@@ -237,6 +237,7 @@ public class FormDataUpdateService {
 
         for (FormFieldValidator.FieldDef def : fieldDefs.values()) {
             if ("TABLE".equals(def.type())) continue; // TABLE 不在主表加列
+            if ("LABEL".equals(def.type())) continue; // v0.0.2：说明文字非输入字段，无列
 
             String colName = ColumnValidation.physicalColumnName(def.name(), FieldType.valueOf(def.type()));
             Object value = submittedData.get(def.name());
@@ -374,6 +375,7 @@ public class FormDataUpdateService {
         List<Object> values = new ArrayList<>(sysCols.values());
 
         for (FormFieldValidator.FieldDef subDef : subFieldDefs) {
+            if ("LABEL".equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
             String colName = ColumnValidation.physicalColumnName(subDef.name(), FieldType.valueOf(subDef.type()));
             Object val = rowData.get(subDef.name());
             if ("BOOL".equals(subDef.type())) {
@@ -416,6 +418,7 @@ public class FormDataUpdateService {
         List<Object> params = new ArrayList<>();
 
         for (FormFieldValidator.FieldDef subDef : subFieldDefs) {
+            if ("LABEL".equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
             String colName = ColumnValidation.physicalColumnName(subDef.name(), FieldType.valueOf(subDef.type()));
             Object val = rowData.get(subDef.name());
             if ("BOOL".equals(subDef.type())) {

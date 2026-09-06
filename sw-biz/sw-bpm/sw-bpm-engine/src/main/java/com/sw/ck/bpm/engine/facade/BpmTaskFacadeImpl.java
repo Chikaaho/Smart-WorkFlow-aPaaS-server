@@ -251,6 +251,18 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
+    public Map<String, Object> getHistoricVariables(String processInstanceId) {
+        // 历史变量查询对已结束实例仍可读；最后一次 set 的值即最终快照
+        return historyService.createHistoricVariableInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .list().stream()
+                .filter(v -> v.getVariableName() != null)
+                .collect(java.util.LinkedHashMap::new,
+                        (m, v) -> m.putIfAbsent(v.getVariableName(), v.getValue()),
+                        java.util.Map::putAll);
+    }
+
+    @Override
     public List<BpmTaskDTO> queryProcessedPage(String tenantId, String assignee, int offset, int limit) {
         // taskWithoutDeleteReason：finished 历史同时包含正常完成与被取消/删除的任务
         //（后者 endTime 亦有值但 deleteReason 非空）。已办兼容来源只承认本人实际

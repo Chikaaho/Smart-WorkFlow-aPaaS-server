@@ -425,12 +425,12 @@ class FormDefinitionServiceTest {
     // ==================== 测试 8：disabled 类型发布 → 拒绝 ====================
 
     @Test
-    @DisplayName("disabled 类型（MULTISELECT）发布 → 拒绝")
+    @DisplayName("disabled 类型（EMAIL）发布 → 拒绝")
     void publishWithDisabledType_shouldReject() {
         FormDefDTO draft = formDefService.createDraft("test_disabled", "测试禁用类型", null, null);
         createdFormIds.add(draft.getId());
         formDefService.saveConfig(draft.getId(), """
-                {"fields": [{"name": "tags", "type": "MULTISELECT"}]}
+                {"fields": [{"name": "email", "type": "EMAIL"}]}
                 """);
 
         assertThatThrownBy(() -> formDefService.publish(draft.getId()))

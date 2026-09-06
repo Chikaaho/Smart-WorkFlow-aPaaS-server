@@ -178,6 +178,9 @@ public final class ColumnValidation {
         if (fieldType == FieldType.TABLE) {
             throw new IllegalArgumentException("TABLE type fields do not produce a column in the parent table");
         }
+        if (fieldType == FieldType.LABEL) {
+            throw new IllegalArgumentException("LABEL type fields are non-input display text and do not produce a column");
+        }
         if (fieldType == FieldType.REFERENCE) {
             return "ref_" + logicalName + "_id";
         }

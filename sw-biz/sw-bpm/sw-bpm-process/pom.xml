@@ -61,6 +61,12 @@
             <artifactId>sw-basic-notify-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- 存储门面接口（表单附件/图片上传与对象权限下载） -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-storage-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- IoT 设备门面接口（审批结果驱动设备） -->
         <dependency>
             <groupId>com.sw.ck</groupId>

@@ -537,7 +537,11 @@ public class FormDataQueryService {
                         "过滤字段 '" + field + "' 的值为空");
             }
 
-            // —— 物理列名（唯一出口） ——
+            // —— 物理列名（唯一出口）；LABEL 非输入字段无可查询列 ——
+            if (fieldType == com.sw.ck.form.dynamic.FieldType.LABEL) {
+                throw new BaseException(FormErrorCode.QUERY_FILTER_FIELD_NOT_FILTERABLE,
+                        "说明文字字段 '" + field + "' 不支持筛选");
+            }
             String physicalCol = ColumnValidation.physicalColumnName(field, fieldType);
 
             // —— 构建 SQL 子句 ——
@@ -654,6 +658,7 @@ public class FormDataQueryService {
 
             // 跳过不可投影类型
             if (ft == FieldType.TABLE) continue;
+            if (ft == FieldType.LABEL) continue;
             if (!ft.isEnabled()) continue;
 
             String physicalCol = ColumnValidation.physicalColumnName(entry.getKey(), ft);
@@ -685,6 +690,7 @@ public class FormDataQueryService {
         for (Map.Entry<String, FieldType> entry : fieldTypeMap.entrySet()) {
             FieldType ft = entry.getValue();
             if (ft == FieldType.TABLE) continue;
+            if (ft == FieldType.LABEL) continue;
             if (!ft.isEnabled()) continue;
 
             String physicalCol = ColumnValidation.physicalColumnName(entry.getKey(), ft);
@@ -740,7 +746,8 @@ public class FormDataQueryService {
                     } catch (IllegalArgumentException e) {
                         continue;
                     }
-                    if (!subFieldType.isEnabled() || subFieldType == FieldType.TABLE) continue;
+                    if (!subFieldType.isEnabled() || subFieldType == FieldType.TABLE
+                            || subFieldType == FieldType.LABEL) continue;
 
                     String physicalCol = ColumnValidation.physicalColumnName(subName, subFieldType);
                     subFields.add(new SubFieldMeta(subName, subFieldType, physicalCol));

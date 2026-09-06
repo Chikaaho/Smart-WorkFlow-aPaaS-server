@@ -14,7 +14,8 @@ create table sw_bpm_process_def (
     status                varchar(20)     not null default 'DRAFT',
     deployment_id         varchar(64),
     process_definition_id varchar(64),
-    graph_json            clob
+    graph_json            clob,
+    category_id           bigint
 );
 
 create index idx_sw_bpm_proc_def_key on sw_bpm_process_def (process_key);

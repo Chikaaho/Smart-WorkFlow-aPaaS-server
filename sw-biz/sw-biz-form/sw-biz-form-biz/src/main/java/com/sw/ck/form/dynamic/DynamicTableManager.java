@@ -145,12 +145,14 @@ public class DynamicTableManager {
             return tableName;
         }
 
-        // —— 分离 TABLE 类型字段（它们需要创建子表，不在主表加列） ——
+        // —— 分离 TABLE / LABEL 类型字段（TABLE 需创建子表、LABEL 非输入不产列，均不在主表加列） ——
         List<FieldSpec> regularFields = new ArrayList<>();
         List<FieldSpec> tableFields = new ArrayList<>();
         for (FieldSpec field : spec.getFields()) {
             if (field.getFieldType() == FieldType.TABLE) {
                 tableFields.add(field);
+            } else if (field.getFieldType() == FieldType.LABEL) {
+                // 说明文字：纯展示，无列、无子表
             } else {
                 regularFields.add(field);
             }

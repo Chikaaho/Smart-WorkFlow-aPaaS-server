@@ -115,6 +115,12 @@ public interface BpmTaskFacade {
     Map<String, Object> getVariables(String processInstanceId);
 
     /**
+     * 读取流程实例的历史变量（含已结束实例）。实例仍在运行时同样返回当前值。
+     * 引擎无该实例历史时返回空映射，不抛异常（只读详情场景容忍缺失）。
+     */
+    Map<String, Object> getHistoricVariables(String processInstanceId);
+
+    /**
      * 分页查询已办任务（历史任务）。
      *
      * @param tenantId 租户 ID

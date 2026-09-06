@@ -90,6 +90,26 @@ public class FieldSpec {
                 Objects.requireNonNull(subFields, "subFields must not be null for TABLE field"));
     }
 
+    /** 多选：字符串列表值，落库 JSON 数组字符串（VARCHAR(1000)） */
+    public static FieldSpec multiselect(String name) {
+        return new FieldSpec(name, FieldType.MULTISELECT, null, null, null);
+    }
+
+    /** 附件：[{storageKey,name}] JSON（CLOB/TEXT） */
+    public static FieldSpec attachment(String name) {
+        return new FieldSpec(name, FieldType.ATTACHMENT, null, null, null);
+    }
+
+    /** 图片：[{storageKey,name}] JSON（CLOB/TEXT） */
+    public static FieldSpec image(String name) {
+        return new FieldSpec(name, FieldType.IMAGE, null, null, null);
+    }
+
+    /** 说明文字：非输入字段，不产生列（DDL/提交路径均跳过） */
+    public static FieldSpec label(String name) {
+        return new FieldSpec(name, FieldType.LABEL, null, null, null);
+    }
+
     // ============ 查询 ============
 
     public String getFieldName() {

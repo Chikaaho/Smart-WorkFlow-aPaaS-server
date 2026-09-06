@@ -66,7 +66,9 @@ public class FormSubmitService {
     private final AesGcmCipher aesCipher;
     private final FormFieldValidator formFieldValidator;
     private final FlowStartPort flowStartPort;
+    private final FormVisibilityRules visibilityRules;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FormSubmitService(FormDefMapper formDefMapper,
                              FormTraceMapper formTraceMapper,
                              DynamicTableManager dynamicTableManager,
@@ -77,7 +79,8 @@ public class FormSubmitService {
                              DomainEventPublisher eventPublisher,
                              Optional<AesGcmCipher> aesCipher,
                              FormFieldValidator formFieldValidator,
-                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort) {
+                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
+                             FormVisibilityRules visibilityRules) {
         this.formDefMapper = formDefMapper;
         this.formTraceMapper = formTraceMapper;
         this.dynamicTableManager = dynamicTableManager;
@@ -89,6 +92,24 @@ public class FormSubmitService {
         this.aesCipher = aesCipher.orElse(null);
         this.formFieldValidator = formFieldValidator;
         this.flowStartPort = flowStartPort.getIfAvailable();
+        this.visibilityRules = visibilityRules;
+    }
+
+    /** 兼容既有测试构造（无显隐规则注入时使用默认实现）。 */
+    public FormSubmitService(FormDefMapper formDefMapper,
+                             FormTraceMapper formTraceMapper,
+                             DynamicTableManager dynamicTableManager,
+                             FormIdGenerator idGenerator,
+                             ObjectMapper objectMapper,
+                             JdbcTemplate jdbcTemplate,
+                             DictFacade dictFacade,
+                             DomainEventPublisher eventPublisher,
+                             Optional<AesGcmCipher> aesCipher,
+                             FormFieldValidator formFieldValidator,
+                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort) {
+        this(formDefMapper, formTraceMapper, dynamicTableManager, idGenerator, objectMapper,
+                jdbcTemplate, dictFacade, eventPublisher, aesCipher, formFieldValidator,
+                flowStartPort, new FormVisibilityRules(objectMapper));
     }
 
     // ==================== 主入口 ====================
@@ -116,9 +137,31 @@ public class FormSubmitService {
         if (!isVisibleToCurrentUser(formDef)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
+        Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
         Map<String, FormFieldValidator.FieldDef> fieldDefs =
-                formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
-        formFieldValidator.validateFields(fieldDefs, submittedData, dictFacade);
+                formFieldValidator.loadAndParseFieldDefs(formDef.getId(), effectiveData);
+        formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
+    }
+
+    /**
+     * 服务端复算口径（v0.0.2）：应用静态默认值（仅新建无值时）→ 按显隐规则过滤隐藏字段。
+     * 隐藏字段不参与本次必填校验和正式提交业务载荷；草稿路径保留用户原输入。
+     */
+    private Map<String, Object> effectivePayload(FormDefEntity formDef, Map<String, Object> submittedData) {
+        Map<String, FormFieldValidator.FieldDef> fieldDefs =
+                formFieldValidator.loadAndParseFieldDefs(formDef.getId(),
+                        submittedData == null ? Map.of() : submittedData);
+        Map<String, Object> effective = formFieldValidator.applyDefaults(fieldDefs,
+                submittedData == null ? new LinkedHashMap<>() : new LinkedHashMap<>(submittedData));
+        if (visibilityRules != null) {
+            List<FormVisibilityRules.VisibilityRule> rules =
+                    visibilityRules.parse(formFieldValidator.loadDefinitionJson(formDef.getId()));
+            Set<String> hidden = visibilityRules.hiddenFields(rules, effective);
+            if (!hidden.isEmpty()) {
+                effective.keySet().removeAll(hidden);
+            }
+        }
+        return effective;
     }
 
     /**
@@ -236,14 +279,16 @@ public class FormSubmitService {
         }
 
         // ==========================================================
-        // Step 3: 加载表单配置并解析字段定义
+        // Step 3: 加载表单配置并解析字段定义 + 服务端复算有效载荷
+        // （默认值仅新建无值时应用；隐藏字段过滤出正式提交业务载荷）
         // ==========================================================
         Map<String, FormFieldValidator.FieldDef> fieldDefs = formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
+        Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
 
         // ==========================================================
-        // Step 4: 校验字段（全部校验通过才落库）
+        // Step 4: 校验字段（隐藏字段已被过滤，不参与必填校验）
         // ==========================================================
-        formFieldValidator.validateFields(fieldDefs, submittedData, dictFacade);
+        formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
 
         // ==========================================================
         // Step 5: 构建系统列 + 用户列值
@@ -251,7 +296,7 @@ public class FormSubmitService {
         String recordId = idGenerator.generate();
         Map<String, Object> systemCols = buildSystemColumns(recordId, tenantId, userId);
 
-        // 用户列（按 fieldDefs 顺序构建，排除 TABLE 类型）
+        // 用户列（按 fieldDefs 顺序构建，排除 TABLE/LABEL 类型）
         Map<String, String> subTableMapping = parseSubTableMapping(formDef.getSubTableMapping());
         List<String> userColumns = new ArrayList<>();
         List<Object> userValues = new ArrayList<>();
@@ -265,14 +310,19 @@ public class FormSubmitService {
                 tableFieldNames.add(fieldName);
                 continue; // TABLE 不在主表加列
             }
+            if ("LABEL".equals(def.type())) {
+                continue; // 说明文字：非输入字段，不产生列
+            }
 
             String colName = ColumnValidation.physicalColumnName(fieldName, FieldType.valueOf(def.type()));
-            Object value = submittedData.get(fieldName);
+            Object value = effectiveData.get(fieldName);
 
             // BOOL 类型转换：true/false → 1/0
             if ("BOOL".equals(def.type())) {
                 value = FormFieldValidator.convertBoolValue(value);
             }
+            // MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列
+            value = serializeListValue(def.type(), value);
 
             userColumns.add(colName);
             userValues.add(value);
@@ -300,7 +350,7 @@ public class FormSubmitService {
                 continue;
             }
 
-            Object rawValue = submittedData.get(tableFieldName);
+            Object rawValue = effectiveData.get(tableFieldName);
             if (rawValue == null) {
                 continue;
             }
@@ -322,9 +372,14 @@ public class FormSubmitService {
 
             // 获取子表字段定义
             FormFieldValidator.FieldDef tableFieldDef = fieldDefs.get(tableFieldName);
+            List<FormFieldValidator.FieldDef> subFieldDefs = new ArrayList<>();
             List<String> subUserColumns = new ArrayList<>();
             if (tableFieldDef != null && tableFieldDef.subFields() != null) {
                 for (FormFieldValidator.FieldDef subDef : tableFieldDef.subFields()) {
+                    if ("LABEL".equals(subDef.type())) {
+                        continue; // 说明文字：非输入字段，不产生列
+                    }
+                    subFieldDefs.add(subDef);
                     subUserColumns.add(ColumnValidation.physicalColumnName(subDef.name(), FieldType.valueOf(subDef.type())));
                 }
             }
@@ -340,12 +395,13 @@ public class FormSubmitService {
                 for (int i = 0; i < subUserColumns.size(); i++) {
                     subCols.add(subUserColumns.get(i));
                     // BOOL 类型转换
-                    String subFieldName = tableFieldDef.subFields().get(i).name();
-                    String subFieldType = tableFieldDef.subFields().get(i).type();
+                    String subFieldName = subFieldDefs.get(i).name();
+                    String subFieldType = subFieldDefs.get(i).type();
                     Object val = row.get(subFieldName);
                     if ("BOOL".equals(subFieldType)) {
                         val = FormFieldValidator.convertBoolValue(val);
                     }
+                    val = serializeListValue(subFieldType, val);
                     subVals.add(val);
                 }
 
@@ -384,7 +440,7 @@ public class FormSubmitService {
         // 仅当无 FlowStartPort（BPM 未装配）时保留历史进程内事件路径兜底。
         // ==========================================================
         String submitterStr = String.valueOf(userId);
-        FormSubmittedEvent event = new FormSubmittedEvent(formKey, submittedData, submitterStr, recordId,
+        FormSubmittedEvent event = new FormSubmittedEvent(formKey, effectiveData, submitterStr, recordId,
                 tenantId, dispatchChannel, processDefKey);
         if (flowStartPort != null) {
             Long commandId = flowStartPort.acceptFlowStart(event);
@@ -454,6 +510,25 @@ public class FormSubmitService {
     }
 
     // ==================== 内部工具方法 ====================
+
+    /**
+     * MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列（其余类型原值返回）。
+     */
+    private Object serializeListValue(String type, Object value) {
+        if (value == null) {
+            return null;
+        }
+        if ("MULTISELECT".equals(type) || "ATTACHMENT".equals(type) || "IMAGE".equals(type)) {
+            if (value instanceof List<?> || value instanceof Map<?, ?>) {
+                try {
+                    return objectMapper.writeValueAsString(value);
+                } catch (JsonProcessingException e) {
+                    throw new BaseException(FormErrorCode.SUBMIT_FAILED, "字段值序列化失败: " + e.getMessage());
+                }
+            }
+        }
+        return value;
+    }
 
     /**
      * 构建 INSERT SQL（PreparedStatement 占位符）。

@@ -22,6 +22,7 @@ import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormVisibilityRules;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
@@ -46,19 +47,34 @@ public class FormDefServiceImpl implements FormDefService {
     private final DynamicTableManager dynamicTableManager;
     private final FormIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
+    private final FormVisibilityRules visibilityRules;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FormDefServiceImpl(FormDefMapper formDefMapper,
                               FormConfigMapper formConfigMapper,
                               FormSnapshotMapper formSnapshotMapper,
                               DynamicTableManager dynamicTableManager,
                               FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              FormVisibilityRules visibilityRules) {
         this.formDefMapper = formDefMapper;
         this.formConfigMapper = formConfigMapper;
         this.formSnapshotMapper = formSnapshotMapper;
         this.dynamicTableManager = dynamicTableManager;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
+        this.visibilityRules = visibilityRules;
+    }
+
+    /** 兼容既有测试构造（无显隐规则注入时使用默认实现）。 */
+    public FormDefServiceImpl(FormDefMapper formDefMapper,
+                              FormConfigMapper formConfigMapper,
+                              FormSnapshotMapper formSnapshotMapper,
+                              DynamicTableManager dynamicTableManager,
+                              FormIdGenerator idGenerator,
+                              ObjectMapper objectMapper) {
+        this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
+                idGenerator, objectMapper, new FormVisibilityRules(objectMapper));
     }
 
     @Override
@@ -180,6 +196,12 @@ public class FormDefServiceImpl implements FormDefService {
 
         List<FieldSpec> fields = parseAndValidateFieldsFromDefinition(definitionJson);
 
+        // —— Step 2b: 显隐规则校验（v0.0.2：字段存在/op/logic/无环依赖） ——
+        Set<String> fieldNames = fields.stream()
+                .map(FieldSpec::getFieldName)
+                .collect(java.util.stream.Collectors.toSet());
+        visibilityRules.parseAndValidate(definitionJson, fieldNames);
+
         // —— Step 3: 校验字段名白名单（复用 ColumnValidation） ——
         if (entity.getLogicalTableName() != null && !entity.getLogicalTableName().isBlank()) {
             ColumnValidation.validateColumnName(entity.getLogicalTableName());
@@ -187,6 +209,7 @@ public class FormDefServiceImpl implements FormDefService {
         Set<String> columnNames = new HashSet<>();
         for (FieldSpec field : fields) {
             if (field.getFieldType() == FieldType.TABLE) continue; // 不产生列
+            if (field.getFieldType() == FieldType.LABEL) continue; // v0.0.2：说明文字不产生列
             String physicalName = field.getPhysicalColumnName();
             try {
                 ColumnValidation.validateColumnName(physicalName);
@@ -582,8 +605,8 @@ public class FormDefServiceImpl implements FormDefService {
                     "字段 '" + name + "' 的类型 '" + typeStr + "' (disabled)，v1 不支持发布");
         }
 
-        // —— 4. 列名 + 白名单校验 (跳过 TABLE) ——
-        if (fieldType != FieldType.TABLE) {
+        // —— 4. 列名 + 白名单校验 (跳过 TABLE / LABEL：均不产生物理列) ——
+        if (fieldType != FieldType.TABLE && fieldType != FieldType.LABEL) {
             String physicalName = ColumnValidation.physicalColumnName(name, fieldType);
             try {
                 ColumnValidation.validateColumnName(physicalName);
@@ -594,6 +617,7 @@ public class FormDefServiceImpl implements FormDefService {
         }
 
         // —— 5. 类型特定约束 ——
+        validateDefaultValueType(name, fieldType, node);
         return switch (fieldType) {
             case TEXT -> FieldSpec.text(name);
             case RICH_TEXT -> FieldSpec.richText(name);
@@ -614,6 +638,10 @@ public class FormDefServiceImpl implements FormDefService {
                 }
                 yield FieldSpec.ref(name, node.get("targetFormId").asText());
             }
+            case MULTISELECT -> FieldSpec.multiselect(name);
+            case ATTACHMENT -> FieldSpec.attachment(name);
+            case IMAGE -> FieldSpec.image(name);
+            case LABEL -> FieldSpec.label(name);
             case TABLE -> {
                 // —— 递归禁止（C: TABLE 套 TABLE 硬拦截） ——
                 if (isSubField) {
@@ -633,10 +661,37 @@ public class FormDefServiceImpl implements FormDefService {
                 yield FieldSpec.table(name, subFields);
             }
             // disabled 占位成员 — 已在 enabled 检查中拦截，不会到达此处
-            case MULTISELECT, ATTACHMENT, IMAGE, LABEL, EMAIL, PHONE, URL, RATE, SLIDER ->
+            case EMAIL, PHONE, URL, RATE, SLIDER ->
                     throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
                             "FieldType " + fieldType + " is not enabled (disabled placeholder)");
         };
+    }
+
+    /**
+     * 校验静态默认值与字段类型匹配（v0.0.2）。
+     * <p>
+     * 仅做类型匹配静态校验：TEXT/RICH_TEXT/DICT/DATE → 文本；NUMBER → 数值；
+     * BOOL → 布尔；MULTISELECT → 字符串数组；ATTACHMENT/IMAGE → 数组；
+     * LABEL/LINK 类非输入字段不允许默认值。类型不符按 1206 ATTR_MISSING 语义拒绝发布。
+     * </p>
+     */
+    private void validateDefaultValueType(String name, FieldType fieldType, JsonNode node) {
+        JsonNode defaultValue = node.get("defaultValue");
+        if (defaultValue == null || defaultValue.isNull()) {
+            return;
+        }
+        boolean valid = switch (fieldType) {
+            case TEXT, RICH_TEXT, DICT, DATE -> defaultValue.isTextual() || defaultValue.isNumber();
+            case NUMBER -> defaultValue.isNumber();
+            case BOOL -> defaultValue.isBoolean();
+            case MULTISELECT, ATTACHMENT, IMAGE -> defaultValue.isArray();
+            case LABEL, REFERENCE, TABLE -> false;
+            default -> defaultValue.isTextual();
+        };
+        if (!valid) {
+            throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
+                    "字段 '" + name + "' 的默认值与类型 " + fieldType + " 不匹配");
+        }
     }
 
     /**

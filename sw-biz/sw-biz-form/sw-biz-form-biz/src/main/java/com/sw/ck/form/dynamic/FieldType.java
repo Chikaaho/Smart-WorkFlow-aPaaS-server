@@ -49,11 +49,17 @@ public enum FieldType {
     REFERENCE(true),
     TABLE(true),
 
-    // ==================== v1 占位（enabled=false） ====================
-    MULTISELECT(false),
-    ATTACHMENT(false),
-    IMAGE(false),
-    LABEL(false),
+    // ==================== v0.0.2 OA 启用 ====================
+    /** 多选：值=字符串列表，落库为 JSON 数组字符串 → VARCHAR(1000)。 */
+    MULTISELECT(true),
+    /** 附件：值=[{storageKey,name}] JSON → CLOB/TEXT；上传/查看/下载走附件端点对象权限。 */
+    ATTACHMENT(true),
+    /** 图片：值=[{storageKey,name}] JSON → CLOB/TEXT。 */
+    IMAGE(true),
+    /** 说明文字：非输入字段，不产生列、不参与提交载荷。 */
+    LABEL(true),
+
+    // ==================== 占位（enabled=false） ====================
     EMAIL(false),
     PHONE(false),
     URL(false),
