@@ -21,4 +21,6 @@ public class ApprovalActionRecord extends BaseEntity {
     @TableField("initialization_summary") private String initializationSummary;
     @TableField("opinion_data") private String opinionData;
     @TableField("settlement_status") private String settlementStatus;
+    /** 产生本动作的受理命令（命令通道重放时据此恢复自身已提交结果；同步入口为 null）。 */
+    @TableField("command_id") private Long commandId;
 }

@@ -620,6 +620,7 @@ class FormDefinitionServiceTest {
                     physical_table_name  VARCHAR(100),
                     form_version         INT          NOT NULL DEFAULT 1,
                     description          VARCHAR(500),
+                    visibility_scope     TEXT,
                     sub_table_mapping    TEXT,
                     tenant_id            BIGINT       NOT NULL DEFAULT 0,
                     deleted              SMALLINT     NOT NULL DEFAULT 0,

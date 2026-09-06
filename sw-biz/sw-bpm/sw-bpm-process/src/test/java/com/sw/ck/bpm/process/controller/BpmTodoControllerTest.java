@@ -53,10 +53,21 @@ class BpmTodoControllerTest {
     private final DomainEventPublisher domainEventPublisher = mock(DomainEventPublisher.class);
     private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
             mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+    private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService =
+            mock(com.sw.ck.bpm.process.service.ApprovalActionService.class);
+    private final com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder participantSnapshotRecorder =
+            mock(com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder.class);
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    private final com.sw.ck.bpm.process.service.TaskActionService taskActionService =
+            new com.sw.ck.bpm.process.service.TaskActionService(
+                    bpmTaskFacade, bpmInstanceService, bpmProcessDefService, domainEventPublisher,
+                    userQueryFacade, approvalActionService, objectMapper, participantSnapshotRecorder);
 
     private final BpmTodoController controller = new BpmTodoController(
-            bpmTaskFacade, bpmInstanceService, bpmProcessDefService, domainEventPublisher,
-            userQueryFacade);
+            bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
+            approvalActionService, objectMapper);
 
     @AfterEach
     void tearDown() {

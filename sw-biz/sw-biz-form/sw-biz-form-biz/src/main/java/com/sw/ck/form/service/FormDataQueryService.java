@@ -154,6 +154,9 @@ public class FormDataQueryService {
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
+        if (!formDefService.isCurrentUserVisible(formKey)) {
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
+        }
         if (!"PUBLISHED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
         }

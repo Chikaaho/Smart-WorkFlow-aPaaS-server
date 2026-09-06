@@ -22,6 +22,8 @@ import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -375,6 +377,85 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
+    public List<FormDefDTO> listPublishedForCurrentUser() {
+        PageParam pageParam = new PageParam();
+        pageParam.setPageNum(1);
+        pageParam.setPageSize(200);
+        LambdaQueryWrapper<FormDefEntity> wrapper = Wrappers.<FormDefEntity>lambdaQuery()
+                .eq(FormDefEntity::getStatus, FormStatusEnum.PUBLISHED.getCode())
+                .orderByDesc(FormDefEntity::getUpdateTime);
+        PageResult<FormDefEntity> page = formDefMapper.selectPage(pageParam, wrapper);
+        return page.getRecords().stream()
+                .filter(this::isVisibleToCurrentUser)
+                .map(this::toDTO)
+                .toList();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateVisibility(String formId, Collection<Long> userIds) {
+        FormDefEntity entity = formDefMapper.selectById(formId);
+        if (entity == null) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
+        }
+        List<Long> normalized = userIds == null ? List.of() : userIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        if (normalized.stream().anyMatch(id -> id <= 0)) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+                    "可见范围用户 ID 无效");
+        }
+        try {
+            entity.setVisibilityScope(normalized.isEmpty()
+                    ? null
+                    : objectMapper.writeValueAsString(Map.of("userIds", normalized)));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("序列化表单可见范围失败", e);
+        }
+        formDefMapper.updateById(entity);
+        log.info("Updated form visibility: formId={}, userCount={}", formId, normalized.size());
+    }
+
+    @Override
+    public boolean isCurrentUserVisible(String formKey) {
+        FormDefEntity entity = formDefMapper.selectOne(Wrappers.<FormDefEntity>lambdaQuery()
+                .eq(FormDefEntity::getFormKey, formKey));
+        return entity != null && isVisibleToCurrentUser(entity);
+    }
+
+    private boolean isVisibleToCurrentUser(FormDefEntity entity) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(entity.getStatus())) {
+            return false;
+        }
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null || loginUser.getUserId() == null) {
+            return false;
+        }
+        String scope = entity.getVisibilityScope();
+        if (scope == null || scope.isBlank()) {
+            return true;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(scope);
+            JsonNode ids = root == null ? null : root.get("userIds");
+            if (ids == null || !ids.isArray()) {
+                return false;
+            }
+            for (JsonNode id : ids) {
+                if (loginUser.getUserId().toString().equals(id.asText())) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (JsonProcessingException e) {
+            log.error("Invalid form visibility scope: formKey={}", entity.getFormKey(), e);
+            return false;
+        }
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteDraft(String id) {
         FormDefEntity entity = formDefMapper.selectById(id);
@@ -401,6 +482,7 @@ public class FormDefServiceImpl implements FormDefService {
                 .physicalTableName(entity.getPhysicalTableName())
                 .formVersion(entity.getFormVersion())
                 .description(entity.getDescription())
+                .visibilityScope(entity.getVisibilityScope())
                 .createTime(entity.getCreateTime())
                 .updateTime(entity.getUpdateTime())
                 .build();

@@ -95,7 +95,20 @@ public class ProcessStartService {
             log.info("表单 {} 无启用绑定，跳过流程发起", cmd.getFormKey());
             return;
         }
-        BpmFormBinding binding = bindings.get(0);
+        BpmFormBinding binding;
+        if (cmd.getProcessDefKey() != null && !cmd.getProcessDefKey().isBlank()) {
+            binding = bindings.stream()
+                    .filter(candidate -> cmd.getProcessDefKey().equals(candidate.getProcessDefKey()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "表单流程绑定已失效: formKey=" + cmd.getFormKey()
+                                    + ", processDefKey=" + cmd.getProcessDefKey()));
+        } else {
+            if (bindings.size() != 1) {
+                throw new IllegalStateException("表单存在多个有效流程绑定: formKey=" + cmd.getFormKey());
+            }
+            binding = bindings.get(0);
+        }
 
         // 2. 解析审批人
         ApproverContext ctx = new ApproverContext();

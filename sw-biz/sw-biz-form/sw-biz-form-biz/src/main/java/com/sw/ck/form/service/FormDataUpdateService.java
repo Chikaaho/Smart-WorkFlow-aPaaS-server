@@ -121,6 +121,9 @@ public class FormDataUpdateService {
         if (formDef == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
+        if (!formDefService.isCurrentUserVisible(formKey)) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
+        }
         if (!"PUBLISHED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED, "表单 '" + formKey + "' 未发布，不能更新");
         }

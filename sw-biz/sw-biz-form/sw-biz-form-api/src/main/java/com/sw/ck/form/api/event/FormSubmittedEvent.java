@@ -41,12 +41,38 @@ public class FormSubmittedEvent implements Serializable {
      */
     private final Long tenantId;
 
+    /**
+     * 流程发起调度通道。由命令消费者在可信上下文中传入；普通表单提交为空，
+     * 由 workflow 侧按 NORMAL 处理。使用字符串避免 form-api 反向依赖 bpm-process。
+     */
+    private final String dispatchChannel;
+
+    /**
+     * 发起受理时由业务命令解析出的流程绑定快照；普通直接表单提交为空，
+     * workflow 侧按 formKey 解析当前唯一绑定。
+     */
+    private final String processDefKey;
+
     public FormSubmittedEvent(String formKey, Map<String, Object> submittedData,
                               String submitter, String recordId, Long tenantId) {
+        this(formKey, submittedData, submitter, recordId, tenantId, null);
+    }
+
+    public FormSubmittedEvent(String formKey, Map<String, Object> submittedData,
+                              String submitter, String recordId, Long tenantId,
+                              String dispatchChannel) {
+        this(formKey, submittedData, submitter, recordId, tenantId, dispatchChannel, null);
+    }
+
+    public FormSubmittedEvent(String formKey, Map<String, Object> submittedData,
+                              String submitter, String recordId, Long tenantId,
+                              String dispatchChannel, String processDefKey) {
         this.formKey = formKey;
         this.submittedData = submittedData;
         this.submitter = submitter;
         this.recordId = recordId;
         this.tenantId = tenantId;
+        this.dispatchChannel = dispatchChannel;
+        this.processDefKey = processDefKey;
     }
 }

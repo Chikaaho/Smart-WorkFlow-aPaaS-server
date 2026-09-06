@@ -88,5 +88,11 @@
             <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- G4/G5/G7 隔离集成验证：测试内按 bpm 迁移目录初始化真实 H2 schema -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

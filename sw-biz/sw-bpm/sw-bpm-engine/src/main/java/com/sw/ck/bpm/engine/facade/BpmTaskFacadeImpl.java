@@ -252,11 +252,17 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
 
     @Override
     public List<BpmTaskDTO> queryProcessedPage(String tenantId, String assignee, int offset, int limit) {
+        // taskWithoutDeleteReason：finished 历史同时包含正常完成与被取消/删除的任务
+        //（后者 endTime 亦有值但 deleteReason 非空）。已办兼容来源只承认本人实际
+        // 完成的任务，取消/删除记录不得混为已办（D4）。
         List<HistoricTaskInstance> tasks = historyService.createHistoricTaskInstanceQuery()
                 .taskTenantId(tenantId)
                 .taskAssignee(assignee)
                 .finished()
+                .taskWithoutDeleteReason()
+                // 唯一次键：同 endTime 记录按唯一 taskId 全序，跨页不漏不重（A5）
                 .orderByHistoricTaskInstanceEndTime().desc()
+                .orderByTaskId().desc()
                 .listPage(offset, limit);
 
         return tasks.stream()
@@ -270,6 +276,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                 .taskTenantId(tenantId)
                 .taskAssignee(assignee)
                 .finished()
+                .taskWithoutDeleteReason()
                 .count();
     }
 

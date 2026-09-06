@@ -10,6 +10,7 @@ import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.dto.FormSnapshotDTO;
 import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
 import com.sw.ck.form.api.dto.FormUpdateReq;
+import com.sw.ck.form.api.dto.FormVisibilityUpdateReq;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.service.FormDefService;
 import org.slf4j.Logger;
@@ -108,6 +109,37 @@ public class FormDefinitionController {
         return R.ok(result);
     }
 
+    /**
+     * 已发布表单候选（业务填报入口，仅需登录；供个人草稿/发起页选择表单）。
+     * P4：普通用户无 form:design 权限，不能走 /page；此端点只暴露
+     * formKey/name/formVersion 最小集，且仅 PUBLISHED。
+     */
+    @GetMapping("/published")
+    public R<java.util.List<java.util.Map<String, Object>>> listPublishedForDraft() {
+        com.sw.ck.common.page.PageParam pageParam = new com.sw.ck.common.page.PageParam();
+        pageParam.setPageNum(1);
+        pageParam.setPageSize(200);
+        java.util.List<java.util.Map<String, Object>> candidates = formDefService.listPublishedForCurrentUser().stream()
+                .map(d -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("formKey", d.getFormKey());
+                    m.put("name", d.getName());
+                    m.put("formVersion", d.getFormVersion());
+                    return m;
+                })
+                .toList();
+        return R.ok(candidates);
+    }
+
+    /** 更新业务发起可见范围；空 userIds 表示当前租户内全部用户。 */
+    @PreAuthorize("@ss.hasPermi('form:design:save')")
+    @PutMapping("/{id}/visibility")
+    public R<Void> updateVisibility(@PathVariable("id") String id,
+                                    @RequestBody FormVisibilityUpdateReq req) {
+        formDefService.updateVisibility(id, req == null ? null : req.getUserIds());
+        return R.ok();
+    }
+
     // ==================== 发布 ====================
 
     /**
@@ -148,7 +180,7 @@ public class FormDefinitionController {
     @GetMapping("/by-key/{formKey}")
     public R<FormDefDTO> getFormDefByKey(@PathVariable("formKey") String formKey) {
         FormDefDTO dto = formDefService.getFormDefByKey(formKey);
-        if (dto == null) {
+        if (dto == null || !formDefService.isCurrentUserVisible(formKey)) {
             return R.fail(FormErrorCode.FORM_NOT_FOUND.getCode(), FormErrorCode.FORM_NOT_FOUND.getMessage());
         }
         return R.ok(dto);
@@ -175,6 +207,9 @@ public class FormDefinitionController {
      */
     @GetMapping("/by-key/{formKey}/definition")
     public R<String> getDefinitionByKey(@PathVariable("formKey") String formKey) {
+        if (!formDefService.isCurrentUserVisible(formKey)) {
+            return R.fail(FormErrorCode.FORM_NOT_FOUND.getCode(), FormErrorCode.FORM_NOT_FOUND.getMessage());
+        }
         String definition = formDefService.getDefinition(formKey);
         if (definition == null) {
             return R.fail(FormErrorCode.CONFIG_NOT_FOUND.getCode(), FormErrorCode.CONFIG_NOT_FOUND.getMessage());

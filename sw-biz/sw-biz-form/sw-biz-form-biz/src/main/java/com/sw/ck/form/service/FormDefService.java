@@ -8,6 +8,7 @@ import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
 import com.sw.ck.form.entity.FormDefEntity;
 
 import java.util.List;
+import java.util.Collection;
 
 /**
  * 表单定义管理服务。
@@ -112,6 +113,15 @@ public interface FormDefService {
      * 根据 ID 获取表单定义实体。
      */
     FormDefEntity getById(String id);
+
+    /** 查询当前租户内当前用户可见的已发布表单。 */
+    List<FormDefDTO> listPublishedForCurrentUser();
+
+    /** 更新业务发起可见范围；空集合表示当前租户内全部用户。 */
+    void updateVisibility(String formId, Collection<Long> userIds);
+
+    /** 判断当前用户是否可通过业务入口发起该已发布表单。 */
+    boolean isCurrentUserVisible(String formKey);
 
     /**
      * 查询表单历史版本快照列表（版本号倒序）。

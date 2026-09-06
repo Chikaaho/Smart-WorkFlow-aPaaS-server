@@ -9,6 +9,9 @@ import java.util.Map;
 @Data
 public class ApprovalActionRequest {
 
+    /** 目标任务 ID（命令通道 payload 使用；HTTP 路径参数优先）。 */
+    private String taskId;
+
     private ApprovalAction action;
     private String returnTargetNodeId;
     private String opinionFormId;

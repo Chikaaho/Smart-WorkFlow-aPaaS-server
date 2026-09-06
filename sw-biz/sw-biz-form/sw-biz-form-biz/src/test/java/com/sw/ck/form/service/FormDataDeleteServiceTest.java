@@ -449,6 +449,7 @@ class FormDataDeleteServiceTest {
                     physical_table_name  VARCHAR(100),
                     form_version         INT          NOT NULL DEFAULT 1,
                     description          VARCHAR(500),
+                    visibility_scope     TEXT,
                     sub_table_mapping    TEXT,
                     tenant_id            BIGINT       NOT NULL DEFAULT 0,
                     deleted              SMALLINT     NOT NULL DEFAULT 0,
@@ -626,7 +627,10 @@ class FormDataDeleteServiceTest {
                                                     FormFieldValidator formFieldValidator) {
             return new FormSubmitService(formDefMapper, formTraceMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper, jdbcTemplate,
-                    dictFacade, eventPublisher, java.util.Optional.empty(), formFieldValidator);
+                    dictFacade, eventPublisher, java.util.Optional.empty(), formFieldValidator,
+                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
+                @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+            });
         }
 
         @Bean
