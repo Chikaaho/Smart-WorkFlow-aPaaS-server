@@ -1,22 +1,32 @@
 package com.sw.ck.bpm.engine.facade;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.common.exception.BaseException;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.UserTask;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.task.api.Task;
+import org.flowable.common.engine.api.FlowableOptimisticLockingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Collection;
 import java.util.stream.Collectors;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * BPM 任务门面实现 —— 封装 Flowable {@link TaskService} + {@link RuntimeService} + {@link RepositoryService} 查询。
@@ -30,6 +40,10 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     private final RuntimeService runtimeService;
     private final RepositoryService repositoryService;
     private final HistoryService historyService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
+    private static final ConcurrentHashMap<String, Object> ACTION_LOCKS = new ConcurrentHashMap<>();
 
     public BpmTaskFacadeImpl(TaskService taskService, RuntimeService runtimeService,
                              RepositoryService repositoryService, HistoryService historyService) {
@@ -43,7 +57,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     public List<BpmTaskDTO> queryTodo(String tenantId, String assignee) {
         List<Task> tasks = taskService.createTaskQuery()
                 .taskTenantId(tenantId)
-                .taskAssignee(assignee)
+                .taskCandidateOrAssigned(assignee)
                 .list();
 
         return tasks.stream()
@@ -72,19 +86,149 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
 
     @Override
     public void complete(String taskId, Map<String, Object> variables) {
+        Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
+        String lockKey = snapshot == null ? "task:" + taskId
+                : "process:" + snapshot.getProcessInstanceId();
+        synchronized (ACTION_LOCKS.computeIfAbsent(lockKey, key -> new Object())) {
+            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务不存在或已被处理");
+            }
+            completeWithOptimisticRetry(taskId, variables);
+        }
+        log.info("BPM task completed: taskId={}", taskId);
+    }
+
+    @Override
+    public boolean canHandle(String taskId, String userId) {
+        return taskId != null && userId != null
+                && taskService.createTaskQuery().taskId(taskId)
+                .taskCandidateOrAssigned(userId).singleResult() != null;
+    }
+
+    @Override
+    public void completeAsUser(String taskId, String userId, Map<String, Object> variables) {
+        Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
+        String lockKey = snapshot == null ? "task:" + taskId
+                : "process:" + snapshot.getProcessInstanceId();
+        synchronized (ACTION_LOCKS.computeIfAbsent(lockKey, key -> new Object())) {
+            Task task = taskService.createTaskQuery().taskId(taskId)
+                    .taskCandidateOrAssigned(userId).singleResult();
+            if (task == null) {
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务不存在、已被处理或当前用户无权处理");
+            }
+            if (task.getAssignee() == null) taskService.claim(taskId, userId);
+            completeWithOptimisticRetry(taskId, variables);
+        }
+    }
+
+    /**
+     * 并发会签任务可能同时更新同一 Flowable execution。第一次提交发生乐观锁竞争时，
+     * 重新读取任务并只重试一次；若竞争者已经处理该任务，则转换为可预期的 2305，
+     * 不把正常的幂等竞争暴露成 HTTP 500。
+     */
+    private void completeWithOptimisticRetry(String taskId, Map<String, Object> variables) {
+        try {
+            completeWithoutRetry(taskId, variables);
+            return;
+        } catch (FlowableOptimisticLockingException first) {
+            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
+                throw alreadyHandled(taskId);
+            }
+            log.info("BPM task optimistic lock conflict, retrying once: taskId={}", taskId);
+        }
+
+        try {
+            completeWithoutRetry(taskId, variables);
+        } catch (FlowableOptimisticLockingException second) {
+            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
+                throw alreadyHandled(taskId);
+            }
+            throw second;
+        }
+    }
+
+    private void completeWithoutRetry(String taskId, Map<String, Object> variables) {
         if (variables != null && !variables.isEmpty()) {
             taskService.complete(taskId, variables);
         } else {
             taskService.complete(taskId);
         }
-        log.info("BPM task completed: taskId={}", taskId);
+    }
+
+    private BaseException alreadyHandled(String taskId) {
+        return new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                "任务不存在或已被处理: " + taskId);
+    }
+
+    @Override
+    public void terminateProcess(String processInstanceId, String reason) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR,
+                    "流程实例标识不能为空");
+        }
+        synchronized (ACTION_LOCKS.computeIfAbsent("process:" + processInstanceId, key -> new Object())) {
+            if (runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult() != null) {
+                runtimeService.deleteProcessInstance(processInstanceId,
+                        reason == null || reason.isBlank() ? "REJECTED" : reason);
+            }
+        }
+        log.info("BPM process terminated: processInstanceId={}, reason={}", processInstanceId, reason);
+    }
+
+    @Override
+    public void returnTask(String taskId, String targetNodeId) {
+        Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
+        String lockKey = snapshot == null ? "task:" + taskId
+                : "process:" + snapshot.getProcessInstanceId();
+        synchronized (ACTION_LOCKS.computeIfAbsent(lockKey, key -> new Object())) {
+            Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
+            if (task == null || targetNodeId == null || targetNodeId.isBlank()) {
+                throw new BaseException(BpmErrorCode.APPROVAL_RETURN_TARGET_INVALID);
+            }
+            BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
+            FlowElement target = model == null ? null : model.getFlowElement(targetNodeId);
+            if (!(target instanceof UserTask)
+                    || historyService.createHistoricTaskInstanceQuery()
+                    .processInstanceId(task.getProcessInstanceId())
+                    .taskDefinitionKey(targetNodeId)
+                    .finished().count() == 0
+                    || !isAllowedReturnTarget(task, targetNodeId)) {
+                throw new BaseException(BpmErrorCode.APPROVAL_RETURN_TARGET_INVALID);
+            }
+            runtimeService.createChangeActivityStateBuilder()
+                    .processInstanceId(task.getProcessInstanceId())
+                    .moveActivityIdTo(task.getTaskDefinitionKey(), targetNodeId)
+                    .changeState();
+        }
+    }
+
+    /**
+     * 当发布配置声明 returnTargets 时严格按声明限制；旧图未声明时以“已经过的人工节点”为兼容边界。
+     */
+    private boolean isAllowedReturnTarget(Task task, String targetNodeId) {
+        try {
+            BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
+            FlowElement current = model == null ? null : model.getFlowElement(task.getTaskDefinitionKey());
+            String json = current == null ? null : current.getAttributeValue(FLOWABLE_NS, "nodeConfig");
+            if (json == null || json.isBlank()) return true;
+            Map<String, Object> config = objectMapper.readValue(json,
+                    new TypeReference<Map<String, Object>>() { });
+            Object targets = config.get("returnTargets");
+            if (!(targets instanceof Collection<?> collection)) return true;
+            if (collection.isEmpty()) return false;
+            return collection.stream().map(String::valueOf).anyMatch(targetNodeId::equals);
+        } catch (Exception e) {
+            throw new BaseException(BpmErrorCode.APPROVAL_RETURN_TARGET_INVALID);
+        }
     }
 
     @Override
     public List<BpmTaskDTO> queryTodoPage(String tenantId, String assignee, int offset, int limit) {
         List<Task> tasks = taskService.createTaskQuery()
                 .taskTenantId(tenantId)
-                .taskAssignee(assignee)
+                .taskCandidateOrAssigned(assignee)
                 .orderByTaskCreateTime().desc()
                 .listPage(offset, limit);
 
@@ -97,7 +241,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     public long countTodo(String tenantId, String assignee) {
         return taskService.createTaskQuery()
                 .taskTenantId(tenantId)
-                .taskAssignee(assignee)
+                .taskCandidateOrAssigned(assignee)
                 .count();
     }
 
@@ -107,12 +251,30 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
+    public Map<String, Object> getHistoricVariables(String processInstanceId) {
+        // 历史变量查询对已结束实例仍可读；最后一次 set 的值即最终快照
+        return historyService.createHistoricVariableInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .list().stream()
+                .filter(v -> v.getVariableName() != null)
+                .collect(java.util.LinkedHashMap::new,
+                        (m, v) -> m.putIfAbsent(v.getVariableName(), v.getValue()),
+                        java.util.Map::putAll);
+    }
+
+    @Override
     public List<BpmTaskDTO> queryProcessedPage(String tenantId, String assignee, int offset, int limit) {
+        // taskWithoutDeleteReason：finished 历史同时包含正常完成与被取消/删除的任务
+        //（后者 endTime 亦有值但 deleteReason 非空）。已办兼容来源只承认本人实际
+        // 完成的任务，取消/删除记录不得混为已办（D4）。
         List<HistoricTaskInstance> tasks = historyService.createHistoricTaskInstanceQuery()
                 .taskTenantId(tenantId)
                 .taskAssignee(assignee)
                 .finished()
+                .taskWithoutDeleteReason()
+                // 唯一次键：同 endTime 记录按唯一 taskId 全序，跨页不漏不重（A5）
                 .orderByHistoricTaskInstanceEndTime().desc()
+                .orderByTaskId().desc()
                 .listPage(offset, limit);
 
         return tasks.stream()
@@ -126,6 +288,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                 .taskTenantId(tenantId)
                 .taskAssignee(assignee)
                 .finished()
+                .taskWithoutDeleteReason()
                 .count();
     }
 
@@ -226,9 +389,16 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         BpmTaskDTO dto = new BpmTaskDTO();
         dto.setTaskId(task.getId());
         dto.setName(task.getName());
+        dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(getProcessDefinitionKey(task));
         dto.setAssignee(task.getAssignee());
+        dto.setCandidateUserIds(taskService.getIdentityLinksForTask(task.getId()).stream()
+                .filter(link -> "candidate".equalsIgnoreCase(link.getType())
+                        && link.getUserId() != null && !link.getUserId().isBlank())
+                .map(org.flowable.identitylink.api.IdentityLink::getUserId)
+                .distinct()
+                .toList());
         dto.setCreateTime(task.getCreateTime());
 
         // businessKey 从 ProcessInstance 获取
@@ -279,6 +449,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         BpmTaskDTO dto = new BpmTaskDTO();
         dto.setTaskId(task.getId());
         dto.setName(task.getName());
+        dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(getProcessDefinitionKeyFromId(task.getProcessDefinitionId()));
         dto.setAssignee(task.getAssignee());

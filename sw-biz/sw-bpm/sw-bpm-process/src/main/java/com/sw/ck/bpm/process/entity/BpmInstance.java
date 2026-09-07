@@ -49,7 +49,7 @@ public class BpmInstance extends BaseEntity {
     private Long initiatorId;
 
     /**
-     * 实例状态：RUNNING / APPROVED / REJECTED。
+     * 实例状态：RUNNING / APPROVED / REJECTED / FAILED。
      * <p>
      * 落库 VARCHAR，接收入 {@link InstanceStatusEnum#getCode()}。
      * </p>

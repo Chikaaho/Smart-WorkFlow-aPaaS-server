@@ -18,6 +18,9 @@ public class StartCommand {
     /** 表单业务标识 */
     private String formKey;
 
+    /** 表单提交受理时解析并冻结的流程绑定 key；直接表单提交为空。 */
+    private String processDefKey;
+
     /** 提交记录 UUID（= 动态宽表主键，作 Flowable businessKey） */
     private String recordId;
 

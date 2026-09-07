@@ -479,6 +479,7 @@ class FormSubmitServiceTest {
                     physical_table_name  VARCHAR(100),
                     form_version         INT          NOT NULL DEFAULT 1,
                     description          VARCHAR(500),
+                    visibility_scope     TEXT,
                     sub_table_mapping    TEXT,
                     tenant_id            BIGINT       NOT NULL DEFAULT 0,
                     deleted              SMALLINT     NOT NULL DEFAULT 0,
@@ -525,21 +526,22 @@ class FormSubmitServiceTest {
 
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS sw_form_trace (
-                    id                 VARCHAR(36)  PRIMARY KEY,
-                    form_id            VARCHAR(36)  NOT NULL,
-                    record_id          VARCHAR(36)  NOT NULL,
-                    submit_user_id     BIGINT       NOT NULL,
-                    submit_ip          VARCHAR(200),
-                    submit_time        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    device_fingerprint VARCHAR(200),
-                    user_agent         VARCHAR(500),
-                    tenant_id          BIGINT       NOT NULL DEFAULT 0,
-                    deleted            SMALLINT     NOT NULL DEFAULT 0,
-                    create_time        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    create_by          BIGINT,
-                    update_time        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    update_by          BIGINT,
-                    version            BIGINT       NOT NULL DEFAULT 0
+                    id                     VARCHAR(36)  PRIMARY KEY,
+                    form_id                VARCHAR(36)  NOT NULL,
+                    record_id              VARCHAR(36)  NOT NULL,
+                    submit_user_id         BIGINT       NOT NULL,
+                    submit_ip              VARCHAR(200),
+                    submit_time            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    device_fingerprint     VARCHAR(200),
+                    user_agent             VARCHAR(500),
+                    submit_idempotency_key VARCHAR(128),
+                    tenant_id              BIGINT       NOT NULL DEFAULT 0,
+                    deleted                SMALLINT     NOT NULL DEFAULT 0,
+                    create_time            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    create_by              BIGINT,
+                    update_time            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    update_by              BIGINT,
+                    version                BIGINT       NOT NULL DEFAULT 0
                 )
                 """);
     }
@@ -677,7 +679,10 @@ class FormSubmitServiceTest {
                                                     FormFieldValidator formFieldValidator) {
             return new FormSubmitService(formDefMapper, formTraceMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper, jdbcTemplate,
-                    dictFacade, eventPublisher, Optional.empty(), formFieldValidator);
+                    dictFacade, eventPublisher, Optional.empty(), formFieldValidator,
+                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
+                @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+            });
         }
 
         @Bean

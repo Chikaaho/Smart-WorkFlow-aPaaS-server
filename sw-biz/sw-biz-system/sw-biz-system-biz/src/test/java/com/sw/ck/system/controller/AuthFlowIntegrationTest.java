@@ -24,6 +24,9 @@ import com.sw.ck.security.jwt.JwtProperties;
 import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.jwt.JwtTokenProviderImpl;
 import com.sw.ck.security.spi.UserDetailsProvider;
+import com.sw.ck.system.security.LoginChallengeService;
+import com.sw.ck.system.security.LoginChallengeStore;
+import com.sw.ck.system.security.LoginSecurityProperties;
 import com.sw.ck.system.mapper.SysMenuMapper;
 import com.sw.ck.system.mapper.SysRefreshTokenMapper;
 import com.sw.ck.system.mapper.SysRoleDeptMapper;
@@ -106,6 +109,9 @@ class AuthFlowIntegrationTest {
 
     @Autowired
     private AuthController authController;
+
+    @Autowired
+    private LoginChallengeTestSupport.TestableLoginChallengeService testableChallengeService;
 
     @Autowired
     private AuthMeController authMeController;
@@ -374,18 +380,55 @@ class AuthFlowIntegrationTest {
 
     /**
      * 登录并返回 JWT access token。
-     * 从 {@code R<TokenResponse>} 的 {@code data.accessToken} 字段提取。
+     * P45 全链：GET /auth/challenge 取挑战 → RSA-OAEP 加密密码 → 五字段 POST /auth/login。
      */
     private String login(String username, String password) throws Exception {
+        MvcResult challengeResult = mockMvc.perform(get("/auth/challenge"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode challenge = objectMapper.readTree(challengeResult.getResponse().getContentAsString()).get("data");
+
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
+                        .content(objectMapper.createObjectNode()
+                                .put("username", username)
+                                .put("password", LoginChallengeTestSupport.encryptPassword(password))
+                                .put("captcha", testableChallengeService.lastCaptchaCode())
+                                .put("captchaId", challenge.get("captchaId").asText())
+                                .put("timestamp", String.valueOf(System.currentTimeMillis()))
+                                .toString()))
                 .andExpect(status().isOk())
                 .andReturn();
 
         JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
         JsonNode data = root.get("data");
-        return data != null ? data.get("accessToken").asText() : null;
+        return data != null && !data.isNull() && data.has("accessToken")
+                ? data.get("accessToken").asText() : null;
+    }
+
+    /** 全链登录并保留完整 MvcResult（用于断言 refresh cookie） */
+    private MvcResult loginMvc(String password) throws Exception {
+        MvcResult challengeResult = mockMvc.perform(get("/auth/challenge"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode challenge = objectMapper.readTree(challengeResult.getResponse().getContentAsString()).get("data");
+        return mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.createObjectNode()
+                                .put("username", "admin")
+                                .put("password", LoginChallengeTestSupport.encryptPassword(password))
+                                .put("captcha", testableChallengeService.lastCaptchaCode())
+                                .put("captchaId", challenge.get("captchaId").asText())
+                                .put("timestamp", String.valueOf(System.currentTimeMillis()))
+                                .toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+    }
+
+    /** 签发挑战并返回完整 challenge data 节点（captcha/captchaId/publicKey/keyVersion/...） */
+    private JsonNode newChallenge() throws Exception {
+        MvcResult challengeResult = mockMvc.perform(get("/auth/challenge")).andReturn();
+        return objectMapper.readTree(challengeResult.getResponse().getContentAsString()).get("data");
     }
 
     // ==================== 测试 1：端到端闭合 Happy Path ====================
@@ -488,35 +531,107 @@ class AuthFlowIntegrationTest {
     // ==================== 测试 3：错误密码登录 ====================
 
     @Test
-    @DisplayName("错误密码登录 → code≠0")
+    @DisplayName("错误密码登录 → 2104 密码错误")
     void login_withWrongPassword_shouldReturnFailure() throws Exception {
+        MvcResult challengeResult = mockMvc.perform(get("/auth/challenge")).andReturn();
+        JsonNode challenge = objectMapper.readTree(challengeResult.getResponse().getContentAsString()).get("data");
+
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"wrong-password\"}"))
+                        .content(objectMapper.createObjectNode()
+                                .put("username", "admin")
+                                .put("password", LoginChallengeTestSupport.encryptPassword("wrong-password"))
+                                .put("captcha", testableChallengeService.lastCaptchaCode())
+                                .put("captchaId", challenge.get("captchaId").asText())
+                                .put("timestamp", String.valueOf(System.currentTimeMillis()))
+                                .toString()))
                 .andExpect(status().isOk())
                 .andReturn();
 
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
         assertThat(body.get("code").asInt())
-                .as("密码错误应返回非 0 错误码")
-                .isNotZero();
+                .as("密码错误应返回 2104")
+                .isEqualTo(2104);
+        assertThat(body.get("msg").asText()).isEqualTo("密码错误");
     }
 
-    // ==================== 测试 4：用户不存在 ====================
-
     @Test
-    @DisplayName("不存在的用户登录 → code≠0")
-    void login_withUnknownUser_shouldReturnFailure() throws Exception {
+    @DisplayName("验证码错误 → 2101，且不执行密码认证")
+    void login_withWrongCaptcha_shouldReturn2101() throws Exception {
+        MvcResult challengeResult = mockMvc.perform(get("/auth/challenge")).andReturn();
+        JsonNode challenge = objectMapper.readTree(challengeResult.getResponse().getContentAsString()).get("data");
+
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"nonexistent\",\"password\":\"any-password\"}"))
+                        .content(objectMapper.createObjectNode()
+                                .put("username", "admin")
+                                .put("password", LoginChallengeTestSupport.encryptPassword(ADMIN_PLAIN_PASSWORD))
+                                .put("captcha", "xxxx")
+                                .put("captchaId", challenge.get("captchaId").asText())
+                                .put("timestamp", String.valueOf(System.currentTimeMillis()))
+                                .toString()))
                 .andExpect(status().isOk())
                 .andReturn();
 
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
-        assertThat(body.get("code").asInt())
-                .as("不存在的用户应返回非 0 错误码")
-                .isNotZero();
+        assertThat(body.get("code").asInt()).as("验证码错误应返回 2101").isEqualTo(2101);
+        // 顺序证明：验证码未通过时挑战未被消费，账号查询未执行
+        assertThat(result.getResponse().getCookie("rt")).isNull();
+    }
+
+    @Test
+    @DisplayName("客户端时间异常 → 2103，且挑战未被消费")
+    void login_withSkewedTime_shouldReturn2103() throws Exception {
+        MvcResult challengeResult = mockMvc.perform(get("/auth/challenge")).andReturn();
+        JsonNode challenge = objectMapper.readTree(challengeResult.getResponse().getContentAsString()).get("data");
+
+        MvcResult result = mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.createObjectNode()
+                                .put("username", "admin")
+                                .put("password", LoginChallengeTestSupport.encryptPassword(ADMIN_PLAIN_PASSWORD))
+                                .put("captcha", testableChallengeService.lastCaptchaCode())
+                                .put("captchaId", challenge.get("captchaId").asText())
+                                .put("timestamp", String.valueOf(System.currentTimeMillis() - 600_000))
+                                .toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(body.get("code").asInt()).as("时间异常应返回 2103").isEqualTo(2103);
+        assertThat(body.get("msg").asText()).isEqualTo("机器时间异常");
+    }
+
+    @Test
+    @DisplayName("相同挑战重复提交 → 第二次 2101（一次性消费）")
+    void login_replayChallenge_shouldBeRejected() throws Exception {
+        String token = login("admin", ADMIN_PLAIN_PASSWORD);
+        assertThat(token).isNotBlank();
+
+        // 复用第一个挑战的验证码与 UUID 再次提交
+        // （login() 已消费该挑战；这里用同一 captchaId + 任意验证码应得 2101）
+        MvcResult result = mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.createObjectNode()
+                                .put("username", "admin")
+                                .put("password", LoginChallengeTestSupport.encryptPassword(ADMIN_PLAIN_PASSWORD))
+                                .put("captcha", "aaaa")
+                                .put("captchaId", "consumed-or-unknown")
+                                .put("timestamp", String.valueOf(System.currentTimeMillis()))
+                                .toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(body.get("code").asInt()).isEqualTo(2101);
+    }
+
+    @Test
+    @DisplayName("不存在的用户登录 → 2104 密码错误")
+    void login_withUnknownUser_shouldReturnFailure() throws Exception {
+        String token = login("nonexistent", "any-password");
+        assertThat(token)
+                .as("不存在的用户不应返回 token")
+                .isNull();
     }
 
     // ==================== 测试 5：停用/锁定用户登录被拒 ====================
@@ -530,9 +645,16 @@ class AuthFlowIntegrationTest {
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
                 """, 2L, "disabled-user", ADMIN_BCRYPT_HASH, "停用用户", 1L, 1, 0);
 
+        JsonNode challenge = newChallenge();
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"disabled-user\",\"password\":\"" + ADMIN_PLAIN_PASSWORD + "\"}"))
+                        .content(objectMapper.createObjectNode()
+                                .put("username", "disabled-user")
+                                .put("password", LoginChallengeTestSupport.encryptPassword(ADMIN_PLAIN_PASSWORD))
+                                .put("captcha", testableChallengeService.lastCaptchaCode())
+                                .put("captchaId", challenge.get("captchaId").asText())
+                                .put("timestamp", String.valueOf(System.currentTimeMillis()))
+                                .toString()))
                 .andExpect(status().isOk())
                 .andReturn();
 
@@ -562,9 +684,16 @@ class AuthFlowIntegrationTest {
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
                 """, 3L, "locked-user", ADMIN_BCRYPT_HASH, "锁定用户", 1L, 2, 0);
 
+        JsonNode challenge = newChallenge();
         MvcResult result = mockMvc.perform(post("/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"locked-user\",\"password\":\"" + ADMIN_PLAIN_PASSWORD + "\"}"))
+                        .content(objectMapper.createObjectNode()
+                                .put("username", "locked-user")
+                                .put("password", LoginChallengeTestSupport.encryptPassword(ADMIN_PLAIN_PASSWORD))
+                                .put("captcha", testableChallengeService.lastCaptchaCode())
+                                .put("captchaId", challenge.get("captchaId").asText())
+                                .put("timestamp", String.valueOf(System.currentTimeMillis()))
+                                .toString()))
                 .andExpect(status().isOk())
                 .andReturn();
 
@@ -583,11 +712,7 @@ class AuthFlowIntegrationTest {
     @DisplayName("账号停用后既有 refresh token 刷新 → 401 + 账号已停用 + 新轮换 token 已撤销")
     void refresh_withDisabledUser_shouldRejectAndRevokeRotatedToken() throws Exception {
         // ---- Act 1: 以正常状态登录，取得 refresh cookie ----
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"" + ADMIN_PLAIN_PASSWORD + "\"}"))
-                .andExpect(status().isOk())
-                .andReturn();
+        MvcResult loginResult = loginMvc(ADMIN_PLAIN_PASSWORD);
         String rawToken = loginResult.getResponse().getCookie("rt").getValue();
         assertThat(rawToken)
                 .as("登录成功应下发 refresh cookie")
@@ -629,11 +754,7 @@ class AuthFlowIntegrationTest {
     @DisplayName("正常用户 refresh → 新 access token + 新 refresh cookie，轮换语义不变")
     void refresh_withActiveUser_shouldRotateAndReturnNewToken() throws Exception {
         // ---- Act 1: 登录 ----
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"" + ADMIN_PLAIN_PASSWORD + "\"}"))
-                .andExpect(status().isOk())
-                .andReturn();
+        MvcResult loginResult = loginMvc(ADMIN_PLAIN_PASSWORD);
         String oldRawToken = loginResult.getResponse().getCookie("rt").getValue();
         assertThat(oldRawToken)
                 .as("登录成功应下发 refresh cookie")
@@ -916,6 +1037,43 @@ class AuthFlowIntegrationTest {
             return new ObjectMapper();
         }
 
+        // ==================== P45 登录挑战 / RSA ====================
+
+        @Bean
+        public LoginSecurityProperties loginSecurityProperties() {
+            LoginSecurityProperties props = new LoginSecurityProperties();
+            props.setRsaPrivateKey(LoginChallengeTestSupport.TEST_PRIVATE_KEY_PEM);
+            props.setRsaKeyVersion("v1");
+            props.setDigestSecret("test-digest-secret");
+            return props;
+        }
+
+        @Bean
+        public com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager(
+                LoginSecurityProperties loginSecurityProperties) {
+            return new com.sw.ck.system.security.RsaLoginKeyManager(loginSecurityProperties);
+        }
+
+        @Bean
+        public LoginChallengeStore loginChallengeStore() {
+            return new LoginChallengeTestSupport.InMemoryLoginChallengeStore();
+        }
+
+        @Bean
+        public com.sw.ck.system.security.PngCaptchaRenderer pngCaptchaRenderer() {
+            return new com.sw.ck.system.security.PngCaptchaRenderer();
+        }
+
+        @Bean
+        public LoginChallengeTestSupport.TestableLoginChallengeService loginChallengeService(
+                LoginChallengeStore loginChallengeStore,
+                com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager,
+                LoginSecurityProperties loginSecurityProperties,
+                com.sw.ck.system.security.PngCaptchaRenderer pngCaptchaRenderer) {
+            return new LoginChallengeTestSupport.TestableLoginChallengeService(
+                    loginChallengeStore, rsaLoginKeyManager, loginSecurityProperties, pngCaptchaRenderer);
+        }
+
         // ==================== 控制器 ====================
 
         @Bean
@@ -926,10 +1084,12 @@ class AuthFlowIntegrationTest {
                 SysUserService sysUserService,
                 JwtProperties jwtProperties,
                 RefreshTokenService refreshTokenService,
-                LoginUserLoader loginUserLoader) {
+                LoginUserLoader loginUserLoader,
+                LoginChallengeService loginChallengeService,
+                com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager) {
             return new AuthController(userDetailsProvider, passwordEncoder,
                     jwtTokenProvider, sysUserService, jwtProperties,
-                    refreshTokenService, loginUserLoader);
+                    refreshTokenService, loginUserLoader, loginChallengeService, rsaLoginKeyManager);
         }
 
         @Bean

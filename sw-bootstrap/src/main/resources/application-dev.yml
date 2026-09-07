@@ -76,6 +76,10 @@ sw:
     enabled: true
   external-datasource:
     cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+  security:
+    debug-auth:
+      # 本地调试需显式设置 SW_DEBUG_AUTH_ENABLED=true；不设置则保持关闭。
+      enabled: ${SW_DEBUG_AUTH_ENABLED:false}
   iot:
     enabled: true
     tencent:
@@ -87,4 +91,3 @@ sw:
       secret-key: ${TENCENT_CLOUD_SECRET_KEY:}
       queue-expiry-minutes: 1440
       max-retry-count: 3
-

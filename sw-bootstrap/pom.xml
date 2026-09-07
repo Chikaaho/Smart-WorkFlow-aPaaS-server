@@ -175,6 +175,11 @@
         <!-- =================== 测试依赖 =================== -->
         <!-- 版本由 sw-dependencies 引入的 spring-boot-dependencies BOM 管理，不写死版本号 -->
         <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>

@@ -181,9 +181,8 @@ class GraphToBpmnTranslatorTest {
     }
 
     @Test
-    void shouldSkipUnknownNodeType() {
-        // 注册表分发（B2）：未注册翻译器的类型按既有语义 warn + skip，
-        // 其余节点照常翻译，翻译不失败。
+    void shouldRejectUnknownNodeType() {
+        // 发布翻译不能跳过未注册节点，否则会生成缺少节点/悬空边的 BPMN。
         ProcessGraph graph = ProcessGraph.builder()
                 .processKey("unknown_type")
                 .elements(List.of(
@@ -197,15 +196,8 @@ class GraphToBpmnTranslatorTest {
                 ))
                 .build();
 
-        BpmnModel model = translator.translate(graph);
-
-        // CONDITION（已注册于校验器但无翻译器）被跳过；START/APPROVAL/END 照常产出
-        assertThat(model.getProcesses()).hasSize(1);
-        org.flowable.bpmn.model.Process process = model.getProcesses().get(0);
-        assertThat(process.getFlowElement("cond")).isNull();
-        assertThat(process.getFlowElement("start")).isNotNull();
-        assertThat(process.getFlowElement("approval")).isInstanceOf(UserTask.class);
-        assertThat(process.getFlowElement("end")).isNotNull();
+        BaseException exception = assertThrows(BaseException.class, () -> translator.translate(graph));
+        assertThat(exception.getCode()).isEqualTo(2107);
     }
 
     // ==================== helpers ====================

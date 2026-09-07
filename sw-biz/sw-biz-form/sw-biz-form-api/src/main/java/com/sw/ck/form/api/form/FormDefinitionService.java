@@ -50,4 +50,7 @@ public interface FormDefinitionService {
      * @return 表单定义 DTO，不存在时返回 null
      */
     FormDefDTO getFormDefById(String formId);
+
+    /** 判断当前登录用户是否可从业务入口发起该已发布表单。 */
+    boolean canCurrentUserInitiate(String formKey);
 }

@@ -7,7 +7,7 @@ import java.io.Serializable;
 /**
  * BPM 通知事件。
  * <p>
- * 由 bpm-process 在流程关键节点（待办创建、流程通过）经 {@code DomainEventPublisher} 发布，
+     * 由 bpm-process 在流程关键节点（待办创建、流程通过/退回/驳回）经 {@code DomainEventPublisher} 发布，
  * 由 bpm-process 的 {@code BpmNotifyListener} 异步 {@code AFTER_COMMIT} 消费。
  * </p>
  *
@@ -20,12 +20,12 @@ import java.io.Serializable;
 public class BpmNotifyEvent implements Serializable {
 
     /**
-     * 触发类型：TODO_CREATED / PROCESS_APPROVED。
+     * 触发类型：TODO_CREATED / PROCESS_APPROVED / PROCESS_REJECTED / PROCESS_RETURNED。
      */
     private final BpmNotifyTrigger trigger;
 
     /**
-     * 接收人用户 ID（TODO_CREATED = approver；PROCESS_APPROVED = initiator）。
+     * 接收人用户 ID（TODO_CREATED = approver；流程结果事件 = initiator）。
      */
     private final Long recipientId;
 
@@ -35,13 +35,13 @@ public class BpmNotifyEvent implements Serializable {
     private final Long tenantId;
 
     /**
-     * 操作人用户 ID（TODO_CREATED = submitter；PROCESS_APPROVED = 当前审批人）。
+     * 操作人用户 ID（TODO_CREATED = submitter；流程结果事件 = 当前审批人）。
      * listener 据此还原 LoginUserHolder.set(userId=actorUserId)，使拦截器自动注入审计列。
      */
     private final Long actorUserId;
 
     /**
-     * 业务 ID（TODO_CREATED = taskId；PROCESS_APPROVED = processInstanceId）。
+     * 业务 ID（TODO_CREATED = taskId；流程结果事件 = processInstanceId）。
      */
     private final String bizId;
 

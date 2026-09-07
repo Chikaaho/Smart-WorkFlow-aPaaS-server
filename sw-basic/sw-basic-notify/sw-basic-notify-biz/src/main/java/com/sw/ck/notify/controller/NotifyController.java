@@ -3,6 +3,11 @@ package com.sw.ck.notify.controller;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
+import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyChannel;
+import com.sw.ck.notify.api.NotifyFacade;
+import com.sw.ck.notify.api.NotifySendRequest;
+import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.dto.NotifyBatchSendReq;
 import com.sw.ck.notify.dto.NotifyBatchSendResp;
 import com.sw.ck.notify.entity.NotifyMessage;
@@ -42,9 +47,11 @@ public class NotifyController {
     private static final Logger log = LoggerFactory.getLogger(NotifyController.class);
 
     private final NotifyMessageService notifyMessageService;
+    private final NotifyFacade notifyFacade;
 
-    public NotifyController(NotifyMessageService notifyMessageService) {
+    public NotifyController(NotifyMessageService notifyMessageService, NotifyFacade notifyFacade) {
         this.notifyMessageService = notifyMessageService;
+        this.notifyFacade = notifyFacade;
     }
 
     /**
@@ -157,6 +164,37 @@ public class NotifyController {
     @PostMapping("/batch-send")
     @PreAuthorize("@ss.hasPermi('notify:batch:send')")
     public R<NotifyBatchSendResp> batchSend(@RequestBody NotifyBatchSendReq req) {
+        // 渠道批量（v0.0.2 R7）：请求指定非 IN_APP 渠道时逐接收人经统一 Facade 投递，
+        // 每接收人独立结果与尝试流水（失败子记录可查可重发），幂等键按批次+接收人隔离；
+        // 缺省仍走既有 IN_APP 批量入口，保留其幂等边界不变。
+        if (req != null && req.getChannel() != null && !req.getChannel().isBlank()
+                && !"IN_APP".equalsIgnoreCase(req.getChannel().trim())) {
+            NotifyChannel channel;
+            try {
+                channel = NotifyChannel.valueOf(req.getChannel().trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR, "未知渠道: " + req.getChannel());
+            }
+            int count = notifyMessageService.resolveCount(req);
+            var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+            int delivered = 0;
+            for (Long recipientId : notifyMessageService.resolveRecipientUserIds(req)) {
+                NotifySendResult result = notifyFacade.send(NotifySendRequest.builder()
+                        .channel(channel)
+                        .recipientId(recipientId)
+                        .title(req.getTitle())
+                        .content(req.getContent())
+                        .bizType(NotifyBizType.SYSTEM)
+                        .tenantId(loginUser == null ? 0L : loginUser.getTenantId())
+                        .idempotencyKey("batch:" + java.util.UUID.randomUUID() + ":" + recipientId)
+                        .build());
+                if ("SUCCESS".equals(result.getStatus())) {
+                    delivered++;
+                }
+            }
+            log.info("渠道批量发送完成: channel={}, recipients={}, delivered={}", channel, count, delivered);
+            return R.ok(new NotifyBatchSendResp(delivered));
+        }
         int count = notifyMessageService.batchSend(req);
         return R.ok(new NotifyBatchSendResp(count));
     }

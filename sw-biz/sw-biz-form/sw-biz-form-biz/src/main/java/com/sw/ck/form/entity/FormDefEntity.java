@@ -1,5 +1,7 @@
 package com.sw.ck.form.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -32,6 +34,13 @@ public class FormDefEntity extends FormBaseEntity {
 
     /** 表单描述 */
     private String description;
+
+    /**
+     * 发起可见范围，JSON 格式为 {"userIds":[...]}；null/空表示当前租户内全部用户。
+     * 仅控制业务发起可见性，不授予表单管理或数据读取权限。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String visibilityScope;
 
     /**
      * TABLE 字段名 → 子表物理名映射 JSON。

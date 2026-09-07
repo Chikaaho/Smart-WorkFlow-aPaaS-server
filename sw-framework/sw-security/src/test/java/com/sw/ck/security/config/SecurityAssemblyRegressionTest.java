@@ -7,6 +7,7 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.spi.UserDetailsProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.mock.env.MockEnvironment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -86,5 +87,33 @@ class SecurityAssemblyRegressionTest {
 
         // 不抛异常即视为通过（启动放行）
         config.userDetailsProviderPresenceCheck(provider).run(null);
+    }
+
+    @Test
+    void debugAuthStartupCheck_rejectsNonDevelopmentProfile() {
+        DebugAuthenticationProperties properties = new DebugAuthenticationProperties();
+        properties.setEnabled(true);
+        SecurityAutoConfiguration config = new SecurityAutoConfiguration();
+
+        assertThatThrownBy(() -> config.debugAuthenticationProfileCheck(
+                properties, environment("prod")).run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("仅允许在 dev/test profile");
+    }
+
+    @Test
+    void debugAuthStartupCheck_allowsExplicitDevelopmentProfile() throws Exception {
+        DebugAuthenticationProperties properties = new DebugAuthenticationProperties();
+        properties.setEnabled(true);
+        SecurityAutoConfiguration config = new SecurityAutoConfiguration();
+
+        config.debugAuthenticationProfileCheck(
+                properties, environment("dev")).run(null);
+    }
+
+    private static MockEnvironment environment(String... profiles) {
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles(profiles);
+        return environment;
     }
 }

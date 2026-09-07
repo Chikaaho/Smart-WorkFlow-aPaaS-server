@@ -10,6 +10,7 @@ import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.event.FormSubmittedEvent;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.port.FlowStartPort;
 import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.DynamicTableManager;
 import com.sw.ck.form.dynamic.FieldType;
@@ -64,7 +65,10 @@ public class FormSubmitService {
     private final DomainEventPublisher eventPublisher;
     private final AesGcmCipher aesCipher;
     private final FormFieldValidator formFieldValidator;
+    private final FlowStartPort flowStartPort;
+    private final FormVisibilityRules visibilityRules;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FormSubmitService(FormDefMapper formDefMapper,
                              FormTraceMapper formTraceMapper,
                              DynamicTableManager dynamicTableManager,
@@ -74,7 +78,9 @@ public class FormSubmitService {
                              DictFacade dictFacade,
                              DomainEventPublisher eventPublisher,
                              Optional<AesGcmCipher> aesCipher,
-                             FormFieldValidator formFieldValidator) {
+                             FormFieldValidator formFieldValidator,
+                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
+                             FormVisibilityRules visibilityRules) {
         this.formDefMapper = formDefMapper;
         this.formTraceMapper = formTraceMapper;
         this.dynamicTableManager = dynamicTableManager;
@@ -85,9 +91,78 @@ public class FormSubmitService {
         this.eventPublisher = eventPublisher;
         this.aesCipher = aesCipher.orElse(null);
         this.formFieldValidator = formFieldValidator;
+        this.flowStartPort = flowStartPort.getIfAvailable();
+        this.visibilityRules = visibilityRules;
+    }
+
+    /** 兼容既有测试构造（无显隐规则注入时使用默认实现）。 */
+    public FormSubmitService(FormDefMapper formDefMapper,
+                             FormTraceMapper formTraceMapper,
+                             DynamicTableManager dynamicTableManager,
+                             FormIdGenerator idGenerator,
+                             ObjectMapper objectMapper,
+                             JdbcTemplate jdbcTemplate,
+                             DictFacade dictFacade,
+                             DomainEventPublisher eventPublisher,
+                             Optional<AesGcmCipher> aesCipher,
+                             FormFieldValidator formFieldValidator,
+                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort) {
+        this(formDefMapper, formTraceMapper, dynamicTableManager, idGenerator, objectMapper,
+                jdbcTemplate, dictFacade, eventPublisher, aesCipher, formFieldValidator,
+                flowStartPort, new FormVisibilityRules(objectMapper));
     }
 
     // ==================== 主入口 ====================
+
+    /**
+     * 提交前校验（与 submitForm 共用同一校验实现，只读不落库）。
+     * <p>
+     * D3：审批命令受理前调用；失败抛业务异常并定位到字段，调用方据此拒绝受理，
+     * 不产生命令、不落表单数据、不启动流程。
+     * </p>
+     */
+    public void validateSubmission(String formKey, Map<String, Object> submittedData) {
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+        }
+        FormDefEntity formDef = formDefMapper.selectOne(
+                Wrappers.lambdaQuery(FormDefEntity.class).eq(FormDefEntity::getFormKey, formKey));
+        if (formDef == null) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
+        }
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())) {
+            throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED, "表单 '" + formKey + "' 未发布，不能提交");
+        }
+        if (!isVisibleToCurrentUser(formDef)) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
+        }
+        Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
+        Map<String, FormFieldValidator.FieldDef> fieldDefs =
+                formFieldValidator.loadAndParseFieldDefs(formDef.getId(), effectiveData);
+        formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
+    }
+
+    /**
+     * 服务端复算口径（v0.0.2）：应用静态默认值（仅新建无值时）→ 按显隐规则过滤隐藏字段。
+     * 隐藏字段不参与本次必填校验和正式提交业务载荷；草稿路径保留用户原输入。
+     */
+    private Map<String, Object> effectivePayload(FormDefEntity formDef, Map<String, Object> submittedData) {
+        Map<String, FormFieldValidator.FieldDef> fieldDefs =
+                formFieldValidator.loadAndParseFieldDefs(formDef.getId(),
+                        submittedData == null ? Map.of() : submittedData);
+        Map<String, Object> effective = formFieldValidator.applyDefaults(fieldDefs,
+                submittedData == null ? new LinkedHashMap<>() : new LinkedHashMap<>(submittedData));
+        if (visibilityRules != null) {
+            List<FormVisibilityRules.VisibilityRule> rules =
+                    visibilityRules.parse(formFieldValidator.loadDefinitionJson(formDef.getId()));
+            Set<String> hidden = visibilityRules.hiddenFields(rules, effective);
+            if (!hidden.isEmpty()) {
+                effective.keySet().removeAll(hidden);
+            }
+        }
+        return effective;
+    }
 
     /**
      * 提交表单数据。
@@ -109,6 +184,55 @@ public class FormSubmitService {
                              String submitIp,
                              String deviceFingerprint,
                              String userAgent) {
+        return submitForm(formKey, submittedData, submitIp, deviceFingerprint, userAgent, null);
+    }
+
+    /**
+     * 提交表单数据（带提交幂等键）。
+     * <p>
+     * {@code idempotencyKey} 非空时：同一租户内已存在同键提交则直接返回既有
+     * recordId，不重复落表单数据、不重复受理流程发起（重试/重投安全）。
+     * </p>
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String submitForm(String formKey,
+                             Map<String, Object> submittedData,
+                             String submitIp,
+                             String deviceFingerprint,
+                             String userAgent,
+                             String idempotencyKey) {
+        return submitForm(formKey, submittedData, submitIp, deviceFingerprint, userAgent,
+                idempotencyKey, null, null);
+    }
+
+    /**
+     * 提交表单数据并携带受控的流程发起通道。该通道只影响同事务受理的 FLOW_START，
+     * 不改变表单校验、落库与幂等规则。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String submitForm(String formKey,
+                             Map<String, Object> submittedData,
+                             String submitIp,
+                             String deviceFingerprint,
+                             String userAgent,
+                             String idempotencyKey,
+                             String dispatchChannel) {
+        return submitForm(formKey, submittedData, submitIp, deviceFingerprint, userAgent,
+                idempotencyKey, dispatchChannel, null);
+    }
+
+    /**
+     * 提交表单并携带统一命令解析出的流程绑定快照。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String submitForm(String formKey,
+                             Map<String, Object> submittedData,
+                             String submitIp,
+                             String deviceFingerprint,
+                             String userAgent,
+                             String idempotencyKey,
+                             String dispatchChannel,
+                             String processDefKey) {
         // ==========================================================
         // Step 1: 获取当前用户
         // ==========================================================
@@ -118,6 +242,19 @@ public class FormSubmitService {
         }
         Long tenantId = loginUser.getTenantId();
         Long userId = loginUser.getUserId();
+
+        // 幂等前置检查：同键提交已存在时返回既有 recordId，不产生任何写入
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            FormTraceEntity existing = formTraceMapper.selectOne(Wrappers.lambdaQuery(FormTraceEntity.class)
+                    .eq(FormTraceEntity::getTenantId, tenantId)
+                    .eq(FormTraceEntity::getSubmitIdempotencyKey, idempotencyKey)
+                    .last("LIMIT 1"));
+            if (existing != null) {
+                log.info("表单提交幂等命中: formKey={}, idempotencyKey={}, recordId={}",
+                        formKey, idempotencyKey, existing.getRecordId());
+                return existing.getRecordId();
+            }
+        }
 
         log.info("Form submit start: formKey={}, userId={}, tenantId={}", formKey, userId, tenantId);
 
@@ -133,20 +270,25 @@ public class FormSubmitService {
         if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED, "表单 '" + formKey + "' 未发布，不能提交");
         }
+        if (!isVisibleToCurrentUser(formDef)) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
+        }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "表单 '" + formKey + "' 无物理表，无法提交");
         }
 
         // ==========================================================
-        // Step 3: 加载表单配置并解析字段定义
+        // Step 3: 加载表单配置并解析字段定义 + 服务端复算有效载荷
+        // （默认值仅新建无值时应用；隐藏字段过滤出正式提交业务载荷）
         // ==========================================================
         Map<String, FormFieldValidator.FieldDef> fieldDefs = formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
+        Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
 
         // ==========================================================
-        // Step 4: 校验字段（全部校验通过才落库）
+        // Step 4: 校验字段（隐藏字段已被过滤，不参与必填校验）
         // ==========================================================
-        formFieldValidator.validateFields(fieldDefs, submittedData, dictFacade);
+        formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
 
         // ==========================================================
         // Step 5: 构建系统列 + 用户列值
@@ -154,7 +296,7 @@ public class FormSubmitService {
         String recordId = idGenerator.generate();
         Map<String, Object> systemCols = buildSystemColumns(recordId, tenantId, userId);
 
-        // 用户列（按 fieldDefs 顺序构建，排除 TABLE 类型）
+        // 用户列（按 fieldDefs 顺序构建，排除 TABLE/LABEL 类型）
         Map<String, String> subTableMapping = parseSubTableMapping(formDef.getSubTableMapping());
         List<String> userColumns = new ArrayList<>();
         List<Object> userValues = new ArrayList<>();
@@ -168,14 +310,19 @@ public class FormSubmitService {
                 tableFieldNames.add(fieldName);
                 continue; // TABLE 不在主表加列
             }
+            if ("LABEL".equals(def.type())) {
+                continue; // 说明文字：非输入字段，不产生列
+            }
 
             String colName = ColumnValidation.physicalColumnName(fieldName, FieldType.valueOf(def.type()));
-            Object value = submittedData.get(fieldName);
+            Object value = effectiveData.get(fieldName);
 
             // BOOL 类型转换：true/false → 1/0
             if ("BOOL".equals(def.type())) {
                 value = FormFieldValidator.convertBoolValue(value);
             }
+            // MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列
+            value = serializeListValue(def.type(), value);
 
             userColumns.add(colName);
             userValues.add(value);
@@ -203,7 +350,7 @@ public class FormSubmitService {
                 continue;
             }
 
-            Object rawValue = submittedData.get(tableFieldName);
+            Object rawValue = effectiveData.get(tableFieldName);
             if (rawValue == null) {
                 continue;
             }
@@ -225,9 +372,14 @@ public class FormSubmitService {
 
             // 获取子表字段定义
             FormFieldValidator.FieldDef tableFieldDef = fieldDefs.get(tableFieldName);
+            List<FormFieldValidator.FieldDef> subFieldDefs = new ArrayList<>();
             List<String> subUserColumns = new ArrayList<>();
             if (tableFieldDef != null && tableFieldDef.subFields() != null) {
                 for (FormFieldValidator.FieldDef subDef : tableFieldDef.subFields()) {
+                    if ("LABEL".equals(subDef.type())) {
+                        continue; // 说明文字：非输入字段，不产生列
+                    }
+                    subFieldDefs.add(subDef);
                     subUserColumns.add(ColumnValidation.physicalColumnName(subDef.name(), FieldType.valueOf(subDef.type())));
                 }
             }
@@ -243,12 +395,13 @@ public class FormSubmitService {
                 for (int i = 0; i < subUserColumns.size(); i++) {
                     subCols.add(subUserColumns.get(i));
                     // BOOL 类型转换
-                    String subFieldName = tableFieldDef.subFields().get(i).name();
-                    String subFieldType = tableFieldDef.subFields().get(i).type();
+                    String subFieldName = subFieldDefs.get(i).name();
+                    String subFieldType = subFieldDefs.get(i).type();
                     Object val = row.get(subFieldName);
                     if ("BOOL".equals(subFieldType)) {
                         val = FormFieldValidator.convertBoolValue(val);
                     }
+                    val = serializeListValue(subFieldType, val);
                     subVals.add(val);
                 }
 
@@ -272,6 +425,7 @@ public class FormSubmitService {
         trace.setUserAgent(userAgent);
         trace.setTenantId(tenantId);
         trace.setDeleted(0);
+        trace.setSubmitIdempotencyKey(idempotencyKey);
         trace.setCreateTime(LocalDateTime.now());
         trace.setCreateBy(userId);
         trace.setUpdateTime(LocalDateTime.now());
@@ -281,15 +435,50 @@ public class FormSubmitService {
         log.debug("Inserted trace record: formId={}, recordId={}", formDef.getId(), recordId);
 
         // ==========================================================
-        // Step 9: 发布 FormSubmittedEvent
+        // Step 9: 流程发起受理（统一命令边界）
+        // BPM 模块在位时于本事务内持久化受理事实（表单落库 ⇒ 发起命令可回查、不丢失）；
+        // 仅当无 FlowStartPort（BPM 未装配）时保留历史进程内事件路径兜底。
         // ==========================================================
         String submitterStr = String.valueOf(userId);
-        FormSubmittedEvent event = new FormSubmittedEvent(formKey, submittedData, submitterStr, recordId, tenantId);
-        eventPublisher.publish(event);
+        FormSubmittedEvent event = new FormSubmittedEvent(formKey, effectiveData, submitterStr, recordId,
+                tenantId, dispatchChannel, processDefKey);
+        if (flowStartPort != null) {
+            Long commandId = flowStartPort.acceptFlowStart(event);
+            log.info("Flow start accepted in-tx: formKey={}, recordId={}, commandId={}",
+                    formKey, recordId, commandId);
+        } else {
+            eventPublisher.publish(event);
+        }
         log.info("Form submit completed: formKey={}, recordId={}, submitter={}",
                 formKey, recordId, submitterStr);
 
         return recordId;
+    }
+
+    private boolean isVisibleToCurrentUser(FormDefEntity formDef) {
+        LoginUser current = LoginUserHolder.get();
+        if (current == null || current.getUserId() == null) {
+            return false;
+        }
+        String scope = formDef.getVisibilityScope();
+        if (scope == null || scope.isBlank()) {
+            return true;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode ids = objectMapper.readTree(scope).get("userIds");
+            if (ids == null || !ids.isArray()) {
+                return false;
+            }
+            for (com.fasterxml.jackson.databind.JsonNode id : ids) {
+                if (current.getUserId().toString().equals(id.asText())) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (JsonProcessingException ex) {
+            log.error("Invalid form visibility scope: formKey={}", formDef.getFormKey(), ex);
+            return false;
+        }
     }
 
     // ==================== 校验 ====================
@@ -321,6 +510,25 @@ public class FormSubmitService {
     }
 
     // ==================== 内部工具方法 ====================
+
+    /**
+     * MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列（其余类型原值返回）。
+     */
+    private Object serializeListValue(String type, Object value) {
+        if (value == null) {
+            return null;
+        }
+        if ("MULTISELECT".equals(type) || "ATTACHMENT".equals(type) || "IMAGE".equals(type)) {
+            if (value instanceof List<?> || value instanceof Map<?, ?>) {
+                try {
+                    return objectMapper.writeValueAsString(value);
+                } catch (JsonProcessingException e) {
+                    throw new BaseException(FormErrorCode.SUBMIT_FAILED, "字段值序列化失败: " + e.getMessage());
+                }
+            }
+        }
+        return value;
+    }
 
     /**
      * 构建 INSERT SQL（PreparedStatement 占位符）。

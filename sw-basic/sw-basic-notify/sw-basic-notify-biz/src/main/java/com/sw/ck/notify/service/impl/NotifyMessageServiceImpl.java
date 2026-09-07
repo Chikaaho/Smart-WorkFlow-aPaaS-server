@@ -53,6 +53,12 @@ public class NotifyMessageServiceImpl
     }
 
     @Override
+    public NotifyMessage findByIdempotencyKey(String idempotencyKey) {
+        if (!StringUtils.hasText(idempotencyKey)) return null;
+        return getBaseMapper().selectByIdempotencyKey(idempotencyKey);
+    }
+
+    @Override
     public List<NotifyMessage> findByRecipientWithFilter(Long recipientId, Boolean read, String keyword) {
         var wrapper = lambdaQuery()
                 .eq(NotifyMessage::getRecipientId, recipientId);
@@ -125,12 +131,19 @@ public class NotifyMessageServiceImpl
             msg.setContent(content);
             msg.setBizType("SYSTEM");
             msg.setRead(false);
+            // 旧批量入口依赖真实表默认值；新渠道入口由 NotifyFacade 显式写入渠道和结果。
             messages.add(msg);
         }
 
         // 7. 事务原子落库
         persistBatchMessages(messages);
         return messages.size();
+    }
+
+    @Override
+    public java.util.List<Long> resolveRecipientUserIds(NotifyBatchSendReq req) {
+        validateRecipientObjects(req);
+        return new java.util.ArrayList<>(resolveRecipientIds(req));
     }
 
     @Override

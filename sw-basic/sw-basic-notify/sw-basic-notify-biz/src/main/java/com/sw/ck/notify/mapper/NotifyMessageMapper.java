@@ -16,6 +16,22 @@ import java.util.List;
 public interface NotifyMessageMapper extends BaseMapperX<NotifyMessage> {
 
     /**
+     * 按幂等键取一条已落库消息。
+     * <p>
+     * 这里显式限定 {@code LIMIT 1}，避免在重试窗口中由通用 wrapper 的
+     * {@code selectOne()} 将并发下的重复行升级为未定义的异常；唯一约束仍由
+     * 数据库负责，调用方只把首条已持久化结果作为重放响应。
+     * </p>
+     */
+    @Select("SELECT id, create_time, create_by, update_time, update_by, deleted, tenant_id, version, "
+            + "recipient_id, title, content, biz_type, biz_id, is_read, channel, delivery_status, "
+            + "external_message_id, failure_reason, idempotency_key "
+            + "FROM sw_notify_message "
+            + "WHERE idempotency_key = #{idempotencyKey} AND deleted = 0 "
+            + "ORDER BY id ASC LIMIT 1")
+    NotifyMessage selectByIdempotencyKey(@Param("idempotencyKey") String idempotencyKey);
+
+    /**
      * 按部门ID列表查询当前租户内有效用户ID（排除停用用户）。
      * <p>
      * 手写 tenant_id 条件，使用 @InterceptorIgnore 跳过租户拦截器

@@ -67,6 +67,16 @@ public class BpmNotifyListener {
                     title = "您的申请已通过";
                     content = "您发起的申请已审批通过";
                     break;
+                case PROCESS_REJECTED:
+                    bizType = NotifyBizType.WF_REJECTED;
+                    title = "您的申请已驳回";
+                    content = "您发起的申请已审批驳回";
+                    break;
+                case PROCESS_RETURNED:
+                    bizType = NotifyBizType.WF_RETURNED;
+                    title = "您的申请已退回";
+                    content = "您发起的申请需要重新处理";
+                    break;
                 default:
                     log.warn("未知 BpmNotifyTrigger: {}，跳过通知", event.getTrigger());
                     return;

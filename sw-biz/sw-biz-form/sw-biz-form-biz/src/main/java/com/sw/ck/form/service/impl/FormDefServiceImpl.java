@@ -9,6 +9,8 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.dto.FormSnapshotDTO;
+import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.DynamicTableManager;
@@ -20,6 +22,9 @@ import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormVisibilityRules;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -42,19 +47,34 @@ public class FormDefServiceImpl implements FormDefService {
     private final DynamicTableManager dynamicTableManager;
     private final FormIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
+    private final FormVisibilityRules visibilityRules;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FormDefServiceImpl(FormDefMapper formDefMapper,
                               FormConfigMapper formConfigMapper,
                               FormSnapshotMapper formSnapshotMapper,
                               DynamicTableManager dynamicTableManager,
                               FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              FormVisibilityRules visibilityRules) {
         this.formDefMapper = formDefMapper;
         this.formConfigMapper = formConfigMapper;
         this.formSnapshotMapper = formSnapshotMapper;
         this.dynamicTableManager = dynamicTableManager;
         this.idGenerator = idGenerator;
         this.objectMapper = objectMapper;
+        this.visibilityRules = visibilityRules;
+    }
+
+    /** 兼容既有测试构造（无显隐规则注入时使用默认实现）。 */
+    public FormDefServiceImpl(FormDefMapper formDefMapper,
+                              FormConfigMapper formConfigMapper,
+                              FormSnapshotMapper formSnapshotMapper,
+                              DynamicTableManager dynamicTableManager,
+                              FormIdGenerator idGenerator,
+                              ObjectMapper objectMapper) {
+        this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
+                idGenerator, objectMapper, new FormVisibilityRules(objectMapper));
     }
 
     @Override
@@ -127,8 +147,13 @@ public class FormDefServiceImpl implements FormDefService {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
         }
 
+        // colSpan 是跨前端设计器、预览和填写页的持久化布局契约；保存入口也必须设防，
+        // 不能只依赖浏览器控件限制。缺省值兼容历史 definition，异常值直接拒绝入库。
+        validateLayoutDefinition(definition);
+
         LambdaQueryWrapper<FormConfigEntity> query = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, formId);
+                .eq(FormConfigEntity::getFormId, formId)
+                .isNull(FormConfigEntity::getParentTable);
         FormConfigEntity config = formConfigMapper.selectOne(query);
         if (config == null) {
             // 创建新的 config 记录
@@ -164,11 +189,18 @@ public class FormDefServiceImpl implements FormDefService {
 
         // —— Step 2: 加载 config.definition 并解析校验字段（唯一字段真源） ——
         LambdaQueryWrapper<FormConfigEntity> configQuery = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, formId);
+                .eq(FormConfigEntity::getFormId, formId)
+                .isNull(FormConfigEntity::getParentTable);
         FormConfigEntity config = formConfigMapper.selectOne(configQuery);
         String definitionJson = (config != null) ? config.getDefinition() : "{}";
 
         List<FieldSpec> fields = parseAndValidateFieldsFromDefinition(definitionJson);
+
+        // —— Step 2b: 显隐规则校验（v0.0.2：字段存在/op/logic/无环依赖） ——
+        Set<String> fieldNames = fields.stream()
+                .map(FieldSpec::getFieldName)
+                .collect(java.util.stream.Collectors.toSet());
+        visibilityRules.parseAndValidate(definitionJson, fieldNames);
 
         // —— Step 3: 校验字段名白名单（复用 ColumnValidation） ——
         if (entity.getLogicalTableName() != null && !entity.getLogicalTableName().isBlank()) {
@@ -177,6 +209,7 @@ public class FormDefServiceImpl implements FormDefService {
         Set<String> columnNames = new HashSet<>();
         for (FieldSpec field : fields) {
             if (field.getFieldType() == FieldType.TABLE) continue; // 不产生列
+            if (field.getFieldType() == FieldType.LABEL) continue; // v0.0.2：说明文字不产生列
             String physicalName = field.getPhysicalColumnName();
             try {
                 ColumnValidation.validateColumnName(physicalName);
@@ -286,7 +319,8 @@ public class FormDefServiceImpl implements FormDefService {
             return null;
         }
         LambdaQueryWrapper<FormConfigEntity> configQuery = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, entity.getId());
+                .eq(FormConfigEntity::getFormId, entity.getId())
+                .isNull(FormConfigEntity::getParentTable);
         FormConfigEntity config = formConfigMapper.selectOne(configQuery);
         return config != null ? config.getDefinition() : null;
     }
@@ -294,7 +328,8 @@ public class FormDefServiceImpl implements FormDefService {
     @Override
     public String getDefinitionById(String formId) {
         LambdaQueryWrapper<FormConfigEntity> configQuery = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, formId);
+                .eq(FormConfigEntity::getFormId, formId)
+                .isNull(FormConfigEntity::getParentTable);
         FormConfigEntity config = formConfigMapper.selectOne(configQuery);
         return config != null ? config.getDefinition() : null;
     }
@@ -322,8 +357,125 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
+    public List<FormSnapshotDTO> listSnapshots(String formId) {
+        FormDefEntity entity = formDefMapper.selectById(formId);
+        if (entity == null) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
+        }
+        LambdaQueryWrapper<FormSnapshotEntity> query = Wrappers.lambdaQuery(FormSnapshotEntity.class)
+                .eq(FormSnapshotEntity::getFormId, formId)
+                .orderByDesc(FormSnapshotEntity::getFormVersion);
+        return formSnapshotMapper.selectList(query).stream()
+                .map(s -> FormSnapshotDTO.builder()
+                        .formVersion(s.getFormVersion())
+                        .createTime(s.getCreateTime())
+                        .build())
+                .toList();
+    }
+
+    @Override
+    public FormSnapshotDetailDTO getSnapshot(String formId, Integer formVersion) {
+        FormDefEntity entity = formDefMapper.selectById(formId);
+        if (entity == null) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
+        }
+        LambdaQueryWrapper<FormSnapshotEntity> query = Wrappers.lambdaQuery(FormSnapshotEntity.class)
+                .eq(FormSnapshotEntity::getFormId, formId)
+                .eq(FormSnapshotEntity::getFormVersion, formVersion);
+        FormSnapshotEntity snapshot = formSnapshotMapper.selectOne(query);
+        if (snapshot == null) {
+            throw new BaseException(FormErrorCode.SNAPSHOT_NOT_FOUND,
+                    "表单版本快照不存在: version=" + formVersion);
+        }
+        return FormSnapshotDetailDTO.builder()
+                .formVersion(snapshot.getFormVersion())
+                .createTime(snapshot.getCreateTime())
+                .definition(snapshot.getDefinition())
+                .build();
+    }
+
+    @Override
     public FormDefEntity getById(String id) {
         return formDefMapper.selectById(id);
+    }
+
+    @Override
+    public List<FormDefDTO> listPublishedForCurrentUser() {
+        PageParam pageParam = new PageParam();
+        pageParam.setPageNum(1);
+        pageParam.setPageSize(200);
+        LambdaQueryWrapper<FormDefEntity> wrapper = Wrappers.<FormDefEntity>lambdaQuery()
+                .eq(FormDefEntity::getStatus, FormStatusEnum.PUBLISHED.getCode())
+                .orderByDesc(FormDefEntity::getUpdateTime);
+        PageResult<FormDefEntity> page = formDefMapper.selectPage(pageParam, wrapper);
+        return page.getRecords().stream()
+                .filter(this::isVisibleToCurrentUser)
+                .map(this::toDTO)
+                .toList();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateVisibility(String formId, Collection<Long> userIds) {
+        FormDefEntity entity = formDefMapper.selectById(formId);
+        if (entity == null) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
+        }
+        List<Long> normalized = userIds == null ? List.of() : userIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        if (normalized.stream().anyMatch(id -> id <= 0)) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+                    "可见范围用户 ID 无效");
+        }
+        try {
+            entity.setVisibilityScope(normalized.isEmpty()
+                    ? null
+                    : objectMapper.writeValueAsString(Map.of("userIds", normalized)));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("序列化表单可见范围失败", e);
+        }
+        formDefMapper.updateById(entity);
+        log.info("Updated form visibility: formId={}, userCount={}", formId, normalized.size());
+    }
+
+    @Override
+    public boolean isCurrentUserVisible(String formKey) {
+        FormDefEntity entity = formDefMapper.selectOne(Wrappers.<FormDefEntity>lambdaQuery()
+                .eq(FormDefEntity::getFormKey, formKey));
+        return entity != null && isVisibleToCurrentUser(entity);
+    }
+
+    private boolean isVisibleToCurrentUser(FormDefEntity entity) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(entity.getStatus())) {
+            return false;
+        }
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null || loginUser.getUserId() == null) {
+            return false;
+        }
+        String scope = entity.getVisibilityScope();
+        if (scope == null || scope.isBlank()) {
+            return true;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(scope);
+            JsonNode ids = root == null ? null : root.get("userIds");
+            if (ids == null || !ids.isArray()) {
+                return false;
+            }
+            for (JsonNode id : ids) {
+                if (loginUser.getUserId().toString().equals(id.asText())) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (JsonProcessingException e) {
+            log.error("Invalid form visibility scope: formKey={}", entity.getFormKey(), e);
+            return false;
+        }
     }
 
     @Override
@@ -353,6 +505,7 @@ public class FormDefServiceImpl implements FormDefService {
                 .physicalTableName(entity.getPhysicalTableName())
                 .formVersion(entity.getFormVersion())
                 .description(entity.getDescription())
+                .visibilityScope(entity.getVisibilityScope())
                 .createTime(entity.getCreateTime())
                 .updateTime(entity.getUpdateTime())
                 .build();
@@ -388,6 +541,9 @@ public class FormDefServiceImpl implements FormDefService {
         }
         try {
             JsonNode root = objectMapper.readTree(definitionJson);
+            if (root == null || root.isNull()) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 不能为 null");
+            }
             JsonNode fieldsArray = root.get("fields");
             if (fieldsArray == null || !fieldsArray.isArray()) {
                 // 兼容旧格式：顶层数组
@@ -403,6 +559,7 @@ public class FormDefServiceImpl implements FormDefService {
             }
             List<FieldSpec> fields = new ArrayList<>();
             for (JsonNode node : fieldsArray) {
+                validateLayoutFieldNode(node);
                 fields.add(parseFieldNodeFromDefinition(node, false));
             }
             return fields;
@@ -421,6 +578,8 @@ public class FormDefServiceImpl implements FormDefService {
      * @throws BaseException 校验失败
      */
     private FieldSpec parseFieldNodeFromDefinition(JsonNode node, boolean isSubField) {
+        validateLayoutFieldNode(node);
+
         // —— 1. name ——
         if (!node.has("name") || node.get("name").asText().isBlank()) {
             throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING, "字段缺少 name");
@@ -446,8 +605,8 @@ public class FormDefServiceImpl implements FormDefService {
                     "字段 '" + name + "' 的类型 '" + typeStr + "' (disabled)，v1 不支持发布");
         }
 
-        // —— 4. 列名 + 白名单校验 (跳过 TABLE) ——
-        if (fieldType != FieldType.TABLE) {
+        // —— 4. 列名 + 白名单校验 (跳过 TABLE / LABEL：均不产生物理列) ——
+        if (fieldType != FieldType.TABLE && fieldType != FieldType.LABEL) {
             String physicalName = ColumnValidation.physicalColumnName(name, fieldType);
             try {
                 ColumnValidation.validateColumnName(physicalName);
@@ -458,6 +617,7 @@ public class FormDefServiceImpl implements FormDefService {
         }
 
         // —— 5. 类型特定约束 ——
+        validateDefaultValueType(name, fieldType, node);
         return switch (fieldType) {
             case TEXT -> FieldSpec.text(name);
             case RICH_TEXT -> FieldSpec.richText(name);
@@ -478,6 +638,10 @@ public class FormDefServiceImpl implements FormDefService {
                 }
                 yield FieldSpec.ref(name, node.get("targetFormId").asText());
             }
+            case MULTISELECT -> FieldSpec.multiselect(name);
+            case ATTACHMENT -> FieldSpec.attachment(name);
+            case IMAGE -> FieldSpec.image(name);
+            case LABEL -> FieldSpec.label(name);
             case TABLE -> {
                 // —— 递归禁止（C: TABLE 套 TABLE 硬拦截） ——
                 if (isSubField) {
@@ -497,10 +661,87 @@ public class FormDefServiceImpl implements FormDefService {
                 yield FieldSpec.table(name, subFields);
             }
             // disabled 占位成员 — 已在 enabled 检查中拦截，不会到达此处
-            case MULTISELECT, ATTACHMENT, IMAGE, LABEL, EMAIL, PHONE, URL, RATE, SLIDER ->
+            case EMAIL, PHONE, URL, RATE, SLIDER ->
                     throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
                             "FieldType " + fieldType + " is not enabled (disabled placeholder)");
         };
+    }
+
+    /**
+     * 校验静态默认值与字段类型匹配（v0.0.2）。
+     * <p>
+     * 仅做类型匹配静态校验：TEXT/RICH_TEXT/DICT/DATE → 文本；NUMBER → 数值；
+     * BOOL → 布尔；MULTISELECT → 字符串数组；ATTACHMENT/IMAGE → 数组；
+     * LABEL/LINK 类非输入字段不允许默认值。类型不符按 1206 ATTR_MISSING 语义拒绝发布。
+     * </p>
+     */
+    private void validateDefaultValueType(String name, FieldType fieldType, JsonNode node) {
+        JsonNode defaultValue = node.get("defaultValue");
+        if (defaultValue == null || defaultValue.isNull()) {
+            return;
+        }
+        boolean valid = switch (fieldType) {
+            case TEXT, RICH_TEXT, DICT, DATE -> defaultValue.isTextual() || defaultValue.isNumber();
+            case NUMBER -> defaultValue.isNumber();
+            case BOOL -> defaultValue.isBoolean();
+            case MULTISELECT, ATTACHMENT, IMAGE -> defaultValue.isArray();
+            case LABEL, REFERENCE, TABLE -> false;
+            default -> defaultValue.isTextual();
+        };
+        if (!valid) {
+            throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
+                    "字段 '" + name + "' 的默认值与类型 " + fieldType + " 不匹配");
+        }
+    }
+
+    /**
+     * 校验并拒绝 definition 中的非法 24 列布局值。
+     * <p>
+     * colSpan 缺省表示旧 definition，交给前端按字段类型补默认值；一旦携带就必须是
+     * 1—24 的整数。校验递归覆盖 TABLE 的 subFields，避免不同入口各自解释值域。
+     * </p>
+     */
+    private void validateLayoutDefinition(String definitionJson) {
+        if (definitionJson == null || definitionJson.isBlank() || "{}".equals(definitionJson.trim())) {
+            return;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson);
+            if (root == null || root.isNull()) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 不能为 null");
+            }
+            JsonNode fieldsArray = root.isArray() ? root : root.get("fields");
+            if (fieldsArray == null || !fieldsArray.isArray()) {
+                return;
+            }
+            for (JsonNode fieldNode : fieldsArray) {
+                validateLayoutFieldNode(fieldNode);
+            }
+        } catch (JsonProcessingException e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "definition JSON 解析失败: " + e.getMessage());
+        }
+    }
+
+    private void validateLayoutFieldNode(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition 字段必须是对象");
+        }
+
+        JsonNode colSpan = node.get("colSpan");
+        if (colSpan != null && (!colSpan.isIntegralNumber()
+                || colSpan.intValue() < 1 || colSpan.intValue() > 24)) {
+            String name = node.path("name").asText("<unknown>");
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "字段 '" + name + "' 的 colSpan 必须是 1—24 的整数");
+        }
+
+        JsonNode subFields = node.get("subFields");
+        if (subFields != null && subFields.isArray()) {
+            for (JsonNode subField : subFields) {
+                validateLayoutFieldNode(subField);
+            }
+        }
     }
 
     /**

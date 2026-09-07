@@ -23,6 +23,9 @@ public class NotifyBatchSendReq {
     /** 角色code列表（解析为拥有该角色的有效用户） */
     private List<String> recipientRoleCodes;
 
+    /** 投递渠道（可选）：缺省 IN_APP 走既有批量入口；指定其他渠道时逐接收人投递并保留失败子记录。 */
+    private String channel;
+
     /** 直接内容标题（与templateCode互斥） */
     private String title;
 

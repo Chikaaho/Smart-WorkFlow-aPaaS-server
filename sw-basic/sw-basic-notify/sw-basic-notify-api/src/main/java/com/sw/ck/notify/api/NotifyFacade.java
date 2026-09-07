@@ -20,4 +20,17 @@ public interface NotifyFacade {
      * @param cmd 通知命令，不可为空
      */
     void send(SendNotifyCommand cmd);
+
+    /** 统一渠道入口；IN_APP 必须先完成站内信持久化才能返回成功。 */
+    NotifySendResult send(NotifySendRequest request);
+
+    /**
+     * 仅执行一次渠道投递，不落新消息行（v0.0.2 失败重发专用）。
+     * <p>
+     * 调用方（发送记录服务）负责受理控制（并发单受理）、尝试流水与最新结果回写。
+     * 与 {@link #send(NotifySendRequest)} 的渠道语义一致：IN_APP 恒成功；
+     * 渠道无适配器/适配器异常按 FAILED 返回，不抛出。
+     * </p>
+     */
+    NotifySendResult attemptDelivery(NotifySendRequest request);
 }

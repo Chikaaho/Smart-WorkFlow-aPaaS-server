@@ -41,4 +41,21 @@ public class NotifyMessage extends BaseEntity {
     /** 是否已读，默认 false */
     @TableField("is_read")
     private Boolean read;
+
+    /** 渠道：IN_APP 或预留第三方标识。 */
+    @TableField("channel")
+    private String channel;
+
+    /** 发送状态：SUCCESS / FAILED / TIMEOUT / PENDING。 */
+    @TableField("delivery_status")
+    private String deliveryStatus;
+
+    @TableField("external_message_id")
+    private String externalMessageId;
+
+    @TableField("failure_reason")
+    private String failureReason;
+
+    @TableField("idempotency_key")
+    private String idempotencyKey;
 }

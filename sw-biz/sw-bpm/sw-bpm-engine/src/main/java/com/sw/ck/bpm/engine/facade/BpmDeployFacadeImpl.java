@@ -13,6 +13,7 @@ import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.ProcessDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -29,9 +30,17 @@ public class BpmDeployFacadeImpl implements BpmDeployFacade {
     private static final Logger log = LoggerFactory.getLogger(BpmDeployFacadeImpl.class);
 
     private final RepositoryService repositoryService;
+    private final GraphToBpmnTranslator graphToBpmnTranslator;
 
     public BpmDeployFacadeImpl(RepositoryService repositoryService) {
+        this(repositoryService, new GraphToBpmnTranslator());
+    }
+
+    @Autowired
+    public BpmDeployFacadeImpl(RepositoryService repositoryService,
+                               GraphToBpmnTranslator graphToBpmnTranslator) {
         this.repositoryService = repositoryService;
+        this.graphToBpmnTranslator = graphToBpmnTranslator;
     }
 
     @Override
@@ -47,8 +56,7 @@ public class BpmDeployFacadeImpl implements BpmDeployFacade {
 
     @Override
     public byte[] translateToBpmn(ProcessGraph graph) {
-        GraphToBpmnTranslator translator = new GraphToBpmnTranslator();
-        BpmnModel bpmnModel = translator.translate(graph);
+        BpmnModel bpmnModel = graphToBpmnTranslator.translate(graph);
         BpmnXMLConverter converter = new BpmnXMLConverter();
         byte[] xmlBytes = converter.convertToXML(bpmnModel);
         log.info("BPMN translation completed: processKey={}, name={}, xmlBytes={}",

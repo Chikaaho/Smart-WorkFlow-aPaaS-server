@@ -1,22 +1,33 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmDeployFacade;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.bpm.process.validator.GraphValidator;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.page.PageParam;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.form.FormDefinitionService;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
@@ -124,6 +135,65 @@ class BpmProcessDefServiceImplTest {
                     });
 
             verifyNoInteractions(bpmDeployFacade);
+        }
+    }
+
+    // ==================== listDefs ====================
+
+    @Nested
+    @DisplayName("listDefs 方法（formKey 过滤）")
+    class ListDefsTests {
+
+        @BeforeAll
+        static void initTableInfo() {
+            // LambdaQueryWrapper 解析 SFunction 需要实体 lambda 缓存；纯单测无 MyBatis 上下文，手动初始化
+            TableInfoHelper.initTableInfo(
+                    new MapperBuilderAssistant(new MybatisConfiguration(), ""), BpmProcessDef.class);
+        }
+
+        @SuppressWarnings("unchecked")
+        private ArgumentCaptor<LambdaQueryWrapper<BpmProcessDef>> captureWrapper(String formKey) {
+            PageResult<BpmProcessDef> pageResult = new PageResult<>();
+            pageResult.setRecords(List.of());
+            pageResult.setTotal(0);
+            pageResult.setPageNum(1);
+            pageResult.setPageSize(20);
+            when(mapper.selectPage(any(PageParam.class), any())).thenReturn(pageResult);
+
+            service.listDefs(new PageParam(), formKey);
+
+            ArgumentCaptor<LambdaQueryWrapper<BpmProcessDef>> captor =
+                    ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+            verify(mapper).selectPage(any(PageParam.class), captor.capture());
+            return captor;
+        }
+
+        @Test
+        @DisplayName("传 formKey → 查询条件含 form_key 精确匹配")
+        void listDefs_withFormKey_filtersByFormKey() {
+            ArgumentCaptor<LambdaQueryWrapper<BpmProcessDef>> captor = captureWrapper("leave_form");
+
+            LambdaQueryWrapper<BpmProcessDef> wrapper = captor.getValue();
+            assertThat(wrapper.getSqlSegment()).contains("form_key");
+            assertThat(wrapper.getParamNameValuePairs().values()).contains("leave_form");
+        }
+
+        @Test
+        @DisplayName("不传 formKey → 查询条件不含 form_key（全量列表语义不变）")
+        void listDefs_withoutFormKey_noFilter() {
+            ArgumentCaptor<LambdaQueryWrapper<BpmProcessDef>> captor = captureWrapper(null);
+
+            LambdaQueryWrapper<BpmProcessDef> wrapper = captor.getValue();
+            assertThat(wrapper.getSqlSegment()).doesNotContain("form_key");
+        }
+
+        @Test
+        @DisplayName("formKey 为空白串 → 视为未过滤")
+        void listDefs_blankFormKey_treatedAsNoFilter() {
+            ArgumentCaptor<LambdaQueryWrapper<BpmProcessDef>> captor = captureWrapper("   ");
+
+            LambdaQueryWrapper<BpmProcessDef> wrapper = captor.getValue();
+            assertThat(wrapper.getSqlSegment()).doesNotContain("form_key");
         }
     }
 }

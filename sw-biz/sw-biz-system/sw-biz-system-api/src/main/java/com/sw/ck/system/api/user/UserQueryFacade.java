@@ -30,4 +30,16 @@ public interface UserQueryFacade {
      * @return id → 展示名（优先 real_name，其次 username）；查不到的 ID 不在结果中
      */
     Map<Long, String> getUserDisplayNames(Collection<Long> ids);
+
+    /** 查询当前租户内启用用户，供流程节点运行期重新校验固定用户配置。 */
+    List<Long> findActiveUserIds(Collection<Long> ids);
+
+    /** 显式租户上下文版本，供引擎异步/无登录线程安全解析。 */
+    List<Long> findActiveUserIds(Collection<Long> ids, Long tenantId);
+
+    /** 查询当前租户内启用角色的启用成员，供流程节点运行期解析 ROLE 策略。 */
+    List<Long> findActiveUserIdsByRoleCodes(Collection<String> roleCodes);
+
+    /** 显式租户上下文版本，供引擎异步/无登录线程安全解析。 */
+    List<Long> findActiveUserIdsByRoleCodes(Collection<String> roleCodes, Long tenantId);
 }

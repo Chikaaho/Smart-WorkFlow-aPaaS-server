@@ -18,6 +18,10 @@ public enum NotifyBizType {
      */
     WF_APPROVED,
 
+    WF_REJECTED,
+
+    WF_RETURNED,
+
     /**
      * 系统消息：模板发送（P36 / M05-F02-01）等平台侧主动通知。
      */

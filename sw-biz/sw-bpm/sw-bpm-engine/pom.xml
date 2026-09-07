@@ -46,6 +46,16 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-biz-system-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-notify-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.flowable</groupId>
             <artifactId>flowable-spring-boot-starter-process</artifactId>
         </dependency>

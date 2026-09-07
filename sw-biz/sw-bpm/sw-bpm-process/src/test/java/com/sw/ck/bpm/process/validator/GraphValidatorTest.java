@@ -3,18 +3,25 @@ package com.sw.ck.bpm.process.validator;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import com.sw.ck.bpm.process.model.NodeTypeRegistry;
+import com.sw.ck.bpm.api.node.BpmNodeDefinition;
+import com.sw.ck.bpm.api.node.BpmNodeMetadata;
+import com.sw.ck.bpm.api.node.BpmNodeRegistry;
+import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * GraphValidator 单元测试 —— 重点覆盖正向 BFS 可达但反向 BFS 到不了 END 的死胡同节点。
@@ -24,14 +31,45 @@ class GraphValidatorTest {
     private GraphValidator validator;
 
     @BeforeEach
-    void setUp() throws Exception {
-        NodeTypeRegistry registry = new NodeTypeRegistry();
-        // registerDefaults() 为 package-private，反射调用
-        Method m = NodeTypeRegistry.class.getDeclaredMethod("registerDefaults");
-        m.setAccessible(true);
-        m.invoke(registry);
+    void setUp() {
+        Map<String, BpmNodeDefinition> definitions = new HashMap<>();
+        definitions.put("START", definition("START", 0, 0, 1, 1, true, false));
+        definitions.put("END", definition("END", 1, Integer.MAX_VALUE, 0, 0, false, true));
+        definitions.put("APPROVAL", definition("APPROVAL", 1, 1, 1, 1, false, false));
+        definitions.put("CONDITION", definition("CONDITION", 1, 1, 1, 1, false, false));
+        definitions.put("EXCLUSIVE_GATEWAY", definition("EXCLUSIVE_GATEWAY", 1, 1, 2, Integer.MAX_VALUE, false, false));
+        definitions.put("PARALLEL_GATEWAY", definition("PARALLEL_GATEWAY", 1, 1, 2, Integer.MAX_VALUE, false, false));
+        definitions.put("JOIN_GATEWAY", definition("JOIN_GATEWAY", 2, Integer.MAX_VALUE, 1, 1, false, false));
+        BpmNodeRegistry registry = mock(BpmNodeRegistry.class);
+        when(registry.find(any())).thenAnswer(invocation ->
+                Optional.ofNullable(definitions.get(invocation.getArgument(0))));
+        when(registry.validateConfig(any())).thenReturn(List.of());
         // formDefinitionService 在 formKey=null 时不会被调用，safe-null mock
         validator = new GraphValidator(registry, mock(FormDefinitionService.class));
+    }
+
+    private static BpmNodeDefinition definition(String type, int minIn, int maxIn,
+                                                int minOut, int maxOut,
+                                                boolean startNode, boolean endNode) {
+        return new BpmNodeDefinition() {
+            @Override
+            public String type() {
+                return type;
+            }
+
+            @Override
+            public BpmNodeMetadata metadata() {
+                return new BpmNodeMetadata(
+                        type, type, "OTHER",
+                        new BpmNodeTopology(minIn, maxIn, minOut, maxOut),
+                        List.of(), "test-v1", EnumSet.of(
+                                com.sw.ck.bpm.api.node.BpmNodeCapability.DESIGN,
+                                com.sw.ck.bpm.api.node.BpmNodeCapability.TRANSLATE,
+                                com.sw.ck.bpm.api.node.BpmNodeCapability.RUNTIME,
+                                com.sw.ck.bpm.api.node.BpmNodeCapability.CONFIG_VALIDATE),
+                        startNode, endNode, startNode || endNode, false);
+            }
+        };
     }
 
     /**

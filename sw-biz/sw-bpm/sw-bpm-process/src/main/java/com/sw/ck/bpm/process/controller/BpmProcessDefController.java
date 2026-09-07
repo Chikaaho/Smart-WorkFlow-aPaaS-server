@@ -3,6 +3,8 @@ package com.sw.ck.bpm.process.controller;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.*;
+import com.sw.ck.bpm.api.node.BpmNodeCapabilityDTO;
+import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.common.page.PageParam;
@@ -13,6 +15,8 @@ import com.sw.ck.system.api.user.UserQueryFacade;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -37,13 +41,23 @@ public class BpmProcessDefController {
     private final BpmProcessDefService bpmProcessDefService;
     private final ObjectMapper objectMapper;
     private final UserQueryFacade userQueryFacade;
+    private final BpmNodeRegistry nodeRegistry;
 
     public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
                                    ObjectMapper objectMapper,
                                    UserQueryFacade userQueryFacade) {
+        this(bpmProcessDefService, objectMapper, userQueryFacade, null);
+    }
+
+    @Autowired
+    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
+                                   ObjectMapper objectMapper,
+                                   UserQueryFacade userQueryFacade,
+                                   BpmNodeRegistry nodeRegistry) {
         this.bpmProcessDefService = bpmProcessDefService;
         this.objectMapper = objectMapper;
         this.userQueryFacade = userQueryFacade;
+        this.nodeRegistry = nodeRegistry;
     }
 
     /**
@@ -56,6 +70,7 @@ public class BpmProcessDefController {
      * @return 流程定义 ID + 初始图
      */
     @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:create')")
     @PostMapping
     public R<CreateProcessDefResponse> create(@Valid @RequestBody CreateProcessDefRequest request) {
         BpmProcessDef entity = bpmProcessDefService.createDef(
@@ -78,6 +93,7 @@ public class BpmProcessDefController {
      * @return 更新后的图（含同步后的 name / formKey）
      */
     @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @PutMapping("/{id}")
     public R<ProcessGraph> updateDef(@PathVariable Long id,
                                      @RequestBody UpdateProcessDefRequest request) {
@@ -97,6 +113,7 @@ public class BpmProcessDefController {
      * @param graph 图 JSON（ProcessGraph）
      */
     @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @PutMapping("/{id}/graph")
     public R<Void> saveDraftGraph(@PathVariable Long id,
                                   @RequestBody ProcessGraph graph) {
@@ -164,10 +181,15 @@ public class BpmProcessDefController {
 
     /**
      * 分页查询流程定义列表（不含 graph_json 大字段）。
+     *
+     * @param pageParam 分页参数
+     * @param formKey   可选，按绑定表单 formKey 精确过滤（表单工作台"关联流程"用）
      */
+    @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping
-    public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam) {
-        PageResult<BpmProcessDef> result = bpmProcessDefService.listDefs(pageParam);
+    public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
+                                                 @RequestParam(required = false) String formKey) {
+        PageResult<BpmProcessDef> result = bpmProcessDefService.listDefs(pageParam, formKey);
         return R.ok(result);
     }
 
@@ -177,6 +199,7 @@ public class BpmProcessDefController {
      * @param id 流程定义 ID
      */
     @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:delete')")
     @DeleteMapping("/{id}")
     public R<Void> deleteDef(@PathVariable Long id) {
         bpmProcessDefService.deleteDef(id);
@@ -195,6 +218,7 @@ public class BpmProcessDefController {
      * @return 发布后的流程定义实体
      */
     @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/publish")
     public R<BpmProcessDef> publish(@PathVariable Long id) {
         BpmProcessDef published = bpmProcessDefService.publish(id);
@@ -217,6 +241,18 @@ public class BpmProcessDefController {
     public R<List<UserOptionDTO>> approverCandidates(
             @RequestParam(required = false, defaultValue = "") String keyword) {
         return R.ok(userQueryFacade.searchActiveUsers(keyword, 50));
+    }
+
+    /**
+     * 当前应用已完整贯通的节点能力清单。设计端、发布校验和翻译链消费同一注册结果。
+     */
+    @PreAuthorize("@ss.hasPermi('workflow:def:view')")
+    @GetMapping("/node-capabilities")
+    public R<List<BpmNodeCapabilityDTO>> nodeCapabilities() {
+        if (nodeRegistry == null) {
+            throw new IllegalStateException("BPM 节点注册结果未装配");
+        }
+        return R.ok(nodeRegistry.capabilities());
     }
 
     // ==================== 内部方法 ====================

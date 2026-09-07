@@ -109,7 +109,12 @@ class NotifyMessageIntegrationTest {
                     content           text            not null,
                     biz_type          varchar(30)     not null,
                     biz_id            varchar(64),
-                    is_read           boolean         not null default false
+                    is_read           boolean         not null default false,
+                    channel           varchar(40)     not null default 'IN_APP',
+                    delivery_status   varchar(20)     not null default 'SUCCESS',
+                    external_message_id varchar(200),
+                    failure_reason    varchar(500),
+                    idempotency_key   varchar(200)
                 )
                 """);
         // 索引无需手动创建（Flyway 脚本中已有），测试验证不依赖索引

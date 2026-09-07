@@ -85,6 +85,9 @@ public class FormFieldValidator {
                 String type = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
                 boolean required = fieldNode.has("required") && fieldNode.get("required").asBoolean();
                 String dictType = fieldNode.has("dictType") ? fieldNode.get("dictType").asText() : null;
+                Object defaultValue = fieldNode.has("defaultValue") && !fieldNode.get("defaultValue").isNull()
+                        ? objectMapper.convertValue(fieldNode.get("defaultValue"), Object.class)
+                        : null;
 
                 // 解析 TABLE 子字段
                 List<FieldDef> subFields = null;
@@ -98,12 +101,15 @@ public class FormFieldValidator {
                             String subType = sub.has("type") ? sub.get("type").asText() : "TEXT";
                             boolean subRequired = sub.has("required") && sub.get("required").asBoolean();
                             String subDictType = sub.has("dictType") ? sub.get("dictType").asText() : null;
-                            subFields.add(new FieldDef(subName, subType, subRequired, subDictType, null));
+                            Object subDefault = sub.has("defaultValue") && !sub.get("defaultValue").isNull()
+                                    ? objectMapper.convertValue(sub.get("defaultValue"), Object.class)
+                                    : null;
+                            subFields.add(new FieldDef(subName, subType, subRequired, subDictType, null, subDefault));
                         }
                     }
                 }
 
-                fieldDefs.put(name, new FieldDef(name, type, required, dictType, subFields));
+                fieldDefs.put(name, new FieldDef(name, type, required, dictType, subFields, defaultValue));
             }
 
             // 检查未知字段
@@ -144,6 +150,11 @@ public class FormFieldValidator {
 
         for (FieldDef def : fieldDefs.values()) {
             Object value = submittedData.get(def.name);
+
+            // LABEL 非输入字段：无值、不参与必填与类型校验
+            if ("LABEL".equals(def.type)) {
+                continue;
+            }
 
             // —— 必填校验 ——
             if (def.required) {
@@ -251,7 +262,20 @@ public class FormFieldValidator {
                         }
                     }
                 }
-                // TEXT / RICH_TEXT / REFERENCE 无额外校验
+                case "MULTISELECT" -> {
+                    if (!(value instanceof List<?> list)
+                            || list.stream().anyMatch(v -> !(v instanceof String))) {
+                        throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                "字段 '" + def.name + "' 需要字符串列表（多选）");
+                    }
+                }
+                case "ATTACHMENT", "IMAGE" -> {
+                    if (!(value instanceof List<?> list)) {
+                        throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                "字段 '" + def.name + "' 需要文件列表");
+                    }
+                }
+                // TEXT / RICH_TEXT / REFERENCE / LABEL 无额外校验
             }
     }
 
@@ -276,6 +300,40 @@ public class FormFieldValidator {
         return null;
     }
 
+    // ==================== 默认值应用 ====================
+
+    /**
+     * 应用静态默认值（v0.0.2）：仅当字段在载荷中不存在或值为空时应用；
+     * 已有值（含草稿恢复/编辑数据）一律不覆盖。返回新映射，不改入参。
+     */
+    public Map<String, Object> applyDefaults(Map<String, FieldDef> fieldDefs, Map<String, Object> data) {
+        Map<String, Object> result = new LinkedHashMap<>(data);
+        for (FieldDef def : fieldDefs.values()) {
+            if (def.defaultValue() == null || "LABEL".equals(def.type)) {
+                continue;
+            }
+            Object existing = result.get(def.name);
+            boolean empty = existing == null || (existing instanceof String s && s.isBlank());
+            if (empty) {
+                result.put(def.name, def.defaultValue());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 加载表单主 definition JSON（parent_table IS NULL），供显隐规则解析等复用。
+     */
+    public String loadDefinitionJson(String formId) {
+        List<FormConfigEntity> configs = formConfigMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                        .eq(FormConfigEntity::getFormId, formId)
+                        .isNull(FormConfigEntity::getParentTable)
+        );
+        FormConfigEntity config = (configs != null && !configs.isEmpty()) ? configs.get(0) : null;
+        return (config != null) ? config.getDefinition() : null;
+    }
+
     // ==================== 内部类型 ====================
 
     /**
@@ -286,6 +344,7 @@ public class FormFieldValidator {
             String type,
             boolean required,
             String dictType,
-            List<FieldDef> subFields
+            List<FieldDef> subFields,
+            Object defaultValue
     ) {}
 }

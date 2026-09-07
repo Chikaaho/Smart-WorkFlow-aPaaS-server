@@ -59,6 +59,7 @@ class FormDataIsolationIntegrationTest {
             dto.setStatus("PUBLISHED");
             dto.setPhysicalTableName(TABLE);
             when(mock.getFormDefByKey(anyString())).thenReturn(dto);
+            when(mock.isCurrentUserVisible(anyString())).thenReturn(true);
             return mock;
         }
 

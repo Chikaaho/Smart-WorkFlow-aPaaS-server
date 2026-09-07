@@ -1,6 +1,7 @@
 package com.sw.ck.system.mapper;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sw.ck.common.datascope.DataScope;
 import com.sw.ck.common.mapper.BaseMapperX;
@@ -10,11 +11,33 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Param;
 import com.sw.ck.system.service.UserPageQuery;
 
+import java.util.List;
+
 /**
  * 系统用户 Mapper。
  */
 @Mapper
 public interface SysUserMapper extends BaseMapperX<SysUser> {
+
+    @Select({"<script>",
+            "SELECT DISTINCT u.id FROM sys_user u WHERE u.deleted = 0 AND u.status = 0 ",
+            "AND u.tenant_id = #{tenantId} AND u.id IN ",
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
+            "</script>"})
+    @InterceptorIgnore(tenantLine = "true")
+    List<Long> selectActiveUserIds(@Param("ids") List<Long> ids, @Param("tenantId") Long tenantId);
+
+    @Select({"<script>",
+            "SELECT DISTINCT ur.user_id FROM sys_user_role ur ",
+            "JOIN sys_user u ON u.id = ur.user_id AND u.deleted = 0 AND u.status = 0 ",
+            "JOIN sys_role r ON r.id = ur.role_id AND r.deleted = 0 AND r.status = 1 ",
+            "WHERE ur.deleted = 0 AND ur.tenant_id = #{tenantId} ",
+            "AND u.tenant_id = #{tenantId} AND r.tenant_id = #{tenantId} AND r.code IN ",
+            "<foreach collection='roleCodes' item='code' open='(' separator=',' close=')'>#{code}</foreach>",
+            "</script>"})
+    @InterceptorIgnore(tenantLine = "true")
+    List<Long> selectActiveUserIdsByRoleCodes(@Param("roleCodes") List<String> roleCodes,
+                                               @Param("tenantId") Long tenantId);
 
     /**
      * 用户分页查询（数据范围纳管入口）。

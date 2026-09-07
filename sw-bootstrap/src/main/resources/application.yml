@@ -174,11 +174,31 @@ sw:
       - /doc.html
       - /webjars/**
       - /actuator/**
+      - /auth/challenge
       - /auth/login
       - /auth/refresh
       - /auth/logout
+    debug-auth:
+      # 仅 dev/test + 回环 + 显式开关同时成立时才会生效，默认关闭。
+      enabled: ${SW_DEBUG_AUTH_ENABLED:false}
     cookie:
       secure: false
+      # 浏览器可见 refresh cookie Path：必须覆盖公开 refresh/logout URL 的最小前缀。
+      # 生产同源保前缀部署（/sw-server/api）在 application-prod.yml 覆盖，避免
+      # Cookie Path 与请求路径不匹配导致有效 refresh 凭证被误判无效（P45 第一断点）。
+      path: /api/auth/
+    login:
+      challenge-ttl-seconds: 300
+      captcha-fail-limit: 5
+      client-time-tolerance-millis: 180000
+      captcha-length: 4
+      rsa-key-version: ${SW_LOGIN_RSA_KEY_VERSION:v1}
+      # 私钥只允许外部安全配置注入（PKCS#8 PEM）；未注入时启动期 fail-fast，无默认私钥
+      rsa-private-key: ${SW_LOGIN_RSA_PRIVATE_KEY:}
+      # 验证码答案 HMAC 摘要密钥：Redis 只存 HMAC，泄露不可枚举恢复答案
+      digest-secret: ${SW_LOGIN_DIGEST_SECRET:}
+      # 轮换窗口内的旧版本私钥，可选；生产经密钥设施注入
+      rsa-extra-keys: {}
     jwt:
       secret: ${JWT_SECRET:smart-workflow-jwt-secret-CHANGE-ME-IN-PRODUCTION-please}
       expire-seconds: 7200

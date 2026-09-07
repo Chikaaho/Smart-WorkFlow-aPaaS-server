@@ -28,6 +28,7 @@ public class FormDefDTO implements Serializable {
     private String physicalTableName;
     private Integer formVersion;
     private String description;
+    private String visibilityScope;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

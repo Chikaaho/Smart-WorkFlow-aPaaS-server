@@ -44,4 +44,9 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
     public FormDefDTO getFormDefById(String formId) {
         return formDefService.getFormDef(formId);
     }
+
+    @Override
+    public boolean canCurrentUserInitiate(String formKey) {
+        return formDefService.isCurrentUserVisible(formKey);
+    }
 }

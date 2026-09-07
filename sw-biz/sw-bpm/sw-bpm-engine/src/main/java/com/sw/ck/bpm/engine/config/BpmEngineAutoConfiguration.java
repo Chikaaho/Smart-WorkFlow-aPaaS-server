@@ -1,12 +1,17 @@
 package com.sw.ck.bpm.engine.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
+import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
 import com.sw.ck.bpm.engine.datasource.ExternalDatasourceManager;
 import com.sw.ck.bpm.engine.executor.SqlExecutor;
+import com.sw.ck.bpm.engine.registry.BpmNodeRegistryImpl;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.bpm.engine.service.SqlExecutionAuditService;
+import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
+import com.sw.ck.bpm.engine.translator.NodeTypeTranslator;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import org.flowable.spring.boot.ProcessEngineConfigurationConfigurer;
 import org.slf4j.Logger;
@@ -30,7 +35,7 @@ import java.util.Map;
  * <p>
  * 默认关闭，通过 sw.bpm.enabled=true 开启。
  * 运行时强制要求 sw.form.enabled=true，否则启动失败。
- * 注意：并存期本配置不写入 AutoConfiguration.imports，不参与运行时装配。
+ * 本配置通过 AutoConfiguration.imports 注册；关闭 sw.bpm.enabled 时不参与运行时装配。
  * </p>
  */
 @AutoConfiguration
@@ -79,6 +84,26 @@ public class BpmEngineAutoConfiguration {
                                    SqlExecutionAuditService auditService,
                                    ExternalDatasourceProperties properties) {
         return new SqlExecutor(datasourceService, poolManager, auditService, properties);
+    }
+
+    /**
+     * 当前应用的唯一 BPM 节点注册结果。节点实现由 Spring 自动发现，注册构造阶段完成
+     * 类型、元数据、配置和能力完整性校验；失败直接阻止 BPM 引擎装配。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public BpmNodeRegistry bpmNodeRegistry(List<NodeTypeTranslator> translators) {
+        return new BpmNodeRegistryImpl(translators);
+    }
+
+    /**
+     * 发布翻译统一消费注册结果，禁止发布链自行 new 出第二套节点分发表。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public GraphToBpmnTranslator graphToBpmnTranslator(ObjectMapper objectMapper,
+                                                        BpmNodeRegistry nodeRegistry) {
+        return new GraphToBpmnTranslator(objectMapper, nodeRegistry);
     }
 
     /**

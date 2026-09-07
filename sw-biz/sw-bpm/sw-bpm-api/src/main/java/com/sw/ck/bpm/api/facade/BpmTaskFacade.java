@@ -69,6 +69,18 @@ public interface BpmTaskFacade {
      */
     void complete(String taskId, Map<String, Object> variables);
 
+    /** 以当前用户身份原子认领并完成候选任务。 */
+    void completeAsUser(String taskId, String userId, Map<String, Object> variables);
+
+    /** 驳回后终止流程实例，确保没有未配置驳回分支时仍进入终态。 */
+    void terminateProcess(String processInstanceId, String reason);
+
+    /** 判断用户是否是任务 assignee 或 candidate。 */
+    boolean canHandle(String taskId, String userId);
+
+    /** 将人工任务退回到已经过且被定义允许的节点。 */
+    void returnTask(String taskId, String targetNodeId);
+
     /**
      * 判断流程实例是否活跃。
      *
@@ -101,6 +113,12 @@ public interface BpmTaskFacade {
      * @return 流程变量 Map
      */
     Map<String, Object> getVariables(String processInstanceId);
+
+    /**
+     * 读取流程实例的历史变量（含已结束实例）。实例仍在运行时同样返回当前值。
+     * 引擎无该实例历史时返回空映射，不抛异常（只读详情场景容忍缺失）。
+     */
+    Map<String, Object> getHistoricVariables(String processInstanceId);
 
     /**
      * 分页查询已办任务（历史任务）。

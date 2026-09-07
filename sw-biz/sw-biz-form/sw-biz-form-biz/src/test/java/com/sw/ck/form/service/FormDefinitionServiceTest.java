@@ -270,6 +270,51 @@ class FormDefinitionServiceTest {
         System.out.println("=== 非法字段名发布被拦截 ===");
     }
 
+    // ==================== 测试 4b：24 列布局边界 ====================
+
+    @Test
+    @DisplayName("保存表单配置时非法 colSpan → 拒绝且不写入脏布局")
+    void saveConfigWithInvalidColSpan_shouldReject() {
+        FormDefDTO draft = formDefService.createDraft("test_invalid_col_span", "测试非法列宽", null, null);
+        createdFormIds.add(draft.getId());
+
+        assertThatThrownBy(() -> formDefService.saveConfig(draft.getId(), """
+                {"fields": [{"name": "subject", "type": "TEXT", "colSpan": 25}]}
+                """))
+                .isInstanceOf(BaseException.class)
+                .satisfies(e -> assertThat(((BaseException) e).getCode())
+                        .isEqualTo(FormErrorCode.DEFINITION_INVALID.getCode()));
+
+        FormConfigEntity config = formConfigMapper.selectOne(Wrappers.lambdaQuery(FormConfigEntity.class)
+                .eq(FormConfigEntity::getFormId, draft.getId()));
+        assertThat(config.getDefinition()).isEqualTo("{}");
+    }
+
+    @Test
+    @DisplayName("保存并发布合法 colSpan 1/12/24 → definition 与快照保持原值")
+    void saveAndPublishWithValidColSpan_shouldPreserveDefinition() {
+        FormDefDTO draft = formDefService.createDraft("test_valid_col_span", "测试合法列宽", null, null);
+        createdFormIds.add(draft.getId());
+        String definitionJson = """
+                {"title":"列宽测试","fields":[
+                  {"name":"one","type":"TEXT","colSpan":1},
+                  {"name":"middle","type":"NUMBER","colSpan":12},
+                  {"name":"full_width","type":"RICH_TEXT","colSpan":24}
+                ]}
+                """;
+
+        formDefService.saveConfig(draft.getId(), definitionJson);
+        assertThat(formDefService.getDefinitionById(draft.getId())).isEqualTo(definitionJson);
+
+        formDefService.publish(draft.getId());
+        FormDefEntity entity = formDefMapper.selectById(draft.getId());
+        createdTables.add(entity.getPhysicalTableName());
+        FormSnapshotEntity snapshot = formSnapshotMapper.selectOne(Wrappers.lambdaQuery(FormSnapshotEntity.class)
+                .eq(FormSnapshotEntity::getFormId, draft.getId())
+                .eq(FormSnapshotEntity::getFormVersion, 2));
+        assertThat(snapshot.getDefinition()).isEqualTo(definitionJson);
+    }
+
     // ==================== 测试 5：重复字段名发布 → 拒绝 ====================
 
     @Test
@@ -336,6 +381,32 @@ class FormDefinitionServiceTest {
         System.out.println("Definition by Key: " + defByKey);
     }
 
+    @Test
+    @DisplayName("发布含 TABLE 的表单后，按 ID / formKey 读取仍只返回主表 definition")
+    void getDefinition_afterPublishingTable_shouldReadMainConfigOnly() throws Exception {
+        FormDefDTO draft = formDefService.createDraft("render_table_test", "渲染子表测试", null, null);
+        createdFormIds.add(draft.getId());
+        String definitionJson = """
+                {"title":"渲染子表测试","fields":[
+                  {"name":"items","type":"TABLE","subFields":[{"name":"item_name","type":"TEXT"}]},
+                  {"name":"remark","type":"TEXT"}
+                ]}
+                """;
+
+        formDefService.saveConfig(draft.getId(), definitionJson);
+        formDefService.publish(draft.getId());
+
+        FormDefEntity entity = formDefMapper.selectById(draft.getId());
+        createdTables.add(entity.getPhysicalTableName());
+        assertThat(entity.getSubTableMapping()).contains("items");
+        Map<String, Object> mapping = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readValue(entity.getSubTableMapping(), Map.class);
+        createdTables.add(String.valueOf(mapping.get("items")));
+
+        assertThat(formDefService.getDefinitionById(draft.getId())).isEqualTo(definitionJson);
+        assertThat(formDefService.getDefinition("render_table_test")).isEqualTo(definitionJson);
+    }
+
     // ==================== 测试 7：已有 formKey 重复 → 拒绝 ====================
 
     @Test
@@ -354,12 +425,12 @@ class FormDefinitionServiceTest {
     // ==================== 测试 8：disabled 类型发布 → 拒绝 ====================
 
     @Test
-    @DisplayName("disabled 类型（MULTISELECT）发布 → 拒绝")
+    @DisplayName("disabled 类型（EMAIL）发布 → 拒绝")
     void publishWithDisabledType_shouldReject() {
         FormDefDTO draft = formDefService.createDraft("test_disabled", "测试禁用类型", null, null);
         createdFormIds.add(draft.getId());
         formDefService.saveConfig(draft.getId(), """
-                {"fields": [{"name": "tags", "type": "MULTISELECT"}]}
+                {"fields": [{"name": "email", "type": "EMAIL"}]}
                 """);
 
         assertThatThrownBy(() -> formDefService.publish(draft.getId()))
@@ -549,6 +620,7 @@ class FormDefinitionServiceTest {
                     physical_table_name  VARCHAR(100),
                     form_version         INT          NOT NULL DEFAULT 1,
                     description          VARCHAR(500),
+                    visibility_scope     TEXT,
                     sub_table_mapping    TEXT,
                     tenant_id            BIGINT       NOT NULL DEFAULT 0,
                     deleted              SMALLINT     NOT NULL DEFAULT 0,

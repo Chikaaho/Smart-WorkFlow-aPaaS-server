@@ -3,6 +3,7 @@ package com.sw.ck.bpm.api.dto;
 import lombok.Data;
 
 import java.util.Date;
+import java.util.List;
 
 /**
  * BPM 任务 DTO —— Facade 层出参，仅包含引擎层可知字段。
@@ -23,6 +24,9 @@ public class BpmTaskDTO {
     /** 任务名称 */
     private String name;
 
+    /** BPMN 节点稳定 key，用于动作审计与退回。 */
+    private String taskDefinitionKey;
+
     /** Flowable 流程实例 ID */
     private String processInstanceId;
 
@@ -31,6 +35,9 @@ public class BpmTaskDTO {
 
     /** 当前处理人 */
     private String assignee;
+
+    /** 候选用户（普通多人审批/会签任务使用；不暴露 Flowable IdentityLink）。 */
+    private List<String> candidateUserIds;
 
     /** 任务创建时间（Flowable Task.getCreateTime() 原生类型） */
     private Date createTime;

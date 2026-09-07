@@ -3,6 +3,7 @@ package com.sw.ck.bpm.engine.translator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.common.exception.BaseException;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.SequenceFlow;
@@ -84,7 +85,7 @@ class NodeTypeTranslatorPlugabilityTest {
     }
 
     @Test
-    void shouldKeepUnknownTypeSemanticsWhenPluginsRegistered() {
+    void shouldRejectUnknownTypeWhenPluginsRegistered() {
         GraphToBpmnTranslator translator = new GraphToBpmnTranslator(
                 new ObjectMapper(), List.of(TEST_NODE_TRANSLATOR));
 
@@ -99,13 +100,10 @@ class NodeTypeTranslatorPlugabilityTest {
                 ))
                 .build();
 
-        BpmnModel model = translator.translate(graph);
-        org.flowable.bpmn.model.Process process = model.getProcesses().get(0);
-
-        // 未注册翻译器的类型（即使已注册于校验器）仍按既有语义 warn + skip
-        assertThat(process.getFlowElement("cond")).isNull();
-        assertThat(process.getFlowElement("start")).isNotNull();
-        assertThat(process.getFlowElement("end")).isNotNull();
+        // 发布翻译不能再 warn + skip，否则会生成缺少节点/悬空边的 BPMN。
+        assertThat(org.junit.jupiter.api.Assertions.assertThrows(
+                BaseException.class, () -> translator.translate(graph)).getCode())
+                .isEqualTo(2107);
     }
 
     // ==================== helpers ====================

@@ -33,8 +33,15 @@ public final class ColumnValidation {
     /** 列名最大长度（PostgreSQL 标识符上限 63） */
     public static final int MAX_COLUMN_NAME_LENGTH = 63;
 
-    /** 列名白名单正则：小写字母/下划线开头，后续小写字母/数字/下划线 */
-    public static final String COLUMN_NAME_PATTERN = "^[a-z_][a-z0-9_]*$";
+    /**
+     * 列名白名单正则：小写字母/下划线开头，后续允许大小写字母、数字和下划线。
+     * <p>
+     * 表单逻辑字段保持前端常用的 camelCase（例如 {@code applicantNote}），
+     * 但仍只允许标识符字符；DDL 使用未加引号的标识符，PostgreSQL/H2 会按各自
+     * 标准折叠大小写，因此不会引入可执行 SQL 片段。
+     * </p>
+     */
+    public static final String COLUMN_NAME_PATTERN = "^[a-z_][a-zA-Z0-9_]*$";
 
     // ==================== 系统固定列名 ====================
 
@@ -170,6 +177,9 @@ public final class ColumnValidation {
         }
         if (fieldType == FieldType.TABLE) {
             throw new IllegalArgumentException("TABLE type fields do not produce a column in the parent table");
+        }
+        if (fieldType == FieldType.LABEL) {
+            throw new IllegalArgumentException("LABEL type fields are non-input display text and do not produce a column");
         }
         if (fieldType == FieldType.REFERENCE) {
             return "ref_" + logicalName + "_id";

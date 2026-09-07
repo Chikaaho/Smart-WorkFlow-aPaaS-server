@@ -15,6 +15,7 @@ public enum InstanceStatusEnum {
     RUNNING("RUNNING", "运行中"),
     APPROVED("APPROVED", "已通过"),
     REJECTED("REJECTED", "已驳回"),
+    FAILED("FAILED", "执行失败"),
     ;
 
     private final String code;

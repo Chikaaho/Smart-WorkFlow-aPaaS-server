@@ -19,5 +19,11 @@ public enum BpmNotifyTrigger {
      * 流程审批通过：流程实例结束时触发（所有节点完成）。
      * 收件人为流程发起人（initiator）。
      */
-    PROCESS_APPROVED
+    PROCESS_APPROVED,
+
+    /** 审批动作导致流程拒绝终态。 */
+    PROCESS_REJECTED,
+
+    /** 审批动作将流程退回已通过人工节点。 */
+    PROCESS_RETURNED
 }

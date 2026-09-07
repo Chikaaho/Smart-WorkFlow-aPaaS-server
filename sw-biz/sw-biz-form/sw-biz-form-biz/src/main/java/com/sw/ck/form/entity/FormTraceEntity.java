@@ -38,4 +38,7 @@ public class FormTraceEntity extends FormBaseEntity {
 
     /** User-Agent */
     private String userAgent;
+
+    /** 提交幂等键（草稿/命令重试防重复落表单数据；可空）。 */
+    private String submitIdempotencyKey;
 }

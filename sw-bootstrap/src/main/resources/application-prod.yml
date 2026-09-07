@@ -82,3 +82,19 @@ sw:
     enabled: true
   external-datasource:
     cipher-key: ${SW_CIPHER_KEY:}
+  security:
+    debug-auth:
+      enabled: false
+    cookie:
+      # 生产同源保前缀部署：网关入口 /sw-server/api，refresh cookie 必须覆盖该前缀，
+      # 否则浏览器不会向 /sw-server/api/auth/refresh 发送 cookie（P45 第一断点）
+      secure: true
+      path: /sw-server/api/auth/
+    login:
+      challenge-ttl-seconds: 300
+      captcha-fail-limit: 5
+      client-time-tolerance-millis: 180000
+      rsa-key-version: ${SW_LOGIN_RSA_KEY_VERSION:v1}
+      rsa-private-key: ${SW_LOGIN_RSA_PRIVATE_KEY:}
+      digest-secret: ${SW_LOGIN_DIGEST_SECRET:}
+      rsa-extra-keys: {}

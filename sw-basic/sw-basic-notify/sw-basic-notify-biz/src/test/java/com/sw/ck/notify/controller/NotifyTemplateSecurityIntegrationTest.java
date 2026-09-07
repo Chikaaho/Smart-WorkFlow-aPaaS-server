@@ -181,7 +181,12 @@ class NotifyTemplateSecurityIntegrationTest {
                     content           text not null,
                     biz_type          varchar(30) not null,
                     biz_id            varchar(64),
-                    is_read           boolean not null default false
+                    is_read           boolean not null default false,
+                    channel           varchar(40) not null default 'IN_APP',
+                    delivery_status   varchar(20) not null default 'SUCCESS',
+                    external_message_id varchar(200),
+                    failure_reason    varchar(500),
+                    idempotency_key   varchar(200)
                 )
                 """);
         jt.execute("DROP INDEX IF EXISTS uk_sw_notify_template_tenant_code");

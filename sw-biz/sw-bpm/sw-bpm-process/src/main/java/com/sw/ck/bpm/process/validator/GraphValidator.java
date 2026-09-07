@@ -1,21 +1,27 @@
 package com.sw.ck.bpm.process.validator;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import com.sw.ck.bpm.process.model.NodeTypeRegistry;
+import com.sw.ck.bpm.api.node.BpmNodeDefinition;
+import com.sw.ck.bpm.api.node.BpmNodeRegistry;
+import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 流程图画布校验器。
  * <p>
  * 仅解释图的拓扑结构（id/kind/type/source/target），不解析 config/style。
- * 类型判定走 {@link NodeTypeRegistry} 的 Map 查找，禁止 switch/if-else 链。
+ * 类型判定、拓扑与配置能力均走 {@link BpmNodeRegistry} 的唯一注册结果，禁止平行类型表。
  * </p>
  */
 @Component
@@ -25,14 +31,16 @@ public class GraphValidator {
 
     private static final String KIND_NODE = "node";
     private static final String KIND_EDGE = "edge";
-    private static final String TYPE_START = "START";
-    private static final String TYPE_END = "END";
+    private static final Pattern FORM_FIELD = Pattern.compile(
+            "(?:form|data)\\.([A-Za-z_][A-Za-z0-9_]*)");
+    private static final Pattern FORM_COMPARISON = Pattern.compile(
+            "(?:form|data)\\.([A-Za-z_][A-Za-z0-9_]*)\\s*(>=|<=|==|!=|>|<)");
 
-    private final NodeTypeRegistry typeRegistry;
+    private final BpmNodeRegistry nodeRegistry;
     private final FormDefinitionService formDefinitionService;
 
-    public GraphValidator(NodeTypeRegistry typeRegistry, FormDefinitionService formDefinitionService) {
-        this.typeRegistry = typeRegistry;
+    public GraphValidator(BpmNodeRegistry nodeRegistry, FormDefinitionService formDefinitionService) {
+        this.nodeRegistry = nodeRegistry;
         this.formDefinitionService = formDefinitionService;
     }
 
@@ -66,9 +74,9 @@ public class GraphValidator {
 
         // --- 1. 恰好一个 START、一个 END ---
         List<GraphElement> starts = nodes.stream()
-                .filter(n -> TYPE_START.equals(n.getType())).toList();
+                .filter(this::isStartNode).toList();
         List<GraphElement> ends = nodes.stream()
-                .filter(n -> TYPE_END.equals(n.getType())).toList();
+                .filter(this::isEndNode).toList();
 
         if (starts.isEmpty()) {
             errors.add(err(null, BpmErrorCode.GRAPH_MISSING_START));
@@ -89,8 +97,10 @@ public class GraphValidator {
         // --- 2. 未知节点类型 ---
         for (GraphElement node : nodes) {
             String type = node.getType();
-            if (type == null || !typeRegistry.isRegistered(type)) {
+            if (type == null || nodeRegistry.find(type).isEmpty()) {
                 errors.add(err(node.getId(), BpmErrorCode.GRAPH_UNKNOWN_NODE_TYPE));
+            } else {
+                errors.addAll(nodeRegistry.validateConfig(node));
             }
         }
 
@@ -122,6 +132,54 @@ public class GraphValidator {
             }
         }
 
+        // --- 3.5 条件分支出口配置：恰好一个默认出口，其余出口必须是受控表达式 ---
+        Map<String, String> formFieldTypes = formFieldTypes(formKey);
+        for (GraphElement node : nodes) {
+            if (!"CONDITION".equals(node.getType())) continue;
+            // P57 的历史保留骨架是 CONDITION → EXCLUSIVE_GATEWAY；
+            // CONDITION 本身不是运行时分支出口，保持该历史图可读可部署。
+            List<GraphElement> outgoing = edges.stream()
+                    .filter(edge -> node.getId() != null && node.getId().equals(edge.getSource()))
+                    .toList();
+            if (isLegacyGatewayPlaceholder(node, outgoing, nodes)) continue;
+            long defaults = outgoing.stream().filter(this::isDefaultBranch).count();
+            if (outgoing.size() < 2 || defaults != 1) {
+                errors.add(err(node.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
+            }
+            Set<Integer> priorities = new HashSet<>();
+            for (GraphElement edge : outgoing) {
+                if (isDefaultBranch(edge)) continue;
+                String expression = branchExpression(edge);
+                if (expression == null || expression.isBlank()
+                        || expression.contains("eval") || expression.contains("new Function")
+                        || expression.contains(";") || expression.contains("{")) {
+                    errors.add(err(edge.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
+                    continue;
+                }
+                try {
+                    RestrictedExpressionEvaluator.value(expression, Map.of());
+                } catch (RuntimeException ex) {
+                    errors.add(err(edge.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
+                }
+                if (!validateFormReferences(expression, formFieldTypes)) {
+                    errors.add(err(edge.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
+                }
+                Object priority = edge.getConfig() == null ? null : edge.getConfig().get("priority");
+                if (priority == null) {
+                    errors.add(err(edge.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
+                } else {
+                    try {
+                        int value = Integer.parseInt(String.valueOf(priority));
+                        if (value < 1 || !priorities.add(value)) {
+                            errors.add(err(edge.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
+                        }
+                    } catch (NumberFormatException ex) {
+                        errors.add(err(edge.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
+                    }
+                }
+            }
+        }
+
         // --- 4. 节点入/出度基数校验 ---
         // 仅在 START/END 数量正确 + 类型全注册时才做基数校验（否则基数无意义）
         if (starts.size() == 1 && ends.size() == 1 && errors.stream()
@@ -146,14 +204,21 @@ public class GraphValidator {
             for (GraphElement node : nodes) {
                 String type = node.getType();
                 if (type == null) continue;
-                var spec = typeRegistry.get(type);
-                if (spec == null) continue;
+                BpmNodeDefinition definition = nodeRegistry.find(type).orElse(null);
+                if (definition == null || definition.metadata() == null) continue;
+                if ("CONDITION".equals(type)) {
+                    List<GraphElement> outgoing = edges.stream()
+                            .filter(edge -> node.getId() != null && node.getId().equals(edge.getSource()))
+                            .toList();
+                    if (isLegacyGatewayPlaceholder(node, outgoing, nodes)) continue;
+                }
+                var topology = definition.metadata().topology();
 
                 int in = inDegree.getOrDefault(node.getId(), 0);
                 int out = outDegree.getOrDefault(node.getId(), 0);
 
-                if (in < spec.getMinIn() || in > spec.getMaxIn()
-                        || out < spec.getMinOut() || out > spec.getMaxOut()) {
+                if (in < topology.minIncoming() || in > topology.maxIncoming()
+                        || out < topology.minOutgoing() || out > topology.maxOutgoing()) {
                     errors.add(err(node.getId(), BpmErrorCode.GRAPH_NODE_EDGE_CARDINALITY));
                 }
             }
@@ -203,6 +268,56 @@ public class GraphValidator {
         return errors;
     }
 
+    /** 发布期校验条件只引用已绑定表单字段，并拒绝把文本字段用于数值大小比较。 */
+    private boolean validateFormReferences(String expression, Map<String, String> fieldTypes) {
+        if (fieldTypes.isEmpty()) return true;
+        Matcher fields = FORM_FIELD.matcher(expression);
+        while (fields.find()) {
+            if (!fieldTypes.containsKey(fields.group(1))) return false;
+        }
+        Matcher comparisons = FORM_COMPARISON.matcher(expression);
+        while (comparisons.find()) {
+            String operator = comparisons.group(2);
+            if (">".equals(operator) || ">=".equals(operator)
+                    || "<".equals(operator) || "<=".equals(operator)) {
+                String type = fieldTypes.get(comparisons.group(1));
+                if (type != null && !isNumericType(type)) return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isNumericType(String type) {
+        return Set.of("NUMBER", "INTEGER", "INT", "LONG", "DECIMAL", "FLOAT", "DOUBLE")
+                .contains(type.toUpperCase(Locale.ROOT));
+    }
+
+    private Map<String, String> formFieldTypes(String formKey) {
+        if (formKey == null || formKey.isBlank()) return Map.of();
+        String definition;
+        try {
+            definition = formDefinitionService.getFormDefinition(formKey);
+        } catch (RuntimeException e) {
+            log.warn("读取表单字段用于分支校验失败: formKey={}, reason={}", formKey, e.getMessage());
+            return Map.of();
+        }
+        if (definition == null || definition.isBlank()) return Map.of();
+        try {
+            JsonNode fields = new ObjectMapper().readTree(definition).path("fields");
+            if (!fields.isArray()) return Map.of();
+            Map<String, String> result = new HashMap<>();
+            for (JsonNode field : fields) {
+                String name = field.path("name").asText("");
+                if (name.isBlank()) name = field.path("fieldName").asText("");
+                if (!name.isBlank()) result.put(name, field.path("type").asText("TEXT"));
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("解析表单字段用于分支校验失败: formKey={}, reason={}", formKey, e.getMessage());
+            return Map.of();
+        }
+    }
+
     /**
      * 从 startNode 出发的 BFS 遍历。
      */
@@ -230,5 +345,41 @@ public class GraphValidator {
                 .errorCode(errorCode.getCode())
                 .message(errorCode.getMessage())
                 .build();
+    }
+
+    private boolean isStartNode(GraphElement node) {
+        return node.getType() != null && nodeRegistry.find(node.getType())
+                .map(definition -> definition.metadata().startNode())
+                .orElse(false);
+    }
+
+    private boolean isEndNode(GraphElement node) {
+        return node.getType() != null && nodeRegistry.find(node.getType())
+                .map(definition -> definition.metadata().endNode())
+                .orElse(false);
+    }
+
+    private boolean isDefaultBranch(GraphElement edge) {
+        return edge.getConfig() != null && (Boolean.TRUE.equals(edge.getConfig().get("default"))
+                || Boolean.TRUE.equals(edge.getConfig().get("isDefault")));
+    }
+
+    private String branchExpression(GraphElement edge) {
+        if (edge.getConfig() == null) return null;
+        Object condition = edge.getConfig().get("condition");
+        if (condition instanceof Map<?, ?> map && map.get("expression") != null) {
+            return String.valueOf(map.get("expression"));
+        }
+        return edge.getConfig().get("expression") == null ? null
+                : String.valueOf(edge.getConfig().get("expression"));
+    }
+
+    private boolean isLegacyGatewayPlaceholder(GraphElement node, List<GraphElement> outgoing,
+                                               List<GraphElement> nodes) {
+        if (outgoing.size() != 1) return false;
+        String targetId = outgoing.get(0).getTarget();
+        return nodes.stream().anyMatch(candidate -> targetId != null
+                && targetId.equals(candidate.getId())
+                && "EXCLUSIVE_GATEWAY".equals(candidate.getType()));
     }
 }

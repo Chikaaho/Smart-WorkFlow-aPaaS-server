@@ -86,7 +86,7 @@ class NotifyBatchSendEvidenceTest {
         jt.execute("CREATE TABLE IF NOT EXISTS sys_role (id BIGINT PRIMARY KEY, name VARCHAR(50) NOT NULL, code VARCHAR(50) NOT NULL, status INT DEFAULT 0, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
         jt.execute("CREATE TABLE IF NOT EXISTS sys_user_role (user_id BIGINT NOT NULL, role_id BIGINT NOT NULL, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, PRIMARY KEY (user_id, role_id))");
         jt.execute("CREATE TABLE IF NOT EXISTS sys_dept (id BIGINT PRIMARY KEY, parent_id BIGINT DEFAULT 0, name VARCHAR(50) NOT NULL, code VARCHAR(50), status INT DEFAULT 0, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
-        jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_message (id BIGINT PRIMARY KEY, recipient_id BIGINT NOT NULL, title VARCHAR(200) NOT NULL, content TEXT NOT NULL, biz_type VARCHAR(30) NOT NULL DEFAULT 'SYSTEM', biz_id VARCHAR(64), is_read BOOLEAN DEFAULT FALSE, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by BIGINT, update_by BIGINT)");
+        jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_message (id BIGINT PRIMARY KEY, recipient_id BIGINT NOT NULL, title VARCHAR(200) NOT NULL, content TEXT NOT NULL, biz_type VARCHAR(30) NOT NULL DEFAULT 'SYSTEM', biz_id VARCHAR(64), is_read BOOLEAN DEFAULT FALSE, channel VARCHAR(40) NOT NULL DEFAULT 'IN_APP', delivery_status VARCHAR(20) NOT NULL DEFAULT 'SUCCESS', external_message_id VARCHAR(200), failure_reason VARCHAR(500), idempotency_key VARCHAR(200), tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by BIGINT, update_by BIGINT)");
         jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_template (id BIGINT PRIMARY KEY, template_code VARCHAR(100) NOT NULL, name VARCHAR(100) NOT NULL, title_template VARCHAR(200), content_template TEXT, enabled SMALLINT DEFAULT 1, remark VARCHAR(500), tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by VARCHAR(64), update_by VARCHAR(64))");
 
         // 种子：部门
@@ -680,7 +680,7 @@ class NotifyBatchSendEvidenceTest {
         @Bean public FailingNotifyMessageService failingNotifyMessageService(NotifyTemplateService ts, TemplateRenderService rs, LoginContextProvider lp, NotifyMessageMapper mapper) {
             return new FailingNotifyMessageService(ts, rs, lp, mapper);
         }
-        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s); }
+        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class)); }
         @Bean("ss") public com.sw.ck.security.support.PermissionService permissionService() { return new com.sw.ck.security.support.PermissionService(); }
     }
 }

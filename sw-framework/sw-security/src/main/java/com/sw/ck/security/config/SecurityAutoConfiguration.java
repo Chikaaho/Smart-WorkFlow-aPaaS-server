@@ -16,6 +16,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.RedisTemplate;
 
 /**
@@ -24,7 +25,8 @@ import org.springframework.data.redis.core.RedisTemplate;
  * sw-common 不能反向依赖 sw-security，故此排序只能在依赖方向合法的这一侧声明。
  */
 @AutoConfiguration(before = MybatisPlusConfig.class)
-@EnableConfigurationProperties({SecurityProperties.class, JwtProperties.class})
+@EnableConfigurationProperties({SecurityProperties.class, JwtProperties.class,
+        DebugAuthenticationProperties.class})
 public class SecurityAutoConfiguration {
 
     @Bean
@@ -74,6 +76,20 @@ public class SecurityAutoConfiguration {
                 throw new SecurityInfrastructureException(
                         "启动自检失败：未发现任何 UserDetailsProvider 实现（应由 sw-biz-system 提供）。" +
                                 "安全链将无法认证任何受保护请求，拒绝启动以暴露装配缺陷。");
+            }
+        };
+    }
+
+    /** 调试认证一旦在非 dev/test profile 激活，启动即失败，确保隔离不是约定而是门禁。 */
+    @Bean
+    public ApplicationRunner debugAuthenticationProfileCheck(
+            DebugAuthenticationProperties debugAuthenticationProperties,
+            Environment environment) {
+        return args -> {
+            if (debugAuthenticationProperties.isEnabled()
+                    && !DebugAuthenticationProfile.isDevelopmentOnly(environment)) {
+                throw new IllegalStateException(
+                        "调试认证仅允许在 dev/test profile 使用，当前 profile 不满足 fail-closed 门禁");
             }
         };
     }

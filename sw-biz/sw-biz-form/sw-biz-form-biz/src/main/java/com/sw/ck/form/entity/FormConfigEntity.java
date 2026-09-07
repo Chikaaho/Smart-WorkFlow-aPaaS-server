@@ -1,6 +1,9 @@
 package com.sw.ck.form.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.sw.ck.form.handler.JsonStringTypeHandler;
+import org.apache.ibatis.type.JdbcType;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -21,7 +24,7 @@ import lombok.EqualsAndHashCode;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@TableName("sw_form_config")
+@TableName(value = "sw_form_config", autoResultMap = true)
 public class FormConfigEntity extends FormBaseEntity {
 
     /** 关联 sw_form_def.id */
@@ -46,5 +49,7 @@ public class FormConfigEntity extends FormBaseEntity {
     private String parentTable;
 
     /** 表单定义 JSON（控件布局/样式/校验规则） */
+    @TableField(value = "definition", jdbcType = JdbcType.OTHER,
+            typeHandler = JsonStringTypeHandler.class)
     private String definition;
 }

@@ -30,6 +30,7 @@ public enum FormErrorCode implements ErrorCode {
 
     // ==================== 渲染（1300-1399） ====================
     CONFIG_NOT_FOUND(1300, "表单配置未找到"),
+    SNAPSHOT_NOT_FOUND(1301, "表单版本快照不存在"),
 
     // ==================== 提交校验（1400-1499） ====================
     SUBMIT_FIELD_UNKNOWN(1400, "提交了未定义的字段"),

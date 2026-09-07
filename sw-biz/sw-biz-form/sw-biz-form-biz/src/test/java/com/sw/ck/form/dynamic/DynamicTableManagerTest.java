@@ -272,6 +272,8 @@ class DynamicTableManagerTest {
         void validColumnName_shouldPass() {
             assertThatCode(() -> dynamicTableManager.validateColumnName("custom_field"))
                     .doesNotThrowAnyException();
+            assertThatCode(() -> dynamicTableManager.validateColumnName("applicantNote"))
+                    .doesNotThrowAnyException();
             assertThatCode(() -> dynamicTableManager.validateColumnName("field_123"))
                     .doesNotThrowAnyException();
             assertThatCode(() -> dynamicTableManager.validateColumnName("_internal_note"))

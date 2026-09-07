@@ -15,13 +15,14 @@ import java.util.List;
 /**
  * 当前认证主体会话端点。
  * <p>
- * {@code GET /system/auth/me} 返回当前登录用户的基本信息、角色、权限标识及超管标记。
- * {@code GET /system/auth/menus} 返回当前用户的导航菜单树。
+ * {@code GET /system/auth/me}（兼容别名 {@code GET /auth/me}）返回当前登录用户的基本信息、
+ * 角色、权限标识及超管标记。{@code GET /system/auth/menus}（兼容别名 {@code GET /auth/menus}）
+ * 返回当前用户的导航菜单树。
  * 这些路径不在 {@code sw.security.permit-urls} 白名单中，未携带/失效 token → 401。
  * </p>
  */
 @RestController
-@RequestMapping("/system/auth")
+@RequestMapping({"/system/auth", "/auth"})
 public class AuthMeController {
 
     private final SysUserService sysUserService;

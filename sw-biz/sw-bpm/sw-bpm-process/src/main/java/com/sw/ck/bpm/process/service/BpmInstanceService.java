@@ -15,7 +15,7 @@ import java.util.Optional;
  * <ul>
  *   <li>{@link #updateStatus(String, String)} 仅更新 status 字段，不触及其他列。
  *       MyBatis-Plus 拦截器自动注入 {@code update_time / update_by}。</li>
- *   <li>调用方负责保证 status 值合法（见 {@link com.sw.ck.bpm.process.entity.InstanceStatusEnum}）。</li>
+     *   <li>调用方负责保证 status 值合法（见 {@link com.sw.ck.bpm.process.entity.InstanceStatusEnum}）。</li>
  * </ul>
  */
 public interface BpmInstanceService extends BaseService<BpmInstance> {

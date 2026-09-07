@@ -79,9 +79,10 @@ public interface BpmProcessDefService {
      * 分页查询流程定义列表（不含 graph_json 大字段）。
      *
      * @param pageParam 分页参数
+     * @param formKey   可选，按绑定表单 formKey 精确过滤（为空不过滤）
      * @return 分页结果
      */
-    PageResult<BpmProcessDef> listDefs(PageParam pageParam);
+    PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey);
 
     /**
      * 软删流程定义。

@@ -294,6 +294,15 @@ class UserDetailsProviderDataScopeTest {
         assertThat(provider.loadByUsername("u_not_exist")).isNull();
     }
 
+    @Test
+    void inactiveUser_shouldNotEnterAuthenticationContext() {
+        Long userId = seedUser("u_inactive");
+        jdbcTemplate.update("UPDATE sys_user SET status = 1 WHERE id = ?", userId);
+
+        assertThat(provider.loadByUserId(userId)).isNull();
+        assertThat(provider.loadByUsername("u_inactive")).isNull();
+    }
+
     // ==================== 测试上下文配置 ====================
 
     @Configuration

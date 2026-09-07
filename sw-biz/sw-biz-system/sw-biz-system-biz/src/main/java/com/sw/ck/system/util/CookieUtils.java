@@ -7,15 +7,16 @@ import jakarta.servlet.http.HttpServletResponse;
 /**
  * httpOnly cookie 工具 — 仅用于 refresh token 的 Set-Cookie 操作。
  * <p>
- * 所有 cookie 均设置 httpOnly=true（JS 不可读）、Path=/api/auth/（仅 auth 端点携带）、
- * SameSite 策略（Secure=true → Strict, Secure=false → Lax）。
+ * 所有 cookie 均设置 httpOnly=true（JS 不可读）、可配置 Path（P45：必须覆盖当前公开
+ * refresh/logout URL 的浏览器可见最小路径，生产按公开 API 前缀如 /sw-server/api/ 配置，
+ * 不再硬编码内部路径假设）、SameSite 策略（Secure=true → Strict, Secure=false → Lax）。
  */
 public final class CookieUtils {
 
     /** Refresh token cookie 名称 */
     public static final String REFRESH_COOKIE_NAME = "rt";
-    /** Refresh token cookie 路径 */
-    public static final String REFRESH_COOKIE_PATH = "/api/auth/";
+    /** 开发默认 Refresh token cookie 路径（生产经 sw.security.cookie.path 覆盖） */
+    public static final String DEFAULT_REFRESH_COOKIE_PATH = "/api/auth/";
     /** Refresh token 默认 Max-Age（秒）= 7 天 */
     public static final int REFRESH_MAX_AGE = 604800;
 
@@ -30,12 +31,14 @@ public final class CookieUtils {
      * @param token    原始 refresh token 字符串（非 hash）
      * @param maxAge   过期秒数，传 0 或负数使用默认 7 天
      * @param secure   是否设置 Secure 属性（生产环境 true，开发期 false）
+     * @param path     浏览器可见 cookie Path（须覆盖公开 refresh/logout URL 最小前缀）
      */
-    public static void setRefreshCookie(HttpServletResponse response, String token, int maxAge, boolean secure) {
+    public static void setRefreshCookie(HttpServletResponse response, String token, int maxAge,
+                                        boolean secure, String path) {
         Cookie cookie = new Cookie(REFRESH_COOKIE_NAME, token);
         cookie.setHttpOnly(true);
         cookie.setSecure(secure);
-        cookie.setPath(REFRESH_COOKIE_PATH);
+        cookie.setPath(path != null && !path.isBlank() ? path : DEFAULT_REFRESH_COOKIE_PATH);
         cookie.setAttribute("SameSite", secure ? "Strict" : "Lax");
         cookie.setMaxAge(maxAge > 0 ? maxAge : REFRESH_MAX_AGE);
         response.addCookie(cookie);
@@ -43,13 +46,13 @@ public final class CookieUtils {
 
     /**
      * 清除 refresh token cookie（logout / token 撤销时调用）。
-     * 设置 Max-Age=0 + 空值，浏览器立即删除。
+     * 设置 Max-Age=0 + 空值，浏览器立即删除。清除必须使用与设置时相同的 Path。
      */
-    public static void clearRefreshCookie(HttpServletResponse response) {
+    public static void clearRefreshCookie(HttpServletResponse response, String path) {
         Cookie cookie = new Cookie(REFRESH_COOKIE_NAME, "");
         cookie.setHttpOnly(true);
         cookie.setSecure(true); // 清除时 Secure 属性不影响删除
-        cookie.setPath(REFRESH_COOKIE_PATH);
+        cookie.setPath(path != null && !path.isBlank() ? path : DEFAULT_REFRESH_COOKIE_PATH);
         cookie.setAttribute("SameSite", "Strict");
         cookie.setMaxAge(0);
         response.addCookie(cookie);

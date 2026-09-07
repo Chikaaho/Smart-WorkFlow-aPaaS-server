@@ -121,7 +121,12 @@ class NotifyControllerIntegrationTest {
                     content           text            not null,
                     biz_type          varchar(30)     not null,
                     biz_id            varchar(64),
-                    is_read           boolean         not null default false
+                    is_read           boolean         not null default false,
+                    channel           varchar(40)     not null default 'IN_APP',
+                    delivery_status   varchar(20)     not null default 'SUCCESS',
+                    external_message_id varchar(200),
+                    failure_reason    varchar(500),
+                    idempotency_key   varchar(200)
                 )
                 """);
     }
@@ -715,7 +720,7 @@ class NotifyControllerIntegrationTest {
         @Bean
         public NotifyController notifyController(
                 NotifyMessageService notifyMessageService) {
-            return new NotifyController(notifyMessageService);
+            return new NotifyController(notifyMessageService, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class));
         }
     }
 }

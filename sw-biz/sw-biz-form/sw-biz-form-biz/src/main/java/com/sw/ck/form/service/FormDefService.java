@@ -3,7 +3,12 @@ package com.sw.ck.form.service;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.dto.FormSnapshotDTO;
+import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
 import com.sw.ck.form.entity.FormDefEntity;
+
+import java.util.List;
+import java.util.Collection;
 
 /**
  * 表单定义管理服务。
@@ -108,6 +113,41 @@ public interface FormDefService {
      * 根据 ID 获取表单定义实体。
      */
     FormDefEntity getById(String id);
+
+    /** 查询当前租户内当前用户可见的已发布表单。 */
+    List<FormDefDTO> listPublishedForCurrentUser();
+
+    /** 更新业务发起可见范围；空集合表示当前租户内全部用户。 */
+    void updateVisibility(String formId, Collection<Long> userIds);
+
+    /** 判断当前用户是否可通过业务入口发起该已发布表单。 */
+    boolean isCurrentUserVisible(String formKey);
+
+    /**
+     * 查询表单历史版本快照列表（版本号倒序）。
+     * <p>
+     * 只读：返回版本元数据（formVersion + createTime），不含 definition JSON。
+     * 表单不存在抛 FORM_NOT_FOUND；无任何快照返回空列表。
+     * 多租户/逻辑删除走 MyBatis-Plus 拦截器自动过滤。
+     * </p>
+     *
+     * @param formId 表单 ID
+     * @return 快照列表，按 formVersion 倒序
+     */
+    List<FormSnapshotDTO> listSnapshots(String formId);
+
+    /**
+     * 读取指定版本的快照详情（只读预览）。
+     * <p>
+     * 返回该版本的完整 definition JSON；表单或快照不存在抛对应错误码。
+     * 不提供任何回写路径。
+     * </p>
+     *
+     * @param formId 表单 ID
+     * @param formVersion 快照版本号
+     * @return 快照详情（含 definition）
+     */
+    FormSnapshotDetailDTO getSnapshot(String formId, Integer formVersion);
 
     /**
      * 删除表单草稿（逻辑删除，仅 DRAFT 状态允许）。

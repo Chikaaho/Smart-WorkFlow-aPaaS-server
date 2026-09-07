@@ -33,12 +33,31 @@ public enum BpmErrorCode implements ErrorCode {
     DEPLOYMENT_FAILED(2103, "BPMN 部署失败"),
     PROCESS_NOT_PUBLISHED(2104, "流程未发布，无法获取 BPMN XML"),
     PROCESS_DEF_PUBLISHED(2105, "流程定义已发布，不可修改"),
+    NODE_CONFIG_INVALID(2106, "节点配置不合法"),
+    NODE_CAPABILITY_MISSING(2107, "节点缺少必要能力"),
+    NODE_REGISTRATION_INVALID(2108, "节点注册契约非法"),
 
     // ==================== 审批人解析（22xx） ====================
     APPROVER_RESOLVE_EMPTY(2200, "审批人解析结果为空"),
     APPROVER_TYPE_NOT_IMPLEMENTED(2201, "审批人类型未实现"),
     APPROVER_CONFIG_MISSING(2202, "审批人配置缺失"),
     APPROVER_TENANT_ID_MISSING(2203, "流程变量中缺少 tenantId，无法构建审批人上下文"),
+
+    // ==================== P58 共享参与人与审批（23xx） ====================
+    PARTICIPANT_CONFIG_INVALID(2300, "参与人配置不合法"),
+    PARTICIPANT_TYPE_NOT_IMPLEMENTED(2301, "参与人策略未实现"),
+    PARTICIPANT_RESOLVE_EMPTY(2302, "参与人解析结果为空"),
+    PARTICIPANT_ADAPTER_NOT_FOUND(2303, "参与人适配器不存在"),
+    APPROVAL_ACTION_INVALID(2304, "审批动作不合法"),
+    APPROVAL_ALREADY_HANDLED(2305, "节点已被处理"),
+    APPROVAL_RETURN_TARGET_INVALID(2306, "退回目标节点不合法"),
+    APPROVAL_OPINION_INVALID(2307, "审批意见不合法"),
+    APPROVAL_OPINION_REQUIRED(2308, "审批意见不能为空"),
+    COUNTER_CONFIG_INVALID(2309, "会签结算配置不合法"),
+    BRANCH_CONFIG_INVALID(2310, "分支配置不合法"),
+    BRANCH_EVALUATION_FAILED(2311, "分支条件求值失败"),
+    NODE_DELIVERY_FAILED(2312, "节点投递失败"),
+    INSTANCE_FAILED(2313, "流程实例已失败，不可继续审批"),
     ;
 
     private final int code;

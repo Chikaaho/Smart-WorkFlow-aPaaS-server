@@ -79,7 +79,7 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     @Override
     public LoginUser loadByUsername(String username) {
         SysUser user = sysUserService.getByUsername(username);
-        if (user == null) {
+        if (!isActive(user)) {
             return null;
         }
         return toLoginUser(user);
@@ -88,10 +88,15 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     @Override
     public LoginUser loadByUserId(Long userId) {
         SysUser user = sysUserService.getById(userId);
-        if (user == null) {
+        if (!isActive(user)) {
             return null;
         }
         return toLoginUser(user);
+    }
+
+    /** 逻辑删除用户不会被 getById 返回；非 0 状态也不得进入认证上下文。 */
+    private boolean isActive(SysUser user) {
+        return user != null && (user.getStatus() == null || user.getStatus() == 0);
     }
 
     private LoginUser toLoginUser(SysUser user) {

@@ -6,6 +6,8 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverContext;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
+import com.sw.ck.bpm.api.participant.NodeParticipantContext;
+import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.common.exception.BaseException;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.UserTask;
@@ -15,6 +17,9 @@ import org.flowable.task.service.delegate.TaskListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 
 import java.util.List;
 import java.util.Map;
@@ -55,14 +60,30 @@ public class ApprovalTaskListener implements TaskListener {
     private final RepositoryService repositoryService;
     private final Map<String, NodeApproverResolver> resolverMap;
     private final ObjectMapper objectMapper;
+    private final ParticipantResolverRegistry participantResolverRegistry;
+    private final ParticipantSnapshotRecorder participantSnapshotRecorder;
 
+    /** 兼容既有引擎单测与旧 DESIGNATED 配置。 */
     public ApprovalTaskListener(RepositoryService repositoryService,
                                 @org.springframework.beans.factory.annotation.Qualifier("approverResolverMap")
                                 Map<String, NodeApproverResolver> resolverMap,
                                 ObjectMapper objectMapper) {
+        this(repositoryService, resolverMap, objectMapper, null, null);
+    }
+
+    @Autowired
+    public ApprovalTaskListener(RepositoryService repositoryService,
+                                @org.springframework.beans.factory.annotation.Qualifier("approverResolverMap")
+                                Map<String, NodeApproverResolver> resolverMap,
+                                ObjectMapper objectMapper,
+                                ParticipantResolverRegistry participantResolverRegistry,
+                                ObjectProvider<ParticipantSnapshotRecorder> participantSnapshotRecorder) {
         this.repositoryService = repositoryService;
         this.resolverMap = resolverMap;
         this.objectMapper = objectMapper;
+        this.participantResolverRegistry = participantResolverRegistry;
+        this.participantSnapshotRecorder = participantSnapshotRecorder == null
+                ? null : participantSnapshotRecorder.getIfAvailable();
     }
 
     @Override
@@ -90,8 +111,12 @@ public class ApprovalTaskListener implements TaskListener {
                     "BPMN 模型中未找到节点: " + nodeKey);
         }
 
-        // 2. 读取 approverConfig（flowable 命名空间扩展属性）
-        String approverJson = userTask.getAttributeValue(FLOWABLE_NS, APPROVER_CONFIG_ELEMENT);
+        // 2. 读取统一 participantConfig；旧 approverConfig 作为兼容入口
+        String approverJson = userTask.getAttributeValue(FLOWABLE_NS, "participantConfig");
+        boolean unifiedConfig = approverJson != null && !approverJson.isBlank();
+        if (!unifiedConfig) {
+            approverJson = userTask.getAttributeValue(FLOWABLE_NS, APPROVER_CONFIG_ELEMENT);
+        }
         if (approverJson == null || approverJson.isBlank()) {
             log.error("Approver config missing in UserTask attributes: nodeKey={}", nodeKey);
             throw new BaseException(BpmErrorCode.APPROVER_CONFIG_MISSING);
@@ -108,20 +133,14 @@ public class ApprovalTaskListener implements TaskListener {
                     "审批人配置 JSON 解析失败: " + e.getMessage());
         }
 
-        String type = (String) approverConfig.get(CONFIG_KEY_TYPE);
+        Object typeValue = approverConfig.containsKey("strategy")
+                ? approverConfig.get("strategy") : approverConfig.get(CONFIG_KEY_TYPE);
+        String type = typeValue == null ? null : String.valueOf(typeValue);
         Object value = approverConfig.get(CONFIG_KEY_VALUE);
 
         if (type == null || type.isBlank()) {
             throw new BaseException(BpmErrorCode.APPROVER_CONFIG_MISSING.getCode(),
                     "审批人类型为空: nodeKey=" + nodeKey);
-        }
-
-        // 4. 按 type 分发解析
-        NodeApproverResolver resolver = resolverMap.get(type);
-        if (resolver == null) {
-            log.error("Approver type '{}' not implemented (nodeKey={})", type, nodeKey);
-            throw new BaseException(BpmErrorCode.APPROVER_TYPE_NOT_IMPLEMENTED.getCode(),
-                    "未实现的审批人类型: " + type);
         }
 
         // 构建上下文
@@ -131,29 +150,63 @@ public class ApprovalTaskListener implements TaskListener {
                     processInstanceId, nodeKey);
             throw new BaseException(BpmErrorCode.APPROVER_TENANT_ID_MISSING);
         }
-        NodeApproverContext ctx = NodeApproverContext.builder()
-                .tenantId(tenantId)
-                .processInstanceId(processInstanceId)
-                .nodeKey(nodeKey)
-                .businessKey((String) delegateTask.getVariable("recordId"))
-                .formKey((String) delegateTask.getVariable("formKey"))
-                .approverValue(value)
-                .initiatorUserId(parseLong(delegateTask.getVariable("submitter")))
-                .build();
-
-        // 5. 解析审批人
-        List<String> userIds = resolver.resolve(ctx);
+        List<String> userIds;
+        if (unifiedConfig && participantResolverRegistry != null) {
+            Map<String, Object> variables = new java.util.LinkedHashMap<>(delegateTask.getVariables());
+            variables.putIfAbsent("initiator", parseLong(delegateTask.getVariable("submitter")));
+            variables.putIfAbsent("initiatorId", parseLong(delegateTask.getVariable("submitter")));
+            NodeParticipantContext ctx = NodeParticipantContext.builder()
+                    .tenantId(tenantId)
+                    .processInstanceId(processInstanceId)
+                    .taskId(delegateTask.getId())
+                    .nodeKey(nodeKey)
+                    .businessKey(delegateTask.getVariable("recordId") == null ? null
+                            : String.valueOf(delegateTask.getVariable("recordId")))
+                    .formKey(delegateTask.getVariable("formKey") == null ? null
+                            : String.valueOf(delegateTask.getVariable("formKey")))
+                    .initiatorUserId(parseLong(delegateTask.getVariable("submitter")))
+                    .variables(variables)
+                    .strategy(type)
+                    .strategyValue(value)
+                    .adapterId(approverConfig.get("adapterId") == null
+                            ? null : String.valueOf(approverConfig.get("adapterId")))
+                    .build();
+            userIds = participantResolverRegistry.resolve(ctx);
+        } else {
+            NodeApproverResolver resolver = resolverMap.get(type);
+            if (resolver == null) {
+                log.error("Approver type '{}' not implemented (nodeKey={})", type, nodeKey);
+                throw new BaseException(BpmErrorCode.APPROVER_TYPE_NOT_IMPLEMENTED.getCode(),
+                        "未实现的审批人类型: " + type);
+            }
+            NodeApproverContext ctx = NodeApproverContext.builder()
+                    .tenantId(tenantId).processInstanceId(processInstanceId).nodeKey(nodeKey)
+                    .businessKey((String) delegateTask.getVariable("recordId"))
+                    .formKey((String) delegateTask.getVariable("formKey"))
+                    .approverValue(value)
+                    .initiatorUserId(parseLong(delegateTask.getVariable("submitter"))).build();
+            userIds = resolver.resolve(ctx);
+        }
         if (userIds == null || userIds.isEmpty()) {
             log.error("Approver resolution returned empty: nodeKey={}, type={}", nodeKey, type);
             throw new BaseException(BpmErrorCode.APPROVER_RESOLVE_EMPTY);
         }
 
-        // v1 取首个作为 assignee
-        String assignee = userIds.get(0);
-        delegateTask.setAssignee(assignee);
+        // 单用户继续使用原生 assignee；多人统一作为候选任务，避免只取首人
+        if (userIds.size() == 1) {
+            delegateTask.setAssignee(userIds.get(0));
+        } else {
+            for (String userId : userIds) {
+                delegateTask.addCandidateUser(userId);
+            }
+        }
+
+        if (participantSnapshotRecorder != null) {
+            participantSnapshotRecorder.record(processInstanceId, nodeKey, delegateTask.getId(), userIds, tenantId);
+        }
 
         log.info("Task assignee set: taskId={}, nodeKey={}, assignee={}",
-                delegateTask.getId(), nodeKey, assignee);
+                delegateTask.getId(), nodeKey, userIds.size() == 1 ? userIds.get(0) : "CANDIDATES");
     }
 
     private Long parseLong(Object value) {

@@ -65,4 +65,10 @@ public class BpmProcessDef extends BaseEntity {
      */
     @TableField("graph_json")
     private String graphJson;
+
+    /**
+     * 事项归属分类（v0.0.2 流程中心；NULL=未分类兜底）。
+     */
+    @TableField("category_id")
+    private Long categoryId;
 }

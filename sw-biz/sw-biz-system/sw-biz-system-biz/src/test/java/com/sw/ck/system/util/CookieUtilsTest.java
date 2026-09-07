@@ -17,14 +17,14 @@ class CookieUtilsTest {
     @DisplayName("setRefreshCookie：设置正确 cookie 属性")
     void setRefreshCookie_shouldSetCorrectAttributes() {
         MockHttpServletResponse response = new MockHttpServletResponse();
-        CookieUtils.setRefreshCookie(response, "test-token-value", 900, false);
+        CookieUtils.setRefreshCookie(response, "test-token-value", 900, false, CookieUtils.DEFAULT_REFRESH_COOKIE_PATH);
 
         Cookie cookie = response.getCookie(CookieUtils.REFRESH_COOKIE_NAME);
         assertThat(cookie).isNotNull();
         assertThat(cookie.getValue()).isEqualTo("test-token-value");
         assertThat(cookie.isHttpOnly()).as("HttpOnly 必须为 true").isTrue();
         assertThat(cookie.getSecure()).as("secure=false 时不应设 Secure").isFalse();
-        assertThat(cookie.getPath()).isEqualTo(CookieUtils.REFRESH_COOKIE_PATH);
+        assertThat(cookie.getPath()).isEqualTo(CookieUtils.DEFAULT_REFRESH_COOKIE_PATH);
         assertThat(cookie.getMaxAge()).isEqualTo(900);
         // SameSite 通过 getAttribute 验证
         assertThat(cookie.getAttribute("SameSite")).isEqualTo("Lax");
@@ -34,7 +34,7 @@ class CookieUtilsTest {
     @DisplayName("setRefreshCookie：secure=true → SameSite=Strict + Secure=true")
     void setRefreshCookie_secureTrue_shouldSetStrictAndSecure() {
         MockHttpServletResponse response = new MockHttpServletResponse();
-        CookieUtils.setRefreshCookie(response, "secure-token", 3600, true);
+        CookieUtils.setRefreshCookie(response, "secure-token", 3600, true, CookieUtils.DEFAULT_REFRESH_COOKIE_PATH);
 
         Cookie cookie = response.getCookie(CookieUtils.REFRESH_COOKIE_NAME);
         assertThat(cookie.getSecure()).isTrue();
@@ -45,7 +45,7 @@ class CookieUtilsTest {
     @DisplayName("setRefreshCookie：maxAge ≤ 0 使用默认 7 天")
     void setRefreshCookie_zeroMaxAge_shouldUseDefault() {
         MockHttpServletResponse response = new MockHttpServletResponse();
-        CookieUtils.setRefreshCookie(response, "default-age-token", 0, false);
+        CookieUtils.setRefreshCookie(response, "default-age-token", 0, false, CookieUtils.DEFAULT_REFRESH_COOKIE_PATH);
 
         Cookie cookie = response.getCookie(CookieUtils.REFRESH_COOKIE_NAME);
         assertThat(cookie.getMaxAge()).isEqualTo(CookieUtils.REFRESH_MAX_AGE);
@@ -57,14 +57,14 @@ class CookieUtilsTest {
     @DisplayName("clearRefreshCookie：设置 Max-Age=0 + 空值")
     void clearRefreshCookie_shouldClearCookie() {
         MockHttpServletResponse response = new MockHttpServletResponse();
-        CookieUtils.clearRefreshCookie(response);
+        CookieUtils.clearRefreshCookie(response, CookieUtils.DEFAULT_REFRESH_COOKIE_PATH);
 
         Cookie cookie = response.getCookie(CookieUtils.REFRESH_COOKIE_NAME);
         assertThat(cookie).isNotNull();
         assertThat(cookie.getValue()).isEmpty();
         assertThat(cookie.getMaxAge()).isZero();
         assertThat(cookie.isHttpOnly()).isTrue();
-        assertThat(cookie.getPath()).isEqualTo(CookieUtils.REFRESH_COOKIE_PATH);
+        assertThat(cookie.getPath()).isEqualTo(CookieUtils.DEFAULT_REFRESH_COOKIE_PATH);
     }
 
     // ============ getRefreshTokenFromCookie ============
@@ -74,7 +74,7 @@ class CookieUtilsTest {
     void getRefreshTokenFromCookie_shouldReturnValue() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         Cookie cookie = new Cookie(CookieUtils.REFRESH_COOKIE_NAME, "my-refresh-token");
-        cookie.setPath(CookieUtils.REFRESH_COOKIE_PATH);
+        cookie.setPath(CookieUtils.DEFAULT_REFRESH_COOKIE_PATH);
         request.setCookies(cookie);
 
         assertThat(CookieUtils.getRefreshTokenFromCookie(request))
@@ -117,7 +117,7 @@ class CookieUtilsTest {
     @DisplayName("CookieUtils 常量：rt + /api/auth/ + 604800")
     void constants_shouldMatchContract() {
         assertThat(CookieUtils.REFRESH_COOKIE_NAME).isEqualTo("rt");
-        assertThat(CookieUtils.REFRESH_COOKIE_PATH).isEqualTo("/api/auth/");
+        assertThat(CookieUtils.DEFAULT_REFRESH_COOKIE_PATH).isEqualTo("/api/auth/");
         assertThat(CookieUtils.REFRESH_MAX_AGE).isEqualTo(604800);
     }
 }

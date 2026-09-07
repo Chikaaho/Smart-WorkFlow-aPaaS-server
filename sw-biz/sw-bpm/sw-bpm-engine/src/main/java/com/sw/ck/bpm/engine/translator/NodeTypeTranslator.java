@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.translator;
 
 import com.sw.ck.bpm.api.dto.GraphElement;
+import com.sw.ck.bpm.api.node.BpmNodeDefinition;
 import org.flowable.bpmn.model.FlowElement;
 
 /**
@@ -17,21 +18,22 @@ import org.flowable.bpmn.model.FlowElement;
  * 纯净红线（见 {@code NodeApproverResolver} 先例注释），故落点限定在引擎内部，
  * 不污染 sw-bpm-api。
  * </p>
- * <p>契约：{@link #translate(GraphElement)} 返回翻译产物；返回 null 时
- * {@link GraphToBpmnTranslator} 跳过该节点（与未知类型语义一致）。</p>
+ * <p>契约：{@link #translate(GraphElement)} 必须返回翻译产物；返回 null
+ * 将按缺少节点能力拒绝发布，避免生成缺节点的 BPMN。</p>
  */
-public interface NodeTypeTranslator {
+public interface NodeTypeTranslator extends BpmNodeDefinition {
 
     /**
      * 本翻译器处理的节点类型（作为注册表分发 key，如 {@code START}）。
      */
+    @Override
     String type();
 
     /**
      * 将节点翻译为 Flowable BPMN 元素。
      *
      * @param node 画布节点（type 已由注册表按 {@link #type()} 匹配）
-     * @return BPMN 元素；返回 null 表示跳过该节点
+     * @return 非空 BPMN 元素；返回 null 将按缺少节点能力拒绝发布
      */
     FlowElement translate(GraphElement node);
 }

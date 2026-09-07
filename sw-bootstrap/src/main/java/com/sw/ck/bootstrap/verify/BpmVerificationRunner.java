@@ -26,18 +26,26 @@ public class BpmVerificationRunner implements CommandLineRunner {
     private final ExternalDatasourceService dsService;
     private final SqlExecutor sqlExecutor;
     private final SqlExecutionAuditService auditService;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     public BpmVerificationRunner(ExternalDatasourceService dsService,
                                   SqlExecutor sqlExecutor,
-                                  SqlExecutionAuditService auditService) {
+                                  SqlExecutionAuditService auditService,
+                                  org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
         this.dsService = dsService;
         this.sqlExecutor = sqlExecutor;
         this.auditService = auditService;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
     public void run(String... args) {
         log.info("========== BPM 外部数据源执行引擎仿真验证开始 ==========");
+
+        // 持久库（PG local profile / dev 外接库）重启时，上次运行的残留行会让
+        // uk_sw_bpm_ext_ds_name(name, deleted) 唯一键在插入或逻辑删除时冲突。
+        // 该行是本 Runner 自造的验证夹具，物理清除是幂等重跑的前提。
+        jdbcTemplate.update("DELETE FROM sw_bpm_ext_datasource WHERE name = ?", "verify-h2-self");
 
         // 创建指向 H2 自身的测试数据源
         ExternalDatasource ds = new ExternalDatasource();

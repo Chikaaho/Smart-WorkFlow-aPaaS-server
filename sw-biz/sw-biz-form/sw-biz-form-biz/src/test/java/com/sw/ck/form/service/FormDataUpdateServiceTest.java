@@ -356,7 +356,7 @@ class FormDataUpdateServiceTest {
                 + "id VARCHAR(36) PRIMARY KEY, form_key VARCHAR(100) NOT NULL UNIQUE,"
                 + "name VARCHAR(200) NOT NULL, logical_table_name VARCHAR(100),"
                 + "status VARCHAR(20) NOT NULL DEFAULT 'DRAFT', physical_table_name VARCHAR(100),"
-                + "form_version INT NOT NULL DEFAULT 1, description VARCHAR(500),"
+                + "form_version INT NOT NULL DEFAULT 1, description VARCHAR(500), visibility_scope TEXT,"
                 + "sub_table_mapping TEXT,"
                 + "tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT NOT NULL DEFAULT 0,"
                 + "create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, create_by BIGINT,"
@@ -440,7 +440,10 @@ class FormDataUpdateServiceTest {
                                             ObjectMapper om, JdbcTemplate jt, DictFacade df,
                                             DomainEventPublisher ep, FormFieldValidator ffv) {
             return new FormSubmitService(fdm, ftm, dtm, new FormIdGenerator(), om, jt, df, ep,
-                    java.util.Optional.empty(), ffv);
+                    java.util.Optional.empty(), ffv,
+                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
+                @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+            });
         }
         @Bean public FormDataUpdateService fdus(FormDefService fds, FormDefMapper fdm, FormConfigMapper fcm,
                                                  JdbcTemplate jt, ObjectMapper om, DictFacade df,

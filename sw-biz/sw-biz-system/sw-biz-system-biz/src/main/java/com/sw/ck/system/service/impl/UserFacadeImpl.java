@@ -64,4 +64,30 @@ public class UserFacadeImpl implements UserQueryFacade {
                                         ? u.getRealName() : u.getUsername(),
                         (a, b) -> a, java.util.LinkedHashMap::new));
     }
+
+    @Override
+    public List<Long> findActiveUserIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        return findActiveUserIds(ids, loginUser == null ? null : loginUser.getTenantId());
+    }
+
+    @Override
+    public List<Long> findActiveUserIds(Collection<Long> ids, Long tenantId) {
+        if (ids == null || ids.isEmpty() || tenantId == null) return List.of();
+        return sysUserMapper.selectActiveUserIds(List.copyOf(ids), tenantId);
+    }
+
+    @Override
+    public List<Long> findActiveUserIdsByRoleCodes(Collection<String> roleCodes) {
+        if (roleCodes == null || roleCodes.isEmpty()) return List.of();
+        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        return findActiveUserIdsByRoleCodes(roleCodes, loginUser == null ? null : loginUser.getTenantId());
+    }
+
+    @Override
+    public List<Long> findActiveUserIdsByRoleCodes(Collection<String> roleCodes, Long tenantId) {
+        if (roleCodes == null || roleCodes.isEmpty() || tenantId == null) return List.of();
+        return sysUserMapper.selectActiveUserIdsByRoleCodes(List.copyOf(roleCodes), tenantId);
+    }
 }

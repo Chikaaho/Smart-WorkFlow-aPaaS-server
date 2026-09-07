@@ -141,6 +141,8 @@ public class SysUserServiceImpl
         if (roleIds != null && valid.size() != roleIds.stream().filter(Objects::nonNull).distinct().count())
             throw new IllegalArgumentException("只能绑定启用的普通角色");
         sysUserRoleMapper.delete(Wrappers.lambdaQuery(SysUserRole.class).eq(SysUserRole::getUserId, userId));
+        // 唯一键含 deleted 列：先物理清除历史软删残留，重复更新（如停用→恢复）才能再次插入
+        purgeSoftDeletedRoleLinks(userId);
         valid.forEach(roleId -> {
             SysUserRole relation = new SysUserRole();
             relation.setUserId(userId);
@@ -166,6 +168,7 @@ public class SysUserServiceImpl
         if (postIds != null && valid.size() != postIds.stream().filter(Objects::nonNull).distinct().count())
             throw new IllegalArgumentException("只能绑定启用的岗位");
         sysUserPostMapper.delete(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, userId));
+        purgeSoftDeletedPostLinks(userId);
         valid.forEach(postId -> { SysUserPost r = new SysUserPost(); r.setUserId(userId); r.setPostId(postId); sysUserPostMapper.insert(r); });
     }
 
@@ -177,5 +180,20 @@ public class SysUserServiceImpl
         user.setId(userId);
         user.setPassword(passwordEncoder.encode(plainPassword));
         updateById(user);
+    }
+
+    private void purgeSoftDeletedRoleLinks(Long userId) {
+        if (sysUserRoleMapper == null) return;
+        sysUserRoleMapper.hardDeleteSoftDeletedByUser(userId, currentTenantId());
+    }
+
+    private void purgeSoftDeletedPostLinks(Long userId) {
+        if (sysUserPostMapper == null) return;
+        sysUserPostMapper.hardDeleteSoftDeletedByUser(userId, currentTenantId());
+    }
+
+    private Long currentTenantId() {
+        com.sw.ck.security.holder.LoginUser loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        return loginUser == null || loginUser.getTenantId() == null ? 0L : loginUser.getTenantId();
     }
 }

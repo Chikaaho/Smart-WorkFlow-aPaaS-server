@@ -2,6 +2,8 @@ package com.sw.ck.security.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.security.cache.LoginUserLoader;
+import com.sw.ck.security.filter.AccessLoggingFilter;
+import com.sw.ck.security.filter.DebugAuthenticationFilter;
 import com.sw.ck.security.filter.JwtAuthenticationFilter;
 import com.sw.ck.security.handler.RestAccessDeniedHandler;
 import com.sw.ck.security.handler.RestAuthenticationEntryPoint;
@@ -42,6 +44,22 @@ public class WebSecurityAutoConfiguration {
     }
 
     @Bean
+    public DebugAuthenticationFilter debugAuthenticationFilter(
+            LoginUserLoader loginUserLoader,
+            SecurityProperties securityProperties,
+            DebugAuthenticationProperties debugAuthenticationProperties,
+            org.springframework.core.env.Environment environment,
+            ObjectMapper objectMapper) {
+        return new DebugAuthenticationFilter(loginUserLoader, securityProperties,
+                debugAuthenticationProperties, environment, objectMapper);
+    }
+
+    @Bean
+    public AccessLoggingFilter accessLoggingFilter() {
+        return new AccessLoggingFilter();
+    }
+
+    @Bean
     public RestAuthenticationEntryPoint restAuthenticationEntryPoint(ObjectMapper objectMapper) {
         return new RestAuthenticationEntryPoint(objectMapper);
     }
@@ -75,7 +93,9 @@ public class WebSecurityAutoConfiguration {
                                                      JwtAuthenticationFilter jwtAuthenticationFilter,
                                                      RestAuthenticationEntryPoint authenticationEntryPoint,
                                                      RestAccessDeniedHandler accessDeniedHandler,
-                                                     SecurityProperties securityProperties) throws Exception {
+                                                     SecurityProperties securityProperties,
+                                                     DebugAuthenticationFilter debugAuthenticationFilter,
+                                                     AccessLoggingFilter accessLoggingFilter) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -85,7 +105,9 @@ public class WebSecurityAutoConfiguration {
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(debugAuthenticationFilter, JwtAuthenticationFilter.class)
+                .addFilterAfter(accessLoggingFilter, DebugAuthenticationFilter.class);
         return http.build();
     }
 }

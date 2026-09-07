@@ -174,9 +174,12 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    public PageResult<BpmProcessDef> listDefs(PageParam pageParam) {
+    public PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey) {
         LambdaQueryWrapper<BpmProcessDef> wrapper = Wrappers.<BpmProcessDef>lambdaQuery()
                 .orderByDesc(BpmProcessDef::getUpdateTime);
+        if (formKey != null && !formKey.isBlank()) {
+            wrapper.eq(BpmProcessDef::getFormKey, formKey.trim());
+        }
         PageResult<BpmProcessDef> result = mapper.selectPage(pageParam, wrapper);
         // 列表不返回 graph_json 大字段
         if (result.getRecords() != null) {
