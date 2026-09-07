@@ -26,6 +26,8 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** 催办服务实现。 */
 @Service
@@ -39,6 +41,9 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
 
     private static final Duration COOLDOWN = Duration.ofMinutes(10);
     private static final String STATUS_RUNNING = "RUNNING";
+
+    /** 单节点进程内同实例串行：避免并发失败方在 H2/PG 行锁等待上超时 500（跨实例兜底仍靠 DB 行锁）。 */
+    private final ConcurrentHashMap<Long, ReentrantLock> instanceLocks = new ConcurrentHashMap<>();
 
     private final BpmInstanceService bpmInstanceService;
     private final BpmTaskFacade bpmTaskFacade;
@@ -71,10 +76,31 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                     instanceRecordId, instance.getInitiatorId(), loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅发起人可催办该实例");
         }
+        // 同实例并发催办进程内串行：未及时拿到锁按受控拒绝收敛（不产生 500）
+        ReentrantLock lock = instanceLocks.computeIfAbsent(instanceRecordId, k -> new ReentrantLock());
+        boolean locked;
+        try {
+            locked = lock.tryLock(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "催办繁忙，请稍后重试");
+        }
+        if (!locked) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "该实例正在催办中，请勿重复提交");
+        }
+        try {
+            return doUrge(instance, loginUser, instanceRecordId);
+        } finally {
+            lock.unlock();
+        }
+    }
 
-        // 实例行加锁串行化同实例并发催办（H2/PG 语义一致），核对在锁内完成
-        jdbcTemplate.queryForList("SELECT id FROM sw_bpm_instance WHERE id = ? FOR UPDATE",
-                instanceRecordId);
+    private UrgeRespDTO doUrge(BpmInstance instance, LoginUser loginUser, Long instanceRecordId) {
+
+        // 实例行加锁串行化同实例并发催办（H2/PG 语义一致），核对在锁内完成。
+        // 并发失败方等待锁期间可能触发 H2 锁等待超时（PG 侧为 lock_timeout/锁冲突异常），
+        // 这里以有界重试获取锁：获胜方事务很短，重试后失败方进入冷却判定而非 500。
+        awaitInstanceRowLock(instanceRecordId);
 
         if (!STATUS_RUNNING.equals(instance.getStatus())) {
             return reject(instance, loginUser.getUserId(), "实例已结束，不能催办");
@@ -156,6 +182,30 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
     private UrgeRespDTO reject(BpmInstance instance, Long operator, String reason) {
         UrgeRecord record = record(instance, operator, null, RESULT_REJECTED, reason);
         return UrgeRespDTO.builder().result(RESULT_REJECTED).detail(reason).recordId(record.getId()).build();
+    }
+
+    /** 有界重试获取实例行锁：每次失败短暂退避后重试，耗尽后按数据库异常向上抛（真实失败）。 */
+    private void awaitInstanceRowLock(Long instanceRecordId) {
+        final int maxAttempts = 20;
+        final long backoffMillis = 100L;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                jdbcTemplate.queryForList("SELECT id FROM sw_bpm_instance WHERE id = ? FOR UPDATE",
+                        instanceRecordId);
+                return;
+            } catch (org.springframework.dao.DataAccessException e) {
+                if (attempt >= maxAttempts) {
+                    log.warn("催办行锁获取失败(重试耗尽): instance={}, attempts={}", instanceRecordId, attempt);
+                    throw e;
+                }
+                try {
+                    Thread.sleep(backoffMillis);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
     }
 
     private UrgeRecord record(BpmInstance instance, Long operator, Long target, String result, String detail) {

@@ -126,6 +126,12 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
             if (!seen.add(key)) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "组件重复: " + key);
             }
+            Object span = component.get("span");
+            if (span != null
+                    && (!(span instanceof Number n) || (n.intValue() != 1 && n.intValue() != 2))) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                        "组件宽度仅支持 1（半宽）或 2（整行）");
+            }
         }
         Object favorites = layout.get("favoriteItemKeys");
         if (favorites != null) {
@@ -146,18 +152,22 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
         todo.put("key", "todo");
         todo.put("visible", true);
         todo.put("order", 1);
+        todo.put("span", 1);
         Map<String, Object> myInitiated = new LinkedHashMap<>();
         myInitiated.put("key", "myInitiated");
         myInitiated.put("visible", true);
         myInitiated.put("order", 2);
+        myInitiated.put("span", 1);
         Map<String, Object> cc = new LinkedHashMap<>();
         cc.put("key", "cc");
         cc.put("visible", true);
         cc.put("order", 3);
+        cc.put("span", 1);
         Map<String, Object> favoriteItems = new LinkedHashMap<>();
         favoriteItems.put("key", "favoriteItems");
         favoriteItems.put("visible", true);
         favoriteItems.put("order", 4);
+        favoriteItems.put("span", 1);
         Map<String, Object> layout = new LinkedHashMap<>();
         layout.put("components", java.util.List.of(todo, myInitiated, cc, favoriteItems));
         layout.put("favoriteItemKeys", java.util.List.of());

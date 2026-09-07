@@ -63,11 +63,20 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
 
     @Override
     public Map<Long, Long> portalCategoryCounts() {
+        // 未分类（categoryId=null）归入 key 0 统计，保证「未分类」页签计数与卡片一致
         return loadDefs(null).stream()
                 .map(this::toPortalItem)
                 .filter(Objects::nonNull)
-                .filter(item -> item.getCategoryId() != null)
-                .collect(Collectors.groupingBy(CatalogItemDTO::getCategoryId, Collectors.counting()));
+                .collect(Collectors.groupingBy(
+                        item -> item.getCategoryId() == null ? UNCATEGORIZED : item.getCategoryId(),
+                        Collectors.counting()));
+    }
+
+    @Override
+    public java.util.List<com.sw.ck.bpm.process.entity.BpmCategory> portalCategories() {
+        return categoryMapper.selectList(
+                Wrappers.<com.sw.ck.bpm.process.entity.BpmCategory>lambdaQuery()
+                        .orderByAsc(com.sw.ck.bpm.process.entity.BpmCategory::getSortNo));
     }
 
     @Override
@@ -89,8 +98,11 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
                 throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "分类不存在");
             }
         }
-        def.setCategoryId(categoryId);
-        processDefMapper.updateById(def);
+        // categoryId 可为 null（移入未分类）：updateById 忽略 null 字段，必须显式 set
+        processDefMapper.update(null,
+                Wrappers.<BpmProcessDef>lambdaUpdate()
+                        .set(BpmProcessDef::getCategoryId, categoryId)
+                        .eq(BpmProcessDef::getProcessKey, processKey));
         log.info("事项分类已调整: processKey={}, categoryId={}", processKey, categoryId);
     }
 

@@ -2,6 +2,7 @@ package com.sw.ck.bpm.process.controller;
 
 import com.sw.ck.bpm.process.dto.CatalogItemDTO;
 import com.sw.ck.bpm.process.dto.CategoryAssignReq;
+import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.service.BpmCatalogService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -44,10 +46,16 @@ public class BpmCatalogController {
         return R.ok(catalogService.listPortalItems(keyword, categoryId, pageParam));
     }
 
-    /** 普通视角分类聚合数量（仅统计本人可见事项）。 */
+    /** 普通视角分类聚合数量（仅统计本人可见事项，未分类归入 key 0）。 */
     @GetMapping("/category-counts")
     public R<Map<Long, Long>> categoryCounts() {
         return R.ok(catalogService.portalCategoryCounts());
+    }
+
+    /** 普通视角分类列表（仅名称/排序，登录即可用；不泄漏事项级信息）。 */
+    @GetMapping("/categories")
+    public R<List<BpmCategory>> portalCategories() {
+        return R.ok(catalogService.portalCategories());
     }
 
     /** 普通视角事项详情（校验可见/发布/绑定后返回关联表单 formKey）。 */
