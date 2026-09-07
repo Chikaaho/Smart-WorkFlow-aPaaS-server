@@ -720,7 +720,7 @@ class NotifyControllerIntegrationTest {
         @Bean
         public NotifyController notifyController(
                 NotifyMessageService notifyMessageService) {
-            return new NotifyController(notifyMessageService);
+            return new NotifyController(notifyMessageService, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class));
         }
     }
 }

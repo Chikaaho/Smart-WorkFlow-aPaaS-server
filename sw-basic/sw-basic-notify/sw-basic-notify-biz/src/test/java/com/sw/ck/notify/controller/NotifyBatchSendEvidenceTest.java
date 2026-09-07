@@ -680,7 +680,7 @@ class NotifyBatchSendEvidenceTest {
         @Bean public FailingNotifyMessageService failingNotifyMessageService(NotifyTemplateService ts, TemplateRenderService rs, LoginContextProvider lp, NotifyMessageMapper mapper) {
             return new FailingNotifyMessageService(ts, rs, lp, mapper);
         }
-        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s); }
+        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class)); }
         @Bean("ss") public com.sw.ck.security.support.PermissionService permissionService() { return new com.sw.ck.security.support.PermissionService(); }
     }
 }

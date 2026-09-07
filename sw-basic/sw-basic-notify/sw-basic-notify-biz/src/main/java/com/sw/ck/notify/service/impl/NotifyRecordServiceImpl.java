@@ -99,9 +99,11 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
         }
         String current = message.getDeliveryStatus();
         boolean takeover = false;
-        // 节流：最近一次尝试（含原始发送后的重发）在最小间隔内 → 拒绝，保证并发/连点只产生一次真实重发
+        // 节流：仅针对重发尝试（attemptNo>=2；attemptNo=1 为原始发送流水，不得拦截首次合法重发）。
+        // 最近一次重发在最小间隔内 → 拒绝，保证窗口内并发/连点只产生一次真实重发。
         NotifySendAttempt lastAny = latestAttempt(id);
-        if (lastAny != null && lastAny.getCreateTime() != null) {
+        if (lastAny != null && lastAny.getCreateTime() != null
+                && lastAny.getAttemptNo() != null && lastAny.getAttemptNo() >= 2) {
             Duration since = Duration.between(lastAny.getCreateTime(), LocalDateTime.now());
             if (since.compareTo(MIN_RESEND_INTERVAL) < 0 && !ATTEMPT_IN_FLIGHT.equals(lastAny.getStatus())) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),

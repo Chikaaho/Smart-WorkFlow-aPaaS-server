@@ -319,6 +319,6 @@ class NotifyBatchSendIntegrationTest {
         @Bean public TemplateRenderService templateRenderService() { return new TemplateRenderService(); }
         @Bean public NotifyTemplateService notifyTemplateService() { return mock(NotifyTemplateService.class); }
         @Bean public NotifyMessageService notifyMessageService(NotifyTemplateService ts, TemplateRenderService rs, LoginContextProvider lp) { return new NotifyMessageServiceImpl(ts, rs, lp); }
-        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s); }
+        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class)); }
     }
 }

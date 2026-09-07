@@ -124,6 +124,41 @@ class NotifyRecordServiceTest {
     }
 
     @Test
+    @DisplayName("原始发送流水(attemptNo=1)不触发节流 → 首次合法重发受理")
+    void originalAttemptDoesNotThrottleFirstResend() {
+        when(messageMapper.selectById(2L)).thenReturn(failedMessage());
+        NotifySendAttempt original = new NotifySendAttempt();
+        original.setMessageId(2L);
+        original.setAttemptNo(1);
+        original.setStatus("FAILED");
+        original.setCreateTime(java.time.LocalDateTime.now());
+        when(attemptMapper.selectList(any())).thenReturn(List.of(original));
+        when(messageMapper.update(isNull(), any())).thenReturn(1);
+        when(notifyFacade.attemptDelivery(any())).thenReturn(
+                NotifySendResult.builder().status("FAILED").failureReason("渠道仍失败").build());
+
+        assertThat(recordService.resend(2L)).isEqualTo("FAILED");
+        verify(notifyFacade, times(1)).attemptDelivery(any());
+    }
+
+    @Test
+    @DisplayName("重发尝试(attemptNo=2)在节流窗口内 → 拒绝重复重发")
+    void recentResendAttemptThrottles() {
+        when(messageMapper.selectById(2L)).thenReturn(failedMessage());
+        NotifySendAttempt recent = new NotifySendAttempt();
+        recent.setMessageId(2L);
+        recent.setAttemptNo(2);
+        recent.setStatus("FAILED");
+        recent.setCreateTime(java.time.LocalDateTime.now());
+        when(attemptMapper.selectList(any())).thenReturn(List.of(recent));
+
+        assertThatThrownBy(() -> recordService.resend(2L))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("重发过于频繁");
+        verify(notifyFacade, never()).attemptDelivery(any());
+    }
+
+    @Test
     @DisplayName("投递抛异常 → 回写 FAILED 并留失败原因，不滞留 RESENDING")
     void deliveryExceptionFinalizesFailed() {
         when(messageMapper.selectById(2L)).thenReturn(failedMessage());

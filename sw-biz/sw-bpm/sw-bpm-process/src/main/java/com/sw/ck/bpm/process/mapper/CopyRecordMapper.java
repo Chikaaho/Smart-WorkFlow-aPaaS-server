@@ -42,7 +42,8 @@ public interface CopyRecordMapper extends BaseMapper<CopyRecord> {
             + "<if test='keyword != null and keyword != \"\"'>"
             + "  AND (i.form_key LIKE CONCAT('%', #{keyword}, '%') "
             + "       OR i.business_key LIKE CONCAT('%', #{keyword}, '%') "
-            + "       OR i.process_def_key LIKE CONCAT('%', #{keyword}, '%'))"
+            + "       OR i.process_def_key LIKE CONCAT('%', #{keyword}, '%') "
+            + "       OR c.process_instance_id LIKE CONCAT('%', #{keyword}, '%'))"
             + " </if>"
             + "ORDER BY c.create_time DESC, c.id DESC "
             + "LIMIT #{limit} OFFSET #{offset}"
@@ -71,7 +72,8 @@ public interface CopyRecordMapper extends BaseMapper<CopyRecord> {
             + "<if test='keyword != null and keyword != \"\"'>"
             + "  AND (i.form_key LIKE CONCAT('%', #{keyword}, '%') "
             + "       OR i.business_key LIKE CONCAT('%', #{keyword}, '%') "
-            + "       OR i.process_def_key LIKE CONCAT('%', #{keyword}, '%'))"
+            + "       OR i.process_def_key LIKE CONCAT('%', #{keyword}, '%') "
+            + "       OR c.process_instance_id LIKE CONCAT('%', #{keyword}, '%'))"
             + " </if>"
             + "</script>")
     long countMyCopies(@Param("tenantId") Long tenantId,

@@ -141,6 +141,12 @@ public class NotifyMessageServiceImpl
     }
 
     @Override
+    public java.util.List<Long> resolveRecipientUserIds(NotifyBatchSendReq req) {
+        validateRecipientObjects(req);
+        return new java.util.ArrayList<>(resolveRecipientIds(req));
+    }
+
+    @Override
     public int resolveCount(NotifyBatchSendReq req) {
         // 仅解析接收对象并去重，不校验内容、不发送
         validateRecipientObjects(req);

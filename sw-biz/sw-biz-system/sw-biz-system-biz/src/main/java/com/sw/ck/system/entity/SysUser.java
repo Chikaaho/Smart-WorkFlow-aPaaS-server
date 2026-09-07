@@ -19,8 +19,9 @@ public class SysUser extends BaseEntity {
     @TableField("username")
     private String username;
 
-    /** 密码（BCrypt 散列） */
+    /** 密码（BCrypt 散列）；仅服务端校验使用，任何 HTTP 响应不得回传（R9 脱敏）。 */
     @TableField("password")
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
     private String password;
 
     /** 真实姓名 */

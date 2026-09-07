@@ -66,6 +66,9 @@ public interface NotifyMessageService extends BaseService<NotifyMessage> {
      * @param req 批量发送请求
      * @return 去重后的接收人数
      */
+    /** 渠道批量投递用：解析并去重后的有效接收人（服务端校验对象有效性）。 */
+    java.util.List<Long> resolveRecipientUserIds(NotifyBatchSendReq req);
+
     int resolveCount(NotifyBatchSendReq req);
 
     /**
