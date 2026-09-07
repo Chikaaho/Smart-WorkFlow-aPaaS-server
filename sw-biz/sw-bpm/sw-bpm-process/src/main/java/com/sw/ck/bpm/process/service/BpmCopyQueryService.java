@@ -14,7 +14,8 @@ public interface BpmCopyQueryService {
      * 仅查询本人收到的抄送（强制 recipient=当前用户），支持关键字与时间窗过滤、稳定分页；
      * 同接收人同一抄送事件去重。
      */
-    PageResult<CopyItemDTO> myCopies(String keyword, LocalDateTime timeFrom, LocalDateTime timeTo,
+    PageResult<CopyItemDTO> myCopies(String processInstanceId, String keyword,
+                                     LocalDateTime timeFrom, LocalDateTime timeTo,
                                      PageParam pageParam);
 
     /**

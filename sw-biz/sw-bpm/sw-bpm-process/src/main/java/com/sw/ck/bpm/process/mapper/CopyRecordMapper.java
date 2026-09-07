@@ -37,6 +37,9 @@ public interface CopyRecordMapper extends BaseMapper<CopyRecord> {
             + "               WHERE m.deleted = 0 AND m.tenant_id = #{tenantId} "
             + "                 AND m.recipient_id = #{recipientId} "
             + "               GROUP BY m.process_instance_id, m.node_key, m.task_id, m.recipient_id) "
+            + "<if test='processInstanceId != null and processInstanceId != \"\"'>"
+            + "  AND c.process_instance_id = #{processInstanceId} "
+            + "</if>"
             + "<if test='timeFrom != null'> AND c.create_time &gt;= #{timeFrom} </if>"
             + "<if test='timeTo != null'> AND c.create_time &lt;= #{timeTo} </if>"
             + "<if test='keyword != null and keyword != \"\"'>"
@@ -50,6 +53,7 @@ public interface CopyRecordMapper extends BaseMapper<CopyRecord> {
             + "</script>")
     List<CopyItemDTO> selectMyCopies(@Param("tenantId") Long tenantId,
                                      @Param("recipientId") String recipientId,
+                                     @Param("processInstanceId") String processInstanceId,
                                      @Param("keyword") String keyword,
                                      @Param("timeFrom") LocalDateTime timeFrom,
                                      @Param("timeTo") LocalDateTime timeTo,
@@ -67,6 +71,9 @@ public interface CopyRecordMapper extends BaseMapper<CopyRecord> {
             + "               WHERE m.deleted = 0 AND m.tenant_id = #{tenantId} "
             + "                 AND m.recipient_id = #{recipientId} "
             + "               GROUP BY m.process_instance_id, m.node_key, m.task_id, m.recipient_id) "
+            + "<if test='processInstanceId != null and processInstanceId != \"\"'>"
+            + "  AND c.process_instance_id = #{processInstanceId} "
+            + "</if>"
             + "<if test='timeFrom != null'> AND c.create_time &gt;= #{timeFrom} </if>"
             + "<if test='timeTo != null'> AND c.create_time &lt;= #{timeTo} </if>"
             + "<if test='keyword != null and keyword != \"\"'>"
@@ -78,6 +85,7 @@ public interface CopyRecordMapper extends BaseMapper<CopyRecord> {
             + "</script>")
     long countMyCopies(@Param("tenantId") Long tenantId,
                        @Param("recipientId") String recipientId,
+                       @Param("processInstanceId") String processInstanceId,
                        @Param("keyword") String keyword,
                        @Param("timeFrom") LocalDateTime timeFrom,
                        @Param("timeTo") LocalDateTime timeTo);

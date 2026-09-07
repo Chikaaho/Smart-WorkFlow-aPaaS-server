@@ -47,16 +47,21 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
     }
 
     @Override
-    public PageResult<CopyItemDTO> myCopies(String keyword, LocalDateTime timeFrom, LocalDateTime timeTo,
+    public PageResult<CopyItemDTO> myCopies(String processInstanceId, String keyword,
+                                            LocalDateTime timeFrom, LocalDateTime timeTo,
                                             PageParam pageParam) {
         LoginUser loginUser = LoginUserHolder.get();
         String recipientId = String.valueOf(loginUser.getUserId());
+        String normalizedProcessInstanceId = blankToNull(processInstanceId);
+        String normalizedKeyword = blankToNull(keyword);
         long total = copyRecordMapper.countMyCopies(loginUser.getTenantId(), recipientId,
-                blankToNull(keyword), timeFrom, timeTo);
+                normalizedProcessInstanceId,
+                normalizedKeyword, timeFrom, timeTo);
         int offset = (int) ((pageParam.getPageNum() - 1) * pageParam.getPageSize());
         List<CopyItemDTO> records = total == 0 ? List.of()
                 : copyRecordMapper.selectMyCopies(loginUser.getTenantId(), recipientId,
-                        blankToNull(keyword), timeFrom, timeTo, (int) pageParam.getPageSize(), offset);
+                        normalizedProcessInstanceId, normalizedKeyword, timeFrom, timeTo,
+                        (int) pageParam.getPageSize(), offset);
         PageResult<CopyItemDTO> page = new PageResult<>();
         page.setRecords(records);
         page.setTotal(total);

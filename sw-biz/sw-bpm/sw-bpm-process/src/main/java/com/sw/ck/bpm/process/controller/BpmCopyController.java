@@ -28,10 +28,11 @@ public class BpmCopyController {
     /** 仅查询本人收到的抄送（关键字 + 时间窗过滤，稳定分页，同事件去重）。 */
     @GetMapping
     public R<PageResult<CopyItemDTO>> myCopies(PageParam pageParam,
+                                               @RequestParam(required = false) String processInstanceId,
                                                @RequestParam(required = false) String keyword,
                                                @RequestParam(required = false) LocalDateTime timeFrom,
                                                @RequestParam(required = false) LocalDateTime timeTo) {
-        return R.ok(copyQueryService.myCopies(keyword, timeFrom, timeTo, pageParam));
+        return R.ok(copyQueryService.myCopies(processInstanceId, keyword, timeFrom, timeTo, pageParam));
     }
 
     /** 抄送详情（仅接收人本人；只读表单快照 + 审批进度/意见，无审批操作权）。 */
