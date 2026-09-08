@@ -73,3 +73,10 @@ sw:
     enabled: true
   external-datasource:
     cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+  iot:
+    enabled: true
+    cipher:
+      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+    tencent:
+      enabled: false
+      provider-mode: mock

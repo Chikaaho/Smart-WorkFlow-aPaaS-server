@@ -161,4 +161,20 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
         dto.setTaskId(ha.getTaskId());
         return dto;
     }
+    @Override
+    public java.util.Map<String, Object> getProcessVariables(String processInstanceId) {
+        java.util.Map<String, Object> variables = new java.util.LinkedHashMap<>();
+        try {
+            for (org.flowable.variable.api.history.HistoricVariableInstance var :
+                    historyService.createHistoricVariableInstanceQuery()
+                            .processInstanceId(processInstanceId)
+                            .list()) {
+                variables.put(var.getVariableName(), var.getValue());
+            }
+        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException e) {
+            return java.util.Map.of();
+        }
+        return variables;
+    }
+
 }

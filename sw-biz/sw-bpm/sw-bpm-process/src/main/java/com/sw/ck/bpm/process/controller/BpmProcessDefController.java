@@ -227,6 +227,39 @@ public class BpmProcessDefController {
     }
 
     /**
+     * IoT 接入开关（P21）：仅允许 IoT 事件规则/受控脚本发起的流程模板开关。
+     * <p>
+     * 服务端强制校验：仅已发布定义可开启；关闭后触发时明确拒绝。
+     * </p>
+     */
+    @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
+    @PostMapping("/{id}/iot-access/{flag}")
+    public R<BpmProcessDef> changeIotAccess(@PathVariable Long id, @PathVariable boolean flag) {
+        BpmProcessDef def = bpmProcessDefService.findById(id);
+        if (def == null) {
+            return R.fail(404, "流程定义不存在: id=" + id);
+        }
+        if (flag && !"PUBLISHED".equals(def.getStatus())) {
+            return R.fail(400, "仅已发布流程定义可开启 IoT 接入: " + def.getProcessKey());
+        }
+        return R.ok(bpmProcessDefService.changeIotAccess(id, flag));
+    }
+
+    /**
+     * A6 设备动作配置（三类设备来源 + 失败策略）。
+     */
+    @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
+    @PostMapping("/{id}/iot-device-action")
+    public R<BpmProcessDef> setIotDeviceAction(@PathVariable Long id,
+                                               @RequestBody java.util.Map<String, Object> body) {
+        String actionJson = body.get("action") == null ? null
+                : com.alibaba.fastjson2.JSON.toJSONString(body.get("action"));
+        return R.ok(bpmProcessDefService.setIotDeviceAction(id, actionJson));
+    }
+
+    /**
      * 审批人候选列表（指定审批人配置用）。
      * <p>
      * 经 {@code UserQueryFacade}（sw-biz-system-api）查询正常状态用户，

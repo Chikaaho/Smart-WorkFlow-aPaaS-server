@@ -29,4 +29,28 @@ public interface IotDeviceFacade {
     Long dispatchCommand(String productId, String deviceName,
                          String commandKey, String commandType,
                          String payload, String approvalBizId);
+
+    /**
+     * 按 deviceKey 下发命令（P21 A6：MQTT 设备统一命令路径）。
+     * <p>
+     * 运行时重校验：设备必须 PUBLISHED + 流程接入开启 + 连接启用；
+     * 命令写 sw_iot_command（sourceType=FLOW，flowInstanceId=approvalBizId），
+     * Broker 接收与设备执行分状态记录，不合并为成功。
+     *
+     * @param tenantId      租户
+     * @param deviceKey     设备业务标识
+     * @param commandKey    命令标识
+     * @param payload       载荷 JSON
+     * @param approvalBizId 流程实例 ID（全链关联标识）
+     * @return 命令记录 ID；设备不合格返回 null（失败策略由调用方处理）
+     */
+    Long dispatchByDeviceKey(Long tenantId, String deviceKey, String commandKey,
+                             String payload, String approvalBizId);
+
+    /**
+     * 同上，并可携带 A6 来源标识（FIXED / FORM_FIELD / VARIABLE）写入命令 sourceRef，
+     * 用于三来源命令的可辨识审计（H3）。
+     */
+    Long dispatchByDeviceKey(Long tenantId, String deviceKey, String commandKey,
+                             String payload, String approvalBizId, String sourceTag);
 }

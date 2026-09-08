@@ -22,6 +22,28 @@ public interface BpmProcessDefService {
     BpmProcessDef findByProcessKey(String processKey);
 
     /**
+     * 根据主键查询流程定义。
+     *
+     * @param id 流程定义 ID
+     * @return 流程定义实体（可能为 null）
+     */
+    BpmProcessDef findById(Long id);
+
+    /**
+     * 变更 IoT 接入开关（P21）。
+     *
+     * @param id   流程定义 ID
+     * @param flag 开关
+     * @return 更新后的实体
+     */
+    BpmProcessDef changeIotAccess(Long id, boolean flag);
+
+    /**
+     * 配置 A6 设备动作（三类设备来源 + 失败策略；JSON 存根）。
+     */
+    BpmProcessDef setIotDeviceAction(Long id, String actionJson);
+
+    /**
      * 创建流程定义（DRAFT 状态）。
      *
      * @param name    流程名称

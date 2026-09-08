@@ -52,6 +52,16 @@
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.mqttv5.client</artifactId>
         </dependency>
+        <!-- 受控脚本：GraalJS 沙箱运行时 -->
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>polyglot</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>js-community</artifactId>
+            <type>pom</type>
+        </dependency>
         <!-- 腾讯云 IoT Explorer SDK -->
         <dependency>
             <groupId>com.tencentcloudapi</groupId>

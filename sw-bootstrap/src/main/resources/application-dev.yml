@@ -82,6 +82,8 @@ sw:
       enabled: ${SW_DEBUG_AUTH_ENABLED:false}
   iot:
     enabled: true
+    cipher:
+      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
     tencent:
       enabled: false
       provider-mode: mock

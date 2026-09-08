@@ -22,15 +22,11 @@ import org.springframework.context.annotation.Bean;
  */
 @AutoConfiguration
 @ConditionalOnProperty(prefix = "sw.iot", name = "enabled", havingValue = "true")
-@EnableConfigurationProperties({MqttProperties.class, TencentCloudProperties.class})
+@EnableConfigurationProperties({MqttProperties.class, TencentCloudProperties.class,
+        IotCipherProperties.class})
 public class IotAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(IotAutoConfiguration.class);
-
-    @Bean
-    public IotDeviceFacade iotDeviceFacade(IotDeviceService iotDeviceService) {
-        return new IotDeviceFacadeImpl(iotDeviceService);
-    }
 
     @Bean
     public DeviceControlProvider deviceControlProvider(TencentCloudProperties properties) {

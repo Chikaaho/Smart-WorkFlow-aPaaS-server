@@ -3,6 +3,7 @@ package com.sw.ck.form.service.impl;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormDataQueryService;
 import org.springframework.stereotype.Service;
 
 /**
@@ -15,9 +16,12 @@ import org.springframework.stereotype.Service;
 public class FormDefinitionServiceImpl implements FormDefinitionService {
 
     private final FormDefService formDefService;
+    private final FormDataQueryService formDataQueryService;
 
-    public FormDefinitionServiceImpl(FormDefService formDefService) {
+    public FormDefinitionServiceImpl(FormDefService formDefService,
+                                     FormDataQueryService formDataQueryService) {
         this.formDefService = formDefService;
+        this.formDataQueryService = formDataQueryService;
     }
 
     @Override
@@ -48,5 +52,10 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
     @Override
     public boolean canCurrentUserInitiate(String formKey) {
         return formDefService.isCurrentUserVisible(formKey);
+    }
+
+    @Override
+    public boolean canCurrentUserAccessRecord(String formKey, String recordId) {
+        return formDataQueryService.canCurrentUserAccessRecord(formKey, recordId);
     }
 }

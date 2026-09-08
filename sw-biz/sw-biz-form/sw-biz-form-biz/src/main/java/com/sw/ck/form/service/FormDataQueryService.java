@@ -366,6 +366,40 @@ public class FormDataQueryService {
         return result;
     }
 
+    /**
+     * 以与详情查询相同的租户、删除和表单可见性边界检查记录是否存在。
+     * <p>
+     * 该方法供跨模块 REFERENCE 契约校验使用；只查询常量列，不读取业务数据，
+     * 记录 ID 作为参数绑定，物理表名仍经过固定白名单校验。
+     * </p>
+     */
+    public boolean canCurrentUserAccessRecord(String formKey, String recordId) {
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null || loginUser.getTenantId() == null
+                || recordId == null || recordId.isBlank()) {
+            return false;
+        }
+        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        if (formDef == null || !"PUBLISHED".equals(formDef.getStatus())
+                || !formDefService.isCurrentUserVisible(formKey)) {
+            return false;
+        }
+        String tableName = formDef.getPhysicalTableName();
+        if (tableName == null || !tableName.matches(TABLE_NAME_PATTERN)) {
+            return false;
+        }
+        String sql = "SELECT 1 FROM \"" + tableName
+                + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ? LIMIT 1";
+        try {
+            List<Integer> rows = jdbcTemplate.query(sql,
+                    (rs, rowNum) -> rs.getInt(1), recordId, loginUser.getTenantId());
+            return !rows.isEmpty();
+        } catch (Exception e) {
+            log.warn("REFERENCE record access check failed: formKey={}, recordId={}", formKey, recordId, e);
+            return false;
+        }
+    }
+
     // ==================== 表名校验 ====================
 
     /**

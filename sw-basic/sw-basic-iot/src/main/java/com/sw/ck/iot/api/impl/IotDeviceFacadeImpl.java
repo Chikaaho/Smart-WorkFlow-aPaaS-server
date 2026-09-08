@@ -3,6 +3,7 @@ package com.sw.ck.iot.api.impl;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.service.IotDeviceService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 /**
@@ -16,9 +17,6 @@ public class IotDeviceFacadeImpl implements IotDeviceFacade {
 
     private final IotDeviceService iotDeviceService;
 
-    public IotDeviceFacadeImpl(IotDeviceService iotDeviceService) {
-        this.iotDeviceService = iotDeviceService;
-    }
 
     @Override
     public Long dispatchCommand(String productId, String deviceName,
@@ -27,5 +25,25 @@ public class IotDeviceFacadeImpl implements IotDeviceFacade {
         IotDeviceCommand command = iotDeviceService.dispatchCommand(
                 productId, deviceName, commandKey, commandType, payload, approvalBizId);
         return command.getId();
+    }
+
+    private final IotDeviceMqttDispatchService mqttDispatchService;
+
+    public IotDeviceFacadeImpl(IotDeviceService iotDeviceService,
+                               @Lazy IotDeviceMqttDispatchService mqttDispatchService) {
+        this.iotDeviceService = iotDeviceService;
+        this.mqttDispatchService = mqttDispatchService;
+    }
+
+    @Override
+    public Long dispatchByDeviceKey(Long tenantId, String deviceKey, String commandKey,
+                                    String payload, String approvalBizId) {
+        return dispatchByDeviceKey(tenantId, deviceKey, commandKey, payload, approvalBizId, null);
+    }
+
+    @Override
+    public Long dispatchByDeviceKey(Long tenantId, String deviceKey, String commandKey,
+                                    String payload, String approvalBizId, String sourceTag) {
+        return mqttDispatchService.dispatch(tenantId, deviceKey, commandKey, payload, approvalBizId, sourceTag);
     }
 }

@@ -131,7 +131,8 @@ public class BpmInstanceController {
             }
         });
 
-        InstanceDetailDTO dto = toDetailDTO(instance, activeNodeIds, flowTrace);
+        InstanceDetailDTO dto = toDetailDTO(instance, activeNodeIds, flowTrace,
+                bpmRuntimeFacade.getProcessVariables(processInstanceId).get("formData"));
 
         log.debug("实例详情查询: processInstanceId={}, activeNodes={}, flowTraceSize={}",
                 processInstanceId, activeNodeIds.size(), flowTrace.size());
@@ -196,8 +197,14 @@ public class BpmInstanceController {
      */
     private InstanceDetailDTO toDetailDTO(BpmInstance instance,
                                            List<String> activeNodeIds,
-                                           List<BpmActivityDTO> flowTrace) {
+                                           List<BpmActivityDTO> flowTrace,
+                                           Object formDataVariable) {
         InstanceDetailDTO dto = new InstanceDetailDTO();
+        if (formDataVariable instanceof Map<?, ?> formDataMap) {
+            java.util.Map<String, Object> formData = new java.util.LinkedHashMap<>();
+            formDataMap.forEach((k, v) -> formData.put(String.valueOf(k), v));
+            dto.setFormData(formData);
+        }
         // 继承 InstanceListItemDTO 的字段
         dto.setId(instance.getId());
         dto.setProcessInstanceId(instance.getProcessInstanceId());

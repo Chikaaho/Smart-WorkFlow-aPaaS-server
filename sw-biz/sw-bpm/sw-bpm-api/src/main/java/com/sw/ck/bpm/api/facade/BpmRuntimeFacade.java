@@ -53,4 +53,12 @@ public interface BpmRuntimeFacade {
      * @return 活动节点列表（按结束时间升序，进行中节点排在末尾），实例不存在时返回空列表
      */
     List<BpmActivityDTO> queryHistoricActivities(String processInstanceId);
+
+    /**
+     * 读取流程实例全部变量（P21 G3b：流程侧表单详情回查）。
+     *
+     * @param processInstanceId 流程实例 ID
+     * @return 变量名 → 值；实例不存在返回空 Map
+     */
+    java.util.Map<String, Object> getProcessVariables(String processInstanceId);
 }

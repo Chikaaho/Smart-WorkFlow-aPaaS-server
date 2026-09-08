@@ -365,4 +365,44 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
                 .canvas(Collections.emptyMap())
                 .build();
     }
+    @Override
+    public BpmProcessDef findById(Long id) {
+        return mapper.selectById(id);
+    }
+
+    @Override
+    @Transactional
+    public BpmProcessDef changeIotAccess(Long id, boolean flag) {
+        BpmProcessDef def = mapper.selectById(id);
+        if (def == null) {
+            throw new IllegalArgumentException("流程定义不存在: id=" + id);
+        }
+        if (flag && !"PUBLISHED".equals(def.getStatus())) {
+            throw new IllegalStateException("仅已发布流程定义可开启 IoT 接入: " + def.getProcessKey());
+        }
+        BpmProcessDef patch = new BpmProcessDef();
+        patch.setId(id);
+        patch.setIotAccessEnabled(flag);
+        mapper.updateById(patch);
+        log.info("流程定义 IoT 接入开关已变更: id={}, processKey={}, enabled={}", id, def.getProcessKey(), flag);
+        return mapper.selectById(id);
+    }
+
+    @Override
+    @Transactional
+    public BpmProcessDef setIotDeviceAction(Long id, String actionJson) {
+        BpmProcessDef def = mapper.selectById(id);
+        if (def == null) {
+            throw new IllegalArgumentException("流程定义不存在: id=" + id);
+        }
+        if (actionJson != null && !actionJson.isBlank()) {
+            com.alibaba.fastjson2.JSON.parseObject(actionJson);
+        }
+        BpmProcessDef patch = new BpmProcessDef();
+        patch.setId(id);
+        patch.setIotDeviceActionJson(actionJson);
+        mapper.updateById(patch);
+        return mapper.selectById(id);
+    }
+
 }

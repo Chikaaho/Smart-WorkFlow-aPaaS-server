@@ -71,4 +71,16 @@ public class BpmProcessDef extends BaseEntity {
      */
     @TableField("category_id")
     private Long categoryId;
+
+    /**
+     * IoT 接入开关（P21）：仅「已发布 + 开关启用」的模板允许被 IoT 事件规则/受控脚本发起。
+     */
+    @TableField("iot_access_enabled")
+    private Boolean iotAccessEnabled;
+
+    /**
+     * A6 设备动作配置 JSON（FIXED/FORM_FIELD/VARIABLE 三类来源 + 失败策略）。
+     */
+    @TableField("iot_device_action_json")
+    private String iotDeviceActionJson;
 }
