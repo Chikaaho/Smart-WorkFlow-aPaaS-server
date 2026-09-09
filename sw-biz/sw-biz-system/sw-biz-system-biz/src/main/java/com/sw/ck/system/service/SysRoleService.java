@@ -4,6 +4,7 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.service.BaseService;
 import com.sw.ck.system.entity.SysRole;
+import com.sw.ck.system.entity.SysUser;
 
 import java.util.List;
 
@@ -40,4 +41,9 @@ public interface SysRoleService extends BaseService<SysRole> {
     List<Long> listMenuIds(Long roleId);
 
     void updateMenuIds(Long roleId, List<Long> menuIds);
+
+    /**
+     * 分页查询角色成员（角色↔用户成员维护的反向视图）。
+     */
+    PageResult<SysUser> pageMembers(Long roleId, PageParam pageParam);
 }

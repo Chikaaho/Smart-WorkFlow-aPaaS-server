@@ -42,6 +42,10 @@ public class CommonTenantLineHandler implements TenantLineHandler {
      */
     @Override
     public boolean ignoreTable(String tableName) {
+        // 认证身份装载期（登录前无租户上下文）挂起租户行过滤；业务读写不得使用
+        if (TenantLineSuspension.isSuspended()) {
+            return true;
+        }
         String currentDs = DynamicDataSourceContextHolder.peek();
         if (currentDs != null && !"master".equals(currentDs)) {
             log.debug("TenantLineHandler: skip tenant filter on non-master DS '{}', table '{}'", currentDs, tableName);

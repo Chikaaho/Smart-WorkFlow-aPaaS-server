@@ -35,8 +35,12 @@ class BpmInstanceControllerTest {
     private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
             mock(com.sw.ck.system.api.user.UserQueryFacade.class);
 
+    private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService =
+            new com.sw.ck.bpm.process.service.ParticipantNameService(
+                    mock(com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper.class), userQueryFacade);
+
     private final BpmInstanceController controller = new BpmInstanceController(
-            bpmInstanceService, bpmRuntimeFacade, bpmProcessDefService, userQueryFacade);
+            bpmInstanceService, bpmRuntimeFacade, bpmProcessDefService, userQueryFacade, participantNameService);
 
     // 测试夹具
     private BpmInstance sampleInstance;

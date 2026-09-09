@@ -20,7 +20,7 @@ public interface SysUserService extends BaseService<SysUser> {
     Long create(SysUser user, String plainPassword);
 
     /** 创建用户及其岗位、角色关系，必须在同一事务内完成。 */
-    Long createWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<Long> postIds);
+    Long createWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<UserPostAssociation> posts);
 
     /**
      * 更新用户（若提供新密码则重新编码）。
@@ -31,10 +31,10 @@ public interface SysUserService extends BaseService<SysUser> {
     void update(SysUser user, String plainPassword);
 
     /** 更新用户及其岗位、角色关系，必须在同一事务内完成。 */
-    void updateWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<Long> postIds);
+    void updateWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<UserPostAssociation> posts);
 
     /**
-     * 删除用户（逻辑删除）。
+     * 删除用户（逻辑删除），并解除角色/岗位关联、立即收敛其登录态与权限。
      */
     void delete(Long id);
 
@@ -58,9 +58,14 @@ public interface SysUserService extends BaseService<SysUser> {
 
     void updateRoleIds(Long userId, List<Long> roleIds);
 
-    List<Long> listPostIds(Long userId);
+    /** 查询用户岗位任职（含任职部门）。 */
+    List<UserPostAssociation> listPosts(Long userId);
 
-    void updatePostIds(Long userId, List<Long> postIds);
+    /**
+     * 整量替换用户岗位任职（岗位在部门内承担；deptId 为空回落用户主部门）。
+     * 完成后立即收敛该用户登录态（缓存踢出）。
+     */
+    void updatePosts(Long userId, List<UserPostAssociation> posts);
 
     /**
      * 仅修改用户密码（自助改密链路）。

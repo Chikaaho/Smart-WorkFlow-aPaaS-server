@@ -48,12 +48,13 @@ public class BpmMyInstanceController {
     private final TaskActionService taskActionService;
     private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
 
     public BpmMyInstanceController(BpmInstanceService bpmInstanceService,
                                    BpmProcessDefService bpmProcessDefService,
                                    BpmTaskFacade bpmTaskFacade,
                                    TaskActionService taskActionService) {
-        this(bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService, null, null);
+        this(bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService, null, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -62,13 +63,15 @@ public class BpmMyInstanceController {
                                    BpmTaskFacade bpmTaskFacade,
                                    TaskActionService taskActionService,
                                    com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
-                                   com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                                   com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                                   com.sw.ck.bpm.process.service.ParticipantNameService participantNameService) {
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
         this.bpmTaskFacade = bpmTaskFacade;
         this.taskActionService = taskActionService;
         this.approvalActionService = approvalActionService;
         this.objectMapper = objectMapper;
+        this.participantNameService = participantNameService;
     }
 
     /**
@@ -178,7 +181,33 @@ public class BpmMyInstanceController {
             }
             history.add(item);
         }
-        if (taskActionService != null) {
+        if (participantNameService != null) {
+            // 候选模式任务在引擎历史中可能被 approver 兜底误填为发起人：
+            // 快照命中即覆盖为权威参与人（I1 G5b），再做冻结名富化
+            Map<String, Long> nodeAssignees =
+                    participantNameService.resolveNodeAssignees(instance.getProcessInstanceId());
+            for (ApprovalHistoryItemDTO item : history) {
+                if (item.getNodeKey() != null) {
+                    Long pid = nodeAssignees.get(item.getNodeKey());
+                    if (pid != null) {
+                        item.setAssignee(String.valueOf(pid));
+                    }
+                }
+            }
+            // 冻结快照名优先：流转记录身份不随后续改名/停用重写（I1）
+            Map<Long, String> names = participantNameService.resolveDisplayNames(
+                    instance.getProcessInstanceId(),
+                    history.stream()
+                    .map(ApprovalHistoryItemDTO::getAssignee)
+                    .filter(a -> a != null && a.matches("\\d+"))
+                    .map(Long::valueOf)
+                    .collect(Collectors.toSet()));
+            for (ApprovalHistoryItemDTO item : history) {
+                if (item.getAssignee() != null && item.getAssignee().matches("\\d+")) {
+                    item.setAssigneeName(names.get(Long.valueOf(item.getAssignee())));
+                }
+            }
+        } else if (taskActionService != null) {
             Map<Long, String> names = taskActionService.resolveUserNames(history.stream()
                     .map(ApprovalHistoryItemDTO::getAssignee)
                     .filter(a -> a != null && a.matches("\\d+"))

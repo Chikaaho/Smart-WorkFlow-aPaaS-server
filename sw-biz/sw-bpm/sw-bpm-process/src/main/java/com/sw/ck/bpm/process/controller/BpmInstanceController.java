@@ -9,6 +9,7 @@ import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ParticipantNameService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -54,15 +55,18 @@ public class BpmInstanceController {
     private final BpmRuntimeFacade bpmRuntimeFacade;
     private final BpmProcessDefService bpmProcessDefService;
     private final UserQueryFacade userQueryFacade;
+    private final ParticipantNameService participantNameService;
 
     public BpmInstanceController(BpmInstanceService bpmInstanceService,
                                   BpmRuntimeFacade bpmRuntimeFacade,
                                   BpmProcessDefService bpmProcessDefService,
-                                  UserQueryFacade userQueryFacade) {
+                                  UserQueryFacade userQueryFacade,
+                                  ParticipantNameService participantNameService) {
         this.bpmInstanceService = bpmInstanceService;
         this.bpmRuntimeFacade = bpmRuntimeFacade;
         this.bpmProcessDefService = bpmProcessDefService;
         this.userQueryFacade = userQueryFacade;
+        this.participantNameService = participantNameService;
     }
 
     /**
@@ -119,8 +123,21 @@ public class BpmInstanceController {
         List<String> activeNodeIds = bpmRuntimeFacade.getActiveActivityIds(processInstanceId);
         List<BpmActivityDTO> flowTrace = bpmRuntimeFacade.queryHistoricActivities(processInstanceId);
 
-        // 审批人展示名富化（可读身份回显；查询失败不阻断详情）
-        Map<Long, String> assigneeNames = resolveUserNames(flowTrace.stream()
+        // 候选模式任务在 Flowable 历史中无 assignee（引擎层 approver 兜底会误填为发起人），
+        // 权威参与人以节点进入时冻结的快照为准：快照命中即覆盖（I1 G5b）
+        Map<String, Long> nodeAssignees = participantNameService.resolveNodeAssignees(processInstanceId);
+        flowTrace.forEach(a -> {
+            if ("userTask".equals(a.getActivityType())) {
+                Long pid = nodeAssignees.get(a.getActivityId());
+                if (pid != null) {
+                    a.setAssignee(String.valueOf(pid));
+                }
+            }
+        });
+
+        // 审批人展示名富化（快照冻结名优先，可读身份不随后续改名重写；查询失败不阻断详情）
+        Map<Long, String> assigneeNames = participantNameService.resolveDisplayNames(processInstanceId,
+                flowTrace.stream()
                 .map(BpmActivityDTO::getAssignee)
                 .filter(a -> a != null && a.matches("\\d+"))
                 .map(Long::valueOf)

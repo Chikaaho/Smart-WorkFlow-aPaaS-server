@@ -64,6 +64,7 @@ public class BpmTodoController {
     private final TaskActionService taskActionService;
     private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
 
     public BpmTodoController(BpmTaskFacade bpmTaskFacade,
                              BpmInstanceService bpmInstanceService,
@@ -71,12 +72,25 @@ public class BpmTodoController {
                              TaskActionService taskActionService,
                              com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+        this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
+                approvalActionService, objectMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BpmTodoController(BpmTaskFacade bpmTaskFacade,
+                             BpmInstanceService bpmInstanceService,
+                             BpmProcessDefService bpmProcessDefService,
+                             TaskActionService taskActionService,
+                             com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
+                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
         this.taskActionService = taskActionService;
         this.approvalActionService = approvalActionService;
         this.objectMapper = objectMapper;
+        this.participantNameService = participantNameService;
     }
 
     /**
@@ -257,8 +271,14 @@ public class BpmTodoController {
                 }
             }
         }
-        // 审批人展示名富化（可读身份回显；查询失败不阻断详情）
-        Map<Long, String> historyNames = taskActionService.resolveUserNames(historyTasks.stream()
+        // 审批人展示名富化（快照冻结名优先，历史身份不随后续改名重写；查询失败不阻断详情）
+        Map<Long, String> historyNames = participantNameService != null
+                ? participantNameService.resolveDisplayNames(task.getProcessInstanceId(), historyTasks.stream()
+                .map(BpmTaskDTO::getAssignee)
+                .filter(a -> a != null && a.matches("\\d+"))
+                .map(Long::valueOf)
+                .collect(Collectors.toSet()))
+                : taskActionService.resolveUserNames(historyTasks.stream()
                 .map(BpmTaskDTO::getAssignee)
                 .filter(a -> a != null && a.matches("\\d+"))
                 .map(Long::valueOf)

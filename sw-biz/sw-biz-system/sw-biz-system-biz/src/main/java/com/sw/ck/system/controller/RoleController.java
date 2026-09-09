@@ -4,6 +4,7 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.entity.SysRole;
+import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.service.SysRoleService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
@@ -74,6 +75,20 @@ public class RoleController {
     public R<Void> delete(@PathVariable Long id) {
         sysRoleService.delete(id);
         return R.ok();
+    }
+
+    /**
+     * 分页查询角色成员（成员维护反向视图）。
+     */
+    @GetMapping("/{id}/users")
+    @PreAuthorize("@ss.hasPermi('system:role:list')")
+    public R<PageResult<SysUser>> members(@PathVariable Long id,
+                                          @RequestParam(defaultValue = "1") long pageNum,
+                                          @RequestParam(defaultValue = "10") long pageSize) {
+        PageParam pageParam = new PageParam();
+        pageParam.setPageNum(pageNum);
+        pageParam.setPageSize(pageSize);
+        return R.ok(sysRoleService.pageMembers(id, pageParam));
     }
 
     @GetMapping("/{id}/menus")

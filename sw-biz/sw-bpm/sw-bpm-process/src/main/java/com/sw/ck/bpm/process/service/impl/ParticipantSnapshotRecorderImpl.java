@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecorder {
@@ -28,6 +29,24 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
             row.setNodeKey(nodeKey);
             row.setTaskId(taskId);
             row.setParticipantId(participantId);
+            row.setParticipantStatus("PENDING");
+            row.setTenantId(tenantId);
+            mapper.insert(row);
+        }
+    }
+
+    @Override
+    @Transactional
+    public void record(String processInstanceId, String nodeKey, String taskId,
+                       List<String> participantIds, Map<String, String> displayNames, Long tenantId) {
+        for (String participantId : participantIds) {
+            ParticipantSnapshot row = new ParticipantSnapshot();
+            row.setProcessInstanceId(processInstanceId);
+            row.setNodeKey(nodeKey);
+            row.setTaskId(taskId);
+            row.setParticipantId(participantId);
+            // 冻结展示名：此后改名/停用不重写该轮次历史身份
+            row.setParticipantName(displayNames == null ? null : displayNames.get(participantId));
             row.setParticipantStatus("PENDING");
             row.setTenantId(tenantId);
             mapper.insert(row);

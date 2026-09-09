@@ -42,4 +42,22 @@ public interface UserQueryFacade {
 
     /** 显式租户上下文版本，供引擎异步/无登录线程安全解析。 */
     List<Long> findActiveUserIdsByRoleCodes(Collection<String> roleCodes, Long tenantId);
+
+    /**
+     * 查询指定部门集合的有效负责人（部门正常状态、负责人用户启用且同租户），
+     * 供流程节点运行期解析 DEPT_LEADER 策略。
+     */
+    List<Long> findActiveUserIdsByDeptLeaders(Collection<Long> deptIds, Long tenantId);
+
+    /**
+     * 按岗位编码查询任职用户（岗位启用、任职行有效、用户启用，同租户），
+     * 供流程节点运行期解析 POST 策略。
+     */
+    List<Long> findActiveUserIdsByPostCodes(Collection<String> postCodes, Long tenantId);
+
+    /**
+     * 查询指定部门内担任指定岗位的有效用户（部门正常、岗位启用、任职行有效，
+     * 同租户），供流程节点运行期解析 DEPT_POST 组合策略。
+     */
+    List<Long> findActiveUserIdsByDeptAndPost(Long deptId, String postCode, Long tenantId);
 }

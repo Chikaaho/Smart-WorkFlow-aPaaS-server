@@ -44,6 +44,13 @@ public class SysDeptServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long create(SysDept dept) {
+        validateParent(dept.getParentId(), null);
+        validateLeader(dept.getLeaderId());
+        if (dept.getStatus() == null) {
+            dept.setStatus(STATUS_NORMAL);
+        } else {
+            validateStatus(dept.getStatus());
+        }
         save(dept);
         return dept.getId();
     }
@@ -51,6 +58,15 @@ public class SysDeptServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(SysDept dept) {
+        SysDept existing = getById(dept.getId());
+        if (existing == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "部门不存在或已删除");
+        }
+        validateParent(dept.getParentId(), dept.getId());
+        validateLeader(dept.getLeaderId());
+        if (dept.getStatus() != null) {
+            validateStatus(dept.getStatus());
+        }
         updateById(dept);
     }
 
@@ -153,6 +169,61 @@ public class SysDeptServiceImpl
     private void enqueueParentIfMissing(Long parentId, Map<Long, SysDept> byId, Deque<Long> pendingParents) {
         if (parentId != null && parentId != 0L && !byId.containsKey(parentId)) {
             pendingParents.addLast(parentId);
+        }
+    }
+
+    /**
+     * 父部门合法性：0/null = 根；否则必须为本租户内未删除部门；
+     * 移动时禁止指向自身或自身子树（成环）。
+     */
+    private void validateParent(Long parentId, Long selfId) {
+        if (parentId == null || parentId == 0L) {
+            return;
+        }
+        if (parentId.equals(selfId)) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "上级部门不能是自身");
+        }
+        SysDept parent = getById(parentId);
+        if (parent == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "上级部门不存在或已删除");
+        }
+        if (selfId != null && isDescendant(selfId, parentId)) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "上级部门不能是自身的子部门");
+        }
+    }
+
+    /** 沿 parent 链向上走：从 candidateParent 出发若能回到 selfId，则它是 self 的子孙。 */
+    private boolean isDescendant(Long selfId, Long candidateParent) {
+        Set<Long> visited = new HashSet<>();
+        Long cursor = candidateParent;
+        while (cursor != null && cursor != 0L && visited.add(cursor)) {
+            if (cursor.equals(selfId)) {
+                return true;
+            }
+            SysDept node = getById(cursor);
+            cursor = node == null ? null : node.getParentId();
+        }
+        return false;
+    }
+
+    /**
+     * 负责人合法性：必须为本租户内未删除且正常状态（status=0）的用户
+     *（跨租户 ID 经租户拦截器查询不到，自然拒绝）。
+     */
+    private void validateLeader(Long leaderId) {
+        if (leaderId == null) {
+            return;
+        }
+        SysUser leader = sysUserService.getById(leaderId);
+        if (leader == null || leader.getStatus() == null || leader.getStatus() != STATUS_NORMAL) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "部门负责人不存在、已停用或无效");
+        }
+    }
+
+    private void validateStatus(Integer status) {
+        if (status == null || (status != STATUS_NORMAL && status != STATUS_DISABLED)) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                    "非法部门状态值：" + status + "，仅支持 0（正常）/1（停用）");
         }
     }
 }

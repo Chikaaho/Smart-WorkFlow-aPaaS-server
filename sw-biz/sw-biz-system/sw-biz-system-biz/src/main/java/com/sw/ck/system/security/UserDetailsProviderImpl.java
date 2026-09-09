@@ -78,20 +78,29 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
 
     @Override
     public LoginUser loadByUsername(String username) {
-        SysUser user = sysUserService.getByUsername(username);
-        if (!isActive(user)) {
-            return null;
+        // 登录前无租户上下文：身份装载必须跨租户全局进行（用户名全局唯一），租户隔离由
+        // 装载完成的 LoginUser.tenantId 在后续业务请求中生效
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            SysUser user = sysUserService.getByUsername(username);
+            if (!isActive(user)) {
+                return null;
+            }
+            return toLoginUser(user);
         }
-        return toLoginUser(user);
     }
 
     @Override
     public LoginUser loadByUserId(Long userId) {
-        SysUser user = sysUserService.getById(userId);
-        if (!isActive(user)) {
-            return null;
+        // 同 loadByUsername：按主键全局装载认证身份（I1 G2b）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            SysUser user = sysUserService.getById(userId);
+            if (!isActive(user)) {
+                return null;
+            }
+            return toLoginUser(user);
         }
-        return toLoginUser(user);
     }
 
     /** 逻辑删除用户不会被 getById 返回；非 0 状态也不得进入认证上下文。 */

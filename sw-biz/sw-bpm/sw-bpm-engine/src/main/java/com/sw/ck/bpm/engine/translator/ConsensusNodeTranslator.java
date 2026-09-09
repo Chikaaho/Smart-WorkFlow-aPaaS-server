@@ -57,8 +57,7 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
         }
         Map<?, ?> participant = (Map<?, ?>) config.get("participant");
         String strategy = participant.get("strategy") == null ? null : String.valueOf(participant.get("strategy"));
-        if (strategy == null || !List.of(ParticipantStrategy.FIXED_USER, ParticipantStrategy.ROLE,
-                ParticipantStrategy.EXPRESSION, ParticipantStrategy.ADAPTER).contains(strategy.toUpperCase())) {
+        if (strategy == null || !ParticipantStrategy.ALL.contains(strategy.toUpperCase())) {
             return List.of(error(node, "会签参与人策略不合法"));
         }
         Object participantValue = participant.get("value");
@@ -77,6 +76,26 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                 try { return Long.parseLong(String.valueOf(item)) <= 0; }
                 catch (Exception e) { return true; }
             })) return List.of(error(node, "会签 FIXED_USER 只能配置正整数用户 ID"));
+        } else if (ParticipantStrategy.DEPT_LEADER.equalsIgnoreCase(strategy)) {
+            Collection<?> values = participantValue instanceof Collection<?> collection
+                    ? collection : List.of(participantValue);
+            if (values.stream().anyMatch(item -> {
+                try { return Long.parseLong(String.valueOf(item)) <= 0; }
+                catch (Exception e) { return true; }
+            })) return List.of(error(node, "会签 DEPT_LEADER 只能配置正整数部门 ID"));
+        } else if (ParticipantStrategy.POST.equalsIgnoreCase(strategy)) {
+            Collection<?> values = participantValue instanceof Collection<?> collection
+                    ? collection : List.of(participantValue);
+            if (values.stream().anyMatch(item -> item == null || String.valueOf(item).isBlank())) {
+                return List.of(error(node, "会签 POST 必须配置非空岗位编码"));
+            }
+        } else if (ParticipantStrategy.DEPT_POST.equalsIgnoreCase(strategy)) {
+            if (!(participantValue instanceof java.util.Map<?, ?> mapping)
+                    || mapping.get("deptId") == null
+                    || mapping.get("postCode") == null
+                    || String.valueOf(mapping.get("postCode")).isBlank()) {
+                return List.of(error(node, "会签 DEPT_POST 必须配置 {deptId, postCode}"));
+            }
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(strategy)) {
             try { RestrictedExpressionEvaluator.value(String.valueOf(participantValue), Map.of()); }
             catch (RuntimeException e) { return List.of(error(node, "会签 EXPRESSION 语法不合法")); }

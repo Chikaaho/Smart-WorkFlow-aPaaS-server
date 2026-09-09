@@ -58,6 +58,7 @@ public enum BpmErrorCode implements ErrorCode {
     BRANCH_EVALUATION_FAILED(2311, "分支条件求值失败"),
     NODE_DELIVERY_FAILED(2312, "节点投递失败"),
     INSTANCE_FAILED(2313, "流程实例已失败，不可继续审批"),
+    INSTANCE_INITIATOR_INVALID(2314, "流程发起人无效、已停用或不属于当前租户"),
     ;
 
     private final int code;

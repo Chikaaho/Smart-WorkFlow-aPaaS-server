@@ -33,4 +33,8 @@ public class SysDept extends BaseEntity {
     /** 状态：0=正常 1=停用 */
     @TableField("status")
     private Integer status;
+
+    /** 部门负责人用户 ID（稳定用户标识；流程选人经组织权威解析） */
+    @TableField("leader_id")
+    private Long leaderId;
 }

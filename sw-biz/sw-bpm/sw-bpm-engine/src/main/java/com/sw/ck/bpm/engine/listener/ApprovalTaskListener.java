@@ -8,6 +8,7 @@ import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
+import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.common.exception.BaseException;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.UserTask;
@@ -62,13 +63,14 @@ public class ApprovalTaskListener implements TaskListener {
     private final ObjectMapper objectMapper;
     private final ParticipantResolverRegistry participantResolverRegistry;
     private final ParticipantSnapshotRecorder participantSnapshotRecorder;
+    private final UserQueryFacade userQueryFacade;
 
     /** 兼容既有引擎单测与旧 DESIGNATED 配置。 */
     public ApprovalTaskListener(RepositoryService repositoryService,
                                 @org.springframework.beans.factory.annotation.Qualifier("approverResolverMap")
                                 Map<String, NodeApproverResolver> resolverMap,
                                 ObjectMapper objectMapper) {
-        this(repositoryService, resolverMap, objectMapper, null, null);
+        this(repositoryService, resolverMap, objectMapper, null, null, null);
     }
 
     @Autowired
@@ -77,13 +79,15 @@ public class ApprovalTaskListener implements TaskListener {
                                 Map<String, NodeApproverResolver> resolverMap,
                                 ObjectMapper objectMapper,
                                 ParticipantResolverRegistry participantResolverRegistry,
-                                ObjectProvider<ParticipantSnapshotRecorder> participantSnapshotRecorder) {
+                                ObjectProvider<ParticipantSnapshotRecorder> participantSnapshotRecorder,
+                                ObjectProvider<UserQueryFacade> userQueryFacade) {
         this.repositoryService = repositoryService;
         this.resolverMap = resolverMap;
         this.objectMapper = objectMapper;
         this.participantResolverRegistry = participantResolverRegistry;
         this.participantSnapshotRecorder = participantSnapshotRecorder == null
                 ? null : participantSnapshotRecorder.getIfAvailable();
+        this.userQueryFacade = userQueryFacade == null ? null : userQueryFacade.getIfAvailable();
     }
 
     @Override
@@ -202,7 +206,22 @@ public class ApprovalTaskListener implements TaskListener {
         }
 
         if (participantSnapshotRecorder != null) {
-            participantSnapshotRecorder.record(processInstanceId, nodeKey, delegateTask.getId(), userIds, tenantId);
+            // 冻结参与人展示名：历史流程身份不随后续改名/停用被重写（I1）
+            java.util.Map<String, String> frozen = new java.util.LinkedHashMap<>();
+            if (userQueryFacade != null) {
+                try {
+                    List<Long> ids = userIds.stream()
+                            .filter(id -> id != null && id.matches("\\d+"))
+                            .map(Long::valueOf).distinct().toList();
+                    userQueryFacade.getUserDisplayNames(ids).forEach((id, name) ->
+                            frozen.put(String.valueOf(id), name));
+                } catch (Exception e) {
+                    log.warn("参与人展示名冻结失败，快照仅记录 ID: {}", e.getMessage());
+                }
+            }
+            java.util.Map<String, String> displayNames = java.util.Collections.unmodifiableMap(frozen);
+            participantSnapshotRecorder.record(processInstanceId, nodeKey, delegateTask.getId(),
+                    userIds, displayNames, tenantId);
         }
 
         log.info("Task assignee set: taskId={}, nodeKey={}, assignee={}",

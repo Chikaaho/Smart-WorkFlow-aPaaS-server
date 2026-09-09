@@ -19,6 +19,15 @@ import java.util.List;
 @Mapper
 public interface SysUserMapper extends BaseMapperX<SysUser> {
 
+    /**
+     * 登录/唯一性校验专用：按用户名全局解析（绕过租户行过滤）。
+     * 用户名唯一索引 uk_sys_user_username(username, deleted) 不含 tenant_id，用户名全局唯一，
+     * 登录态尚无租户上下文，租户过滤会把非 0 租户账号挡在认证之外（I1 G2b 修复）。
+     */
+    @Select("SELECT * FROM sys_user WHERE username = #{username} AND deleted = 0")
+    @InterceptorIgnore(tenantLine = "true")
+    SysUser selectGlobalByUsername(@org.apache.ibatis.annotations.Param("username") String username);
+
     @Select({"<script>",
             "SELECT DISTINCT u.id FROM sys_user u WHERE u.deleted = 0 AND u.status = 0 ",
             "AND u.tenant_id = #{tenantId} AND u.id IN ",
@@ -39,6 +48,45 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
     List<Long> selectActiveUserIdsByRoleCodes(@Param("roleCodes") List<String> roleCodes,
                                                @Param("tenantId") Long tenantId);
 
+    /** 部门负责人解析：仅正常状态部门（status=0），负责人用户启用且同租户。 */
+    @Select({"<script>",
+            "SELECT DISTINCT d.leader_id FROM sys_dept d ",
+            "JOIN sys_user u ON u.id = d.leader_id AND u.deleted = 0 AND u.status = 0 ",
+            "WHERE d.deleted = 0 AND d.status = 0 AND d.leader_id IS NOT NULL ",
+            "AND d.tenant_id = #{tenantId} AND u.tenant_id = #{tenantId} AND d.id IN ",
+            "<foreach collection='deptIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
+            "</script>"})
+    @InterceptorIgnore(tenantLine = "true")
+    List<Long> selectActiveUserIdsByDeptLeaders(@Param("deptIds") List<Long> deptIds,
+                                                 @Param("tenantId") Long tenantId);
+
+    /** 岗位解析：启用岗位 × 有效任职行 × 启用用户，同租户。 */
+    @Select({"<script>",
+            "SELECT DISTINCT up.user_id FROM sys_user_post up ",
+            "JOIN sys_post p ON p.id = up.post_id AND p.deleted = 0 AND p.status = 1 ",
+            "JOIN sys_user u ON u.id = up.user_id AND u.deleted = 0 AND u.status = 0 ",
+            "WHERE up.deleted = 0 AND up.tenant_id = #{tenantId} ",
+            "AND p.tenant_id = #{tenantId} AND u.tenant_id = #{tenantId} AND p.code IN ",
+            "<foreach collection='postCodes' item='code' open='(' separator=',' close=')'>#{code}</foreach>",
+            "</script>"})
+    @InterceptorIgnore(tenantLine = "true")
+    List<Long> selectActiveUserIdsByPostCodes(@Param("postCodes") List<String> postCodes,
+                                               @Param("tenantId") Long tenantId);
+
+    /** 部门+岗位组合解析：任职部门精确匹配（dept_id），部门须正常状态。 */
+    @Select({"SELECT DISTINCT up.user_id FROM sys_user_post up ",
+            "JOIN sys_post p ON p.id = up.post_id AND p.deleted = 0 AND p.status = 1 ",
+            "JOIN sys_user u ON u.id = up.user_id AND u.deleted = 0 AND u.status = 0 ",
+            "WHERE up.deleted = 0 AND up.tenant_id = #{tenantId} ",
+            "AND p.tenant_id = #{tenantId} AND u.tenant_id = #{tenantId} ",
+            "AND up.dept_id = #{deptId} AND p.code = #{postCode} ",
+            "AND EXISTS (SELECT 1 FROM sys_dept d WHERE d.id = #{deptId} ",
+            "AND d.deleted = 0 AND d.status = 0 AND d.tenant_id = #{tenantId})"})
+    @InterceptorIgnore(tenantLine = "true")
+    List<Long> selectActiveUserIdsByDeptAndPost(@Param("deptId") Long deptId,
+                                                 @Param("postCode") String postCode,
+                                                 @Param("tenantId") Long tenantId);
+
     /**
      * 用户分页查询（数据范围纳管入口）。
      * <p>
@@ -51,6 +99,18 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
     @DataScope
     @Select("SELECT * FROM sys_user WHERE deleted = 0")
     IPage<SysUser> selectUserPage(Page<SysUser> page);
+
+    /**
+     * 角色成员分页（角色管理成员维护反向视图；租户条件由拦截器注入）。
+     * 仅含启用普通角色绑定（superadmin 角色不暴露成员视图）。
+     */
+    @Select({"<script>",
+            "SELECT DISTINCT u.* FROM sys_user u ",
+            "JOIN sys_user_role ur ON ur.user_id = u.id AND ur.deleted = 0 AND ur.role_id = #{roleId} ",
+            "WHERE u.deleted = 0 ",
+            "ORDER BY u.id",
+            "</script>"})
+    IPage<SysUser> selectUsersByRole(Page<SysUser> page, @Param("roleId") Long roleId);
 
     @DataScope(deptAlias = "u", userAlias = "u")
     @Select({"<script>",
