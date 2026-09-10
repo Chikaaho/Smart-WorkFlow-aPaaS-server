@@ -5,6 +5,7 @@ import com.sw.ck.form.service.FormSubmitService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -37,6 +38,7 @@ public class FormSubmitController {
      * @return {@code R<String>} 主表记录 ID
      */
     @PostMapping("/{formKey}")
+    @PreAuthorize("@ss.hasPermi('form:data:submit')")
     public R<String> submitData(@PathVariable("formKey") String formKey,
                                  @RequestBody Map<String, Object> data,
                                  HttpServletRequest request) {

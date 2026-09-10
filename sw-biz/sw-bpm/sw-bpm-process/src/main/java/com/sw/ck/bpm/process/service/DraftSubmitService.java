@@ -177,12 +177,37 @@ public class DraftSubmitService {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "草稿不存在");
         }
         LoginUser loginUser = LoginUserHolder.get();
-        if (!loginUser.getUserId().equals(draft.getCreateBy())) {
+        if (loginUser == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
+        }
+        if (!isSameTenant(loginUser, draft) || !loginUser.getUserId().equals(draft.getCreateBy())) {
             log.warn("草稿越权拒绝: draftId={}, owner={}, currentUser={}",
                     id, draft.getCreateBy(), loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该草稿");
         }
+        if (!formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view")) {
+            log.warn("草稿视图权限拒绝: draftId={}, formKey={}, currentUser={}",
+                    id, draft.getFormKey(), loginUser.getUserId());
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该草稿");
+        }
         return draft;
+    }
+
+    /** 草稿列表过滤使用：不抛出业务异常，不向撤权主体泄露草稿对象。 */
+    public boolean canCurrentUserView(BpmDraft draft) {
+        LoginUser loginUser = LoginUserHolder.get();
+        return loginUser != null
+                && draft != null
+                && loginUser.getUserId() != null
+                && loginUser.getUserId().equals(draft.getCreateBy())
+                && isSameTenant(loginUser, draft)
+                && formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view");
+    }
+
+    private boolean isSameTenant(LoginUser loginUser, BpmDraft draft) {
+        return loginUser.getTenantId() != null
+                && draft.getTenantId() != null
+                && loginUser.getTenantId().equals(draft.getTenantId());
     }
 
     /** 已发布表单校验（保存/提交共用）。 */

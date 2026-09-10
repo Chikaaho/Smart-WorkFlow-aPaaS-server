@@ -87,6 +87,15 @@ public class BpmEngineAutoConfiguration {
     }
 
     /**
+     * form 模块受控外部数据源查询端口适配（I2）：复用唯一 SqlExecutor 执行权威。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public com.sw.ck.form.api.port.ExtDatasourceQueryPort extDatasourceQueryPort(SqlExecutor sqlExecutor) {
+        return new com.sw.ck.bpm.engine.adapter.FormExtDatasourceQueryAdapter(sqlExecutor);
+    }
+
+    /**
      * 当前应用的唯一 BPM 节点注册结果。节点实现由 Spring 自动发现，注册构造阶段完成
      * 类型、元数据、配置和能力完整性校验；失败直接阻止 BPM 引擎装配。
      */

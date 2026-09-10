@@ -275,6 +275,32 @@ public class FormFieldValidator {
                                 "字段 '" + def.name + "' 需要文件列表");
                     }
                 }
+                case "TIME" -> {
+                    if (!(value instanceof String time) || !time.matches("^([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d)?$")) {
+                        throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                "字段 '" + def.name + "' 需要 HH:mm 或 HH:mm:ss 时间格式");
+                    }
+                }
+                case "USER", "DEPT" -> {
+                    // 数字型对象 ID；存在性/启用/租户校验由 FormFieldEnrichmentService 经 Facade 执行
+                    if (!(value instanceof Number) && !(value instanceof String id && id.matches("\\d+"))) {
+                        throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                "字段 '" + def.name + "' 需要数字型对象 ID");
+                    }
+                }
+                case "DATASOURCE" -> {
+                    // 客户端只送稳定对象标识；服务端增补后允许规范化摘要继续通过二次校验。
+                    boolean stableId = value instanceof Number || value instanceof String;
+                    boolean serverSummary = value instanceof Map<?, ?> summary
+                            && summary.get("value") != null
+                            && summary.get("display") != null
+                            && summary.get("queryKey") != null
+                            && summary.get("version") != null;
+                    if (!stableId && !serverSummary) {
+                        throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                "字段 '" + def.name + "' 需要稳定对象标识");
+                    }
+                }
                 // TEXT / RICH_TEXT / REFERENCE / LABEL 无额外校验
             }
     }

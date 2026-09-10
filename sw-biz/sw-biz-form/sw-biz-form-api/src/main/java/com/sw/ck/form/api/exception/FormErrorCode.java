@@ -16,6 +16,10 @@ public enum FormErrorCode implements ErrorCode {
     FORM_ALREADY_PUBLISHED(1100, "表单已发布，不能修改"),
     FORM_ALREADY_DRAFT(1101, "表单处于草稿态，不能执行此操作"),
     FORM_NOT_PUBLISHED(1102, "表单未发布，不能提交数据"),
+    FORM_DISABLED(1103, "表单已停用，不能填报或提交"),
+    FORM_DELETE_RESTRICTED(1104, "表单存在有效引用，不能删除"),
+    FIELD_EDIT_DENIED(1105, "当前身份无该字段编辑权限"),
+    FIELD_VIEW_DENIED(1106, "当前身份无该字段查看权限"),
 
     // ==================== 发布校验（1200-1299） ====================
     INVALID_COLUMN_NAME(1200, "字段名不合法"),
@@ -27,6 +31,17 @@ public enum FormErrorCode implements ErrorCode {
     FIELD_ATTR_MISSING(1206, "字段缺少必要属性"),
     FIELD_NESTED_TABLE(1207, "表格字段不能嵌套"),
     DEFINITION_INVALID(1208, "表单定义配置异常"),
+    FORMULA_INVALID(1209, "公式表达式非法"),
+    FORMULA_CYCLE(1210, "公式存在循环依赖"),
+    FORMULA_UNKNOWN_FIELD(1211, "公式引用了未定义字段"),
+    EXT_QUERY_NOT_FOUND(1212, "外部数据源查询契约不存在"),
+    EXT_QUERY_DISABLED(1213, "外部数据源查询契约已停用"),
+    EXT_OUTPUT_MISMATCH(1214, "外部数据源输出与契约不匹配"),
+    EXT_OBJECT_NOT_FOUND(1215, "外部数据对象不存在或不可见"),
+    LIST_CONFIG_INVALID(1216, "列表展示配置非法"),
+    REFERENCE_OBJECT_NOT_FOUND(1217, "引用记录不存在或不可见"),
+    ATTACHMENT_FILE_NOT_FOUND(1218, "附件/图片文件不存在或不可见"),
+    EXT_RESULT_LIMIT_EXCEEDED(1219, "外部数据源结果超过行数上限"),
 
     // ==================== 渲染（1300-1399） ====================
     CONFIG_NOT_FOUND(1300, "表单配置未找到"),

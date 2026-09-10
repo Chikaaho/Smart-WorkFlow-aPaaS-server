@@ -46,6 +46,28 @@ class LoginChallengeServiceTest {
                 .hasMessageContaining("摘要密钥未配置");
     }
 
+    @Test
+    @DisplayName("显式 test-mock 开启时固定验证码为 1234，仍沿用原挑战校验链")
+    void testMock_shouldUseFixedCaptchaWithoutChangingValidation() {
+        LoginSecurityProperties properties = properties("unit-test-digest-secret");
+        DevProperties devProperties = new DevProperties();
+        devProperties.setTestMock(true);
+        CapturingStore store = new CapturingStore();
+        LoginChallengeService service = new LoginChallengeService(
+                store,
+                new RsaLoginKeyManager(properties),
+                properties,
+                new PngCaptchaRenderer(),
+                devProperties);
+
+        LoginChallengeService.ChallengeView challenge = service.create();
+
+        assertThat(service.verifyCaptcha(challenge.captchaId(), "1234")).isNotNull();
+        assertThatThrownBy(() -> service.verifyCaptcha(challenge.captchaId(), "5678"))
+                .isInstanceOf(LoginChallengeService.AuthException.class)
+                .hasMessage("验证码错误");
+    }
+
     private LoginSecurityProperties properties(String digestSecret) {
         LoginSecurityProperties properties = new LoginSecurityProperties();
         properties.setRsaPrivateKey(LoginChallengeTestSupport.TEST_PRIVATE_KEY_PEM);

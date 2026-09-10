@@ -30,18 +30,28 @@ public class LoginChallengeService {
     private final RsaLoginKeyManager rsaKeyManager;
     private final LoginSecurityProperties properties;
     private final PngCaptchaRenderer captchaRenderer;
+    private final DevProperties devProperties;
     private final SecureRandom secureRandom = new SecureRandom();
     private final byte[] digestSecretBytes;
+
+    public LoginChallengeService(LoginChallengeStore challengeStore,
+                                 RsaLoginKeyManager rsaKeyManager,
+                                 LoginSecurityProperties properties,
+                                 PngCaptchaRenderer captchaRenderer) {
+        this(challengeStore, rsaKeyManager, properties, captchaRenderer, new DevProperties());
+    }
 
     @Autowired
     public LoginChallengeService(LoginChallengeStore challengeStore,
                                  RsaLoginKeyManager rsaKeyManager,
                                  LoginSecurityProperties properties,
-                                 PngCaptchaRenderer captchaRenderer) {
+                                 PngCaptchaRenderer captchaRenderer,
+                                 DevProperties devProperties) {
         this.challengeStore = challengeStore;
         this.rsaKeyManager = rsaKeyManager;
         this.properties = properties;
         this.captchaRenderer = captchaRenderer;
+        this.devProperties = devProperties;
         // 服务端密钥参与答案摘要：未配置即 fail-fast，无密钥摘要不允许上线
         String secret = properties.getDigestSecret();
         if (secret == null || secret.isBlank()) {
@@ -135,6 +145,9 @@ public class LoginChallengeService {
     }
 
     protected String generateCaptcha(int length) {
+        if (devProperties.isTestMock()) {
+            return "1234";
+        }
         String charset = properties.getCaptchaCharset();
         StringBuilder sb = new StringBuilder(length);
         for (int i = 0; i < length; i++) {

@@ -67,6 +67,8 @@ public class FormSubmitService {
     private final FormFieldValidator formFieldValidator;
     private final FlowStartPort flowStartPort;
     private final FormVisibilityRules visibilityRules;
+    /** I2 写路径增补（可选：既有测试构造不注入时跳过增补管线）。 */
+    private final FormFieldEnrichmentService enrichment;
 
     @org.springframework.beans.factory.annotation.Autowired
     public FormSubmitService(FormDefMapper formDefMapper,
@@ -80,7 +82,8 @@ public class FormSubmitService {
                              Optional<AesGcmCipher> aesCipher,
                              FormFieldValidator formFieldValidator,
                              org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
-                             FormVisibilityRules visibilityRules) {
+                             FormVisibilityRules visibilityRules,
+                             org.springframework.beans.factory.ObjectProvider<FormFieldEnrichmentService> enrichment) {
         this.formDefMapper = formDefMapper;
         this.formTraceMapper = formTraceMapper;
         this.dynamicTableManager = dynamicTableManager;
@@ -93,6 +96,25 @@ public class FormSubmitService {
         this.formFieldValidator = formFieldValidator;
         this.flowStartPort = flowStartPort.getIfAvailable();
         this.visibilityRules = visibilityRules;
+        this.enrichment = enrichment.getIfAvailable();
+    }
+
+    /** 兼容既有测试构造（无显隐规则注入时使用默认实现；不注入 I2 增补）。 */
+    public FormSubmitService(FormDefMapper formDefMapper,
+                             FormTraceMapper formTraceMapper,
+                             DynamicTableManager dynamicTableManager,
+                             FormIdGenerator idGenerator,
+                             ObjectMapper objectMapper,
+                             JdbcTemplate jdbcTemplate,
+                             DictFacade dictFacade,
+                             DomainEventPublisher eventPublisher,
+                             Optional<AesGcmCipher> aesCipher,
+                             FormFieldValidator formFieldValidator,
+                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
+                             FormFieldEnrichmentService enrichment) {
+        this(formDefMapper, formTraceMapper, dynamicTableManager, idGenerator, objectMapper,
+                jdbcTemplate, dictFacade, eventPublisher, aesCipher, formFieldValidator,
+                flowStartPort, new FormVisibilityRules(objectMapper), enrichment, false);
     }
 
     /** 兼容既有测试构造（无显隐规则注入时使用默认实现）。 */
@@ -109,7 +131,37 @@ public class FormSubmitService {
                              org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort) {
         this(formDefMapper, formTraceMapper, dynamicTableManager, idGenerator, objectMapper,
                 jdbcTemplate, dictFacade, eventPublisher, aesCipher, formFieldValidator,
-                flowStartPort, new FormVisibilityRules(objectMapper));
+                flowStartPort, new FormVisibilityRules(objectMapper), null, false);
+    }
+
+    /** 私有全参构造（唯一赋值点）。 */
+    private FormSubmitService(FormDefMapper formDefMapper,
+                              FormTraceMapper formTraceMapper,
+                              DynamicTableManager dynamicTableManager,
+                              FormIdGenerator idGenerator,
+                              ObjectMapper objectMapper,
+                              JdbcTemplate jdbcTemplate,
+                              DictFacade dictFacade,
+                              DomainEventPublisher eventPublisher,
+                              Optional<AesGcmCipher> aesCipher,
+                              FormFieldValidator formFieldValidator,
+                              org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
+                              FormVisibilityRules visibilityRules,
+                              FormFieldEnrichmentService enrichment,
+                              boolean unusedMarker) {
+        this.formDefMapper = formDefMapper;
+        this.formTraceMapper = formTraceMapper;
+        this.dynamicTableManager = dynamicTableManager;
+        this.idGenerator = idGenerator;
+        this.objectMapper = objectMapper;
+        this.jdbcTemplate = jdbcTemplate;
+        this.dictFacade = dictFacade;
+        this.eventPublisher = eventPublisher;
+        this.aesCipher = aesCipher.orElse(null);
+        this.formFieldValidator = formFieldValidator;
+        this.flowStartPort = flowStartPort.getIfAvailable();
+        this.visibilityRules = visibilityRules;
+        this.enrichment = enrichment;
     }
 
     // ==================== 主入口 ====================
@@ -138,6 +190,9 @@ public class FormSubmitService {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
         Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
+        if (enrichment != null) {
+            enrichment.enrichForWrite(formDef.getId(), effectiveData);
+        }
         Map<String, FormFieldValidator.FieldDef> fieldDefs =
                 formFieldValidator.loadAndParseFieldDefs(formDef.getId(), effectiveData);
         formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
@@ -284,6 +339,12 @@ public class FormSubmitService {
         // ==========================================================
         Map<String, FormFieldValidator.FieldDef> fieldDefs = formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
         Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
+        if (enrichment != null) {
+            // I2：字段编辑权限闸门 + 公式服务端重算 + USER/DEPT/DATASOURCE 对象校验与解析
+            enrichment.enrichForWrite(formDef.getId(), effectiveData);
+            // 增补可能新增/改写字段值（公式结果、数据源摘要），重载字段定义做未知字段校验
+            fieldDefs = formFieldValidator.loadAndParseFieldDefs(formDef.getId(), effectiveData);
+        }
 
         // ==========================================================
         // Step 4: 校验字段（隐藏字段已被过滤，不参与必填校验）
@@ -442,12 +503,17 @@ public class FormSubmitService {
         String submitterStr = String.valueOf(userId);
         FormSubmittedEvent event = new FormSubmittedEvent(formKey, effectiveData, submitterStr, recordId,
                 tenantId, dispatchChannel, processDefKey);
-        if (flowStartPort != null) {
+        boolean canStartFlow = enrichment == null
+                || enrichment.canCurrentUserPerformAction(formDef.getId(), "flowStart");
+        if (flowStartPort != null && canStartFlow) {
             Long commandId = flowStartPort.acceptFlowStart(event);
             log.info("Flow start accepted in-tx: formKey={}, recordId={}, commandId={}",
                     formKey, recordId, commandId);
-        } else {
+        } else if (flowStartPort == null && canStartFlow) {
             eventPublisher.publish(event);
+        } else {
+            log.info("Flow start skipped by form action permission: formKey={}, recordId={}, userId={}",
+                    formKey, recordId, userId);
         }
         log.info("Form submit completed: formKey={}, recordId={}, submitter={}",
                 formKey, recordId, submitterStr);
@@ -525,6 +591,14 @@ public class FormSubmitService {
                 } catch (JsonProcessingException e) {
                     throw new BaseException(FormErrorCode.SUBMIT_FAILED, "字段值序列化失败: " + e.getMessage());
                 }
+            }
+        }
+        // I2：DATASOURCE 值为服务端解析后的摘要 Map → JSON 落列
+        if ("DATASOURCE".equals(type) && value instanceof Map<?, ?>) {
+            try {
+                return objectMapper.writeValueAsString(value);
+            } catch (JsonProcessingException e) {
+                throw new BaseException(FormErrorCode.SUBMIT_FAILED, "数据源摘要序列化失败: " + e.getMessage());
             }
         }
         return value;

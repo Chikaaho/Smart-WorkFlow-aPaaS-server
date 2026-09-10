@@ -291,6 +291,55 @@ class FormDataQueryServiceTest {
         assertThat(result.getRecords().get(0).get("title")).isEqualTo("Alpha");
     }
 
+    // ==================== 测试 3b：系统主键 id 过滤（引用显示名解析依赖） ====================
+
+    @Test
+    @DisplayName("系统列 id EQ → 精确返回该行；id 非 EQ → 拒绝")
+    void filter_systemIdEq_shouldReturnSingleRow_andNonEqRejected() {
+        var setup = setupQueryForm("id_eq");
+        String tableName = setup.tableName;
+        String targetId = UUID.randomUUID().toString();
+
+        jdbcTemplate.update(
+                "INSERT INTO \"" + tableName + "\" (\"id\", \"tenant_id\", \"deleted\", \"create_time\", \"create_by\", \"update_time\", \"update_by\", \"version\", \"title\") "
+                        + "VALUES (?, ?, 0, NOW(), ?, NOW(), ?, 0, ?)",
+                targetId, TEST_TENANT_ID, TEST_USER_ID, TEST_USER_ID, "Target");
+        jdbcTemplate.update(
+                "INSERT INTO \"" + tableName + "\" (\"id\", \"tenant_id\", \"deleted\", \"create_time\", \"create_by\", \"update_time\", \"update_by\", \"version\", \"title\") "
+                        + "VALUES (?, ?, 0, NOW(), ?, NOW(), ?, 0, ?)",
+                UUID.randomUUID().toString(), TEST_TENANT_ID, TEST_USER_ID, TEST_USER_ID, "Other");
+
+        // 正向：id EQ 精确返回该行
+        FormDataQueryRequest request = new FormDataQueryRequest();
+        request.setPageNum(1);
+        request.setPageSize(10);
+        FormDataFilter eqFilter = new FormDataFilter();
+        eqFilter.setField("id");
+        eqFilter.setOp(FilterOp.EQ);
+        eqFilter.setValue(targetId);
+        request.setFilters(List.of(eqFilter));
+
+        PageResult<Map<String, Object>> result = formDataQueryService.queryFormData(setup.formKey, request);
+        assertThat(result.getTotal()).isEqualTo(1);
+        assertThat(result.getRecords().get(0).get("id")).isEqualTo(targetId);
+        assertThat(result.getRecords().get(0).get("title")).isEqualTo("Target");
+
+        // 反向：id LIKE 拒绝（系统列仅放行 EQ）
+        FormDataQueryRequest likeRequest = new FormDataQueryRequest();
+        likeRequest.setPageNum(1);
+        likeRequest.setPageSize(10);
+        FormDataFilter likeFilter = new FormDataFilter();
+        likeFilter.setField("id");
+        likeFilter.setOp(FilterOp.LIKE);
+        likeFilter.setValue(targetId);
+        likeRequest.setFilters(List.of(likeFilter));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> formDataQueryService.queryFormData(setup.formKey, likeRequest))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("仅支持 EQ");
+    }
+
     // ==================== 测试 4：LIKE 过滤 (TEXT) ====================
 
     @Test

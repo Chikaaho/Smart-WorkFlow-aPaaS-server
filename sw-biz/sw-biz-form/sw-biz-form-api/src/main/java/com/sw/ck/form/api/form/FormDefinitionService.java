@@ -54,6 +54,11 @@ public interface FormDefinitionService {
     /** 判断当前登录用户是否可从业务入口发起该已发布表单。 */
     boolean canCurrentUserInitiate(String formKey);
 
+    /** 判断当前用户是否具备表单 definition 顶层动作权限。 */
+    default boolean canCurrentUserPerformAction(String formKey, String action) {
+        return canCurrentUserInitiate(formKey);
+    }
+
     /**
      * 判断当前用户是否能访问已发布表单中的指定记录。
      * <p>

@@ -104,6 +104,29 @@ public class FormDataQueryService {
         this.objectMapper = objectMapper;
     }
 
+    // ==== I2 依赖（可选注入；既有测试构造不受影响；缺省时按登录态降级解析） ====
+
+    private FieldPermissionService fieldPermissionService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setFieldPermissionService(FieldPermissionService fieldPermissionService) {
+        this.fieldPermissionService = fieldPermissionService;
+    }
+
+    private com.sw.ck.common.security.LoginContextProvider loginContextProvider;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLoginContextProvider(com.sw.ck.common.security.LoginContextProvider loginContextProvider) {
+        this.loginContextProvider = loginContextProvider;
+    }
+
+    private com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDeptScopeProvider(com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+        this.deptScopeProvider = deptScopeProvider;
+    }
+
     // ==================== 主入口 ====================
 
     /**
@@ -157,7 +180,7 @@ public class FormDataQueryService {
         if (!formDefService.isCurrentUserVisible(formKey)) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
-        if (!"PUBLISHED".equals(formDef.getStatus())) {
+        if (!"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
         }
         String tableName = formDef.getPhysicalTableName();
@@ -171,11 +194,14 @@ public class FormDataQueryService {
         // —— Step 3: 加载 definition JSON 并解析字段类型 ——
         Map<String, FieldType> fieldTypeMap = loadFieldTypeMap(formDef.getId());
 
-        // —— Step 4: 校验过滤条件 ——
-        List<FilterClause> clauses = validateAndBuildClauses(request.getFilters(), fieldTypeMap);
+        // —— I2: 当前身份无 view 权的字段（投影剔除 + 筛选拒绝，敏感值不可侧漏） ——
+        Set<String> viewDenied = viewDeniedFields(loginUser, formDef.getId());
 
-        // —— Step 5: 构建列投影 ——
-        List<String> projectionColumns = buildProjection(fieldTypeMap);
+        // —— Step 4: 校验过滤条件 ——
+        List<FilterClause> clauses = validateAndBuildClauses(request.getFilters(), fieldTypeMap, viewDenied);
+
+        // —— Step 5: 构建列投影（I2：无 view 权字段不出响应） ——
+        List<String> projectionColumns = buildProjection(fieldTypeMap, viewDenied);
 
         // —— Step 6: 钳制分页参数 ——
         int page = Math.max(1, (int) request.getPageNum());
@@ -190,25 +216,11 @@ public class FormDataQueryService {
         whereBuilder.append(" AND \"tenant_id\" = ?");
         filterParams.add(tenantId);
 
-        // —— 数据范围过滤（create_by 归属语义，对齐 DataScopeFilter） ——
-        if (scopeFilter != null) {
-            if (scopeFilter.isAlwaysFalse()) {
-                whereBuilder.append(" AND 1 = 0");
-            } else if (scopeFilter.getUserId() != null) {
-                whereBuilder.append(" AND \"create_by\" = ?");
-                filterParams.add(scopeFilter.getUserId());
-            } else if (scopeFilter.getDeptIds() != null) {
-                List<Long> deptIds = scopeFilter.getDeptIds();
-                if (deptIds.isEmpty()) {
-                    whereBuilder.append(" AND 1 = 0");
-                } else {
-                    String placeholders = deptIds.stream().map(d -> "?").collect(Collectors.joining(", "));
-                    whereBuilder.append(" AND \"create_by\" IN (SELECT id FROM sys_user WHERE dept_id IN (")
-                            .append(placeholders).append("))");
-                    filterParams.addAll(deptIds);
-                }
-            }
-        }
+        // —— 数据范围过滤（I2：服务端权威强制，调用方不可选择关闭；create_by 归属语义） ——
+        DataScopeFilter effectiveScope = scopeFilter != null
+                ? scopeFilter
+                : FormDataScopeSupport.resolve(loginUser, loginContextProvider, deptScopeProvider);
+        FormDataScopeSupport.appendWhere(whereBuilder, filterParams, effectiveScope);
 
         for (FilterClause clause : clauses) {
             whereBuilder.append(" AND ").append(clause.sql());
@@ -282,7 +294,7 @@ public class FormDataQueryService {
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
-        if (!"PUBLISHED".equals(formDef.getStatus())) {
+        if (!"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
         }
         String tableName = formDef.getPhysicalTableName();
@@ -295,19 +307,25 @@ public class FormDataQueryService {
         Map<String, FieldType> fieldTypeMap = loadFieldTypeMap(formDef.getId());
         Map<String, List<SubFieldMeta>> tableSubFields = loadTableSubFields(formDef.getId());
 
-        // —— Step 4: 构建详情投影（含 version） ——
-        List<String> projectionColumns = buildDetailProjection(fieldTypeMap);
+        // —— I2: 字段查看权限 + 记录数据范围（服务端权威强制） ——
+        Set<String> viewDenied = viewDeniedFields(loginUser, formDef.getId());
 
-        // —— Step 5: 查询主记录 ——
+        // —— Step 4: 构建详情投影（含 version；剔除无 view 权字段） ——
+        List<String> projectionColumns = buildDetailProjection(fieldTypeMap, viewDenied);
+
+        // —— Step 5: 查询主记录（数据范围条件与列表同口径强制） ——
         String columns = projectionColumns.stream()
                 .map(c -> "\"" + c + "\"")
                 .collect(Collectors.joining(", "));
-        String sql = "SELECT " + columns + " FROM \"" + tableName
-                + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+        StringBuilder detailWhere = new StringBuilder("\"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
+        List<Object> detailParams = new ArrayList<>(List.of(recordId, tenantId));
+        DataScopeFilter detailScope = FormDataScopeSupport.resolve(loginUser, loginContextProvider, deptScopeProvider);
+        FormDataScopeSupport.appendWhere(detailWhere, detailParams, detailScope);
+        String sql = "SELECT " + columns + " FROM \"" + tableName + "\" WHERE " + detailWhere;
 
         List<Map<String, Object>> records;
         try {
-            records = jdbcTemplate.queryForList(sql, recordId, tenantId);
+            records = jdbcTemplate.queryForList(sql, detailParams.toArray());
         } catch (Exception e) {
             log.error("Detail query failed: table={}, recordId={}", tableName, recordId, e);
             throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询失败: " + e.getMessage());
@@ -337,8 +355,12 @@ public class FormDataQueryService {
                 // 获取子表字段定义
                 List<SubFieldMeta> subFields = tableSubFields.getOrDefault(tableFieldName, List.of());
 
-                // 构建子表投影
-                List<String> subProjection = buildSubTableProjection(subFields);
+                // 构建子表投影（I2：剔除无 view 权子字段，键 tableField.subField）
+                List<String> subProjection = buildSubTableProjection(subFields).stream()
+                        .filter(c -> subFields.stream()
+                                .noneMatch(m -> m.physicalCol().equals(c)
+                                        && viewDenied.contains(tableFieldName + "." + m.name())))
+                        .toList();
 
                 // 查询子表行
                 String subColumns = subProjection.stream()
@@ -517,7 +539,8 @@ public class FormDataQueryService {
      * </p>
      */
     private List<FilterClause> validateAndBuildClauses(List<FormDataFilter> filters,
-                                                        Map<String, FieldType> fieldTypeMap) {
+                                                        Map<String, FieldType> fieldTypeMap,
+                                                        Set<String> viewDenied) {
         if (filters == null || filters.isEmpty()) {
             return List.of();
         }
@@ -545,9 +568,26 @@ public class FormDataQueryService {
                         "过滤操作符 IN 在 v1 暂不支持");
             }
 
+            // —— 系统主键 id：仅放行 EQ（引用显示名解析等单记录定位） ——
+            // id 是 SYSTEM_COLUMNS 固定主键列，不经 definition 校验；记录数据范围
+            // 条件仍强制并入 WHERE，跨范围按 id 过滤查不到即 fail-closed，无侧漏。
+            if ("id".equals(field)) {
+                if (op != FilterOp.EQ) {
+                    throw new BaseException(FormErrorCode.QUERY_FILTER_OP_TYPE_MISMATCH,
+                            "系统列 'id' 仅支持 EQ 过滤");
+                }
+                if (value == null || (value instanceof String s && s.isBlank())) {
+                    throw new BaseException(FormErrorCode.QUERY_FILTER_OP_TYPE_MISMATCH,
+                            "过滤字段 'id' 的值为空");
+                }
+                clauses.add(buildClause("id", op, value, FieldType.TEXT));
+                continue;
+            }
+
             // —— 字段是否在 definition 中 ——
             FieldType fieldType = fieldTypeMap.get(field);
-            if (fieldType == null) {
+            if (fieldType == null || viewDenied.contains(field)) {
+                // 无 view 权字段与未知字段同口径拒绝，不确认其存在性
                 throw new BaseException(FormErrorCode.QUERY_FILTER_FIELD_UNKNOWN,
                         "过滤字段 '" + field + "' 不在表单定义中");
             }
@@ -684,7 +724,7 @@ public class FormDataQueryService {
      * 列表视图排除 deleted、tenant_id、version（无业务意义）。
      * </p>
      */
-    private List<String> buildProjection(Map<String, FieldType> fieldTypeMap) {
+    private List<String> buildProjection(Map<String, FieldType> fieldTypeMap, Set<String> viewDenied) {
         List<String> columns = new ArrayList<>(PROJECTION_SYSTEM_COLUMNS);
 
         for (Map.Entry<String, FieldType> entry : fieldTypeMap.entrySet()) {
@@ -694,6 +734,8 @@ public class FormDataQueryService {
             if (ft == FieldType.TABLE) continue;
             if (ft == FieldType.LABEL) continue;
             if (!ft.isEnabled()) continue;
+            // I2：无 view 权字段不进 SELECT 投影
+            if (viewDenied.contains(entry.getKey())) continue;
 
             String physicalCol = ColumnValidation.physicalColumnName(entry.getKey(), ft);
             columns.add(physicalCol);
@@ -715,7 +757,7 @@ public class FormDataQueryService {
     /**
      * 构建详情视图的列投影（含 version，不含 deleted/tenant_id）。
      */
-    private List<String> buildDetailProjection(Map<String, FieldType> fieldTypeMap) {
+    private List<String> buildDetailProjection(Map<String, FieldType> fieldTypeMap, Set<String> viewDenied) {
         // 详情投影系统列：id + 审计列 + version（比列表多 version）
         List<String> columns = new ArrayList<>(List.of(
                 "id", "create_time", "create_by", "update_time", "update_by", "version"
@@ -726,12 +768,61 @@ public class FormDataQueryService {
             if (ft == FieldType.TABLE) continue;
             if (ft == FieldType.LABEL) continue;
             if (!ft.isEnabled()) continue;
+            // I2：无 view 权字段不进详情投影
+            if (viewDenied.contains(entry.getKey())) continue;
 
             String physicalCol = ColumnValidation.physicalColumnName(entry.getKey(), ft);
             columns.add(physicalCol);
         }
 
         return columns;
+    }
+
+    /**
+     * I2：解析当前身份在指定表单上的无 view 权字段集合
+     * （含 TABLE 子字段，键形如 {@code items.qty}；权限服务缺失时视为不设限）。
+     */
+    private Set<String> viewDeniedFields(LoginUser loginUser, String formId) {
+        if (fieldPermissionService == null) {
+            return Set.of();
+        }
+        String definitionJson = loadDefinitionJsonForPermissions(formId);
+        if (definitionJson == null) {
+            return Set.of();
+        }
+        Set<String> denied = new java.util.LinkedHashSet<>(fieldPermissionService.viewDeniedFields(loginUser,
+                fieldPermissionService.parse(definitionJson)));
+        // 子字段键展开：子字段权限键 = TABLE字段名.子字段名
+        try {
+            var perms = fieldPermissionService.parse(definitionJson);
+            JsonNode root = objectMapper.readTree(definitionJson);
+            JsonNode fieldsArray = root.get("fields");
+            if (fieldsArray != null && fieldsArray.isArray()) {
+                for (JsonNode field : fieldsArray) {
+                    if (!"TABLE".equals(field.path("type").asText())) continue;
+                    String tableName = field.path("name").asText();
+                    for (JsonNode sub : field.path("subFields")) {
+                        String key = tableName + "." + sub.path("name").asText();
+                        if (perms.containsKey(key) && !fieldPermissionService.canView(loginUser, key, perms)) {
+                            denied.add(key);
+                        }
+                    }
+                }
+            }
+        } catch (JsonProcessingException e) {
+            log.warn("viewDenied subfield expansion failed: {}", e.getMessage());
+        }
+        return denied;
+    }
+
+    private String loadDefinitionJsonForPermissions(String formId) {
+        List<FormConfigEntity> configs = formConfigMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                        .eq(FormConfigEntity::getFormId, formId)
+                        .isNull(FormConfigEntity::getParentTable)
+        );
+        FormConfigEntity config = (configs != null && !configs.isEmpty()) ? configs.get(0) : null;
+        return config != null ? config.getDefinition() : null;
     }
 
     /**

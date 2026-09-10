@@ -7,6 +7,8 @@ import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.executor.SqlExecutor;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.common.response.R;
+import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
+import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import jakarta.validation.Valid;
@@ -51,19 +53,24 @@ public class ExternalDatasourceController {
         log.info("SQL execute requested by {} (id={}), datasourceId={}",
                 loginUser.getUsername(), loginUser.getUserId(), request.getDatasourceId());
 
-        SqlExecutionResult result = sqlExecutor.execute(
-                request.getDatasourceId(), request.getSql(),
-                loginUser.getUserId(), loginUser.getUsername());
-        return R.ok(result);
+        try {
+            SqlExecutionResult result = sqlExecutor.execute(
+                    request.getDatasourceId(), request.getSql(),
+                    loginUser.getUserId(), loginUser.getUsername());
+            return R.ok(result);
+        } catch (ExternalDatasourceResultLimitExceededException e) {
+            return R.fail(FormErrorCode.EXT_RESULT_LIMIT_EXCEEDED.getCode(),
+                    FormErrorCode.EXT_RESULT_LIMIT_EXCEEDED.getMessage());
+        }
     }
 
     /** 创建外部数据源 */
     @PostMapping
     @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
-    public R<Void> create(@Valid @RequestBody ExternalDatasourceRequest request) {
+    public R<Long> create(@Valid @RequestBody ExternalDatasourceRequest request) {
         ExternalDatasource entity = toEntity(request);
         datasourceService.saveWithEncryption(entity, request.getPassword());
-        return R.ok();
+        return R.ok(entity.getId());
     }
 
     /** 更新外部数据源 */

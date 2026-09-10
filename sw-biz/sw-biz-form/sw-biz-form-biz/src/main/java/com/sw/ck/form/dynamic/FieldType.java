@@ -59,6 +59,24 @@ public enum FieldType {
     /** 说明文字：非输入字段，不产生列、不参与提交载荷。 */
     LABEL(true),
 
+    // ==================== I2 低代码表单收口启用 ====================
+    /** 时间：值 HH:mm:ss → TIME 列。 */
+    TIME(true),
+    /** 人员选择：值=有效用户 ID（服务端经 UserQueryFacade 校验同租户启用）→ VARCHAR(64)。 */
+    USER(true),
+    /** 部门选择：值=有效部门 ID（服务端经 DeptQueryFacade 校验同租户正常状态）→ VARCHAR(64)。 */
+    DEPT(true),
+    /**
+     * 公式：definition 携带 expression，仅登记字段+白名单函数；
+     * 服务端提交/更新时重算并落 NUMERIC(20,6) 结果列，客户端值一律不消费。
+     */
+    FORMULA(true),
+    /**
+     * 受控外部数据源：definition 携带 dsBinding{queryKey,version,valueField,displayField}；
+     * 值列存服务端解析后的 {value,display,queryKey,version} JSON → CLOB/TEXT。
+     */
+    DATASOURCE(true),
+
     // ==================== 占位（enabled=false） ====================
     EMAIL(false),
     PHONE(false),
@@ -80,4 +98,11 @@ public enum FieldType {
         return enabled;
     }
 
+    /**
+     * 该类型是否为非输入/非列类型（TABLE / LABEL / FORMULA 不由用户直接输入落列）。
+     * FORMULA 有结果列但值由服务端重算，不消费客户端值。
+     */
+    public boolean isNonInputType() {
+        return this == TABLE || this == LABEL || this == FORMULA;
+    }
 }

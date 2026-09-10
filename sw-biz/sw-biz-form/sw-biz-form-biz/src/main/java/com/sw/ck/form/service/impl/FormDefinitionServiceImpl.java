@@ -4,6 +4,7 @@ import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormDataQueryService;
+import com.sw.ck.form.service.FormFieldEnrichmentService;
 import org.springframework.stereotype.Service;
 
 /**
@@ -17,11 +18,14 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
 
     private final FormDefService formDefService;
     private final FormDataQueryService formDataQueryService;
+    private final FormFieldEnrichmentService formFieldEnrichmentService;
 
     public FormDefinitionServiceImpl(FormDefService formDefService,
-                                     FormDataQueryService formDataQueryService) {
+                                     FormDataQueryService formDataQueryService,
+                                     FormFieldEnrichmentService formFieldEnrichmentService) {
         this.formDefService = formDefService;
         this.formDataQueryService = formDataQueryService;
+        this.formFieldEnrichmentService = formFieldEnrichmentService;
     }
 
     @Override
@@ -52,6 +56,19 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
     @Override
     public boolean canCurrentUserInitiate(String formKey) {
         return formDefService.isCurrentUserVisible(formKey);
+    }
+
+    @Override
+    public boolean canCurrentUserPerformAction(String formKey, String action) {
+        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        if (formDef == null || !formDefService.isCurrentUserVisible(formKey)) {
+            return false;
+        }
+        if (!"view".equals(action) && !"PUBLISHED".equals(formDef.getStatus())) {
+            return false;
+        }
+        return formFieldEnrichmentService == null
+                || formFieldEnrichmentService.canCurrentUserPerformAction(formDef.getId(), action);
     }
 
     @Override

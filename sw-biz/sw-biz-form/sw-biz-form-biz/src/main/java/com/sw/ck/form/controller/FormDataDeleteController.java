@@ -4,6 +4,7 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.form.service.FormDataDeleteService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -32,6 +33,7 @@ public class FormDataDeleteController {
      * @return {@code R<Void>}
      */
     @DeleteMapping("/{formKey}/{recordId}")
+    @PreAuthorize("@ss.hasPermi('form:data:delete')")
     public R<Void> deleteData(@PathVariable("formKey") String formKey,
                                @PathVariable("recordId") String recordId) {
         log.info("Form data delete: formKey={}, recordId={}", formKey, recordId);

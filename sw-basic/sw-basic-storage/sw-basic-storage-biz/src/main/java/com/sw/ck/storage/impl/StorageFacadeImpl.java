@@ -1,5 +1,6 @@
 package com.sw.ck.storage.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.storage.api.StorageFacade;
@@ -52,6 +53,15 @@ public class StorageFacadeImpl implements StorageFacade {
                 originalName, result.getStorageKey(), provider.getType(), result.getFileSize());
 
         return result;
+    }
+
+    @Override
+    public boolean exists(String storageKey) {
+        if (storageKey == null || storageKey.isBlank()) {
+            return false;
+        }
+        return storageFileService.count(new LambdaQueryWrapper<StorageFile>()
+                .eq(StorageFile::getStorageKey, storageKey)) > 0;
     }
 
     @Override

@@ -6,6 +6,7 @@ import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormDataUpdateService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -44,6 +45,7 @@ public class FormDataController {
      * @return {@code R<Map>} 主记录字段 + 各子表行列表
      */
     @GetMapping("/{formKey}/{recordId}")
+    @PreAuthorize("@ss.hasPermi('form:data:query')")
     public R<Map<String, Object>> getDetail(@PathVariable("formKey") String formKey,
                                             @PathVariable("recordId") String recordId) {
         log.info("Form data detail: formKey={}, recordId={}", formKey, recordId);
@@ -60,6 +62,7 @@ public class FormDataController {
      * @return {@code R<Void>}
      */
     @PutMapping("/{formKey}/{recordId}")
+    @PreAuthorize("@ss.hasPermi('form:data:edit')")
     public R<Void> updateData(@PathVariable("formKey") String formKey,
                               @PathVariable("recordId") String recordId,
                               @RequestBody FormDataUpdateRequest request) {

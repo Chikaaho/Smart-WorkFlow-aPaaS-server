@@ -6,6 +6,7 @@ import com.sw.ck.bpm.engine.datasource.ExternalDatasourceManager;
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.bpm.engine.service.SqlExecutionAuditService;
+import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.select.Select;
@@ -97,7 +98,9 @@ public class SqlExecutor {
         // 3. 获取独立连接池，通过裸 JDBC 执行
         javax.sql.DataSource pool = poolManager.getOrCreatePool(entity);
         jdbcTemplate.setDataSource(pool);
-        jdbcTemplate.setMaxRows(execConfig.getMaxRows());
+        int maxRows = maxRows();
+        // 只允许探测到上限+1 行；超过上限时由 executeQuery 明确失败，不能静默截断。
+        jdbcTemplate.setMaxRows(probeMaxRows(maxRows));
         jdbcTemplate.setQueryTimeout(execConfig.getQueryTimeout());
 
         try {
@@ -119,6 +122,9 @@ public class SqlExecutor {
             auditService.auditFailure(datasourceId, entity.getName(), sql,
                     elapsed, e.getMessage(), operatorId, operatorName);
 
+            if (e instanceof ExternalDatasourceResultLimitExceededException limitExceeded) {
+                throw limitExceeded;
+            }
             throw new RuntimeException("SQL execution failed: " + e.getMessage(), e);
         }
     }
@@ -190,7 +196,8 @@ public class SqlExecutor {
             conn.setHoldability(ResultSet.CLOSE_CURSORS_AT_COMMIT);
 
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setMaxRows(execConfig.getMaxRows());
+                int maxRows = maxRows();
+                ps.setMaxRows(probeMaxRows(maxRows));
                 ps.setQueryTimeout(execConfig.getQueryTimeout());
 
                 try (ResultSet rs = ps.executeQuery()) {
@@ -200,6 +207,9 @@ public class SqlExecutor {
                         columns.add(meta.getColumnLabel(i));
                     }
                     while (rs.next()) {
+                        if (rows.size() >= maxRows) {
+                            throw new ExternalDatasourceResultLimitExceededException(maxRows);
+                        }
                         Map<String, Object> row = new LinkedHashMap<>();
                         for (int i = 1; i <= colCount; i++) {
                             row.put(columns.get(i - 1), rs.getObject(i));
@@ -217,6 +227,18 @@ public class SqlExecutor {
                 .rows(rows)
                 .rowCount(rows.size())
                 .build();
+    }
+
+    private int maxRows() {
+        int maxRows = execConfig.getMaxRows();
+        if (maxRows <= 0) {
+            throw new IllegalStateException("External datasource maxRows must be positive");
+        }
+        return maxRows;
+    }
+
+    private int probeMaxRows(int maxRows) {
+        return maxRows == Integer.MAX_VALUE ? maxRows : maxRows + 1;
     }
 
     // ---------- helper methods ----------
