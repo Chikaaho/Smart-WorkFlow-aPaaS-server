@@ -100,8 +100,10 @@ public final class ApprovalOpinionValidator {
                     }
                 }
             }
-            if (visible && data.get(key) == null && text(data.get(key)) == null
-                    && Boolean.TRUE.equals(field.get("required"))) {
+            boolean blankValue = data.get(key) == null
+                    || (data.get(key) instanceof String s && s.isBlank())
+                    || (data.get(key) instanceof Collection<?> c && c.isEmpty());
+            if (visible && blankValue && Boolean.TRUE.equals(field.get("required"))) {
                 throw new BaseException(BpmErrorCode.APPROVAL_OPINION_REQUIRED);
             }
             Object value = data.get(key);

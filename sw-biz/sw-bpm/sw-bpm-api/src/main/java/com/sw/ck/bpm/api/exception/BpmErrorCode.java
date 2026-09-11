@@ -59,6 +59,27 @@ public enum BpmErrorCode implements ErrorCode {
     NODE_DELIVERY_FAILED(2312, "节点投递失败"),
     INSTANCE_FAILED(2313, "流程实例已失败，不可继续审批"),
     INSTANCE_INITIATOR_INVALID(2314, "流程发起人无效、已停用或不属于当前租户"),
+
+    // ==================== I3 动作/会签/时限/函数（24xx） ====================
+    ACTION_NOT_ALLOWED(2400, "当前状态不允许该动作"),
+    ACTION_SELF_INVALID(2401, "不能转办/委托/授权给本人"),
+    AUTHORIZATION_INVALID(2402, "代理授权不合法（冲突、循环、失效或越租户）"),
+    WITHDRAW_NOT_PERMITTED(2403, "当前状态不可撤回"),
+    INVALIDATE_NOT_PERMITTED(2404, "当前主体无权废弃该实例"),
+    ADD_SIGN_INVALID(2405, "加签/补签请求不合法"),
+    SIGN_RECORD_NOT_FOUND(2406, "加签/补签记录不存在"),
+    DELEGATE_RELATION_INVALID(2407, "委托关系不合法"),
+    COMMUNICATION_INVALID(2408, "沟通请求不合法"),
+    CONSENSUS_VETOED(2409, "会签被一票否决"),
+    DEADLINE_NOT_FOUND(2410, "时限配置不存在或已失效"),
+    AUTO_ACTION_INVALID(2411, "受控自动动作配置不合法"),
+    NODE_FUNCTION_NOT_FOUND(2412, "节点函数不存在"),
+    NODE_FUNCTION_INVALID_OUTPUT(2413, "节点函数输出不合法"),
+    NODE_FUNCTION_FAILED(2414, "节点函数执行失败"),
+    NODE_FUNCTION_TIMEOUT(2415, "节点函数执行超时"),
+    OPINION_FORM_GONE(2415, "意见表单不可用（未发布或版本缺失）"),
+    VERSION_STATE_INVALID(2416, "发布版本状态不允许该操作"),
+    OPINION_FORM_COMPONENT_UNAVAILABLE(2417, "审批意见表单组件不可用"),
     ;
 
     private final int code;

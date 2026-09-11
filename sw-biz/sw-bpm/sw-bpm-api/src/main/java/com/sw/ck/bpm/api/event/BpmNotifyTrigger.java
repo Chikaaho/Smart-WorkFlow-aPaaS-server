@@ -25,5 +25,31 @@ public enum BpmNotifyTrigger {
     PROCESS_REJECTED,
 
     /** 审批动作将流程退回已通过人工节点。 */
-    PROCESS_RETURNED
+    PROCESS_RETURNED,
+
+    // ==================== I3 新动作通知（复用既有站内信容器） ====================
+
+    /** 任务被转办：通知转入人。 */
+    TASK_TRANSFERRED,
+
+    /** 任务被委托：通知受托人。 */
+    TASK_DELEGATED,
+
+    /** 沟通征询：通知沟通接收人（不授权限）。 */
+    TASK_COMMUNICATED,
+
+    /** 发起人撤回。 */
+    PROCESS_WITHDRAWN,
+
+    /** 实例废弃。 */
+    PROCESS_DISCARDED,
+
+    /** 针对节点结算规则的不通过意见终局（区别于 REJECT）。 */
+    PROCESS_DISAPPROVED,
+
+    /** 加签任务到达：通知被追加人。 */
+    TASK_SIGN_REQUESTED,
+
+    /** 时限提醒/升级催办。 */
+    TASK_DEADLINE_ALERT
 }

@@ -41,7 +41,7 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                 new BpmNodeTopology(1, 1, 1, 1),
                 List.of(new BpmNodeConfigField("participant", "参与人", "object", true, Map.of()),
                         new BpmNodeConfigField("mode", "结算方式", "string", true,
-                                Map.of("values", List.of("ALL", "ANY", "RATIO"))),
+                                Map.of("values", List.of("ALL", "ANY", "RATIO", "VETO"))),
                         new BpmNodeConfigField("ratio", "通过比例", "integer", false,
                                 Map.of("min", 1, "max", 100))),
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
@@ -101,7 +101,7 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
             catch (RuntimeException e) { return List.of(error(node, "会签 EXPRESSION 语法不合法")); }
         }
         String mode = config.get("mode") == null ? null : String.valueOf(config.get("mode"));
-        if (!List.of("ALL", "ANY", "RATIO").contains(mode)) return List.of(error(node, "会签方式不合法"));
+        if (!List.of("ALL", "ANY", "RATIO", "VETO").contains(mode)) return List.of(error(node, "会签方式不合法"));
         if ("RATIO".equals(mode)) {
             try {
                 int ratio = Integer.parseInt(String.valueOf(config.get("ratio")));

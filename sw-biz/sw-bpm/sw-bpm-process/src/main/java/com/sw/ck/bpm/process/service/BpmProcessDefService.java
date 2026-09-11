@@ -147,4 +147,42 @@ public interface BpmProcessDefService {
      * @return 发布后的实体（含回填的 deployment_id / process_definition_id）
      */
     BpmProcessDef publish(Long id);
+
+    // ==================== I3 发布版本冻结 ====================
+
+    /**
+     * 列出流程定义全部发布版本（不含 graph_json）。
+     *
+     * @param defId 流程定义 ID
+     * @return 版本行列表（按版本号降序）
+     */
+    List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> listVersions(Long defId);
+
+    /**
+     * 读取指定发布版本的冻结图（ProcessGraph）。
+     *
+     * @param defId         流程定义 ID
+     * @param graphVersion  图版本号
+     * @return 冻结图对象
+     */
+    ProcessGraph getVersionGraph(Long defId, Integer graphVersion);
+
+    /**
+     * 挂起指定发布版本：仅禁止新实例发起，既有实例保持可解释。
+     * 挂起/激活只对当前最高版本有效（执行实例仍旧绑定其发起版本）。
+     *
+     * @param defId        流程定义 ID
+     * @param graphVersion 版本号
+     */
+    void suspendVersion(Long defId, Integer graphVersion);
+
+    /**
+     * 激活指定发布版本（恢复同一版本发起能力）。
+     */
+    void activateVersion(Long defId, Integer graphVersion);
+
+    /**
+     * 标记发布版本为 DISABLED（业务下线；不删除历史）。
+     */
+    void disableVersion(Long defId, Integer graphVersion);
 }

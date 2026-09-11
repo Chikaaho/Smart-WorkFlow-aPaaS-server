@@ -9,6 +9,7 @@ import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.spi.ApproverResolver;
 import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
+import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.common.event.DomainEventPublisher;
@@ -60,6 +61,8 @@ public class ProcessStartService {
     private static final Logger log = LoggerFactory.getLogger(ProcessStartService.class);
 
     private final BpmFormBindingService bindingService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sw.ck.bpm.process.service.BpmProcessDefService bpmProcessDefService;
     private final ApproverResolver approverResolver;
     private final BpmRuntimeFacade bpmRuntimeFacade;
     private final BpmTaskFacade bpmTaskFacade;
@@ -184,6 +187,11 @@ public class ProcessStartService {
         instance.setBusinessKey(cmd.getRecordId());
         instance.setFormKey(cmd.getFormKey());
         instance.setInitiatorId(cmd.getSubmitter());
+        // I3 §4.3：运行实例绑定明确的发布版本（发起时刻 def.published_version 快照）
+        BpmProcessDef startedDef = bpmProcessDefServiceByName(binding);
+        if (startedDef != null && startedDef.getPublishedVersion() != null) {
+            instance.setDefVersion(startedDef.getPublishedVersion());
+        }
         // Flowable 可能在 startProcess 返回前就完成无人工节点的流程。此时若无条件写
         // RUNNING，会产生“引擎已到 End、业务记录仍运行中”的假终态；沿用审批完成路径
         // 的 APPROVED 语义。
@@ -202,6 +210,18 @@ public class ProcessStartService {
         } else {
             log.info("流程启动后已到达终态，跳过 TODO_CREATED 通知: processInstanceId={}",
                     processInstanceId);
+        }
+    }
+
+    /** 查定义行以绑定发布版本（bpmProcessDefService 可选注入；查不到返回 null）。 */
+    private BpmProcessDef bpmProcessDefServiceByName(BpmFormBinding binding) {
+        if (bpmProcessDefService == null) {
+            return null;
+        }
+        try {
+            return bpmProcessDefService.findByProcessKey(binding.getProcessDefKey());
+        } catch (Exception e) {
+            return null;
         }
     }
 

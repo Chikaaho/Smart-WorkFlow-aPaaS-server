@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -44,4 +45,13 @@ public class GraphElement implements Serializable {
 
     /** 不透明样式（画布样式，原样透传）。 */
     private Map<String, Object> style;
+
+    /** 节点画布 X 坐标（第一方设计器显式契约；旧图缺省时兼容读取 style.x）。 */
+    private Double x;
+
+    /** 节点画布 Y 坐标（第一方设计器显式契约；旧图缺省时兼容读取 style.y）。 */
+    private Double y;
+
+    /** 边折点列表 [{x,y},...]（第一方设计器显式契约；为空时前端按直线渲染）。 */
+    private List<java.util.Map<String, Object>> waypoints;
 }

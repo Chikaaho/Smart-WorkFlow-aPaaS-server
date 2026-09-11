@@ -298,8 +298,8 @@ class BpmTodoControllerTest {
         }
 
         @Test
-        @DisplayName("驳回但流程未结束 → 不更新状态")
-        void reject_flowStillActive_shouldNotUpdateStatus() {
+        @DisplayName("I3 REJECT 为流程级终态：即使引擎仍在活跃也立即终结并更新状态")
+        void reject_flowStillActive_shouldTerminateProcessLevel() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
             when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
@@ -308,9 +308,8 @@ class BpmTodoControllerTest {
             R<Void> result = controller.reject("task-001");
 
             assertThat(result.getCode()).isZero();
-            verify(bpmTaskFacade).complete(eq("task-001"), argThat(vars ->
-                    vars != null && "REJECTED".equals(vars.get("outcome"))));
-            verify(bpmInstanceService, never()).updateStatus(anyString(), anyString());
+            verify(bpmTaskFacade).terminateProcess("pi-task-001", "REJECTED");
+            verify(bpmInstanceService).updateStatus("pi-task-001", "REJECTED");
         }
 
         @Test

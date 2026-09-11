@@ -77,6 +77,46 @@ public class BpmNotifyListener {
                     title = "您的申请已退回";
                     content = "您发起的申请需要重新处理";
                     break;
+                case TASK_TRANSFERRED:
+                    bizType = NotifyBizType.WF_TODO;
+                    title = "您收到一条转办任务";
+                    content = "有任务已转办给您，请及时处理";
+                    break;
+                case TASK_DELEGATED:
+                    bizType = NotifyBizType.WF_TODO;
+                    title = "您收到一条委托任务";
+                    content = "有任务被委托给您办理";
+                    break;
+                case TASK_COMMUNICATED:
+                    bizType = NotifyBizType.WF_TODO;
+                    title = "您收到一条沟通征询";
+                    content = "有人向您征询审批意见，请查看";
+                    break;
+                case PROCESS_WITHDRAWN:
+                    bizType = NotifyBizType.WF_REJECTED;
+                    title = "您的申请已撤回";
+                    content = "发起人撤回了该申请";
+                    break;
+                case PROCESS_DISAPPROVED:
+                    bizType = NotifyBizType.WF_REJECTED;
+                    title = "您的申请未通过";
+                    content = "您的发起申请被不通过意见拦截";
+                    break;
+                case PROCESS_DISCARDED:
+                    bizType = NotifyBizType.WF_REJECTED;
+                    title = "您的申请已废弃";
+                    content = "该实例已由授权主体废弃";
+                    break;
+                case TASK_SIGN_REQUESTED:
+                    bizType = NotifyBizType.WF_TODO;
+                    title = "您收到一条加签任务";
+                    content = "有任务向您追加签批，请处理";
+                    break;
+                case TASK_DEADLINE_ALERT:
+                    bizType = NotifyBizType.WF_TODO;
+                    title = "办理时限提醒";
+                    content = "您的一条审批任务临近/已超时限";
+                    break;
                 default:
                     log.warn("未知 BpmNotifyTrigger: {}，跳过通知", event.getTrigger());
                     return;

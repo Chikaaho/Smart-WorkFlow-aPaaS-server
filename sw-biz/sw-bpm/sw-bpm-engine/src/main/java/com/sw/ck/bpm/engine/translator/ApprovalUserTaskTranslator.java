@@ -51,6 +51,10 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
 
     private static final String APPROVER_CONFIG_ELEMENT = "approverConfig";
 
+    /** 审批意见表单可用组件集合（组件适用矩阵，I3 §4.10；与 ApprovalOpinionValidator 口径一致）。 */
+    private static final java.util.Set<String> OPINION_SUPPORTED_TYPES = java.util.Set.of(
+            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE");
+
     /** Flowable 扩展命名空间（BPMN 2.0 XSD 允许 {@code flowable:*} 属性） */
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
     private static final String FLOWABLE_PREFIX = "flowable";
@@ -137,6 +141,26 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                 || item.toString().isBlank())))) {
             return List.of(configError(node, BpmErrorCode.APPROVER_RESOLVE_EMPTY,
                     "参与人配置值不能为空"));
+        }
+        // 意见表单组件适用矩阵（I3 §4.10）：不可用组件（富文本、表格、外键等）
+        // 必须在设计端/发布校验被拒，不得带病发布；类型集合与 ApprovalOpinionValidator 一致。
+        Object opinionFormObj = config.get("opinionForm");
+        if (opinionFormObj instanceof Map<?, ?> opinionForm
+                && opinionForm.get("fields") instanceof Collection<?> opinionFields) {
+            for (Object fieldObj : opinionFields) {
+                if (!(fieldObj instanceof Map<?, ?> field)) {
+                    return List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
+                            "审批意见表单字段定义不合法"));
+                }
+                Object typeObj = field.get("type");
+                String fieldType = typeObj == null ? null
+                        : String.valueOf(typeObj).trim().toUpperCase();
+                if (fieldType == null || fieldType.isBlank()
+                        || !OPINION_SUPPORTED_TYPES.contains(fieldType)) {
+                    return List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
+                            "审批意见表单组件不可用: " + fieldType));
+                }
+            }
         }
         return List.of();
     }

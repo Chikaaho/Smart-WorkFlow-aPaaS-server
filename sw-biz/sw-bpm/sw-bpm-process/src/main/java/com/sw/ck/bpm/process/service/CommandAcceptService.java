@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
@@ -73,6 +74,7 @@ public class CommandAcceptService {
             case APPROVE -> CommandTypeEnum.TASK_APPROVE;
             case REJECT -> CommandTypeEnum.TASK_REJECT;
             case RETURN -> CommandTypeEnum.TASK_RETURN;
+            default -> throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED);
         };
         String commandKey = type.getCode() + ":" + taskId + ":" + loginUser.getUserId();
         String lockKey = loginUser.getTenantId() + ":" + commandKey;

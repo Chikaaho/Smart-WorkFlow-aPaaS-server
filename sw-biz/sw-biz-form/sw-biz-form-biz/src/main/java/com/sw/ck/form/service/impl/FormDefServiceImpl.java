@@ -173,6 +173,10 @@ public class FormDefServiceImpl implements FormDefService {
         // 不能只依赖浏览器控件限制。缺省值兼容历史 definition，异常值直接拒绝入库。
         validateLayoutDefinition(definition);
 
+        // 字段类型权威校验（Z8/G14a）：config 保存层即拒绝未启用类型，与 publish 的
+        // validFieldTypes 校验同口径——禁止类型不得依赖 publish 兜底。
+        validateFieldTypes(definition);
+
         LambdaQueryWrapper<FormConfigEntity> query = Wrappers.lambdaQuery(FormConfigEntity.class)
                 .eq(FormConfigEntity::getFormId, formId)
                 .isNull(FormConfigEntity::getParentTable);
@@ -1068,6 +1072,47 @@ public class FormDefServiceImpl implements FormDefService {
         } catch (JsonProcessingException e) {
             throw new BaseException(FormErrorCode.DEFINITION_INVALID,
                     "definition JSON 解析失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 字段类型权威校验（Z8/G14a）：config 保存层拒绝未知与未启用类型。
+     * 未知类型用 FIELD_TYPE_UNKNOWN(1204)，未启用类型用 FIELD_TYPE_DISABLED(1205)，
+     * 与 publish 的 validFieldTypes 校验同口径（ColumnValidation 权威目录）。
+     */
+    private void validateFieldTypes(String definitionJson) {
+        if (definitionJson == null || definitionJson.isBlank() || "{}".equals(definitionJson.trim())) {
+            return;
+        }
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(definitionJson);
+        } catch (JsonProcessingException e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "definition JSON 解析失败: " + e.getMessage());
+        }
+        JsonNode fieldsArray = (root == null || root.isNull()) ? null
+                : (root.isArray() ? root : root.get("fields"));
+        if (fieldsArray == null || !fieldsArray.isArray()) {
+            return;
+        }
+        for (JsonNode fieldNode : fieldsArray) {
+            String type = fieldNode.path("type").asText("");
+            if (type.isBlank()) {
+                throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
+                        "字段缺少 type: " + fieldNode.path("name").asText(""));
+            }
+            com.sw.ck.form.dynamic.FieldType fieldType;
+            try {
+                fieldType = com.sw.ck.form.dynamic.FieldType.valueOf(type);
+            } catch (IllegalArgumentException e) {
+                throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
+                        "字段类型未知: " + type);
+            }
+            if (!fieldType.isEnabled()) {
+                throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
+                        "字段类型暂不允许发布: " + type);
+            }
         }
     }
 

@@ -155,6 +155,11 @@ public class BpmTodoController {
     @PostMapping("/{taskId}/reject")
     public R<Void> reject(@PathVariable String taskId,
                           @RequestBody(required = false) ApprovalActionRequest request) {
+        // 语义分离（I3 §4.4）：请求体明确携带 DISAPPROVE → 参与人不通过意见交节点结算；
+        // 缺省或明确 REJECT → 流程级驳回终态。端点不得强制改写语义枚举。
+        if (request != null && request.getAction() != null) {
+            return taskActionService.execute(taskId, request);
+        }
         ApprovalActionRequest actionRequest = request == null ? new ApprovalActionRequest() : request;
         actionRequest.setAction(ApprovalAction.REJECT);
         return taskActionService.execute(taskId, actionRequest);

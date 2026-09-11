@@ -149,6 +149,62 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         }
     }
 
+    @Override
+    public void setAssignee(String taskId, String userId) {
+        synchronized (lockFor(taskId)) {
+            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务不存在或已被处理: " + taskId);
+            }
+            taskService.setAssignee(taskId, userId);
+        }
+        log.info("BPM task assignee replaced (TRANSFER): taskId={}, userId={}", taskId, userId);
+    }
+
+    @Override
+    public void delegateTask(String taskId, String userId) {
+        synchronized (lockFor(taskId)) {
+            Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
+            if (task == null) {
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务不存在或已被处理: " + taskId);
+            }
+            if (task.getOwner() != null && !task.getOwner().isBlank()) {
+                throw new BaseException(BpmErrorCode.DELEGATE_RELATION_INVALID.getCode(),
+                        "任务已处于委托链中，不可重复委托");
+            }
+            taskService.setOwner(taskId, task.getAssignee());
+            taskService.setAssignee(taskId, userId);
+            taskService.setVariableLocal(taskId, "delegateState", "DELEGATED");
+        }
+        log.info("BPM task delegated: taskId={}, userId={}", taskId, userId);
+    }
+
+    @Override
+    public String getTaskOwner(String taskId) {
+        Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
+        return task == null ? null : task.getOwner();
+    }
+
+    @Override
+    public void addCandidateUser(String taskId, String userId) {
+        synchronized (lockFor(taskId)) {
+            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务不存在或已被处理: " + taskId);
+            }
+            taskService.addCandidateUser(taskId, userId);
+        }
+        log.info("BPM task candidate added (ADD_SIGN): taskId={}, userId={}", taskId, userId);
+    }
+
+    private Object lockFor(String taskId) {
+        Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
+        String lockKey = snapshot == null ? "task:" + taskId
+                : "process:" + snapshot.getProcessInstanceId();
+        return ACTION_LOCKS.computeIfAbsent(lockKey, key -> new Object());
+    }
+
     private void completeWithoutRetry(String taskId, Map<String, Object> variables) {
         if (variables != null && !variables.isEmpty()) {
             taskService.complete(taskId, variables);
@@ -248,6 +304,11 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     @Override
     public Map<String, Object> getVariables(String processInstanceId) {
         return runtimeService.getVariables(processInstanceId);
+    }
+
+    @Override
+    public void setVariable(String processInstanceId, String name, Object value) {
+        runtimeService.setVariable(processInstanceId, name, value);
     }
 
     @Override
@@ -400,6 +461,12 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                 .distinct()
                 .toList());
         dto.setCreateTime(task.getCreateTime());
+        if (task.getOwner() != null) {
+            dto.setOwner(task.getOwner());
+        }
+        if (task.getDelegationState() != null) {
+            dto.setDelegationState(task.getDelegationState().name());
+        }
 
         // businessKey 从 ProcessInstance 获取
         ProcessInstance pi = runtimeService.createProcessInstanceQuery()

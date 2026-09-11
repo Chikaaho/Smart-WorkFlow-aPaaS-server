@@ -38,6 +38,25 @@ public class FormDefinitionController {
         this.formDefService = formDefService;
     }
 
+    // ==================== 能力目录 ====================
+
+    /**
+     * 服务端权威字段类型能力响应（Z8/G14a）：组件目录的唯一 HTTP 权威来源。
+     * 返回全部 22 类及其 enabled 状态；校验/矩阵/前端目录必须由本端点驱动，
+     * 不接受源码枚举或前端常量替代。
+     */
+    @GetMapping("/field-types")
+    public R<java.util.List<java.util.Map<String, Object>>> fieldTypes() {
+        java.util.List<java.util.Map<String, Object>> list = new java.util.ArrayList<>();
+        for (com.sw.ck.form.dynamic.FieldType ft : com.sw.ck.form.dynamic.FieldType.values()) {
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("type", ft.name());
+            row.put("enabled", ft.isEnabled());
+            list.add(row);
+        }
+        return R.ok(list);
+    }
+
     // ==================== 草稿管理 ====================
 
     /**

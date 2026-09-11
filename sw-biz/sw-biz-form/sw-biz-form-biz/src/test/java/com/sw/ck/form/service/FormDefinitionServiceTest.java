@@ -425,22 +425,22 @@ class FormDefinitionServiceTest {
     // ==================== 测试 8：disabled 类型发布 → 拒绝 ====================
 
     @Test
-    @DisplayName("disabled 类型（EMAIL）发布 → 拒绝")
+    @DisplayName("disabled 类型（EMAIL）→ config 保存层即拒绝（与 publish 同口径 1205）")
     void publishWithDisabledType_shouldReject() {
         FormDefDTO draft = formDefService.createDraft("test_disabled", "测试禁用类型", null, null);
         createdFormIds.add(draft.getId());
-        formDefService.saveConfig(draft.getId(), """
+        // Z8/G14a 反向断言升级：禁止类型在 config 保存层即拒绝（FIELD_TYPE_DISABLED 1205），
+        // 不再依赖 publish 兜底；此前 saveConfig 允许 EMAIL 入库、publish 才拒。
+        assertThatThrownBy(() -> formDefService.saveConfig(draft.getId(), """
                 {"fields": [{"name": "email", "type": "EMAIL"}]}
-                """);
-
-        assertThatThrownBy(() -> formDefService.publish(draft.getId()))
+                """))
                 .isInstanceOf(BaseException.class)
                 .satisfies(e -> {
                     BaseException be = (BaseException) e;
                     assertThat(be.getCode()).isEqualTo(FormErrorCode.FIELD_TYPE_DISABLED.getCode());
                 });
 
-        // 确认无动态宽表被创建
+        // 确认无动态宽表被创建，定义仍是 DRAFT
         FormDefEntity entity = formDefMapper.selectById(draft.getId());
         assertThat(entity.getStatus()).isEqualTo(FormStatusEnum.DRAFT.getCode());
     }

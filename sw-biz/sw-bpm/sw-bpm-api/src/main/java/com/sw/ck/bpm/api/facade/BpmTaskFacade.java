@@ -114,6 +114,9 @@ public interface BpmTaskFacade {
      */
     Map<String, Object> getVariables(String processInstanceId);
 
+    /** 写入受控流程结果变量（节点结果函数白名单出口，I3 §4.9）。 */
+    void setVariable(String processInstanceId, String name, Object value);
+
     /**
      * 读取流程实例的历史变量（含已结束实例）。实例仍在运行时同样返回当前值。
      * 引擎无该实例历史时返回空映射，不抛异常（只读详情场景容忍缺失）。
@@ -147,4 +150,28 @@ public interface BpmTaskFacade {
      * @return 历史任务列表（按完成时间倒序）
      */
     List<BpmTaskDTO> queryHistoryByProcessInstance(String processInstanceId);
+
+    // ==================== I3 任务生命周期（转办/委托/代理） ====================
+
+    /**
+     * 转办：将任务 assignee 改为另一有效办理人；转出人失去当前办理权，
+     * 任务对象不被复制成双活。要求任务存在且当前活跃。
+     */
+    void setAssignee(String taskId, String userId);
+
+    /**
+     * 委托：保留原责任人（owner），受托人完成引导回原责任人的
+     * Flowable delegation 语义（PENDING → 完成后回到 owner RESOLVED）。
+     */
+    void delegateTask(String taskId, String userId);
+
+    /**
+     * 查询任务委托状态：delegated 状态返回 "DELEGATED"；owner 返回 ownerId。
+     */
+    String getTaskOwner(String taskId);
+
+    /**
+     * 追加候选办理人（加签 PARALLEL 投递）。
+     */
+    void addCandidateUser(String taskId, String userId);
 }

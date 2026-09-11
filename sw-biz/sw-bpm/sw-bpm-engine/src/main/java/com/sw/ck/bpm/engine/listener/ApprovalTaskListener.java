@@ -64,6 +64,9 @@ public class ApprovalTaskListener implements TaskListener {
     private final ParticipantResolverRegistry participantResolverRegistry;
     private final ParticipantSnapshotRecorder participantSnapshotRecorder;
     private final UserQueryFacade userQueryFacade;
+    /** 可选生命周期端口（I3：代理改派 + 时限登记；未装配时跳过）。 */
+    @Autowired(required = false)
+    private transient org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort> lifecycleEntryPort;
 
     /** 兼容既有引擎单测与旧 DESIGNATED 配置。 */
     public ApprovalTaskListener(RepositoryService repositoryService,
@@ -198,7 +201,41 @@ public class ApprovalTaskListener implements TaskListener {
 
         // 单用户继续使用原生 assignee；多人统一作为候选任务，避免只取首人
         if (userIds.size() == 1) {
-            delegateTask.setAssignee(userIds.get(0));
+            String nodeConfigJson;
+            try {
+                nodeConfigJson = userTask.getAttributeValue(FLOWABLE_NS, "nodeConfig");
+            } catch (Exception e) {
+                nodeConfigJson = null;
+            }
+            com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort entryPort =
+                    lifecycleEntryPort == null ? null : lifecycleEntryPort.getIfAvailable();
+            List<String> effectiveUsers = userIds;
+            if (entryPort != null) {
+                try {
+                    List<String> functionResolved = entryPort.resolveParticipantsByFunction(
+                            tenantId, processInstanceId, nodeKey, delegateTask.getId(),
+                            new java.util.LinkedHashMap<>(delegateTask.getVariables()),
+                            nodeConfigJson);
+                    if (functionResolved != null && !functionResolved.isEmpty()) {
+                        effectiveUsers = functionResolved;
+                    }
+                } catch (Exception e) {
+                    log.warn("节点函数参与人解析失败: taskId={}, error={}",
+                            delegateTask.getId(), e.getMessage());
+                }
+                try {
+                    String proxied = entryPort.onTaskCreate(tenantId, processInstanceId,
+                            nodeKey, delegateTask.getId(), effectiveUsers, nodeConfigJson);
+                    if (proxied != null && !proxied.isBlank()) {
+                        delegateTask.setOwner(effectiveUsers.get(0));
+                        effectiveUsers = List.of(proxied);
+                    }
+                } catch (Exception e) {
+                    log.warn("任务进入生命周期处理失败（不阻断任务创建）: taskId={}, error={}",
+                            delegateTask.getId(), e.getMessage());
+                }
+            }
+            delegateTask.setAssignee(effectiveUsers.get(0));
         } else {
             for (String userId : userIds) {
                 delegateTask.addCandidateUser(userId);

@@ -43,7 +43,7 @@ public class BpmProcessDef extends BaseEntity {
     private Integer defVersion;
 
     /**
-     * 状态：DRAFT / PUBLISHED。本刀恒 DRAFT。
+     * 状态：DRAFT / PUBLISHED / SUSPENDED / DISABLED。本刀恒 DRAFT。
      */
     @TableField("status")
     private String status;
@@ -83,4 +83,10 @@ public class BpmProcessDef extends BaseEntity {
      */
     @TableField("iot_device_action_json")
     private String iotDeviceActionJson;
+
+    /**
+     * 已发布的最高版本号（I3 §4.3；发布时与冻结版本行同步）。
+     */
+    @TableField("published_version")
+    private Integer publishedVersion;
 }

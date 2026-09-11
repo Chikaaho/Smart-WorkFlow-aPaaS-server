@@ -16,6 +16,8 @@ public enum InstanceStatusEnum {
     APPROVED("APPROVED", "已通过"),
     REJECTED("REJECTED", "已驳回"),
     FAILED("FAILED", "执行失败"),
+    WITHDRAWN("WITHDRAWN", "已撤回"),
+    DISCARDED("DISCARDED", "已废弃"),
     ;
 
     private final String code;

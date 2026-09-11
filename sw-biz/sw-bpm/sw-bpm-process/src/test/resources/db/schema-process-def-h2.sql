@@ -17,7 +17,8 @@ create table sw_bpm_process_def (
     graph_json            clob,
     category_id           bigint,
     iot_access_enabled    boolean not null default false,
-    iot_device_action_json text
+    iot_device_action_json text,
+    published_version     int
 );
 
 create index idx_sw_bpm_proc_def_key on sw_bpm_process_def (process_key);

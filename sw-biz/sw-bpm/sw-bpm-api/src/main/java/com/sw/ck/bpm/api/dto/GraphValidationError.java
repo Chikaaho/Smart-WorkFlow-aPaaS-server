@@ -22,6 +22,12 @@ public class GraphValidationError implements Serializable {
     /** 出错的元素 id（节点或边）。 */
     private String elementId;
 
+    /** 出错的节点 id（仅节点错误；供设计器定位并聚焦画布节点）。 */
+    private String nodeKey;
+
+    /** 出错的边 id（仅边错误；供设计器定位并聚焦画布连线）。 */
+    private String edgeKey;
+
     /** 错误码（对应 {@code BpmErrorCode.code}）。 */
     private int errorCode;
 

@@ -59,4 +59,19 @@ public interface BpmDeployFacade {
      * @return 原始 BPMN XML 字符串
      */
     String getBpmnXml(String processDefinitionId);
+
+    /**
+     * 挂起 Flowable 流程定义：只禁止新实例发起，保持既有实例可解释（I3 §4.3）。
+     */
+    void suspendProcessDefinition(String processDefinitionId);
+
+    /**
+     * 激活 Flowable 流程定义：恢复同一已发布版本的发起能力（I3 §4.3）。
+     */
+    void activateProcessDefinition(String processDefinitionId);
+
+    /**
+     * 按部署 ID 查询 Flowable 流程定义 ID（发布版本与实例勾稽用）。
+     */
+    String findProcessDefinitionIdByDeployment(String deploymentId);
 }
