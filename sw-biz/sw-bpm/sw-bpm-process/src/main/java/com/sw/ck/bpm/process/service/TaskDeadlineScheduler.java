@@ -54,6 +54,18 @@ public class TaskDeadlineScheduler {
     private final ObjectMapper objectMapper;
 
     @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    private volatile org.springframework.transaction.support.TransactionTemplate notifyTx;
+
+    private org.springframework.transaction.support.TransactionTemplate notifyTx() {
+        if (notifyTx == null) {
+            notifyTx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        }
+        return notifyTx;
+    }
+
+    @Autowired
     public TaskDeadlineScheduler(BpmTaskDeadlineMapper deadlineMapper,
                                  BpmTaskFacade bpmTaskFacade,
                                  BpmInstanceService bpmInstanceService,
@@ -112,8 +124,12 @@ public class TaskDeadlineScheduler {
                             record.getId(), record.getTaskId());
                     return;
                 }
-                notifyDeadline(record, task, "升级催办");
-                markResult(record.getId(), "ESCALATED");
+                // 通知事件由 AFTER_COMMIT 监听器消费，必须在事务内发布，否则事件被静默丢弃；
+                // 认领已先行原子完成，事务内发布仍保证恰一次通知。
+                notifyTx().executeWithoutResult(st -> {
+                    notifyDeadline(record, task, "升级催办");
+                    markResult(record.getId(), "ESCALATED");
+                });
             }
         } catch (Exception e) {
             log.warn("时限处理失败: taskId={}, error={}", record.getTaskId(), e.getMessage());
@@ -124,8 +140,10 @@ public class TaskDeadlineScheduler {
     private void runAutoAction(BpmTaskDeadline record, BpmTaskDTO task) {
         // 候选任务（无人认领）不做自动动作——受控自动动作只作用于已有责任人
         if (task.getAssignee() == null || task.getAssignee().isBlank()) {
-            notifyDeadline(record, task, "升级催办（无自动动作）");
-            patch(record, "DONE", "ESCALATED");
+            notifyTx().executeWithoutResult(st -> {
+                notifyDeadline(record, task, "升级催办（无自动动作）");
+                patch(record, "DONE", "ESCALATED");
+            });
             return;
         }
         // 认领：原子 UPDATE 型推进（PENDING → DONE 一次性占位）
