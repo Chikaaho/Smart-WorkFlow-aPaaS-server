@@ -8,6 +8,22 @@ ch:
 server:
   port: 8080
 
+# I5 收口：Druid 监控台仅在 dev profile 显式开启（默认全局关闭）
+spring:
+  druid:
+    stat-view-servlet:
+      enabled: true
+      url-pattern: /druid/*
+      login-username: ${DRUID_USERNAME:dev-admin}
+      login-password: ${DRUID_PASSWORD:dev-admin-only-local}
+
+# 开发文档入口仅 dev profile 开放（默认全局关闭）
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
 spring:
   autoconfigure:
     exclude:

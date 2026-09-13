@@ -773,7 +773,14 @@ class CommandOverlapRealEngineTest {
         windowQueue.staleSnapshot = snapshotA;
 
         // 3a. 重试分支：迟到失败不得打回 PENDING、不得改 retryCount/failureReason
-        boolean retried = windowQueue.failAndScheduleRetry(cmd, tokenA, "A 代迟到重试", 5, 1000);
+        // I5 fail-closed：写回经租户拦截器，需持有行租户上下文（租户 1）
+        LoginUserHolder.set(claimIdentity);
+        boolean retried;
+        try {
+            retried = windowQueue.failAndScheduleRetry(cmd, tokenA, "A 代迟到重试", 5, 1000);
+        } finally {
+            LoginUserHolder.clear();
+        }
         assertThat(retried).as("重试分支必须被当前租约令牌拒绝").isFalse();
         Map<String, Object> row = jdbcTemplate.queryForMap(
                 "select status, claim_token, retry_count, failure_reason from sw_bpm_command where id = ?", cmd);
@@ -783,7 +790,13 @@ class CommandOverlapRealEngineTest {
         assertThat(row.get("failure_reason")).isNull();
 
         // 3b. 终态失败分支（预算=1 即直接终态）：迟到失败不得改判 FAILED/写 failureReason
-        boolean terminalFailed = windowQueue.failAndScheduleRetry(cmd, tokenA, "A 代迟到终态", 1, 1000);
+        LoginUserHolder.set(claimIdentity);
+        boolean terminalFailed;
+        try {
+            terminalFailed = windowQueue.failAndScheduleRetry(cmd, tokenA, "A 代迟到终态", 1, 1000);
+        } finally {
+            LoginUserHolder.clear();
+        }
         assertThat(terminalFailed).as("终态失败分支必须被当前租约令牌拒绝").isFalse();
         row = jdbcTemplate.queryForMap(
                 "select status, claim_token, failure_reason from sw_bpm_command where id = ?", cmd);

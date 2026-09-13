@@ -57,19 +57,27 @@ class CommandAcceptServiceTest {
     }
 
     @Test
-    @DisplayName("G6b 非超租户受理前明确拒绝：不产生命令（当前调度仅可靠消费超租户）")
-    void acceptTaskAction_shouldRejectNonSuperTenantBeforeAccept() {
+    @DisplayName("I5 收口：非零租户命令正常受理，信封携带发起租户（消费侧按信封租户还原身份）")
+    void acceptTaskAction_shouldAcceptNonSuperTenantWithEnvelopeTenant() {
         LoginUser tenant5 = new LoginUser();
         tenant5.setUserId(2L);
         tenant5.setTenantId(5L);
         LoginUserHolder.set(tenant5);
+        when(commandQueue.findByKey(5L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.empty());
+        when(commandQueue.enqueue(any(CommandEnvelope.class))).thenAnswer(inv -> {
+            CommandEnvelope env = inv.getArgument(0);
+            env.setCommandId(66L);
+            return 66L;
+        });
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.acceptTaskAction(
-                        "task-9", ApprovalAction.APPROVE, null, CommandChannelEnum.NORMAL))
-                .isInstanceOf(BaseException.class)
-                .hasMessageContaining("当前租户未开通流程命令通道");
-        org.mockito.Mockito.verify(commandQueue, org.mockito.Mockito.never())
-                .enqueue(any(CommandEnvelope.class));
+        CommandAcceptRespDTO resp = service.acceptTaskAction("task-9", ApprovalAction.APPROVE,
+                null, CommandChannelEnum.NORMAL);
+
+        assertThat(resp.getCommandId()).isEqualTo(66L);
+        ArgumentCaptor<CommandEnvelope> captor = ArgumentCaptor.forClass(CommandEnvelope.class);
+        verify(commandQueue).enqueue(captor.capture());
+        assertThat(captor.getValue().getTenantId()).isEqualTo(5L);
+        assertThat(captor.getValue().getInitiatorId()).isEqualTo(2L);
     }
 
     @Test

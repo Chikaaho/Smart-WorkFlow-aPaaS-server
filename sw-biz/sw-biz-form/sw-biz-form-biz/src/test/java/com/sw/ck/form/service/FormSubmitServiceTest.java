@@ -103,6 +103,13 @@ class FormSubmitServiceTest {
 
     @BeforeEach
     void setUp() {
+        // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
+        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+            i5TenantZeroSetup.setUserId(0L);
+            i5TenantZeroSetup.setTenantId(0L);
+            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+        }
         createMetadataTables();
         // 设置登录用户上下文
         LoginUser loginUser = new LoginUser();
@@ -612,6 +619,54 @@ class FormSubmitServiceTest {
             MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
             interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
             factory.setPlugins(interceptor);
+
+            // I5：租户归属改由 MetaObjectHandler 从登录态填充（不再写死 0L），
+            // 测试上下文注册同一填充器与登录态读取入口（与生产 CommonMetaObjectHandler 同源）
+            com.sw.ck.common.security.LoginContextProvider loginContextProvider =
+                    new com.sw.ck.common.security.LoginContextProvider() {
+                        @Override
+                        public Long getUserId() {
+                            com.sw.ck.security.holder.LoginUser user =
+                                    com.sw.ck.security.holder.LoginUserHolder.get();
+                            return user != null ? user.getUserId() : null;
+                        }
+
+                        @Override
+                        public Long getTenantId() {
+                            com.sw.ck.security.holder.LoginUser user =
+                                    com.sw.ck.security.holder.LoginUserHolder.get();
+                            return user != null ? user.getTenantId() : null;
+                        }
+
+                        @Override
+                        public Long getDeptId() {
+                            return null;
+                        }
+
+                        @Override
+                        public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
+                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        }
+
+                        @Override
+                        public java.util.Set<Long> getCustomDeptIds() {
+                            return java.util.Set.of();
+                        }
+
+                        @Override
+                        public boolean isSuperAdmin() {
+                            return false;
+                        }
+                    };
+            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler metaObjectHandler =
+                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(loginContextProvider);
+            metaObjectHandler.setFormIdFiller(meta -> {
+                Object original = meta.getOriginalObject();
+                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                }
+            });
+            globalConfig.setMetaObjectHandler(metaObjectHandler);
 
             return factory.getObject();
         }

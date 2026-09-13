@@ -10,18 +10,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 /**
- * 启动时部署 BPMN 并插入表单↔流程绑定。
+ * 启动时部署 BPMN 并插入表单↔流程绑定（仅 dev/test 骨架初始化资产）。
  * <p>
  * 职责：
  * <ol>
  *   <li>部署 {@code skeleton_approval.bpmn20.xml}（单节点审批）</li>
  *   <li>检查并插入 {@code it_application} → {@code skeleton_approval} 的启用绑定</li>
  * </ol>
+ * </p>
+ *
+ * <p>
+ * I5 收口：骨架部署与绑定是显式 dev/test 初始化资产，生产 profile 不再启动即以
+ * 租户 0 创建可被业务依赖的定义或绑定；真实租户必须发布本租户定义并建立本租户绑定。
  * </p>
  *
  * <p>
@@ -50,15 +56,22 @@ public class BpmDeployRunner implements CommandLineRunner {
 
     private final BpmDeployFacade bpmDeployFacade;
     private final BpmFormBindingService bindingService;
+    private final Environment environment;
 
     public BpmDeployRunner(BpmDeployFacade bpmDeployFacade,
-                           BpmFormBindingService bindingService) {
+                           BpmFormBindingService bindingService,
+                           Environment environment) {
         this.bpmDeployFacade = bpmDeployFacade;
         this.bindingService = bindingService;
+        this.environment = environment;
     }
 
     @Override
     public void run(String... args) {
+        if (!isDevelopmentOnly()) {
+            log.info("非 dev/test profile，跳过骨架流程部署与绑定（生产租户定义经正式发布链创建）");
+            return;
+        }
         LoginUser systemUser = new LoginUser();
         systemUser.setUserId(CommonConstants.SYSTEM_OPERATOR_ID);
         systemUser.setTenantId(Long.parseLong(CommonConstants.SUPER_TENANT_ID));
@@ -71,6 +84,20 @@ public class BpmDeployRunner implements CommandLineRunner {
         } finally {
             LoginUserHolder.clear();
         }
+    }
+
+    /** 与 DebugAuthenticationProfile 同口径：仅纯 dev/test profile 视为开发环境。 */
+    private boolean isDevelopmentOnly() {
+        String[] activeProfiles = environment.getActiveProfiles();
+        if (activeProfiles.length == 0) {
+            return false;
+        }
+        for (String profile : activeProfiles) {
+            if (!"dev".equals(profile) && !"test".equals(profile)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 部署 BPMN（经 BpmDeployFacade，不再直接调 RepositoryService） */

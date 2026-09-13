@@ -285,7 +285,11 @@ public class NodeFunctionService {
 
     /** 注册表租户隔离：仅全局注册（tenant_id=0）与调用方本租户注册可命中，跨租户引用一律视为不存在。 */
     private BpmNodeFunction find(String key, int version, Long tenantId) {
-        long ownerTenant = tenantId == null ? 0L : tenantId;
+        if (tenantId == null) {
+            // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不按租户 0 解析
+            throw new IllegalArgumentException("节点函数解析缺少租户上下文: key=" + key);
+        }
+        long ownerTenant = tenantId;
         return mapper.selectOne(Wrappers.<BpmNodeFunction>lambdaQuery()
                 .eq(BpmNodeFunction::getFuncKey, key)
                 .eq(BpmNodeFunction::getFuncVersion, version)

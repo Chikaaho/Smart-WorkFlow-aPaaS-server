@@ -310,6 +310,10 @@ public class SysUserServiceImpl
 
     private Long currentTenantId() {
         com.sw.ck.security.holder.LoginUser loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
-        return loginUser == null || loginUser.getTenantId() == null ? 0L : loginUser.getTenantId();
+        if (loginUser == null || loginUser.getTenantId() == null) {
+            // 软删链接清理按租户隔离；租户上下文缺失属异常路径，fail closed 不落租户 0
+            throw new IllegalStateException("用户关联清理缺少租户上下文");
+        }
+        return loginUser.getTenantId();
     }
 }

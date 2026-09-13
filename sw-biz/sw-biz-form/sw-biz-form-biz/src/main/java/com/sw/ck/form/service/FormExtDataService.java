@@ -268,7 +268,12 @@ public class FormExtDataService {
 
     private Long currentTenantId() {
         LoginUser user = LoginUserHolder.get();
-        return user == null || user.getTenantId() == null ? 0L : user.getTenantId();
+        if (user == null || user.getTenantId() == null) {
+            // 无租户上下文 fail closed：外部数据源契约按租户隔离，缺失即拒绝
+            throw new BaseException(FormErrorCode.EXT_QUERY_NOT_FOUND.getCode(),
+                    "租户上下文缺失，无法解析外部数据源契约");
+        }
+        return user.getTenantId();
     }
 
     private String queryKeyOf(FormExtQueryEntity entity) {

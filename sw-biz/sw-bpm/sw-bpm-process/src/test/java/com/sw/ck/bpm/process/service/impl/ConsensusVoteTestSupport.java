@@ -78,8 +78,9 @@ public class ConsensusVoteTestSupport {
 
             @Override
             public Long getTenantId() {
+                // I5 fail-closed：本支撑上下文的种子/断言均在租户 0 语境，无登录态时固定租户 0
                 var user = LoginUserHolder.get();
-                return user == null ? null : user.getTenantId();
+                return user == null ? Long.valueOf(0L) : user.getTenantId();
             }
 
             @Override

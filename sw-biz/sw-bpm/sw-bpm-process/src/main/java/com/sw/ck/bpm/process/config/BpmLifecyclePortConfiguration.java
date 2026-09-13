@@ -105,8 +105,12 @@ public class BpmLifecyclePortConfiguration {
                 if (service == null) {
                     return;
                 }
-                String tenantIdSafe = tenantId == null ? "0" : tenantId;
-                service.settleConsensusNegative(tenantIdSafe, processInstanceId, nodeKey, reason);
+                if (tenantId == null) {
+                    // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
+                    throw new IllegalArgumentException(
+                            "会签负向结算缺少租户上下文: processInstanceId=" + processInstanceId);
+                }
+                service.settleConsensusNegative(tenantId, processInstanceId, nodeKey, reason);
             }
         };
     }

@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * I4 等强度跨租户隔离集成（真实 PostgreSQL 路径 = zonky 内嵌 PG 17 + 全链迁移 V1—V82 +
+ * I4 等强度跨租户隔离集成（真实 PostgreSQL 路径 = zonky 内嵌 PG 17 + 全链迁移 V1—V84 +
  * TenantLineInnerInterceptor）。四象限覆盖 I4 新表：
  * sw_bpm_dynamic_branch / sw_bpm_handover / sw_openapi_idempotency。
  * t0→t0 正向读写、t88→t88 正向读写、t0→t88 零读零写、t88→t0 零读零写。

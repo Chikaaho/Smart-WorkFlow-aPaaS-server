@@ -242,14 +242,14 @@ class UserDetailsProviderDataScopeTest {
     // ==================== 无角色 / 边界 ====================
 
     @Test
-    void noRole_shouldDefaultToAll() {
+    void noRole_shouldDefaultToSelf() {
         seedUser("u_norole");
 
         LoginUser loginUser = provider.loadByUsername("u_norole");
 
         assertThat(loginUser.getDataScope())
-                .as("无角色用户应默认 ALL（与历史硬编码行为一致）")
-                .isEqualTo(DataScope.ALL);
+                .as("无角色用户应取最小可见档 SELF（I5 fail closed，不再回落 ALL）")
+                .isEqualTo(DataScope.SELF);
         assertThat(loginUser.getCustomDeptIds()).isEmpty();
         assertThat(loginUser.isSuperAdmin()).isFalse();
     }
@@ -269,13 +269,13 @@ class UserDetailsProviderDataScopeTest {
     }
 
     @Test
-    void nullDataScope_shouldFallbackToAll() {
+    void nullDataScope_shouldFallbackToSelf() {
         Long userId = seedUser("u_nullscope");
         grantRole(userId, seedRole("r_nullscope", null, 1));
 
         assertThat(provider.loadByUsername("u_nullscope").getDataScope())
-                .as("dataScope=null（旧库/脏数据）应按 DB 默认 0 处理为 ALL")
-                .isEqualTo(DataScope.ALL);
+                .as("dataScope=null（未配置）按最小可见档 SELF 处理（I5 fail closed）")
+                .isEqualTo(DataScope.SELF);
     }
 
     @Test

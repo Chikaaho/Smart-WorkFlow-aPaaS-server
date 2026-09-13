@@ -93,4 +93,22 @@ public class SecurityAutoConfiguration {
             }
         };
     }
+
+    /**
+     * JWT 签名密钥启动期硬校验（I5）：密钥缺失、空白或仍为仓库已知占位值时启动失败。
+     * 占位值来自 application.yml 默认表达式，出现在生产即意味着环境变量未注入——
+     * 已知默认密钥可被任何持源码者伪造 token，属认证红线。
+     */
+    @Bean
+    public ApplicationRunner jwtSecretPresenceCheck(JwtProperties jwtProperties) {
+        return args -> {
+            String secret = jwtProperties.getSecret();
+            if (secret == null || secret.isBlank()
+                    || secret.contains("CHANGE-ME")) {
+                throw new IllegalStateException(
+                        "JWT 签名密钥未配置或仍为仓库占位值：必须经外部安全配置注入 sw.security.jwt.secret"
+                                + "（如环境变量 JWT_SECRET），默认/占位密钥不允许上线");
+            }
+        };
+    }
 }

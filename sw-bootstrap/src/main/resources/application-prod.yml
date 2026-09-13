@@ -4,7 +4,9 @@
 # ===================================================================
 ch:
   dev:
-    test-mock: true
+    # I5 收口：生产 profile 显式关闭固定验证码开关（双保险：即使误开，
+    # LoginChallengeService 的 profile 门禁在非纯 dev/test profile 下也不生效）
+    test-mock: false
 
 server:
   port: 8080

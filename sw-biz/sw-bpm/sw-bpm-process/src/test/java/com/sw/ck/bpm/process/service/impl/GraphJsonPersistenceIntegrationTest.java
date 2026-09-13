@@ -71,6 +71,23 @@ class GraphJsonPersistenceIntegrationTest {
     @EnableAutoConfiguration
     static class TestConfig {
 
+        // I5 fail-closed：测试种子与断言均在租户 0 语境；本测试上下文提供固定
+        // 租户 0 的登录上下文（生产由 SecurityLoginContextProvider 从认证态读取）
+        @Bean
+        public com.sw.ck.common.security.LoginContextProvider i5TenantZeroLoginContextProvider() {
+            return new com.sw.ck.common.security.LoginContextProvider() {
+                @Override public Long getUserId() { return 0L; }
+                @Override public Long getTenantId() { return 0L; }
+                @Override public Long getDeptId() { return null; }
+                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
+                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                }
+                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public boolean isSuperAdmin() { return false; }
+            };
+        }
+
+
         @Bean
         BpmProcessDefServiceImpl bpmProcessDefService(
                 BpmProcessDefMapper mapper,

@@ -8,7 +8,6 @@ import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.entity.DraftStatusEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
-import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.dto.FormDefDTO;
@@ -157,16 +156,13 @@ public class DraftSubmitService {
     }
 
     /**
-     * 受理前租户边界（审查03 §3.3）：当前调度线程按部署事实仅可靠消费超租户(0)命令。
-     * 非超租户命令若受理将永久 PENDING，故必须在受理前明确拒绝，不产生命令。
+     * 受理前租户边界（I5 收口）：命令信封承载租户语义，消费侧按信封租户还原身份并
+     * 一致性校验；任何有效租户的命令均可受理，不再以「仅超租户可消费」为由拒绝。
+     * 缺失租户上下文仍 fail closed。
      */
     private void requireConsumableTenant(LoginUser loginUser) {
-        if (loginUser == null) {
+        if (loginUser == null || loginUser.getTenantId() == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
-        }
-        if (!CommonConstants.SUPER_TENANT_ID.equals(String.valueOf(loginUser.getTenantId()))) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
-                    "当前租户未开通流程命令通道，不能发起审批");
         }
     }
 

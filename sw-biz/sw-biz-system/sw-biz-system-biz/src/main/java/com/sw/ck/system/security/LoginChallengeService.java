@@ -31,6 +31,7 @@ public class LoginChallengeService {
     private final LoginSecurityProperties properties;
     private final PngCaptchaRenderer captchaRenderer;
     private final DevProperties devProperties;
+    private final org.springframework.core.env.Environment environment;
     private final SecureRandom secureRandom = new SecureRandom();
     private final byte[] digestSecretBytes;
 
@@ -38,7 +39,7 @@ public class LoginChallengeService {
                                  RsaLoginKeyManager rsaKeyManager,
                                  LoginSecurityProperties properties,
                                  PngCaptchaRenderer captchaRenderer) {
-        this(challengeStore, rsaKeyManager, properties, captchaRenderer, new DevProperties());
+        this(challengeStore, rsaKeyManager, properties, captchaRenderer, new DevProperties(), null);
     }
 
     @Autowired
@@ -46,12 +47,14 @@ public class LoginChallengeService {
                                  RsaLoginKeyManager rsaKeyManager,
                                  LoginSecurityProperties properties,
                                  PngCaptchaRenderer captchaRenderer,
-                                 DevProperties devProperties) {
+                                 DevProperties devProperties,
+                                 org.springframework.core.env.Environment environment) {
         this.challengeStore = challengeStore;
         this.rsaKeyManager = rsaKeyManager;
         this.properties = properties;
         this.captchaRenderer = captchaRenderer;
         this.devProperties = devProperties;
+        this.environment = environment;
         // 服务端密钥参与答案摘要：未配置即 fail-fast，无密钥摘要不允许上线
         String secret = properties.getDigestSecret();
         if (secret == null || secret.isBlank()) {
@@ -145,7 +148,9 @@ public class LoginChallengeService {
     }
 
     protected String generateCaptcha(int length) {
-        if (devProperties.isTestMock()) {
+        // I5 收口：固定验证码只在受控 dev/test 条件生效——纯 dev/test profile 是必要条件，
+        // 生产 profile 或空/混合 profile 即使误开 ch.dev.test-mock 也不返回固定答案
+        if (environment != null && devProperties.isTestMockAllowed(environment)) {
             return "1234";
         }
         String charset = properties.getCaptchaCharset();

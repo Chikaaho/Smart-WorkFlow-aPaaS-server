@@ -175,11 +175,11 @@ public class DynamicBranchPortConfiguration {
             }
 
             private long parseTenant(String tenantId) {
-                try {
-                    return tenantId == null ? 0L : Long.parseLong(tenantId);
-                } catch (NumberFormatException e) {
-                    return 0L;
+                if (tenantId == null) {
+                    // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
+                    throw new IllegalArgumentException("动态分支端口缺少租户上下文");
                 }
+                return Long.parseLong(tenantId);
             }
 
             private long parseLongSafe(String value) {

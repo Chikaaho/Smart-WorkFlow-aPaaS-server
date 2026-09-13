@@ -80,7 +80,6 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
             row.setLayoutJson(json);
             row.setCreateTime(LocalDateTime.now());
             row.setUpdateTime(LocalDateTime.now());
-            row.setTenantId(0L);
             row.setDeleted(0);
             row.setVersion(0L);
             workspaceMapper.insert(row);

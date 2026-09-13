@@ -630,7 +630,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         record.setAction(ApprovalAction.AUTHORIZE.name());
         record.setDetail(toJson(mapOf("event", "PROXY_TAKEOVER")));
         record.setSettlementStatus("PROXY_JOINED");
-        record.setTenantId(tenantId == null ? 0L : tenantId);
+        if (tenantId == null) {
+            // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
+            throw new IllegalArgumentException("代理接管审计缺少租户上下文: processInstanceId=" + processInstanceId);
+        }
+        record.setTenantId(tenantId);
         approvalActionService.save(record);
     }
 
@@ -692,7 +696,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             record.setAutoActionConfig(deadlineMap.get("autoActionConfig") == null
                     ? "{}" : toJson(deadlineMap.get("autoActionConfig")));
             record.setRunState("PENDING");
-            record.setTenantId(tenantId == null ? 0L : tenantId);
+            if (tenantId == null) {
+                // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
+                throw new IllegalArgumentException("办理时限登记缺少租户上下文: taskId=" + taskId);
+            }
+            record.setTenantId(tenantId);
             deadlineMapper.insert(record);
             log.info("办理时限已登记: taskId={}, dueAt={}, autoAction={}", taskId, due, auto);
         } catch (BaseException e) {
@@ -737,7 +745,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         if (branchPort != null) {
             branchPort.closeRemaining(tenantId, processInstanceId, nodeKey, "CONSENSUS_NEGATIVE_SETTLED");
         }
-        Long tenantLong = tenantId == null ? 0L : Long.valueOf(tenantId);
+        if (tenantId == null) {
+            // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
+            throw new IllegalArgumentException("会签负向结算缺少租户上下文: processInstanceId=" + processInstanceId);
+        }
+        Long tenantLong = Long.valueOf(tenantId);
         recordInstance(instance, syntheticLogin(tenantLong), ApprovalAction.DISAPPROVE,
                 "CONSENSUS_SETTLED", mapOf("reason", nullSafe(reason, "会签负向结算"),
                         "nodeKey", nodeKey));
@@ -767,7 +779,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                                   String taskId, String actorId, String outcome) {
                 try {
                     Long actor = Long.valueOf(actorId);
-                    Long tenant = tenantId == null ? 0L : Long.valueOf(tenantId);
+                    if (tenantId == null) {
+                        // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed
+                        throw new IllegalArgumentException("会签投票缺少租户上下文: taskId=" + taskId);
+                    }
+                    Long tenant = Long.valueOf(tenantId);
                     if (consensusVoteMapper.selectCount(
                             Wrappers.<BpmConsensusVote>lambdaQuery()
                                     .eq(BpmConsensusVote::getTaskId, taskId)
@@ -949,10 +965,14 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     private void publishNotice(LoginUser actor, String processInstanceId, Long recipient,
                                BpmNotifyTrigger trigger) {
         try {
+            if (actor == null || actor.getTenantId() == null) {
+                // 通知事件租户缺失属异常路径，fail closed 不落租户 0
+                throw new IllegalArgumentException("通知事件缺少租户上下文: processInstanceId=" + processInstanceId);
+            }
             domainEventPublisher.publish(new BpmNotifyEvent(
                     trigger, recipient,
-                    actor == null ? 0L : actor.getTenantId(),
-                    actor == null ? 0L : actor.getUserId(),
+                    actor.getTenantId(),
+                    actor.getUserId(),
                     processInstanceId));
         } catch (Exception e) {
             log.warn("通知事件发布失败（审批状态不回滚）: trigger={}, error={}", trigger, e.getMessage());
@@ -962,7 +982,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     private LoginUser syntheticLogin(Long tenantId) {
         LoginUser synthetic = new LoginUser();
         synthetic.setUserId(0L);
-        synthetic.setTenantId(tenantId == null ? 0L : tenantId);
+        if (tenantId == null) {
+            // 合成身份仅用于引擎线程结算/通知；租户缺失属异常路径，fail closed
+            throw new IllegalArgumentException("合成身份缺少租户上下文");
+        }
+        synthetic.setTenantId(tenantId);
         return synthetic;
     }
 

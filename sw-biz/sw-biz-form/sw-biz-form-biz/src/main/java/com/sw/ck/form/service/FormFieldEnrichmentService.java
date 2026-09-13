@@ -256,7 +256,12 @@ public class FormFieldEnrichmentService {
                     "字段 '" + name + "' 的引用目标表单不存在或未发布");
         }
         LoginUser user = LoginUserHolder.get();
-        long tenantId = user == null || user.getTenantId() == null ? 0L : user.getTenantId();
+        if (user == null || user.getTenantId() == null) {
+            // 无租户上下文 fail closed：引用记录按租户隔离，缺失即拒绝（不回落租户 0）
+            throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
+                    "字段 '" + name + "' 引用的记录不存在或不可见");
+        }
+        long tenantId = user.getTenantId();
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM \"" + target.getPhysicalTableName()
                         + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?",

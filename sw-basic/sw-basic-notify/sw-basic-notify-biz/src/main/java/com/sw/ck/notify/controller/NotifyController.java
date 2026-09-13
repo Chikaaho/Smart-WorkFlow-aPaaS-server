@@ -185,7 +185,8 @@ public class NotifyController {
                         .title(req.getTitle())
                         .content(req.getContent())
                         .bizType(NotifyBizType.SYSTEM)
-                        .tenantId(loginUser == null ? 0L : loginUser.getTenantId())
+                        .tenantId(loginUser == null || loginUser.getTenantId() == null
+                                ? null : loginUser.getTenantId())
                         .idempotencyKey("batch:" + java.util.UUID.randomUUID() + ":" + recipientId)
                         .build());
                 if ("SUCCESS".equals(result.getStatus())) {

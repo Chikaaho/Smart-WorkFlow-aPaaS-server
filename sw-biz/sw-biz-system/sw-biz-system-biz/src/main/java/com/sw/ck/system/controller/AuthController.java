@@ -50,6 +50,7 @@ public class AuthController {
     private final LoginUserLoader loginUserLoader;
     private final LoginChallengeService loginChallengeService;
     private final RsaLoginKeyManager rsaLoginKeyManager;
+    private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
 
     @Value("${sw.security.cookie.secure:false}")
     private boolean cookieSecure;
@@ -66,7 +67,8 @@ public class AuthController {
                           RefreshTokenService refreshTokenService,
                           LoginUserLoader loginUserLoader,
                           LoginChallengeService loginChallengeService,
-                          RsaLoginKeyManager rsaLoginKeyManager) {
+                          RsaLoginKeyManager rsaLoginKeyManager,
+                          com.sw.ck.system.service.TenantValidityService tenantValidityService) {
         this.userDetailsProvider = userDetailsProvider;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
@@ -76,6 +78,7 @@ public class AuthController {
         this.loginUserLoader = loginUserLoader;
         this.loginChallengeService = loginChallengeService;
         this.rsaLoginKeyManager = rsaLoginKeyManager;
+        this.tenantValidityService = tenantValidityService;
     }
 
     /**
@@ -170,6 +173,13 @@ public class AuthController {
             return R.fail(401, statusDenyMessage);
         }
 
+        // 7b. 租户有效性（I5 §3.2）：租户不存在/停用/过期不得建立新会话
+        if (!tenantValidityService.isValid(user.getTenantId())) {
+            log.warn("用户 {} 登录被拒绝: 租户无效或已停用/过期, tenantId={}",
+                    request.getUsername(), user.getTenantId());
+            return R.fail(401, "所属租户不可用，无法登录");
+        }
+
         // 8. 签发 access token
         String accessToken = jwtTokenProvider.generateToken(user.getId());
 
@@ -202,13 +212,26 @@ public class AuthController {
                     refreshTokenService.rotateRefreshToken(rawToken, jwtProperties.getRefreshExpireSeconds());
             // 3. 重载用户并校验账号状态（停用/锁定/已删除账号不得续期：
             //    撤销刚轮换出的新 refresh token + 清除 cookie）
-            SysUser user = sysUserService.getById(rotation.userId());
+            // refresh 链路无 access 会话；用户按主键全局装载（I1 G2b 同口径）
+            SysUser user;
+            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                user = sysUserService.getById(rotation.userId());
+            }
             String statusDenyMessage = user == null ? "账号已停用" : statusDenyMessage(user.getStatus());
             if (statusDenyMessage != null) {
                 refreshTokenService.revokeRefreshToken(rotation.newRawToken());
                 CookieUtils.clearRefreshCookie(response, cookiePath);
                 log.warn("用户 {} refresh 被拒绝: {}", rotation.userId(), statusDenyMessage);
                 return R.fail(401, statusDenyMessage);
+            }
+            // 租户有效性（I5 §3.2）：租户停用/过期不得续期既有会话
+            if (!tenantValidityService.isValid(user.getTenantId())) {
+                refreshTokenService.revokeRefreshToken(rotation.newRawToken());
+                CookieUtils.clearRefreshCookie(response, cookiePath);
+                log.warn("用户 {} refresh 被拒绝: 租户无效或已停用/过期, tenantId={}",
+                        rotation.userId(), user.getTenantId());
+                return R.fail(401, "所属租户不可用，会话已终止");
             }
             // 4. 下发新 refresh cookie
             CookieUtils.setRefreshCookie(response, rotation.newRawToken(),

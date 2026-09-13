@@ -63,6 +63,13 @@ class FormDataUpdateServiceTest {
 
     @BeforeEach
     void setUp() {
+        // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
+        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+            i5TenantZeroSetup.setUserId(0L);
+            i5TenantZeroSetup.setTenantId(0L);
+            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+        }
         createMetadataTables();
         LoginUser u = new LoginUser();
         u.setUserId(TEST_USER_ID);
@@ -412,6 +419,31 @@ class FormDataUpdateServiceTest {
             GlobalConfig.DbConfig db = new GlobalConfig.DbConfig();
             db.setLogicDeleteField("deleted"); db.setLogicDeleteValue("1"); db.setLogicNotDeleteValue("0");
             gc.setDbConfig(db); f.setGlobalConfig(gc);
+            // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
+            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
+                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+                        @Override public Long getUserId() {
+                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            return u != null ? u.getUserId() : null;
+                        }
+                        @Override public Long getTenantId() {
+                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            return u != null ? u.getTenantId() : null;
+                        }
+                        @Override public Long getDeptId() { return null; }
+                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
+                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        }
+                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public boolean isSuperAdmin() { return false; }
+                    });
+            i5MetaObjectHandler.setFormIdFiller(meta -> {
+                Object original = meta.getOriginalObject();
+                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f2 && f2.getId() == null) {
+                    f2.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                }
+            });
+            gc.setMetaObjectHandler(i5MetaObjectHandler);
             MybatisPlusInterceptor i = new MybatisPlusInterceptor();
             i.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
             f.setPlugins(i);

@@ -64,11 +64,10 @@ public class CommandAcceptService {
         if (loginUser == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
-        // 受理前租户边界：与草稿提交一致，非超租户命令当前无可靠消费路径，受理前明确拒绝。
-        if (!com.sw.ck.common.constant.CommonConstants.SUPER_TENANT_ID
-                .equals(String.valueOf(loginUser.getTenantId()))) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
-                    "当前租户未开通流程命令通道，不能提交审批命令");
+        // 受理前租户边界（I5 收口）：命令信封承载租户语义，消费侧按信封租户还原身份并
+        // 一致性校验；任何有效租户的命令均可受理，不再以「仅超租户可消费」为由拒绝。
+        if (loginUser.getTenantId() == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "租户上下文缺失，不能提交审批命令");
         }
         CommandTypeEnum type = switch (action) {
             case APPROVE -> CommandTypeEnum.TASK_APPROVE;

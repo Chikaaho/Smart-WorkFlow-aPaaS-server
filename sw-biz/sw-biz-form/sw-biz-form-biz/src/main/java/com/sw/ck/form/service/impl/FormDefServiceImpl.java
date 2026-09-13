@@ -102,7 +102,7 @@ public class FormDefServiceImpl implements FormDefService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description) {
-        // —— 校验唯一性 ——
+        // —— 校验唯一性（经租户拦截器按当前租户过滤；V83 后跨租户同名 formKey 合法） ——
         LambdaQueryWrapper<FormDefEntity> keyQuery = Wrappers.lambdaQuery(FormDefEntity.class)
                 .eq(FormDefEntity::getFormKey, formKey);
         if (formDefMapper.selectCount(keyQuery) > 0) {
@@ -120,7 +120,6 @@ public class FormDefServiceImpl implements FormDefService {
         entity.setFormVersion(1);
         entity.setCreateTime(LocalDateTime.now());
         entity.setUpdateTime(LocalDateTime.now());
-        entity.setTenantId(0L);
         entity.setDeleted(0);
         entity.setVersion(0L);
         formDefMapper.insert(entity);
@@ -132,7 +131,6 @@ public class FormDefServiceImpl implements FormDefService {
         config.setDefinition("{}");
         config.setCreateTime(LocalDateTime.now());
         config.setUpdateTime(LocalDateTime.now());
-        config.setTenantId(0L);
         config.setDeleted(0);
         config.setVersion(0L);
         formConfigMapper.insert(config);
@@ -189,7 +187,6 @@ public class FormDefServiceImpl implements FormDefService {
             config.setDefinition(definition);
             config.setCreateTime(LocalDateTime.now());
             config.setUpdateTime(LocalDateTime.now());
-            config.setTenantId(0L);
             config.setDeleted(0);
             config.setVersion(0L);
             formConfigMapper.insert(config);
@@ -304,7 +301,6 @@ public class FormDefServiceImpl implements FormDefService {
             subConfig.setDefinition(subDefinition);
             subConfig.setCreateTime(LocalDateTime.now());
             subConfig.setUpdateTime(LocalDateTime.now());
-            subConfig.setTenantId(0L);
             subConfig.setDeleted(0);
             subConfig.setVersion(0L);
             formConfigMapper.insert(subConfig);
@@ -318,7 +314,6 @@ public class FormDefServiceImpl implements FormDefService {
         snapshot.setDefinition(definitionJson);
         snapshot.setCreateTime(LocalDateTime.now());
         snapshot.setUpdateTime(LocalDateTime.now());
-        snapshot.setTenantId(0L);
         snapshot.setDeleted(0);
         snapshot.setVersion(0L);
         formSnapshotMapper.insert(snapshot);
@@ -388,7 +383,6 @@ public class FormDefServiceImpl implements FormDefService {
         snapshot.setDefinition(definition);
         snapshot.setCreateTime(LocalDateTime.now());
         snapshot.setUpdateTime(LocalDateTime.now());
-        snapshot.setTenantId(0L);
         snapshot.setDeleted(0);
         snapshot.setVersion(0L);
         formSnapshotMapper.insert(snapshot);
@@ -657,7 +651,6 @@ public class FormDefServiceImpl implements FormDefService {
             config.setConfigJson(configJson);
             config.setCreateTime(now);
             config.setUpdateTime(now);
-            config.setTenantId(0L);
             config.setDeleted(0);
             config.setVersion(0L);
             listConfigMapper.insert(config);

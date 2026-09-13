@@ -345,6 +345,10 @@ class RoleMenusContractAndSecurityTest {
     @DisplayName("PUT /menus body=null → 语义=清空（updateMenuIds 对 null 返回前已删除全部绑定）")
     void putMenus_withNullBody_shouldClearAll() throws Exception {
         TestAuthenticationFilter.permissions = List.of("system:role:update");
+        // service 级直调无认证过滤器：显式建立种子数据所属的租户 0 上下文（I5 fail-closed 后不再隐式回落）
+        com.sw.ck.security.holder.LoginUserHolder.set(new com.sw.ck.security.holder.LoginUser() {{
+            setUserId(1L); setTenantId(0L); setPermissions(java.util.List.of());
+        }});
         // 经服务方法直接验证 null 语义：先删后插中的删除已执行，null 不插入任何行
         sysRoleService.updateMenuIds(2L, null);
         assertThat(countRoleMenuRows(2L))

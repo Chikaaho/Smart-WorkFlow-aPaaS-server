@@ -94,6 +94,17 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     @Override
     public List<CommandEnvelope> claimDue(List<CommandChannelEnum> channels, int limit) {
         LocalDateTime now = LocalDateTime.now();
+        // 调度线程无登录态，租户拦截器会追加错误的 tenant_id 条件导致非零租户命令
+        // 永久不可领取；命令消费的租户语义由信封 tenant_id 承载并在消费前校验，
+        // 领取本身必须跨租户扫描（I5 收口：移除「仅可靠消费租户 0」的受理边界）。
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return claimDueSuspended(channels, limit, now);
+        }
+    }
+
+    private List<CommandEnvelope> claimDueSuspended(List<CommandChannelEnum> channels, int limit,
+                                                    LocalDateTime now) {
         List<BpmCommand> candidates = commandService.lambdaQuery()
                 .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
                 .in(BpmCommand::getChannel, channels.stream().map(Enum::name).toList())

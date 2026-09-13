@@ -61,6 +61,7 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     private final SysRoleMenuMapper sysRoleMenuMapper;
     private final SysMenuMapper sysMenuMapper;
     private final SysRoleDeptMapper sysRoleDeptMapper;
+    private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
 
     public UserDetailsProviderImpl(SysUserService sysUserService,
                                    SysUserRoleMapper sysUserRoleMapper,
@@ -68,12 +69,24 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
                                    SysRoleMenuMapper sysRoleMenuMapper,
                                    SysMenuMapper sysMenuMapper,
                                    SysRoleDeptMapper sysRoleDeptMapper) {
+        this(sysUserService, sysUserRoleMapper, sysRoleMapper, sysRoleMenuMapper,
+                sysMenuMapper, sysRoleDeptMapper, null);
+    }
+
+    public UserDetailsProviderImpl(SysUserService sysUserService,
+                                   SysUserRoleMapper sysUserRoleMapper,
+                                   SysRoleMapper sysRoleMapper,
+                                   SysRoleMenuMapper sysRoleMenuMapper,
+                                   SysMenuMapper sysMenuMapper,
+                                   SysRoleDeptMapper sysRoleDeptMapper,
+                                   com.sw.ck.system.service.TenantValidityService tenantValidityService) {
         this.sysUserService = sysUserService;
         this.sysUserRoleMapper = sysUserRoleMapper;
         this.sysRoleMapper = sysRoleMapper;
         this.sysRoleMenuMapper = sysRoleMenuMapper;
         this.sysMenuMapper = sysMenuMapper;
         this.sysRoleDeptMapper = sysRoleDeptMapper;
+        this.tenantValidityService = tenantValidityService;
     }
 
     @Override
@@ -141,7 +154,8 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
             superAdmin = roleCodes.contains(SUPER_ADMIN_ROLE_CODE);
         }
 
-        // 3. 数据范围：多角色取最宽；无角色默认 ALL（与历史硬编码行为一致）
+        // 3. 数据范围：多角色取最宽；无有效角色取最小可见档 SELF（I5 fail closed，
+        //    不再回落 DataScope.ALL 造成无角色用户取得全量数据范围）
         DataScope dataScope = resolveWidestScope(roles);
         Set<Long> customDeptIds = dataScope == DataScope.CUSTOM
                 ? loadCustomDeptIds(roles)
@@ -157,6 +171,12 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
         loginUser.setDataScope(dataScope);
         loginUser.setCustomDeptIds(customDeptIds);
 
+        // 5. 租户有效性（I5 §3.2）：租户不存在/停用/过期时身份装载失败，
+        //    登录与既有会话在下一次权威装载时统一收敛拒绝
+        if (tenantValidityService != null && !tenantValidityService.isValid(user.getTenantId())) {
+            return null;
+        }
+
         if (superAdmin) {
             loginUser.setSuperAdmin(true);
             // 超管旁路权限：前端 hasPerm = superAdmin || hasPermission，空数组即可
@@ -170,7 +190,8 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     }
 
     /**
-     * 多角色取最宽档。空角色集合返回 {@link DataScope#ALL}（与历史硬编码默认一致）。
+     * 多角色取最宽档。空角色集合返回 {@link DataScope#SELF}（I5 fail closed：
+     * 无有效角色用户取得最小可见数据范围，不再回落 ALL）。
      */
     private DataScope resolveWidestScope(List<SysRole> roles) {
         DataScope widest = null;
@@ -183,22 +204,23 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
                 widest = scope;
             }
         }
-        return widest != null ? widest : DataScope.ALL;
+        return widest != null ? widest : DataScope.SELF;
     }
 
     /**
      * 将 sys_role.data_scope 的 smallint 值映射为 {@link DataScope} 枚举（按 ordinal）。
-     * null（未配置，DB 列 default 0）与越界值均按 ALL 处理，与 DB 默认值语义一致。
+     * null（未配置，DB 列无默认值）按最小可见档 SELF 处理（I5 fail closed）；
+     * 越界值同样收敛 SELF，不再按 ALL 放行。
      */
     private DataScope toDataScope(Integer ordinal) {
         if (ordinal == null) {
-            return DataScope.ALL;
+            return DataScope.SELF;
         }
         DataScope[] values = DataScope.values();
         if (ordinal >= 0 && ordinal < values.length) {
             return values[ordinal];
         }
-        return DataScope.ALL;
+        return DataScope.SELF;
     }
 
     /**

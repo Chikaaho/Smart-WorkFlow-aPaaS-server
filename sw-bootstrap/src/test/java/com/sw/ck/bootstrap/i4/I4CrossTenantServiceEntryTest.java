@@ -98,7 +98,7 @@ class I4CrossTenantServiceEntryTest {
         String jdbcUrl = jdbc.queryForObject("select current_setting('server_version_num')", String.class);
         String out = "R1 PG runtime fingerprint\nJDBC: " + url + "\nserver_version_num: " + jdbcVersion(jdbc)
                 + "\nversion(): " + version + "\nembedded pg port: " + pgPort
-                + "\nmigrated to V82 (postgresql full chain)\n";
+                + "\nmigrated to V84 (postgresql full chain)\n";
         writeFingerprint(dir, out);        writeFingerprint(dir, out);
     }
 

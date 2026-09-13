@@ -36,7 +36,11 @@ public class IotAuditService {
                                        String detail) {
         LoginUser current = LoginUserHolder.get();
         Long resolvedTenantId = tenantId != null ? tenantId
-                : current == null ? 0L : current.getTenantId();
+                : current == null ? null : current.getTenantId();
+        if (resolvedTenantId == null) {
+            // 审计行租户缺失属异常路径，fail closed 不落租户 0
+            throw new IllegalStateException("IoT 审计缺少租户上下文: action=" + action);
+        }
         Long resolvedActorId = actorId != null ? actorId
                 : current == null || current.getUserId() == null ? 0L : current.getUserId();
         String resolvedIdentity = systemIdentity == null || systemIdentity.isBlank()
@@ -47,7 +51,7 @@ public class IotAuditService {
                 ? UUID.randomUUID().toString() : correlationId;
 
         IotAuditRecord audit = new IotAuditRecord();
-        audit.setTenantId(resolvedTenantId == null ? 0L : resolvedTenantId);
+        audit.setTenantId(resolvedTenantId);
         audit.setAction(require(action, "action"));
         audit.setObjectType(require(objectType, "objectType"));
         audit.setObjectId(require(objectId, "objectId"));

@@ -64,7 +64,16 @@ class AuthControllerTest {
     private final AuthController controller = new AuthController(
             userDetailsProvider, passwordEncoder, jwtTokenProvider, sysUserService,
             jwtProperties, refreshTokenService, loginUserLoader,
-            challengeService, keyManager);
+            challengeService, keyManager,
+            alwaysValidTenantService());
+
+    /** 默认租户校验替身：非空租户一律有效（租户拒绝分支由 I5 集成测试覆盖）。 */
+    private com.sw.ck.system.service.TenantValidityService alwaysValidTenantService() {
+        com.sw.ck.system.service.TenantValidityService service =
+                mock(com.sw.ck.system.service.TenantValidityService.class);
+        when(service.isValid(org.mockito.ArgumentMatchers.any())).thenReturn(true);
+        return service;
+    }
 
     private LoginSecurityProperties testProps() {
         LoginSecurityProperties props = new LoginSecurityProperties();

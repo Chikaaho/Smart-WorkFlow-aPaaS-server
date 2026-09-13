@@ -5,6 +5,7 @@ import com.sw.ck.system.mapper.SysMenuMapper;
 import com.sw.ck.system.mapper.SysRoleDeptMapper;
 import com.sw.ck.system.mapper.SysRoleMapper;
 import com.sw.ck.system.mapper.SysRoleMenuMapper;
+import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.system.security.UserDetailsProviderImpl;
 import com.sw.ck.system.service.SysUserService;
@@ -28,7 +29,8 @@ public class SystemAutoConfiguration {
      * 注册 UserDetailsProvider 实现，触发 sw-security 的 LoginUserCacheService / LoginUserLoader
      * 自动装载（参见 {@link com.sw.ck.security.config.SecurityAutoConfiguration}）。
      * <p>
-     * 注入 RBAC Mapper 用于组装 roles / permissions / superAdmin（替换旧有 userId==1 硬编）。
+     * 注入 RBAC Mapper 用于组装 roles / permissions / superAdmin（替换旧有 userId==1 硬编）；
+     * 注入 TenantValidityService 用于身份装载期租户有效性校验（I5）。
      * </p>
      */
     @Bean
@@ -37,9 +39,11 @@ public class SystemAutoConfiguration {
                                                    SysRoleMapper sysRoleMapper,
                                                    SysRoleMenuMapper sysRoleMenuMapper,
                                                    SysMenuMapper sysMenuMapper,
-                                                   SysRoleDeptMapper sysRoleDeptMapper) {
+                                                   SysRoleDeptMapper sysRoleDeptMapper,
+                                                   SysTenantMapper sysTenantMapper) {
         return new UserDetailsProviderImpl(sysUserService, sysUserRoleMapper, sysRoleMapper,
-                sysRoleMenuMapper, sysMenuMapper, sysRoleDeptMapper);
+                sysRoleMenuMapper, sysMenuMapper, sysRoleDeptMapper,
+                new com.sw.ck.system.service.TenantValidityService(sysTenantMapper));
     }
 
     /**
@@ -50,5 +54,41 @@ public class SystemAutoConfiguration {
     @ConditionalOnMissingBean(PasswordEncoder.class)
     public PasswordEncoder bcryptPasswordEncoder() {
         return new BCryptPasswordEncoder(10);
+    }
+
+    /**
+     * SSO Provider 凭据加密器（I5）：AES-256-GCM，密钥经环境变量注入；
+     * 缺失/空白时启动失败（fail-fast，与 RsaLoginKeyManager 同口径）。
+     */
+    @Bean
+    @ConditionalOnMissingBean(com.sw.ck.common.crypto.AesGcmCipher.class)
+    public com.sw.ck.common.crypto.AesGcmCipher ssoCipher(
+            @org.springframework.beans.factory.annotation.Value("${sw.security.sso.cipher-key:}") String cipherKey) {
+        if (cipherKey == null || cipherKey.isBlank()) {
+            throw new IllegalStateException(
+                    "SSO 凭据加密密钥未配置：必须经外部安全配置注入 sw.security.sso.cipher-key"
+                            + "（如环境变量 SW_SSO_CIPHER_KEY），明文凭据不允许落库");
+        }
+        return new com.sw.ck.common.crypto.AesGcmCipher(cipherKey);
+    }
+
+    /**
+     * SSO Provider 客户端注册（I5）：三 Provider 各自独立实现，Map 分发。
+     */
+    @Bean
+    public com.sw.ck.system.sso.SsoAuthService ssoAuthService(
+            com.sw.ck.system.mapper.SsoProviderConfigMapper configMapper,
+            com.sw.ck.system.mapper.SsoUserBindingMapper bindingMapper,
+            com.sw.ck.system.mapper.SsoAuthStateMapper stateMapper,
+            com.sw.ck.system.mapper.SsoAuditRecordMapper auditMapper,
+            com.sw.ck.system.service.SysUserService sysUserService,
+            com.sw.ck.common.crypto.AesGcmCipher ssoCipher) {
+        return new com.sw.ck.system.sso.SsoAuthService(configMapper, bindingMapper, stateMapper,
+                auditMapper, sysUserService,
+                java.util.List.of(
+                        new com.sw.ck.system.sso.WecomSsoProviderClient(),
+                        new com.sw.ck.system.sso.FeishuSsoProviderClient(),
+                        new com.sw.ck.system.sso.DingtalkSsoProviderClient()),
+                ssoCipher);
     }
 }
