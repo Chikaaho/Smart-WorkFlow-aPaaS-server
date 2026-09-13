@@ -383,6 +383,45 @@ class BpmTodoControllerTest {
         }
 
         @Test
+        @DisplayName("I4 G4b：非办理人且无监控权限 → 任务详情拒绝")
+        void detail_outsider_shouldDeny() {
+            LoginUser outsider = new LoginUser();
+            outsider.setUserId(999L);
+            outsider.setTenantId(1L);
+            outsider.setUsername("outsider");
+            outsider.setRoles(Collections.emptyList());
+            outsider.setPermissions(Collections.emptyList());
+            outsider.setSuperAdmin(false);
+            LoginUserHolder.set(outsider);
+            BpmTaskDTO task = createTask("task-001");
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+
+            assertThatThrownBy(() -> controller.detail("task-001"))
+                    .isInstanceOf(BaseException.class)
+                    .hasMessageContaining("无权查看该任务");
+        }
+
+        @Test
+        @DisplayName("监控权限身份 → 任务详情允许")
+        void detail_monitorViewer_shouldAllow() {
+            LoginUser monitor = new LoginUser();
+            monitor.setUserId(888L);
+            monitor.setTenantId(1L);
+            monitor.setUsername("monitor");
+            monitor.setRoles(List.of("admin"));
+            monitor.setPermissions(List.of("workflow:monitor:view"));
+            monitor.setSuperAdmin(false);
+            LoginUserHolder.set(monitor);
+            BpmTaskDTO task = createTask("task-001");
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmInstanceService.findByProcessInstanceId("pi-task-001")).thenReturn(Optional.of(createInstance()));
+            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(Collections.emptyMap());
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(Collections.emptyList());
+
+            assertThat(controller.detail("task-001").getCode()).isZero();
+        }
+
+        @Test
         @DisplayName("审批历史为空 → approvalHistory 为空列表（非 null）")
         void detail_emptyHistory_shouldReturnEmptyList() {
             setLoginUser();

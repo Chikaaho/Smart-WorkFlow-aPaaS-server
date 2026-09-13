@@ -168,6 +168,19 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
+    @Transactional
+    public void markTemplateSource(Long id, Long templateId, Integer templateVersion) {
+        BpmProcessDef entity = getExisting(id);
+        // 仅 DRAFT 未登记时写入：历史与已发布定义的溯源关系不被改写
+        if (!"DRAFT".equals(entity.getStatus()) || entity.getSourceTemplateId() != null) {
+            return;
+        }
+        entity.setSourceTemplateId(templateId);
+        entity.setSourceTemplateVersion(templateVersion);
+        mapper.updateById(entity);
+    }
+
+    @Override
     public List<GraphValidationError> validateGraph(Long id) {
         BpmProcessDef entity = getExisting(id);
         ProcessGraph graph = parseGraph(entity.getGraphJson());

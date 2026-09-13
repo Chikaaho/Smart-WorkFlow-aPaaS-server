@@ -67,6 +67,7 @@ spring:
       - classpath:db/migration/job/{vendor}
       - classpath:db/migration/agent/{vendor}
       - classpath:db/migration/iot/{vendor}
+      - classpath:db/migration/openapi/{vendor}
     baseline-on-migrate: true
     validate-on-migrate: true
     out-of-order: false
@@ -178,6 +179,7 @@ sw:
       - /auth/login
       - /auth/refresh
       - /auth/logout
+      - /openapi/v1/**
     debug-auth:
       # 仅 dev/test + 回环 + 显式开关同时成立时才会生效，默认关闭。
       enabled: ${SW_DEBUG_AUTH_ENABLED:false}

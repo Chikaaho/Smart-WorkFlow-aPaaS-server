@@ -13,6 +13,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -39,8 +40,35 @@ class BpmInstanceControllerTest {
             new com.sw.ck.bpm.process.service.ParticipantNameService(
                     mock(com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper.class), userQueryFacade);
 
+    private final com.sw.ck.security.support.PermissionService permissionService =
+            mock(com.sw.ck.security.support.PermissionService.class);
+    private final com.sw.ck.bpm.process.mapper.CopyRecordMapper copyRecordMapper =
+            mock(com.sw.ck.bpm.process.mapper.CopyRecordMapper.class);
+
     private final BpmInstanceController controller = new BpmInstanceController(
-            bpmInstanceService, bpmRuntimeFacade, bpmProcessDefService, userQueryFacade, participantNameService);
+            bpmInstanceService, bpmRuntimeFacade, bpmProcessDefService, userQueryFacade, participantNameService,
+            permissionService, copyRecordMapper);
+
+    @AfterEach
+    void tearDown() {
+        com.sw.ck.security.holder.LoginUserHolder.clear();
+    }
+
+    private com.sw.ck.security.holder.LoginUser superAdmin() {
+        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        user.setUserId(1L);
+        user.setTenantId(0L);
+        user.setSuperAdmin(true);
+        return user;
+    }
+
+    private com.sw.ck.security.holder.LoginUser normalUser(Long userId) {
+        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        user.setUserId(userId);
+        user.setTenantId(0L);
+        user.setSuperAdmin(false);
+        return user;
+    }
 
     // 测试夹具
     private BpmInstance sampleInstance;
@@ -48,6 +76,8 @@ class BpmInstanceControllerTest {
 
     @BeforeEach
     void setUp() {
+        // 默认超管身份：既有用例关注详情装配；对象权限负向单独覆盖
+        com.sw.ck.security.holder.LoginUserHolder.set(superAdmin());
         sampleInstance = new BpmInstance();
         sampleInstance.setId(1L);
         sampleInstance.setProcessInstanceId("proc-001");
@@ -144,6 +174,53 @@ class BpmInstanceControllerTest {
             assertThat(result.getCode()).isZero();
             InstanceListItemDTO dto = result.getData().getRecords().get(0);
             assertThat(dto.getProcessName()).isNull();  // 不阻断
+        }
+    }
+
+    // ==================== 对象权限（I4 §3.3/§4 跨用户零串读） ====================
+
+    @Nested
+    @DisplayName("实例详情对象权限")
+    class InstanceDetailAccessTests {
+
+        @Test
+        @DisplayName("无监控权限且非发起人/参与人/抄送人 → 拒绝")
+        void instanceDetail_outsider_shouldDeny() {
+            com.sw.ck.security.holder.LoginUserHolder.set(normalUser(999L));
+            when(bpmInstanceService.findByProcessInstanceId("proc-001"))
+                    .thenReturn(Optional.of(sampleInstance));
+            assertThatThrownBy(() -> controller.instanceDetail("proc-001"))
+                    .isInstanceOf(BaseException.class)
+                    .hasMessageContaining("无权查看");
+            verify(permissionService).hasPermi("workflow:monitor:view");
+        }
+
+        @Test
+        @DisplayName("发起人本人 → 允许")
+        void instanceDetail_initiator_shouldAllow() {
+            com.sw.ck.security.holder.LoginUserHolder.set(normalUser(100L));
+            when(bpmInstanceService.findByProcessInstanceId("proc-001"))
+                    .thenReturn(Optional.of(sampleInstance));
+            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(List.of());
+            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(List.of());
+            when(bpmProcessDefService.findByProcessKey("leave")).thenReturn(sampleProcessDef);
+            assertThat(controller.instanceDetail("proc-001").getCode()).isZero();
+        }
+
+        @Test
+        @DisplayName("参与人（历史任务办理人）→ 允许")
+        void instanceDetail_participant_shouldAllow() {
+            com.sw.ck.security.holder.LoginUserHolder.set(normalUser(200L));
+            when(bpmInstanceService.findByProcessInstanceId("proc-001"))
+                    .thenReturn(Optional.of(sampleInstance));
+            com.sw.ck.bpm.api.dto.BpmActivityDTO taskRow = new com.sw.ck.bpm.api.dto.BpmActivityDTO();
+            taskRow.setActivityType("userTask");
+            taskRow.setTaskId("task-1");
+            taskRow.setAssignee("200");
+            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(List.of(taskRow));
+            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(List.of());
+            when(bpmProcessDefService.findByProcessKey("leave")).thenReturn(sampleProcessDef);
+            assertThat(controller.instanceDetail("proc-001").getCode()).isZero();
         }
     }
 

@@ -122,7 +122,7 @@ class CommandAcceptServiceTest {
     }
 
     @Test
-    @DisplayName("已存在且状态 FAILED → 重新 enqueue 新受理")
+    @DisplayName("已存在且状态 FAILED → 复用同键行 requeueFailed 重新入队（唯一键语义下不新插）")
     void acceptTaskAction_shouldReEnqueueWhenFailed() {
         CommandEnvelope existing = new CommandEnvelope();
         existing.setCommandId(66L);
@@ -131,18 +131,19 @@ class CommandAcceptServiceTest {
         existing.setCommandKey("TASK_APPROVE:task-9:2");
         existing.setStatus("FAILED");
         when(commandQueue.findByKey(0L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.of(existing));
-        when(commandQueue.enqueue(any(CommandEnvelope.class))).thenAnswer(inv -> {
+        when(commandQueue.requeueFailed(any(CommandEnvelope.class))).thenAnswer(inv -> {
             CommandEnvelope env = inv.getArgument(0);
-            env.setCommandId(99L);
-            return 99L;
+            env.setCommandId(66L);
+            return 66L;
         });
 
         CommandAcceptRespDTO resp = service.acceptTaskAction("task-9", ApprovalAction.APPROVE,
                 new ApprovalActionRequest(), CommandChannelEnum.NORMAL);
 
-        assertThat(resp.getCommandId()).isEqualTo(99L);
+        assertThat(resp.getCommandId()).isEqualTo(66L);
         assertThat(resp.isDuplicated()).isTrue();
-        verify(commandQueue).enqueue(any(CommandEnvelope.class));
+        verify(commandQueue).requeueFailed(any(CommandEnvelope.class));
+        verify(commandQueue, never()).enqueue(any());
     }
 
     @Test

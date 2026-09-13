@@ -74,6 +74,15 @@ public interface BpmProcessDefService {
     void saveDraftGraph(Long id, String graphJson);
 
     /**
+     * 登记模板溯源关系（I4 §3.2）：仅 DRAFT 且未登记过时写入，历史与已发布定义不改写。
+     *
+     * @param id             流程定义 ID
+     * @param templateId     来源模板 ID
+     * @param templateVersion 复制时的模板版本
+     */
+    void markTemplateSource(Long id, Long templateId, Integer templateVersion);
+
+    /**
      * 校验图（按 ID 读取定义中的图进行校验）。
      *
      * @param id 流程定义 ID

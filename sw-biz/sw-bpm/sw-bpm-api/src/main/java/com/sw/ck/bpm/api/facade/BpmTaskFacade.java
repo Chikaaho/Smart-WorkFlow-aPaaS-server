@@ -75,6 +75,15 @@ public interface BpmTaskFacade {
     /** 驳回后终止流程实例，确保没有未配置驳回分支时仍进入终态。 */
     void terminateProcess(String processInstanceId, String reason);
 
+    /** 实例级挂起（I4 §3.3 运营干预）：运行中实例暂停推进，与定义级挂起互不混同。幂等。 */
+    void suspendProcessInstance(String processInstanceId);
+
+    /** 实例级恢复：解除挂起状态。幂等。 */
+    void resumeProcessInstance(String processInstanceId);
+
+    /** 查询实例运行时挂起状态：true=挂起。 */
+    boolean isProcessInstanceSuspended(String processInstanceId);
+
     /** 判断用户是否是任务 assignee 或 candidate。 */
     boolean canHandle(String taskId, String userId);
 

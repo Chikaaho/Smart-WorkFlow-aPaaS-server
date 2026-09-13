@@ -90,13 +90,14 @@ class ConsensusVoteConcurrencyTest {
                 com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper participantSnapshotMapper,
                 ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade> userQueryFacade,
                 ObjectProvider<com.sw.ck.bpm.process.service.TaskActionService> taskActionService,
+                ObjectProvider<com.sw.ck.bpm.api.participant.DynamicBranchPort> dynamicBranchPort,
                 DomainEventPublisher domainEventPublisher,
                 com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
             return new ApprovalLifecycleServiceImpl(bpmTaskFacade, bpmInstanceService,
                     bpmProcessDefService, approvalActionService, authorizeRuleMapper,
                     communicationMapper, signRecordMapper, deadlineMapper, consensusVoteMapper,
                     participantSnapshotMapper, userQueryFacade, taskActionService,
-                    domainEventPublisher, objectMapper);
+                    dynamicBranchPort, domainEventPublisher, objectMapper);
         }
 
         @Bean

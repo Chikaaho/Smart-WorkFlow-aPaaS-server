@@ -183,6 +183,20 @@ public class BpmTodoController {
         if (task == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
         }
+        // 对象权限（I4 §3.7：消息摘要与深链再次执行对象权限）：仅任务办理人、
+        // 超级管理员或持有监控查看权限的运营身份可读，其余身份服务端拒绝
+        var loginUser = LoginUserHolder.get();
+        boolean allowed = loginUser != null && (
+                loginUser.isSuperAdmin()
+                || (loginUser.getPermissions() != null
+                        && loginUser.getPermissions().contains("workflow:monitor:view"))
+                || (task.getAssignee() != null
+                        && task.getAssignee().equals(String.valueOf(loginUser.getUserId()))));
+        if (!allowed) {
+            log.warn("任务详情越权拒绝: taskId={}, currentUser={}",
+                    taskId, loginUser == null ? null : loginUser.getUserId());
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权查看该任务");
+        }
 
         TaskDetailRespDTO dto = new TaskDetailRespDTO();
         dto.setTaskId(task.getTaskId());

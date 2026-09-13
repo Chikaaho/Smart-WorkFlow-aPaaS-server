@@ -61,4 +61,13 @@ public interface BpmRuntimeFacade {
      * @return 变量名 → 值；实例不存在返回空 Map
      */
     java.util.Map<String, Object> getProcessVariables(String processInstanceId);
+
+    /**
+     * 读取流程实例状态（I4 §3.4 外部状态查询口径）。
+     *
+     * @param processInstanceId 流程实例 ID
+     * @return RUNNING / APPROVED / REJECTED / FAILED / WITHDRAWN / DISCARDED / TERMINATED / UNKNOWN；
+     *         实例不存在返回 "NOT_FOUND"
+     */
+    String getProcessInstanceStatus(String processInstanceId);
 }

@@ -129,4 +129,43 @@ public class ParticipantNameService {
         }
         return 1;
     }
+
+    /**
+     * 解析流程实例内各任务的权威参与人（I4 G1a）。
+     * <p>
+     * 动态并行多分支任务共用同一 node_key，节点级解析会把多条分支覆盖为同一人；
+     * 任务级以快照的 task_id 为键逐一对应，保证办理身份与轨迹逐条相等。
+     * 同任务多轮快照按状态优先级取一（HANDLED &gt; PENDING &gt; INVALIDATED）。
+     * 查询失败返回空 Map，不阻断调用方。
+     * </p>
+     */
+    public Map<String, Long> resolveTaskAssignees(String processInstanceId) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            return Map.of();
+        }
+        try {
+            List<ParticipantSnapshot> snapshots = snapshotMapper.selectList(
+                    new LambdaQueryWrapper<ParticipantSnapshot>()
+                            .eq(ParticipantSnapshot::getProcessInstanceId, processInstanceId)
+                            .isNotNull(ParticipantSnapshot::getTaskId));
+            Map<String, Long> result = new HashMap<>();
+            Map<String, Integer> ranks = new HashMap<>();
+            for (ParticipantSnapshot snapshot : snapshots) {
+                Long pid = parseId(snapshot.getParticipantId());
+                if (pid == null || snapshot.getTaskId() == null || snapshot.getTaskId().isBlank()) {
+                    continue;
+                }
+                int rank = rankOf(snapshot.getParticipantStatus());
+                Integer current = ranks.get(snapshot.getTaskId());
+                if (current == null || rank > current) {
+                    result.put(snapshot.getTaskId(), pid);
+                    ranks.put(snapshot.getTaskId(), rank);
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("任务参与人快照查询失败，回退为空: {}", e.getMessage());
+            return Map.of();
+        }
+    }
 }

@@ -84,4 +84,50 @@ class ParticipantNameSnapshotTest {
 
         assertThat(names).containsEntry(101L, "实时名");
     }
+
+    @Test
+    @DisplayName("I4 G1a：任务级解析按 taskId 逐一对应，动态并行多分支不合并为同一人")
+    void resolveTaskAssignees_shouldKeyByTaskId() {
+        ParticipantSnapshot branchA = new ParticipantSnapshot();
+        branchA.setProcessInstanceId("pi-x");
+        branchA.setNodeKey("dyn");
+        branchA.setTaskId("task-a");
+        branchA.setParticipantId("101");
+        branchA.setParticipantStatus("HANDLED");
+        ParticipantSnapshot branchB = new ParticipantSnapshot();
+        branchB.setProcessInstanceId("pi-x");
+        branchB.setNodeKey("dyn");
+        branchB.setTaskId("task-b");
+        branchB.setParticipantId("102");
+        branchB.setParticipantStatus("PENDING");
+        when(snapshotMapper.selectList(any())).thenReturn(List.of(branchA, branchB));
+
+        ParticipantNameService service = new ParticipantNameService(snapshotMapper, userQueryFacade);
+        Map<String, Long> byTask = service.resolveTaskAssignees("pi-x");
+
+        assertThat(byTask).containsEntry("task-a", 101L).containsEntry("task-b", 102L);
+        // 与节点级解析对照：同一 node_key 两分支在节点级必然坍缩为一个人
+        Map<String, Long> byNode = service.resolveNodeAssignees("pi-x");
+        assertThat(byNode).containsKey("dyn");
+    }
+
+    @Test
+    @DisplayName("I4 G1a：同任务多轮快照按 HANDLED>PENDING 取一；异常回退空 Map")
+    void resolveTaskAssignees_shouldRankAndDegrade() {
+        ParticipantSnapshot pending = new ParticipantSnapshot();
+        pending.setTaskId("task-1");
+        pending.setParticipantId("101");
+        pending.setParticipantStatus("PENDING");
+        ParticipantSnapshot handled = new ParticipantSnapshot();
+        handled.setTaskId("task-1");
+        handled.setParticipantId("102");
+        handled.setParticipantStatus("HANDLED");
+        when(snapshotMapper.selectList(any())).thenReturn(List.of(pending, handled));
+
+        ParticipantNameService service = new ParticipantNameService(snapshotMapper, userQueryFacade);
+        assertThat(service.resolveTaskAssignees("pi-1")).containsEntry("task-1", 102L);
+
+        when(snapshotMapper.selectList(any())).thenThrow(new RuntimeException("db down"));
+        assertThat(service.resolveTaskAssignees("pi-1")).isEmpty();
+    }
 }

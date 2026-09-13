@@ -183,15 +183,20 @@ public class BpmMyInstanceController {
         }
         if (participantNameService != null) {
             // 候选模式任务在引擎历史中可能被 approver 兜底误填为发起人：
-            // 快照命中即覆盖为权威参与人（I1 G5b），再做冻结名富化
+            // 快照命中即覆盖为权威参与人（I1 G5b），再做冻结名富化。
+            // 任务级快照优先：动态并行多分支共用同一 node_key，节点级覆盖会把多条
+            // 分支改写为同一办理人（I4 G1a），taskId 命中才回退节点级。
             Map<String, Long> nodeAssignees =
                     participantNameService.resolveNodeAssignees(instance.getProcessInstanceId());
+            Map<String, Long> taskAssignees =
+                    participantNameService.resolveTaskAssignees(instance.getProcessInstanceId());
             for (ApprovalHistoryItemDTO item : history) {
-                if (item.getNodeKey() != null) {
-                    Long pid = nodeAssignees.get(item.getNodeKey());
-                    if (pid != null) {
-                        item.setAssignee(String.valueOf(pid));
-                    }
+                Long pid = item.getTaskId() != null ? taskAssignees.get(item.getTaskId()) : null;
+                if (pid == null && item.getNodeKey() != null) {
+                    pid = nodeAssignees.get(item.getNodeKey());
+                }
+                if (pid != null) {
+                    item.setAssignee(String.valueOf(pid));
                 }
             }
             // 冻结快照名优先：流转记录身份不随后续改名/停用重写（I1）

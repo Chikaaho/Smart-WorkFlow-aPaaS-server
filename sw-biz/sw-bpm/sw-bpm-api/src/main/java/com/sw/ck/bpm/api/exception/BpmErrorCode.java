@@ -80,6 +80,11 @@ public enum BpmErrorCode implements ErrorCode {
     OPINION_FORM_GONE(2415, "意见表单不可用（未发布或版本缺失）"),
     VERSION_STATE_INVALID(2416, "发布版本状态不允许该操作"),
     OPINION_FORM_COMPONENT_UNAVAILABLE(2417, "审批意见表单组件不可用"),
+
+    // ==================== I4 动态并行编排（242x） ====================
+    DYNAMIC_BRANCH_EMPTY(2418, "动态并行来源集合为空且未配置受控放行策略"),
+    DYNAMIC_BRANCH_LEADER_MISSING(2419, "动态并行存在失效部门或负责人缺失，且未配置受控跳过策略"),
+    DYNAMIC_BRANCH_LIMIT_EXCEEDED(2420, "动态并行分支数超过安全上限"),
     ;
 
     private final int code;

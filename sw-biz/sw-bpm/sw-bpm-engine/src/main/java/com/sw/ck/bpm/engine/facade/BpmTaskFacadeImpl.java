@@ -234,6 +234,45 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
+    public void suspendProcessInstance(String processInstanceId) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR,
+                    "流程实例标识不能为空");
+        }
+        // 幂等：已挂起实例重复挂起不产生第二次效果
+        org.flowable.engine.runtime.ProcessInstance instance = runtimeService
+                .createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
+        if (instance != null && !instance.isSuspended()) {
+            runtimeService.suspendProcessInstanceById(processInstanceId);
+            log.info("BPM process suspended: processInstanceId={}", processInstanceId);
+        }
+    }
+
+    @Override
+    public void resumeProcessInstance(String processInstanceId) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR,
+                    "流程实例标识不能为空");
+        }
+        org.flowable.engine.runtime.ProcessInstance instance = runtimeService
+                .createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
+        if (instance != null && instance.isSuspended()) {
+            runtimeService.activateProcessInstanceById(processInstanceId);
+            log.info("BPM process resumed: processInstanceId={}", processInstanceId);
+        }
+    }
+
+    @Override
+    public boolean isProcessInstanceSuspended(String processInstanceId) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            return false;
+        }
+        org.flowable.engine.runtime.ProcessInstance instance = runtimeService
+                .createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
+        return instance != null && instance.isSuspended();
+    }
+
+    @Override
     public void returnTask(String taskId, String targetNodeId) {
         Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
         String lockKey = snapshot == null ? "task:" + taskId

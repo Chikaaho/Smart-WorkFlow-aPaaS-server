@@ -102,6 +102,14 @@ public class CommandAcceptService {
             return toResp(existing, false);
         }
 
+        // FAILED 终态允许重新提交：唯一键 (tenant_id, command_key) 语义下复用同键行重置入队，
+        // 不走新插（同键新插必撞唯一键且事务已污染，无法再走幂等返回）
+        if (existing != null) {
+            existing.setPayload(toPayload(taskId, action, request));
+            commandQueue.requeueFailed(existing);
+            return toResp(existing, true);
+        }
+
         CommandEnvelope envelope = new CommandEnvelope();
         envelope.setCommandType(type);
         envelope.setChannel(channel);

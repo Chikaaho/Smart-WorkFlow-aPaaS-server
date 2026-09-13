@@ -89,4 +89,13 @@ public class BpmProcessDef extends BaseEntity {
      */
     @TableField("published_version")
     private Integer publishedVersion;
+
+    /**
+     * 模板溯源（I4 §3.2）：本定义由哪个模板复制创建；模板版本可追溯。
+     */
+    @TableField("source_template_id")
+    private Long sourceTemplateId;
+
+    @TableField("source_template_version")
+    private Integer sourceTemplateVersion;
 }

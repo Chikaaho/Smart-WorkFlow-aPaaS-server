@@ -9,6 +9,7 @@ import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
+import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
@@ -86,6 +87,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     private final ParticipantSnapshotMapper participantSnapshotMapper;
     private final ObjectProvider<UserQueryFacade> userQueryFacade;
     private final ObjectProvider<TaskActionService> taskActionService;
+    private final ObjectProvider<DynamicBranchPort> dynamicBranchPort;
     private final DomainEventPublisher domainEventPublisher;
     private final ObjectMapper objectMapper;
 
@@ -101,6 +103,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                                         ParticipantSnapshotMapper participantSnapshotMapper,
                                         ObjectProvider<UserQueryFacade> userQueryFacade,
                                         ObjectProvider<TaskActionService> taskActionService,
+                                        ObjectProvider<DynamicBranchPort> dynamicBranchPort,
                                         DomainEventPublisher domainEventPublisher,
                                         ObjectMapper objectMapper) {
         this.bpmTaskFacade = bpmTaskFacade;
@@ -115,6 +118,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         this.participantSnapshotMapper = participantSnapshotMapper;
         this.userQueryFacade = userQueryFacade;
         this.taskActionService = taskActionService;
+        this.dynamicBranchPort = dynamicBranchPort;
         this.domainEventPublisher = domainEventPublisher;
         this.objectMapper = objectMapper;
     }
@@ -729,6 +733,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         bpmInstanceService.updateStatus(processInstanceId,
                 InstanceStatusEnum.REJECTED.getCode());
         closeDeadlines(processInstanceId, "会签负向结算关闭");
+        DynamicBranchPort branchPort = dynamicBranchPort == null ? null : dynamicBranchPort.getIfAvailable();
+        if (branchPort != null) {
+            branchPort.closeRemaining(tenantId, processInstanceId, nodeKey, "CONSENSUS_NEGATIVE_SETTLED");
+        }
         Long tenantLong = tenantId == null ? 0L : Long.valueOf(tenantId);
         recordInstance(instance, syntheticLogin(tenantLong), ApprovalAction.DISAPPROVE,
                 "CONSENSUS_SETTLED", mapOf("reason", nullSafe(reason, "会签负向结算"),

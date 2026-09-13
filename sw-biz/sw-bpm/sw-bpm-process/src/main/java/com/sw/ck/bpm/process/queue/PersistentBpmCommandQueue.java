@@ -56,6 +56,32 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     }
 
     @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Long requeueFailed(CommandEnvelope envelope) {
+        BpmCommand command = commandService.lambdaQuery()
+                .eq(BpmCommand::getTenantId, envelope.getTenantId())
+                .eq(BpmCommand::getCommandKey, envelope.getCommandKey())
+                .last("LIMIT 1")
+                .one();
+        if (command == null || !CommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
+            throw new IllegalStateException(
+                    "requeueFailed 仅接受已存在且 FAILED 的命令: " + envelope.getCommandKey());
+        }
+        command.setStatus(CommandStatusEnum.PENDING.getCode());
+        command.setPayload(envelope.getPayload());
+        command.setRetryCount(0);
+        command.setFailureReason(null);
+        command.setNextRetryAt(null);
+        command.setClaimedAt(null);
+        command.setClaimToken(null);
+        command.setResult(null);
+        commandService.updateById(command);
+        envelope.setCommandId(command.getId());
+        log.info("FAILED 命令已重新入队: commandId={}, key={}", command.getId(), command.getCommandKey());
+        return command.getId();
+    }
+
+    @Override
     public Optional<CommandEnvelope> findByKey(Long tenantId, String commandKey) {
         BpmCommand command = commandService.lambdaQuery()
                 .eq(BpmCommand::getTenantId, tenantId)

@@ -176,7 +176,8 @@ public class SysRoleServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public void updateMenuIds(Long roleId, List<Long> menuIds) {
         assertMutable(roleId);
-        sysRoleMenuMapper.delete(new LambdaQueryWrapper<SysRoleMenu>().eq(SysRoleMenu::getRoleId, roleId));
+        // 关联行是纯配置关系：物理删除，避免逻辑删行占用唯一键导致「撤销后再授权」撞键
+        sysRoleMenuMapper.deletePhysicallyByRoleId(roleId);
         if (menuIds == null) {
             return;
         }
