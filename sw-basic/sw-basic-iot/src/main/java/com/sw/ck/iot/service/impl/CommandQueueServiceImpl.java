@@ -194,15 +194,17 @@ public class CommandQueueServiceImpl implements CommandQueueService {
 
     @Override
     public List<IotDeviceCommand> getStuckCommands(int stuckMinutes) {
-        Long tenantId = getCurrentTenantId();
-        LocalDateTime since = LocalDateTime.now().minusMinutes(stuckMinutes);
-        // 查询所有 QUEUED 状态且创建时间早于阈值的命令
-        return commandMapper.selectList(
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
-                        .eq(IotDeviceCommand::getTenantId, tenantId)
-                        .eq(IotDeviceCommand::getDeleted, 0)
-                        .eq(IotDeviceCommand::getStatus, "QUEUED")
-                        .le(IotDeviceCommand::getCreateTime, since));
+        // 补偿调度线程无登录态：挂起租户过滤（同 getExpiredCommands 口径）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            LocalDateTime since = LocalDateTime.now().minusMinutes(stuckMinutes);
+            // 查询所有 QUEUED 状态且创建时间早于阈值的命令
+            return commandMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
+                            .eq(IotDeviceCommand::getDeleted, 0)
+                            .eq(IotDeviceCommand::getStatus, "QUEUED")
+                            .le(IotDeviceCommand::getCreateTime, since));
+        }
     }
 
     @Override

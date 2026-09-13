@@ -47,6 +47,15 @@ public class SystemAutoConfiguration {
     }
 
     /**
+     * 租户有效性契约实现（I5 复验 G2a）：供 openapi 等跨模块非浏览器入口校验。
+     */
+    @Bean
+    public com.sw.ck.system.api.tenant.TenantValidityFacade tenantValidityFacade(
+            com.sw.ck.system.service.TenantValidityService tenantValidityService) {
+        return tenantValidityService::isValid;
+    }
+
+    /**
      * BCrypt 密码编码器（sw-security 不提供，业务方负责注册）。
      * 使用 strength=10，与其他模块一致。
      */
@@ -84,13 +93,14 @@ public class SystemAutoConfiguration {
             com.sw.ck.system.service.SysUserService sysUserService,
             com.sw.ck.common.crypto.AesGcmCipher ssoCipher,
             com.sw.ck.system.sso.SsoCallbackPolicy ssoCallbackPolicy,
-            com.sw.ck.system.service.TenantValidityService tenantValidityService) {
+            com.sw.ck.system.service.TenantValidityService tenantValidityService,
+            org.springframework.transaction.PlatformTransactionManager transactionManager) {
         return new com.sw.ck.system.sso.SsoAuthService(configMapper, bindingMapper, stateMapper,
                 auditMapper, sysUserService,
                 java.util.List.of(
                         new com.sw.ck.system.sso.WecomSsoProviderClient(),
                         new com.sw.ck.system.sso.FeishuSsoProviderClient(),
                         new com.sw.ck.system.sso.DingtalkSsoProviderClient()),
-                ssoCipher, ssoCallbackPolicy, tenantValidityService);
+                ssoCipher, ssoCallbackPolicy, tenantValidityService, transactionManager);
     }
 }

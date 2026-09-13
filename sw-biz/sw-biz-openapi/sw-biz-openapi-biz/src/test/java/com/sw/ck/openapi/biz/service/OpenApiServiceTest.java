@@ -38,7 +38,7 @@ class OpenApiServiceTest {
     private final OpenApiAppMapper appMapper = mock(OpenApiAppMapper.class);
     private final OpenApiNonceMapper nonceMapper = mock(OpenApiNonceMapper.class);
     private final OpenApiIdempotencyMapper idemMapper = mock(OpenApiIdempotencyMapper.class);
-    private final OpenApiAuthService auth = new OpenApiAuthService(appMapper, nonceMapper);
+    private final OpenApiAuthService auth = new OpenApiAuthService(appMapper, nonceMapper, null);
 
     @BeforeAll
     static void initTableInfo() {

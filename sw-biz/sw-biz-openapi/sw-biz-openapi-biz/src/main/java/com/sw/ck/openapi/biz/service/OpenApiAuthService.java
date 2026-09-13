@@ -33,15 +33,29 @@ public class OpenApiAuthService {
 
     private final OpenApiAppMapper appMapper;
     private final OpenApiNonceMapper nonceMapper;
+    private final com.sw.ck.system.api.tenant.TenantValidityFacade tenantValidityFacade;
 
-    public OpenApiAuthService(OpenApiAppMapper appMapper, OpenApiNonceMapper nonceMapper) {
+    public OpenApiAuthService(OpenApiAppMapper appMapper, OpenApiNonceMapper nonceMapper,
+                              @org.springframework.beans.factory.annotation.Autowired(required = false)
+                              com.sw.ck.system.api.tenant.TenantValidityFacade tenantValidityFacade) {
         this.appMapper = appMapper;
         this.nonceMapper = nonceMapper;
+        this.tenantValidityFacade = tenantValidityFacade;
     }
 
     /** 校验签名/时间窗/防重放/scope，通过后建立代理上下文并返回应用。 */
     public OpenApiAuthContext authenticate(String appId, String timestamp, String nonce,
                                            String signature, String rawBody, String requiredScope) {
+        // 认证前无登录态：app/nonce 读取与写入显式挂起租户过滤
+        // （租户语义由 app 行 tenantId 与代理上下文权威承担）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return doAuthenticate(appId, timestamp, nonce, signature, rawBody, requiredScope);
+        }
+    }
+
+    private OpenApiAuthContext doAuthenticate(String appId, String timestamp, String nonce,
+                                              String signature, String rawBody, String requiredScope) {
         if (appId == null || timestamp == null || nonce == null || signature == null) {
             throw new BaseException(OpenApiErrorCode.SIGN_INVALID.getCode(),
                     "缺少鉴权头（X-App-Id / X-Timestamp / X-Nonce / X-Signature）");
@@ -71,14 +85,24 @@ public class OpenApiAuthService {
         try {
             OpenApiNonce row = new OpenApiNonce();
             row.setAppId(appId);
+            row.setTenantId(app.getTenantId());
             row.setNonce(nonce);
             row.setExpireAt(LocalDateTime.now().plusSeconds(WINDOW_SECONDS * 2));
             row.setCreateTime(LocalDateTime.now());
             row.setUpdateTime(LocalDateTime.now());
             row.setDeleted(0);
-            nonceMapper.insert(row); // 唯一键兜底并发重放
+            // 认证前无登录态：挂起租户过滤（租户归 app 行权威，显式携带）
+            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                nonceMapper.insert(row); // 唯一键兜底并发重放
+            }
         } catch (DuplicateKeyException e) {
             throw new BaseException(OpenApiErrorCode.NONCE_REUSED);
+        }
+        // 租户有效性（I5 复验 G2a）：应用所属租户停用/过期/缺失时 fail closed，
+        // 不得建立代理上下文
+        if (tenantValidityFacade != null && !tenantValidityFacade.isValid(app.getTenantId())) {
+            throw new BaseException(OpenApiErrorCode.TENANT_INVALID);
         }
         List<String> scopes = app.getScopes() == null ? List.of()
                 : List.of(app.getScopes().split(","));

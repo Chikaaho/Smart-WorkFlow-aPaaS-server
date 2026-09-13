@@ -60,6 +60,7 @@ public class SsoAuthService {
     private final AesGcmCipher cipher;
     private final SsoCallbackPolicy callbackPolicy;
     private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
+    private final org.springframework.transaction.support.TransactionTemplate consumeTxTemplate;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public SsoAuthService(SsoProviderConfigMapper configMapper,
@@ -70,7 +71,15 @@ public class SsoAuthService {
                           List<SsoProviderClient> clientList,
                           AesGcmCipher cipher,
                           SsoCallbackPolicy callbackPolicy,
-                          com.sw.ck.system.service.TenantValidityService tenantValidityService) {
+                          com.sw.ck.system.service.TenantValidityService tenantValidityService,
+                          org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        org.springframework.transaction.support.TransactionTemplate tpl = null;
+        if (transactionManager != null) {
+            tpl = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+            tpl.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        }
+        this.consumeTxTemplate = tpl;
+
         this.configMapper = configMapper;
         this.bindingMapper = bindingMapper;
         this.stateMapper = stateMapper;
@@ -295,13 +304,15 @@ public class SsoAuthService {
             audit(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider mismatch");
             throw new IllegalStateException("Provider 与授权状态不匹配");
         }
-        // 原子消费：仅未消费状态可置 1（并发重放只有一个成功）
-        int consumed = stateMapper.update(null,
+        // 原子消费（I5 复验 G5b）：必须在外呼之前、且以独立事务提交——
+        // 否则换票失败回滚会把 state 还原为未消费，重放会再次打穿到 Provider。
+        final Long stateId = stateRow.getId();
+        Integer consumed = consumeTxTemplate.execute(status -> stateMapper.update(null,
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoAuthState>lambdaUpdate()
-                        .eq(SsoAuthState::getId, stateRow.getId())
+                        .eq(SsoAuthState::getId, stateId)
                         .eq(SsoAuthState::getConsumed, 0)
-                        .set(SsoAuthState::getConsumed, 1));
-        if (consumed != 1) {
+                        .set(SsoAuthState::getConsumed, 1)));
+        if (consumed == null || consumed != 1) {
             audit(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state concurrent replay");
             throw new IllegalStateException("授权状态已消费");
         }
@@ -320,7 +331,8 @@ public class SsoAuthService {
             throw e;
         }
         String externalDigest = sha256(externalId);
-        SsoUserBinding binding = bindingMapper.selectActiveByExternal(provider, stateRow.getTenantId(), externalId);
+        // 摘要即权威：external_id 列存摘要（明文不落 SQL/日志，I5 复验 G7b）
+        SsoUserBinding binding = bindingMapper.selectActiveByExternal(provider, stateRow.getTenantId(), externalDigest);
         if (binding != null) {
             audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, binding.getUserId(), externalDigest,
                     null, stateRow.getTenantId());
@@ -346,8 +358,9 @@ public class SsoAuthService {
             throw new IllegalStateException("租户上下文缺失，不能绑定");
         }
         Long tenantId = current.getTenantId();
+        // 摘要即权威：明文 externalId 不落 SQL/日志（I5 复验 G7b）
         String externalDigest = sha256(externalId);
-        SsoUserBinding existingExternal = bindingMapper.selectActiveByExternal(provider, tenantId, externalId);
+        SsoUserBinding existingExternal = bindingMapper.selectActiveByExternal(provider, tenantId, externalDigest);
         if (existingExternal != null) {
             audit(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), existingExternal.getUserId(),
                     externalDigest, "external id already bound");
@@ -359,10 +372,25 @@ public class SsoAuthService {
                     externalDigest, "user already bound to another external id");
             throw new IllegalStateException("该本地账号已绑定其他外部身份");
         }
+        // 跨租户稳定主体冲突（I5 复验 G6a/V87）：同一 (provider, 摘要) 全局仅允许一个租户绑定
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            Long crossTenant = bindingMapper.selectCount(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoUserBinding>lambdaQuery()
+                            .eq(SsoUserBinding::getProvider, provider)
+                            .eq(SsoUserBinding::getExternalDigest, externalDigest)
+                            .eq(SsoUserBinding::getBindStatus, "ACTIVE")
+                            .ne(SsoUserBinding::getTenantId, tenantId));
+            if (crossTenant != null && crossTenant > 0) {
+                audit(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
+                        externalDigest, "external subject already bound in another tenant");
+                throw new IllegalStateException("该外部身份已在其他租户绑定，不能跨租户重复绑定");
+            }
+        }
         SsoUserBinding binding = new SsoUserBinding();
         binding.setProvider(provider);
         binding.setTenantId(tenantId);
-        binding.setExternalId(externalId);
+        binding.setExternalId(externalDigest);
         binding.setExternalDigest(externalDigest);
         binding.setUserId(userId);
         binding.setBindStatus("ACTIVE");
@@ -512,6 +540,11 @@ public class SsoAuthService {
         byte[] buf = new byte[bytes];
         secureRandom.nextBytes(buf);
         return HexFormat.of().formatHex(buf);
+    }
+
+    /** 外部标识摘要（绑定权威列；明文不落 SQL/日志——I5 复验 G7b）。 */
+    public static String digest(String externalId) {
+        return sha256Static(externalId);
     }
 
     /** 外部标识摘要前缀（审计/展示用；不回传原文）。 */

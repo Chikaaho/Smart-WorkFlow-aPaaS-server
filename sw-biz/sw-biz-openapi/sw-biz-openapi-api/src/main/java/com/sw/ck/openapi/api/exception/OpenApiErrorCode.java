@@ -18,6 +18,7 @@ public enum OpenApiErrorCode implements ErrorCode {
     IDEMPOTENCY_CONFLICT(3006, "幂等键已绑定其他业务对象"),
     PROCESS_NOT_VISIBLE(3007, "流程实例不存在或不属于应用授权范围"),
     CALLBACK_FAILED(3008, "回调投递失败"),
+    TENANT_INVALID(3009, "应用所属租户不可用"),
     ;
 
     private final int code;

@@ -72,6 +72,31 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * @Valid 参数校验失败 → HTTP 400 受控错误，不得落入 500。
+     */
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public R<Void> handleValidation(org.springframework.web.bind.MethodArgumentNotValidException ex) {
+        String detail = ex.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(f -> f.getField() + " " + f.getDefaultMessage())
+                .orElse("参数非法");
+        log.warn("validation failed: {}", detail);
+        return R.fail(400, "参数非法: " + detail);
+    }
+
+    /**
+     * 静态资源/未映射路径 → HTTP 404 受控结果，不得落入 500（I5 复验 G2a：
+     * 匿名或路径错误必须是可判定结果，"系统异常" 不得掩盖认证/路由语义）。
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public R<Void> handleNoResource(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        log.warn("no resource: {}", ex.getResourcePath());
+        return R.fail(404, "资源不存在");
+    }
+
+    /**
      * 未分类 / 基础设施故障 → HTTP 500 + body 500。
      * system.md §8：基础设施故障必须落 5xx，不得伪装为 200。
      */

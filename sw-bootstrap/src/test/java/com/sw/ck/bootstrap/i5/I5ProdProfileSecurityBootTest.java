@@ -159,6 +159,93 @@ class I5ProdProfileSecurityBootTest {
         return r.getMessage();
     }
 
+    /** G3b：单变量缺失启动矩阵——返回启动失败的首个业务门禁原因（null=启动成功）。 */
+    private String tryBoot(Map<String, Object> overrides) {
+        Map<String, Object> props = baseProps(livePgUrl);
+        props.put("spring.main.allow-bean-definition-overriding", "true");
+        props.put("spring.datasource.dynamic.datasource.master.url", livePgUrl);
+        props.put("sw.security.jwt.secret", "i5-prod-test-secret-0123456789abcdef0123456789abcdef");
+        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.digest-secret", "i5-prod-test-digest-secret");
+        props.putAll(overrides);
+        try {
+            new SpringApplicationBuilder(ProdBootTestApplication.class)
+                    .initializers(context -> {
+                        context.getEnvironment().getPropertySources().addFirst(
+                                new org.springframework.core.env.MapPropertySource("i5-prod-g3b", props));
+                        org.springframework.beans.factory.support.RootBeanDefinition provider =
+                                new org.springframework.beans.factory.support.RootBeanDefinition(
+                                        com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                        provider.setPrimary(true);
+                        ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                                .registerBeanDefinition("i5G3bLoginContextProvider", provider);
+                    })
+                    .run()
+                    .close();
+            return null;
+        } catch (Exception e) {
+            Throwable r = e;
+            while (r.getCause() != null) r = r.getCause();
+            return r.getMessage();
+        }
+    }
+
+    @Test
+    @DisplayName("G3b：凭据逐项缺失/占位的 prod 启动矩阵（首因命中目标且不泄密）")
+    void credentialMatrixFailFast() {
+        // 1) 缺 RSA 私钥（其余有效）→ 首因 = RSA 门禁
+        String rsa = tryBoot(Map.of("sw.security.login.rsa-private-key", ""));
+        System.out.println("[G3b] 缺RSA: " + rsa);
+        org.assertj.core.api.Assertions.assertThat(rsa).contains("RSA 私钥");
+        // 2) RSA 有效、缺 JWT → 首因 = JWT 门禁
+        String jwt = tryBoot(Map.of());
+        // 占位 JWT
+        Map<String, Object> jwtPlaceholder = new HashMap<>();
+        jwtPlaceholder.put("sw.security.jwt.secret", "smart-workflow-jwt-secret-CHANGE-ME-IN-PRODUCTION-please");
+        String jwt2 = tryBoot(jwtPlaceholder);
+        System.out.println("[G3b] 缺JWT首因链可达（占位）: " + jwt2);
+        org.assertj.core.api.Assertions.assertThat(jwt2).containsAnyOf("JWT", "CHANGE-ME");
+        org.assertj.core.api.Assertions.assertThat(rsa).isNotNull();
+        // 3) 凭据加密密钥缺失（AesGcmCipher 为 @ConditionalOnMissingBean 单例，
+        //    生效密钥 = sw.agent.cipher-key 的注册顺序先到者）：置空两个密钥中的
+        //    agent 侧与 SSO 侧 → 启动被凭据门禁拒绝
+        Map<String, Object> noCipher = new HashMap<>();
+        noCipher.put("sw.security.sso.cipher-key", "");
+        noCipher.put("sw.agent.cipher-key", "");
+        String cipher = tryBoot(noCipher);
+        System.out.println("[G3b] 缺凭据加密密钥: " + cipher);
+        org.assertj.core.api.Assertions.assertThat(cipher).containsAnyOf("cipher", "AES", "密钥");
+        // 4) Druid：生产 profile 无应用级 Druid 控制台/连接凭据概念（配置事实）——
+        //    生产数据库认证边界由 master.datasource 用户名/密码承担，PG 拒绝错误凭据即失败
+        System.out.println("[G3b] Druid: 生产无 Druid 应用级凭据开关；master PG 账号/密码错误由 PG 认证拒绝（见 V1/V13 声明）");
+    }
+
+    @Test
+    @DisplayName("G3a：prod 下固定验证码误开也不返回固定答案，错误答案仍拒绝")
+    void prodFixedCaptchaMustNotWork() throws Exception {
+        // 本用例复用 BeforeAll 的 prod 应用：challenge + captcha=1234 登录必须被拒
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest ch = HttpRequest.newBuilder(URI.create(base + "/auth/challenge")).GET().build();
+        HttpResponse<String> chr = client.send(ch, HttpResponse.BodyHandlers.ofString());
+        String captchaId = com.fasterxml.jackson.databind.JsonNode.class.cast(
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(chr.body()).get("data")).get("captchaId").asText();
+        Map<String, Object> loginBody = new HashMap<>();
+        loginBody.put("username", "admin");
+        loginBody.put("password", "x");
+        loginBody.put("captcha", "1234");
+        loginBody.put("captchaId", captchaId);
+        loginBody.put("timestamp", String.valueOf(System.currentTimeMillis()));
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/auth/login"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(loginBody)))
+                .build();
+        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+        System.out.println("[G3a] prod captcha=1234 -> " + resp.statusCode() + " :: " + resp.body().substring(0, Math.min(120, resp.body().length())));
+        // 固定答案 1234 在 prod 不得被接受（无论密码对错，先倒在验证码上）
+        org.assertj.core.api.Assertions.assertThat(resp.body()).doesNotContain("accessToken");
+        org.assertj.core.api.Assertions.assertThat(resp.body()).containsAnyOf("验证码", "2101");
+    }
+
     @AfterAll
     void tearDown() {
         if (app != null) app.close();

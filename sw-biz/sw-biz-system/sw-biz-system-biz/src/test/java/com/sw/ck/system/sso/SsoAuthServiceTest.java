@@ -53,7 +53,7 @@ class SsoAuthServiceTest {
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
                 new SsoCallbackPolicy("", List.of()),
-                tenantValidityService);
+                tenantValidityService, noopTxManager());
         Mockito.when(stateMapper.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any()))
                 .thenAnswer(inv -> {
                     SsoAuthState s = inv.getArgument(0);
@@ -172,7 +172,7 @@ class SsoAuthServiceTest {
         loginAs(1L);
         SsoUserBinding existing = new SsoUserBinding();
         existing.setUserId(99L);
-        Mockito.when(bindingMapper.selectActiveByExternal("WECOM", 1L, "ext-1")).thenReturn(existing);
+        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"), org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(SsoAuthService.digest("ext-1")))).thenReturn(existing);
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "ext-1"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("已绑定其他本地账号");
@@ -199,7 +199,9 @@ class SsoAuthServiceTest {
         service.bind("WECOM", 2L, "ext-1");
         Mockito.verify(bindingMapper).insert(org.mockito.ArgumentMatchers.<SsoUserBinding>argThat(b ->
                 "ACTIVE".equals(b.getBindStatus()) && b.getTenantId() == 1L
-                        && b.getExternalDigest().length() == 64));
+                        && b.getExternalDigest().length() == 64
+                        && b.getExternalId().equals(b.getExternalDigest())));
+        Mockito.when(bindingMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
         Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "BIND".equals(a.getEventType()) && "SUCCESS".equals(a.getResult())));
     }
@@ -222,6 +224,14 @@ class SsoAuthServiceTest {
 
     // ======== I5 复验补证（G5/G7）：登录前安全发起、回调白名单分离、审计查询守卫 ========
 
+    private org.springframework.transaction.PlatformTransactionManager noopTxManager() {
+        return new org.springframework.transaction.PlatformTransactionManager() {
+            @Override public org.springframework.transaction.TransactionStatus getTransaction(org.springframework.transaction.TransactionDefinition definition) { return new org.springframework.transaction.support.SimpleTransactionStatus(); }
+            @Override public void commit(org.springframework.transaction.TransactionStatus status) { }
+            @Override public void rollback(org.springframework.transaction.TransactionStatus status) { }
+        };
+    }
+
     private com.sw.ck.system.service.TenantValidityService mockedValidity() {
         com.sw.ck.system.service.TenantValidityService v =
                 Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
@@ -237,7 +247,7 @@ class SsoAuthServiceTest {
                         new DingtalkSsoProviderClient()),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                policy, validity);
+                policy, validity, noopTxManager());
     }
 
     @Test
@@ -316,6 +326,53 @@ class SsoAuthServiceTest {
                 .hasMessageContaining("跨租户重复登记");
         Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "CONFLICT_REJECTED".equals(a.getEventType())));
+    }
+
+    @Test
+    @DisplayName("绑定：同一摘要已在其他租户绑定 → 跨租户拒绝（G6a/V87）")
+    void bind_crossTenantDigestConflict_shouldReject() {
+        loginAs(2L);
+        Mockito.when(bindingMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(1L);
+        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
+                org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
+        assertThatThrownBy(() -> service.bind("WECOM", 2L, "ext-cross"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("其他租户");
+    }
+
+    @Test
+    @DisplayName("回调：换票失败后 state 仍保持已消费，重放在外呼前拒绝（G5b）")
+    void stateConsumedSurvivesProviderFailure_replayRejectedBeforeOutbound() {
+        // lambdaUpdate 需要 MP TableInfo 缓存（单测上下文无 MapperScan 初始化）
+        com.baomidou.mybatisplus.core.MybatisConfiguration cfg = new com.baomidou.mybatisplus.core.MybatisConfiguration();
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(cfg, ""), SsoAuthState.class);
+        SsoProviderClient failing = new SsoProviderClient() {
+            @Override public String provider() { return "WECOM"; }
+            @Override public String buildAuthorizeUrl(SsoProviderConfigView config, String redirectUri, String state) { return "https://provider.example?state=" + state; }
+            @Override public String exchangeExternalId(SsoProviderConfigView config, String code) { throw new SsoProviderClient.SsoProviderException("exchange failed"); }
+        };
+        SsoAuthService svc = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
+                Mockito.mock(SysUserService.class), List.of(failing),
+                new com.sw.ck.common.crypto.AesGcmCipher(
+                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCallbackPolicy("", List.of()), mockedValidity(), noopTxManager());
+        SsoAuthState fresh = new SsoAuthState();
+        fresh.setId(7L); fresh.setProvider("WECOM"); fresh.setConsumed(0); fresh.setTenantId(1L);
+        fresh.setExpireAt(LocalDateTime.now().plusSeconds(60));
+        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(fresh);
+        Mockito.when(stateMapper.update(org.mockito.ArgumentMatchers.eq(null), org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
+                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
+        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-x", "state-ok"))
+                .isInstanceOf(SsoProviderClient.SsoProviderException.class);
+        SsoAuthState consumed = new SsoAuthState();
+        consumed.setId(7L); consumed.setProvider("WECOM"); consumed.setConsumed(1); consumed.setTenantId(1L);
+        consumed.setExpireAt(LocalDateTime.now().plusSeconds(60));
+        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(consumed);
+        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-y", "state-ok"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("已消费");
     }
 
     @Test
