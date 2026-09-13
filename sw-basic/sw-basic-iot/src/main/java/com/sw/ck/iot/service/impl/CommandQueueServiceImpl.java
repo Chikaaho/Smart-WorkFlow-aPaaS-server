@@ -185,8 +185,11 @@ public class CommandQueueServiceImpl implements CommandQueueService {
 
     @Override
     public List<IotDeviceCommand> getExpiredCommands() {
-        Long tenantId = getCurrentTenantId();
-        return commandMapper.selectExpired(LocalDateTime.now(), tenantId);
+        // 补偿调度线程无登录态：挂起租户过滤（补偿作业跨租户扫描过期命令）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return commandMapper.selectExpired(LocalDateTime.now(), null);
+        }
     }
 
     @Override

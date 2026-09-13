@@ -22,6 +22,7 @@ public class SecurityProperties {
     private List<String> permitUrls = new ArrayList<>(List.of(
             "/auth/challenge", "/auth/login", "/auth/refresh", "/auth/logout",
             "/auth/sso/*/callback", "/auth/sso/ticket", "/auth/sso/candidate",
+            "/auth/sso/*/authorize-login",
             "/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness"
     ));
 }

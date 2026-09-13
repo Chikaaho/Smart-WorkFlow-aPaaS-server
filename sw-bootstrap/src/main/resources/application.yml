@@ -71,6 +71,8 @@ spring:
       - classpath:db/migration/iot/{vendor}
       - classpath:db/migration/openapi/{vendor}
       - classpath:db/migration/system/{vendor}
+      # I5：dev 专用可控测试夹具目录（仅 application-dev.yml 覆盖装载；生产不包含）
+      # classpath:db/migration/devseed/{vendor}
     baseline-on-migrate: true
     validate-on-migrate: true
     out-of-order: false
@@ -179,6 +181,7 @@ sw:
       - /auth/sso/*/callback
       - /auth/sso/ticket
       - /auth/sso/candidate
+      - /auth/sso/*/authorize-login
       - /openapi/v1/**
       # I5 收口：仅放行无详情的最小健康探针（liveness/readiness），详细健康、
       # 指标、环境与管理入口一律需要认证；swagger 调试入口不再随生产开放

@@ -58,6 +58,8 @@ public class SsoAuthService {
     private final SysUserService sysUserService;
     private final Map<String, SsoProviderClient> clients;
     private final AesGcmCipher cipher;
+    private final SsoCallbackPolicy callbackPolicy;
+    private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public SsoAuthService(SsoProviderConfigMapper configMapper,
@@ -66,7 +68,9 @@ public class SsoAuthService {
                           SsoAuditRecordMapper auditMapper,
                           SysUserService sysUserService,
                           List<SsoProviderClient> clientList,
-                          AesGcmCipher cipher) {
+                          AesGcmCipher cipher,
+                          SsoCallbackPolicy callbackPolicy,
+                          com.sw.ck.system.service.TenantValidityService tenantValidityService) {
         this.configMapper = configMapper;
         this.bindingMapper = bindingMapper;
         this.stateMapper = stateMapper;
@@ -77,6 +81,8 @@ public class SsoAuthService {
             this.clients.put(client.provider(), client);
         }
         this.cipher = cipher;
+        this.callbackPolicy = callbackPolicy;
+        this.tenantValidityService = tenantValidityService;
     }
 
     // ==================== 配置管理 ====================
@@ -95,6 +101,25 @@ public class SsoAuthService {
         SsoProviderConfig config = configMapper.selectOne(
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoProviderConfig>lambdaQuery()
                         .eq(SsoProviderConfig::getProvider, provider));
+        // 应用归属唯一（I5 复验 G6）：同一 (provider, appId) 只允许一个租户登记，
+        // 否则同一 Provider 应用/组织中的稳定外部主体可被两个租户各绑定一次
+        boolean updatingSameRow = config != null && config.getTenantId() != null
+                && config.getTenantId().equals(current.getTenantId());
+        if (appId != null && !appId.isBlank()) {
+            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                Long conflicts = configMapper.selectCount(
+                        com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoProviderConfig>lambdaQuery()
+                                .eq(SsoProviderConfig::getProvider, provider)
+                                .eq(SsoProviderConfig::getAppId, appId)
+                                .ne(updatingSameRow, SsoProviderConfig::getTenantId, current.getTenantId()));
+                if (conflicts != null && conflicts > 0) {
+                    audit(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), null, null,
+                            "app already registered by another tenant", current.getTenantId());
+                    throw new IllegalStateException("该 Provider 应用已登记在其他租户，不能跨租户重复登记");
+                }
+            }
+        }
         if (config == null) {
             config = new SsoProviderConfig();
             config.setProvider(provider);
@@ -181,10 +206,52 @@ public class SsoAuthService {
 
         SsoProviderClient client = clients.get(provider);
         String authorizeUrl = client.buildAuthorizeUrl(
-                decryptConfig(config), serverCallbackUrl(provider), state);
+                decryptConfig(config), callbackPolicy.resolveCallbackUrl(provider), state);
         audit(provider, "AUTH_START", "SUCCESS", current == null ? null : current.getUserId(),
                 null, null, null);
         return new AuthorizeStart(authorizeUrl, state);
+    }
+
+    /**
+     * 登录前安全发起（I5 复验 G5）：无既有登录态时确定租户并发起授权。
+     * <p>
+     * 租户来源为显式入参并经服务端权威校验（租户存在/启用/未过期 + 该租户的
+     * Provider 配置已启用）；该入参只用于定位租户级 Provider 配置与绑定域，
+     * 不授予任何权限——已绑定登录最终由服务端按绑定行的 tenantId 装载
+     * LoginUser/角色/数据范围。租户无效或 Provider 未启用均 fail closed。
+     * </p>
+     */
+    @Transactional
+    public AuthorizeStart startAuthorizeLogin(String provider, Long tenantId, String redirectPath) {
+        requireProvider(provider);
+        if (tenantId == null) {
+            throw new IllegalStateException("登录前发起必须显式指定租户");
+        }
+        // 免认证路径无登录态：租户语义全部由显式谓词承担（state.tenantId、配置行
+        // tenant_id、绑定行 tenant_id），挂起拦截器避免 fail-closed 误伤
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            tenantValidityService.requireValid(tenantId);
+            SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
+            if (config == null || config.getEnabled() != 1) {
+                throw new IllegalStateException("该 Provider 未启用: " + provider);
+            }
+            String state = randomToken(32);
+            SsoAuthState stateRow = new SsoAuthState();
+            stateRow.setStateValue(sha256(state));
+            stateRow.setProvider(provider);
+            stateRow.setRedirectPath(sanitizeRedirect(redirectPath));
+            stateRow.setConsumed(0);
+            stateRow.setExpireAt(LocalDateTime.now().plusSeconds(STATE_TTL_SECONDS));
+            stateRow.setTenantId(tenantId);
+            stateMapper.insert(stateRow);
+
+            SsoProviderClient client = clients.get(provider);
+            String authorizeUrl = client.buildAuthorizeUrl(
+                    decryptConfig(config), callbackPolicy.resolveCallbackUrl(provider), state);
+            audit(provider, "AUTH_START", "SUCCESS", null, null, null, "pre-login tenant=" + tenantId, tenantId);
+            return new AuthorizeStart(authorizeUrl, state);
+        }
     }
 
     /**
@@ -198,6 +265,14 @@ public class SsoAuthService {
     @Transactional
     public CallbackResult handleCallback(String provider, String code, String state) {
         requireProvider(provider);
+        // 免认证回调：与 startAuthorizeLogin 同口径挂起租户拦截器（显式谓词承担租户语义）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return doHandleCallback(provider, code, state);
+        }
+    }
+
+    private CallbackResult doHandleCallback(String provider, String code, String state) {
         if (code == null || code.isBlank() || state == null || state.isBlank()) {
             audit(provider, "LOGIN_FAILED", "DENIED", null, null, null, "missing code/state");
             throw new IllegalStateException("回调参数缺失");
@@ -247,11 +322,13 @@ public class SsoAuthService {
         String externalDigest = sha256(externalId);
         SsoUserBinding binding = bindingMapper.selectActiveByExternal(provider, stateRow.getTenantId(), externalId);
         if (binding != null) {
-            audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, binding.getUserId(), externalDigest, null);
+            audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, binding.getUserId(), externalDigest,
+                    null, stateRow.getTenantId());
             return new CallbackResult(provider, stateRow.getTenantId(), externalId, externalDigest,
                     binding.getUserId(), stateRow.getRedirectPath(), true);
         }
-        audit(provider, "LOGIN_FAILED", "DENIED", null, null, externalDigest, "not bound");
+        audit(provider, "LOGIN_FAILED", "DENIED", null, null, externalDigest,
+                "not bound", stateRow.getTenantId());
         return new CallbackResult(provider, stateRow.getTenantId(), externalId, externalDigest,
                 null, stateRow.getRedirectPath(), false);
     }
@@ -340,10 +417,20 @@ public class SsoAuthService {
 
     private void audit(String provider, String eventType, String result, Long actorId,
                        Long localUserId, String externalDigest, String detail) {
+        audit(provider, eventType, result, actorId, localUserId, externalDigest, detail, null);
+    }
+
+    /**
+     * 审计写入。显式 tenantId 优先（回调/登录前发起路径无登录态，租户拦截器为
+     * fail-closed，必须挂起过滤并显式携带 state 所属租户），否则取当前登录态租户。
+     */
+    private void audit(String provider, String eventType, String result, Long actorId,
+                       Long localUserId, String externalDigest, String detail, Long explicitTenantId) {
         try {
             SsoAuditRecord record = new SsoAuditRecord();
             LoginUser current = LoginUserHolder.get();
-            record.setTenantId(current != null ? current.getTenantId() : null);
+            record.setTenantId(explicitTenantId != null ? explicitTenantId
+                    : (current != null && current.getTenantId() != null ? current.getTenantId() : 0L));
             record.setProvider(provider);
             record.setEventType(eventType);
             record.setResult(result);
@@ -351,7 +438,14 @@ public class SsoAuthService {
             record.setLocalUserId(localUserId);
             record.setExternalDigest(externalDigest);
             record.setDetail(detail);
-            auditMapper.insert(record);
+            if (current == null) {
+                try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                             com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                    auditMapper.insert(record);
+                }
+            } else {
+                auditMapper.insert(record);
+            }
         } catch (Exception e) {
             log.warn("SSO 审计写入失败: provider={}, event={}", provider, eventType, e);
         }
@@ -364,8 +458,43 @@ public class SsoAuthService {
     }
 
     private String serverCallbackUrl(String provider) {
-        // 回调由应用外部基址 + 固定路径构成；基址经配置注入，缺省相对路径由前端代理处理
-        return "/api/auth/sso/" + provider.toLowerCase() + "/callback";
+        return callbackPolicy.resolveCallbackUrl(provider);
+    }
+
+    // ==================== 审计查询（I5 复验 G7） ====================
+
+    /**
+     * 按租户隔离查询 SSO 审计（调用方须经 {@code system:sso:audit:query} 权限守卫；
+     * 无权/跨租户查询被拒绝由权限链与本查询的显式租户条件共同保证）。
+     */
+    public Map<String, Object> queryAudit(String provider, String eventType, String result,
+                                          Long localUserId, int page, int size) {
+        LoginUser current = LoginUserHolder.get();
+        if (current == null || current.getTenantId() == null) {
+            throw new IllegalStateException("租户上下文缺失，不能查询 SSO 审计");
+        }
+        int safeSize = Math.min(Math.max(size, 1), 200);
+        var wrapper = com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoAuditRecord>lambdaQuery()
+                .eq(SsoAuditRecord::getTenantId, current.getTenantId())
+                .eq(provider != null && !provider.isBlank(), SsoAuditRecord::getProvider, provider)
+                .eq(eventType != null && !eventType.isBlank(), SsoAuditRecord::getEventType, eventType)
+                .eq(result != null && !result.isBlank(), SsoAuditRecord::getResult, result)
+                .eq(localUserId != null, SsoAuditRecord::getLocalUserId, localUserId)
+                .orderByDesc(SsoAuditRecord::getId)
+                .last("LIMIT " + safeSize + " OFFSET " + (long) Math.max(page, 0) * safeSize);
+        List<SsoAuditRecord> records = auditMapper.selectList(wrapper);
+        var view = records.stream().map(r -> Map.of(
+                "id", String.valueOf(r.getId()),
+                "provider", r.getProvider(),
+                "eventType", r.getEventType(),
+                "result", r.getResult(),
+                "actorId", String.valueOf(r.getActorId()),
+                "localUserId", String.valueOf(r.getLocalUserId()),
+                "externalDigestPrefix", r.getExternalDigest() == null ? "" : r.getExternalDigest().substring(0, Math.min(8, r.getExternalDigest().length())),
+                "detail", r.getDetail() == null ? "" : r.getDetail(),
+                "createTime", String.valueOf(r.getCreateTime())
+        )).toList();
+        return Map.of("records", view, "tenantId", String.valueOf(current.getTenantId()));
     }
 
     private String sanitizeRedirect(String redirectPath) {

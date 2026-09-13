@@ -82,13 +82,15 @@ public class SystemAutoConfiguration {
             com.sw.ck.system.mapper.SsoAuthStateMapper stateMapper,
             com.sw.ck.system.mapper.SsoAuditRecordMapper auditMapper,
             com.sw.ck.system.service.SysUserService sysUserService,
-            com.sw.ck.common.crypto.AesGcmCipher ssoCipher) {
+            com.sw.ck.common.crypto.AesGcmCipher ssoCipher,
+            com.sw.ck.system.sso.SsoCallbackPolicy ssoCallbackPolicy,
+            com.sw.ck.system.service.TenantValidityService tenantValidityService) {
         return new com.sw.ck.system.sso.SsoAuthService(configMapper, bindingMapper, stateMapper,
                 auditMapper, sysUserService,
                 java.util.List.of(
                         new com.sw.ck.system.sso.WecomSsoProviderClient(),
                         new com.sw.ck.system.sso.FeishuSsoProviderClient(),
                         new com.sw.ck.system.sso.DingtalkSsoProviderClient()),
-                ssoCipher);
+                ssoCipher, ssoCallbackPolicy, tenantValidityService);
     }
 }

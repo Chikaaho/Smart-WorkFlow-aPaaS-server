@@ -41,9 +41,13 @@ public class JobInfoServiceImpl
 
     @Override
     public List<JobInfo> listEnabled() {
-        return lambdaQuery()
-                .eq(JobInfo::getStatus, "NORMAL")
-                .list();
+        // 调度线程无登录态：挂起租户过滤（作业注册表为系统级对象）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return lambdaQuery()
+                    .eq(JobInfo::getStatus, "NORMAL")
+                    .list();
+        }
     }
 
     @Override

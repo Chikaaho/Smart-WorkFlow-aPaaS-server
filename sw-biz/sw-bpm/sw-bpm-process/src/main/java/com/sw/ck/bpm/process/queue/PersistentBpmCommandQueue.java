@@ -240,13 +240,18 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     @Override
     public int reclaimStale(LocalDateTime staleBefore) {
-        boolean updated = commandService.lambdaUpdate()
-                .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
-                .lt(BpmCommand::getClaimedAt, staleBefore)
-                .set(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
-                .set(BpmCommand::getClaimToken, null)
-                .update();
-        return updated ? 1 : 0;
+        // 调度线程无登录态：与 claimDue 同口径挂起租户过滤（孤儿命令为全局对象，
+        // 按状态与领取时间回收，不涉及租户语义）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            boolean updated = commandService.lambdaUpdate()
+                    .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
+                    .lt(BpmCommand::getClaimedAt, staleBefore)
+                    .set(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                    .set(BpmCommand::getClaimToken, null)
+                    .update();
+            return updated ? 1 : 0;
+        }
     }
 
     @Override

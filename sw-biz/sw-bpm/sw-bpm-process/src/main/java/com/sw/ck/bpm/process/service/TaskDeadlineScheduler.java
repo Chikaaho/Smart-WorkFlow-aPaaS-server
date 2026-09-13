@@ -86,13 +86,21 @@ public class TaskDeadlineScheduler {
     @Scheduled(fixedDelay = 60000)
     public void scan() {
         try {
-            List<BpmTaskDeadline> due = deadlineMapper.selectList(
-                    Wrappers.<BpmTaskDeadline>lambdaQuery()
-                            .eq(BpmTaskDeadline::getRunState, "PENDING")
-                            .lt(BpmTaskDeadline::getDueAt, LocalDateTime.now())
-                            .last("LIMIT 50"));
+            // 调度线程无登录态：与 PersistentBpmCommandQueue.claimDue 同口径挂起租户过滤
+            List<BpmTaskDeadline> due;
+            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                due = deadlineMapper.selectList(
+                        Wrappers.<BpmTaskDeadline>lambdaQuery()
+                                .eq(BpmTaskDeadline::getRunState, "PENDING")
+                                .lt(BpmTaskDeadline::getDueAt, LocalDateTime.now())
+                                .last("LIMIT 50"));
+            }
             for (BpmTaskDeadline record : due) {
-                processSafely(record);
+                try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended suspended =
+                             com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                    processSafely(record);
+                }
             }
         } catch (Exception e) {
             log.warn("时限扫描失败（下轮重试）: {}", e.getMessage());

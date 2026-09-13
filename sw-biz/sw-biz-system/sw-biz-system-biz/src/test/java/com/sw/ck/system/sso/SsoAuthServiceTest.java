@@ -43,11 +43,17 @@ class SsoAuthServiceTest {
         stateMapper = Mockito.mock(SsoAuthStateMapper.class);
         auditMapper = Mockito.mock(SsoAuditRecordMapper.class);
         SysUserService sysUserService = Mockito.mock(SysUserService.class);
+        com.sw.ck.system.service.TenantValidityService tenantValidityService =
+                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doNothing().when(tenantValidityService)
+                .requireValid(org.mockito.ArgumentMatchers.any());
         service = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 sysUserService, List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
                 new DingtalkSsoProviderClient()),
                 new com.sw.ck.common.crypto.AesGcmCipher(
-                        java.util.Base64.getEncoder().encodeToString(new byte[32])));
+                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCallbackPolicy("", List.of()),
+                tenantValidityService);
         Mockito.when(stateMapper.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any()))
                 .thenAnswer(inv -> {
                     SsoAuthState s = inv.getArgument(0);
@@ -212,5 +218,119 @@ class SsoAuthServiceTest {
         var view = service.getConfig("WECOM");
         assertThat(view.get("secretConfigured")).isEqualTo(true);
         assertThat(String.valueOf(view)).doesNotContain("secret-value");
+    }
+
+    // ======== I5 复验补证（G5/G7）：登录前安全发起、回调白名单分离、审计查询守卫 ========
+
+    private com.sw.ck.system.service.TenantValidityService mockedValidity() {
+        com.sw.ck.system.service.TenantValidityService v =
+                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doNothing().when(v).requireValid(org.mockito.ArgumentMatchers.any());
+        return v;
+    }
+
+    private SsoAuthService serviceWith(SsoCallbackPolicy policy,
+                                       com.sw.ck.system.service.TenantValidityService validity) {
+        return new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
+                Mockito.mock(SysUserService.class),
+                List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
+                        new DingtalkSsoProviderClient()),
+                new com.sw.ck.common.crypto.AesGcmCipher(
+                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                policy, validity);
+    }
+
+    @Test
+    @DisplayName("登录前发起：未指定租户 → fail closed")
+    void startAuthorizeLogin_withoutTenant_shouldReject() {
+        assertThatThrownBy(() -> service.startAuthorizeLogin("WECOM", null, null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("显式指定租户");
+    }
+
+    @Test
+    @DisplayName("登录前发起：租户无效 → fail closed 且不签发 state")
+    void startAuthorizeLogin_invalidTenant_shouldReject() {
+        com.sw.ck.system.service.TenantValidityService invalid =
+                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doThrow(new IllegalStateException("租户无效"))
+                .when(invalid).requireValid(777L);
+        SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of()), invalid);
+        assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", 777L, null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("租户无效");
+        Mockito.verify(stateMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+    }
+
+    @Test
+    @DisplayName("登录前发起：租户有效 + Provider 启用 → state 与租户绑定落库")
+    void startAuthorizeLogin_validTenant_shouldBindStateToTenant() {
+        SsoAuthService.AuthorizeStart start = service.startAuthorizeLogin("WECOM", 100L, "/workspace");
+        assertThat(start.authorizeUrl()).contains("appid=ww-test-corp");
+        Mockito.verify(stateMapper).insert(org.mockito.ArgumentMatchers.<SsoAuthState>argThat(s ->
+                s.getTenantId() != null && s.getTenantId() == 100L && s.getConsumed() == 0));
+    }
+
+    @Test
+    @DisplayName("回调白名单：默认相对路径模式可用；显式白名单外 fail closed")
+    void callbackPolicy_allowlistSeparation() {
+        SsoCallbackPolicy relative = new SsoCallbackPolicy("", List.of());
+        assertThat(relative.isRelativeMode()).isTrue();
+        assertThat(relative.resolveCallbackUrl("WECOM")).isEqualTo("/api/auth/sso/wecom/callback");
+
+        SsoCallbackPolicy allowlisted = new SsoCallbackPolicy(
+                "https://oa.example.com", List.of("https://oa.example.com/api/auth/sso/"));
+        assertThat(allowlisted.resolveCallbackUrl("WECOM"))
+                .isEqualTo("https://oa.example.com/api/auth/sso/wecom/callback");
+
+        SsoCallbackPolicy hostile = new SsoCallbackPolicy(
+                "https://evil.example.com", List.of("https://oa.example.com/api/auth/sso/"));
+        assertThatThrownBy(() -> hostile.resolveCallbackUrl("WECOM"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("白名单");
+    }
+
+    @Test
+    @DisplayName("审计查询：无租户上下文 → 拒绝；有上下文 → 按当前租户返回")
+    void queryAudit_tenantScoped() {
+        assertThatThrownBy(() -> service.queryAudit(null, null, null, null, 0, 20))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("租户上下文缺失");
+        loginAs(1L);
+        Mockito.when(auditMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of());
+        var view = service.queryAudit("WECOM", null, null, null, 0, 20);
+        assertThat(view.get("tenantId")).isEqualTo("1");
+        Mockito.verify(auditMapper).selectList(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("配置保存：Provider 应用已登记在其他租户 → 跨租户冲突拒绝并审计")
+    void saveConfig_appRegisteredByAnotherTenant_shouldReject() {
+        loginAs(2L);
+        Mockito.when(configMapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(configMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(1L);
+        assertThatThrownBy(() -> service.saveConfig("WECOM", true, "ww-same-app", null, null, null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("跨租户重复登记");
+        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                "CONFLICT_REJECTED".equals(a.getEventType())));
+    }
+
+    @Test
+    @DisplayName("配置保存：无跨租户冲突 → 正常登记")
+    void saveConfig_noConflict_shouldPass() {
+        loginAs(2L);
+        Mockito.when(configMapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(configMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(configMapper.insert(org.mockito.ArgumentMatchers.<SsoProviderConfig>any()))
+                .thenAnswer(inv -> {
+                    SsoProviderConfig c = inv.getArgument(0);
+                    c.setId(11L);
+                    return 1;
+                });
+        service.saveConfig("WECOM", true, "ww-new-app", "s", null, null);
+        Mockito.verify(configMapper).insert(org.mockito.ArgumentMatchers.<SsoProviderConfig>any());
     }
 }

@@ -8,7 +8,9 @@ ch:
 server:
   port: 8080
 
-# I5 收口：Druid 监控台仅在 dev profile 显式开启（默认全局关闭）
+# I5 收口：Druid 监控台仅在 dev profile 显式开启（默认全局关闭）；
+# 开发文档入口仅 dev profile 开放（默认全局关闭）。
+# 注意：本文件 spring 顶层键只出现一次——SnakeYAML 对重复顶层键 fail-fast。
 spring:
   druid:
     stat-view-servlet:
@@ -17,14 +19,6 @@ spring:
       login-username: ${DRUID_USERNAME:dev-admin}
       login-password: ${DRUID_PASSWORD:dev-admin-only-local}
 
-# 开发文档入口仅 dev profile 开放（默认全局关闭）
-springdoc:
-  api-docs:
-    enabled: true
-  swagger-ui:
-    enabled: true
-
-spring:
   autoconfigure:
     exclude:
       # pgvector 需 PostgreSQL 且需单一 EmbeddingModel，dev 的 H2 + 双 AI 模型冲突，排除
@@ -62,6 +56,21 @@ spring:
     ollama:
       base-url: http://localhost:11434
 
+  flyway:
+    locations:
+      - classpath:db/migration/{vendor}
+      - classpath:db/migration/bpm/{vendor}
+      - classpath:db/migration/notify/{vendor}
+      - classpath:db/migration/form/{vendor}
+      - classpath:db/migration/storage/{vendor}
+      - classpath:db/migration/job/{vendor}
+      - classpath:db/migration/agent/{vendor}
+      - classpath:db/migration/iot/{vendor}
+      - classpath:db/migration/openapi/{vendor}
+      - classpath:db/migration/system/{vendor}
+      # I5 复验：dev 专用可控测试身份夹具（仅 dev profile）
+      - classpath:db/migration/devseed/{vendor}
+
   flowable:
     database-schema-update: false
 
@@ -76,6 +85,13 @@ logging:
     com.sw.ck: debug
     org.springframework.jdbc: debug
     com.baomidou.mybatisplus: debug
+
+# 开发文档入口仅 dev profile 开放（默认全局关闭）
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
 
 # ======================== 外部数据源（dev 用 H2 测试密钥） ========================
 sw:
