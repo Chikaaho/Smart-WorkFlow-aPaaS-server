@@ -57,7 +57,22 @@ logging:
     root: info
     com.sw.ck: debug
     org.springframework.jdbc: debug
-    com.baomidou.mybatisplus: debug
+    com.baomidou.mybatisplus: info
+    # I6 R-E：生产环境不输出全量 SQL 与参数（防正文/联系方式/Provider 标识进入普通日志）
+    org.apache.ibatis: info
+
+# I6 R-E：生产覆盖开发期 MyBatis 全量 SQL 输出
+mybatis-plus:
+  mapper-locations: classpath:mapper/**/*.xml
+  type-aliases-package: com.sw.ck.**.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: ASSIGN_ID
+      logic-delete-field: deleted
 
 sw:
   agent:

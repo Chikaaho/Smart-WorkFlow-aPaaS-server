@@ -9,7 +9,7 @@ import com.sw.ck.bpm.process.mapper.UrgeRecordMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.notify.api.NotifyFacade;
-import com.sw.ck.notify.api.SendNotifyCommand;
+import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.junit.jupiter.api.AfterEach;
@@ -97,7 +97,7 @@ class BpmUrgeServiceTest {
         UrgeRespDTO resp = urgeService.urge(1L);
         assertThat(resp.getResult()).isEqualTo("REJECTED");
         assertThat(resp.getDetail()).contains("已结束");
-        verify(notifyFacade, never()).send(any(SendNotifyCommand.class));
+        verify(notifyFacade, never()).send(any(NotifySendRequest.class));
         ArgumentCaptor<UrgeRecord> captor = ArgumentCaptor.forClass(UrgeRecord.class);
         verify(urgeRecordMapper).insert(captor.capture());
         assertThat(captor.getValue().getResult()).isEqualTo("REJECTED");
@@ -117,7 +117,7 @@ class BpmUrgeServiceTest {
         UrgeRespDTO resp = urgeService.urge(1L);
         assertThat(resp.getResult()).isEqualTo("COOLDOWN");
         assertThat(resp.getDetail()).contains("冷却");
-        verify(notifyFacade, never()).send(any(SendNotifyCommand.class));
+        verify(notifyFacade, never()).send(any(NotifySendRequest.class));
     }
 
     @Test
@@ -133,7 +133,7 @@ class BpmUrgeServiceTest {
 
         UrgeRespDTO resp = urgeService.urge(1L);
         assertThat(resp.getResult()).isEqualTo("ACCEPTED");
-        verify(notifyFacade, times(1)).send(any(SendNotifyCommand.class));
+        verify(notifyFacade, times(1)).send(any(NotifySendRequest.class));
         ArgumentCaptor<UrgeRecord> captor = ArgumentCaptor.forClass(UrgeRecord.class);
         verify(urgeRecordMapper).insert(captor.capture());
         UrgeRecord record = captor.getValue();

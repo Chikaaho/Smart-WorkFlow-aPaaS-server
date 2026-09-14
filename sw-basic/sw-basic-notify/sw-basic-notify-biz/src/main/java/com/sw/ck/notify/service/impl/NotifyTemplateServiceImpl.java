@@ -35,10 +35,20 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
 
     private final TemplateRenderService renderService;
 
+    private final com.sw.ck.notify.service.NotifyTemplateVersionService versionService;
+
     public NotifyTemplateServiceImpl(NotifyTemplateMapper templateMapper,
                                      TemplateRenderService renderService) {
+        this(templateMapper, renderService, null);
+    }
+
+@org.springframework.beans.factory.annotation.Autowired
+    public NotifyTemplateServiceImpl(NotifyTemplateMapper templateMapper,
+                                     TemplateRenderService renderService,
+                                     com.sw.ck.notify.service.NotifyTemplateVersionService versionService) {
         this.templateMapper = templateMapper;
         this.renderService = renderService;
+        this.versionService = versionService;
     }
 
     @Override
@@ -69,6 +79,10 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         requireCodeAvailable(dto.getTemplateCode());
         NotifyTemplate entity = toEntity(dto);
         templateMapper.insert(entity);
+        // I6：发布即追加不可改写版本快照
+        if (versionService != null) {
+            versionService.release(entity);
+        }
         return entity.getId();
     }
 
@@ -84,6 +98,11 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         NotifyTemplate entity = toEntity(dto);
         entity.setId(id);
         templateMapper.updateById(entity);
+        // I6：编辑生效即追加新版本；历史投递固定引用旧版本快照
+        NotifyTemplate updated = requireEntity(id);
+        if (versionService != null) {
+            versionService.release(updated);
+        }
     }
 
     @Override
@@ -219,6 +238,10 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         dto.setContentTemplate(t.getContentTemplate());
         dto.setEnabled(Boolean.TRUE.equals(t.getEnabled()));
         dto.setRemark(t.getRemark());
+        dto.setEventType(t.getEventType());
+        dto.setChannel(t.getChannel());
+        dto.setVariablesAllowed(t.getVariablesAllowed());
+        dto.setJumpRef(t.getJumpRef());
         return dto;
     }
 
@@ -230,6 +253,10 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         t.setContentTemplate(dto.getContentTemplate());
         t.setEnabled(Boolean.TRUE.equals(dto.getEnabled()));
         t.setRemark(dto.getRemark());
+        t.setEventType(dto.getEventType());
+        t.setChannel(dto.getChannel());
+        t.setVariablesAllowed(dto.getVariablesAllowed());
+        t.setJumpRef(dto.getJumpRef());
         return t;
     }
 }

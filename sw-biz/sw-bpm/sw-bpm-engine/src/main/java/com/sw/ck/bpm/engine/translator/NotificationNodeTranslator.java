@@ -47,7 +47,7 @@ public class NotificationNodeTranslator extends ServiceTaskNodeTranslator {
     }
 
     private String failureStrategy(Map<String, Object> config) {
-        return text(config.get("failureStrategy"), "BLOCK").toUpperCase();
+        return text(config.get("failureStrategy"), "CONTINUE").toUpperCase(); // I6 §3.2：纯通知节点默认入队即推进
     }
 
     private GraphValidationError error(GraphElement node, String message) {

@@ -58,4 +58,37 @@ public class NotifyMessage extends BaseEntity {
 
     @TableField("idempotency_key")
     private String idempotencyKey;
+
+
+    /* I6 扩展字段 */
+    @TableField("event_type")
+    private String eventType;
+
+    @TableField("occurrence_no")
+    private Long occurrenceNo;
+
+    @TableField("template_id")
+    private Long templateId;
+
+    @TableField("template_version")
+    private Integer templateVersion;
+
+    @TableField("link_type")
+    private String linkType;
+
+    @TableField("link_id")
+    private String linkId;
+
+    @TableField("retry_count")
+    private Integer retryCount;
+
+    @TableField("next_retry_time")
+    private java.time.LocalDateTime nextRetryTime;
+
+    @TableField("failure_class")
+    private String failureClass;
+
+    @TableField("receipt_digest")
+    private String receiptDigest;
 }
+

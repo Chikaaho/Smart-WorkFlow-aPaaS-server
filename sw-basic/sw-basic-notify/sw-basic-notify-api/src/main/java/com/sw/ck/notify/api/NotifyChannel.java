@@ -4,6 +4,7 @@ package com.sw.ck.notify.api;
 public enum NotifyChannel {
     IN_APP,
     SMS,
+    EMAIL,
     FEISHU,
     DINGTALK,
     WECHAT_WORK,

@@ -2,8 +2,10 @@ package com.sw.ck.bpm.process.listener;
 
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
-import com.sw.ck.notify.api.SendNotifyCommand;
+import com.sw.ck.notify.api.NotifySendRequest;
+import com.sw.ck.notify.api.NotifyRoutingService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
@@ -13,24 +15,27 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.util.List;
+
 /**
- * 监听 {@link BpmNotifyEvent}，将流程待办/审批通知写入通知表。
+ * 监听 {@link BpmNotifyEvent}（I6 收敛版）。
  * <p>
- * 使用 {@code @TransactionalEventListener(AFTER_COMMIT)} 确保只在流程事务提交后触发，
- * 配合 {@code @Async} 异步执行，不阻塞完整路径。
+ * 使用 {@code @TransactionalEventListener(AFTER_COMMIT)} + {@code @Async}，审批事务
+ * 提交后异步执行，投递失败不回滚已合法提交的审批动作。
  * </p>
  *
- * <h3>上下文还原</h3>
- * 异步线程中 {@link LoginUserHolder} 不可用（ThreadLocal 不跨线程），
- * 所有上下文信息（actorUserId、tenantId）均从事件 payload 获取。
- * 入口处还原 LoginUserHolder，使 MyBatis-Plus 拦截器自动注入 tenant_id/审计列；
- * finally 中 clear。
- *
- * <h3>映射规则</h3>
+ * <h3>I6 统一投递权威</h3>
  * <ul>
- *   <li>{@code TODO_CREATED} → {@code WF_TODO}：通知审批人有新待办</li>
- *   <li>{@code PROCESS_APPROVED} → {@code WF_APPROVED}：通知发起人审批已通过</li>
+ *   <li>事件类型 = 触发器常量（TODO_CREATED / PROCESS_APPROVED / …）；</li>
+ *   <li>渠道与订阅由 {@link NotifyRoutingService} 唯一裁决（IN_APP 保底）；</li>
+ *   <li>每次投递携带业务稳定身份（租户+事件+业务对象+发生次序+接收人+渠道），
+ *       由通知域幂等托管，重复发布/重试不产生第二条业务通知；</li>
+ *   <li>深链仅承载受控对象类型与稳定 ID（打开时由服务端重新鉴权）。</li>
  * </ul>
+ *
+ * <h3>上下文还原</h3>
+ * 异步线程中 {@link LoginUserHolder} 不可用，全部上下文取自事件 payload，
+ * 入口还原、finally clear。
  */
 @Component
 public class BpmNotifyListener {
@@ -38,15 +43,16 @@ public class BpmNotifyListener {
     private static final Logger log = LoggerFactory.getLogger(BpmNotifyListener.class);
 
     private final NotifyFacade notifyFacade;
+    private final NotifyRoutingService notifyRoutingService;
 
-    public BpmNotifyListener(NotifyFacade notifyFacade) {
+    public BpmNotifyListener(NotifyFacade notifyFacade, NotifyRoutingService notifyRoutingService) {
         this.notifyFacade = notifyFacade;
+        this.notifyRoutingService = notifyRoutingService;
     }
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onBpmNotify(BpmNotifyEvent event) {
-        // 从事件 payload 还原上下文（异步线程中 LoginUserHolder 为空）
         LoginUser loginUser = new LoginUser();
         loginUser.setUserId(event.getActorUserId());
         loginUser.setTenantId(event.getTenantId());
@@ -55,7 +61,6 @@ public class BpmNotifyListener {
             NotifyBizType bizType;
             String title;
             String content;
-
             switch (event.getTrigger()) {
                 case TODO_CREATED:
                     bizType = NotifyBizType.WF_TODO;
@@ -122,20 +127,35 @@ public class BpmNotifyListener {
                     return;
             }
 
-            SendNotifyCommand cmd = new SendNotifyCommand(
-                    event.getRecipientId(),
-                    title,
-                    content,
-                    bizType,
-                    event.getBizId(),
-                    event.getTenantId()
-            );
-            notifyFacade.send(cmd);
-
-            log.debug("通知已发送: recipientId={}, bizType={}, bizId={}",
-                    event.getRecipientId(), bizType, event.getBizId());
+            String eventType = event.getTrigger().name();
+            List<NotifyChannel> channels = notifyRoutingService.channelsFor(eventType, event.getRecipientId());
+            for (NotifyChannel channel : channels) {
+                notifyFacade.send(NotifySendRequest.builder()
+                        .channel(channel)
+                        .recipientId(event.getRecipientId())
+                        .title(title)
+                        .content(content)
+                        .bizType(bizType)
+                        .bizId(event.getBizId())
+                        .tenantId(event.getTenantId())
+                        .eventType(eventType)
+                        .occurrenceNo(event.getOccurrenceNo())
+                        .linkType(linkType(event.getTrigger().name()))
+                        .linkId(event.getBizId())
+                        .build());
+            }
+            log.debug("通知已发送: recipientId={}, eventType={}, bizId={}, channels={}",
+                    event.getRecipientId(), eventType, event.getBizId(), channels.size());
+        } catch (Exception e) {
+            log.warn("通知投递异常（不回滚已提交审批）: trigger={}, bizId={}, exceptionClass={}",
+                    event.getTrigger(), event.getBizId(), e.getClass().getSimpleName());
         } finally {
             LoginUserHolder.clear();
         }
+    }
+
+    /** 深链对象类型：流程终态类事件指向流程实例，其余指向任务。 */
+    private String linkType(String trigger) {
+        return trigger.startsWith("PROCESS") ? "WF_PROCESS" : "WF_TASK";
     }
 }

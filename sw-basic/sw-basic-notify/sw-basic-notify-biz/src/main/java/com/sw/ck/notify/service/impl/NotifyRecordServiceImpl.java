@@ -54,8 +54,8 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
     }
 
     @Override
-    public PageResult<NotifyMessage> pageRecords(PageParam pageParam, String deliveryStatus, Long recipientId,
-                                                 String keyword, LocalDateTime timeFrom, LocalDateTime timeTo) {
+    public PageResult<NotifyMessage> pageEntities(PageParam pageParam, String deliveryStatus, Long recipientId,
+                                                  String keyword, LocalDateTime timeFrom, LocalDateTime timeTo) {
         LambdaQueryWrapper<NotifyMessage> wrapper = Wrappers.lambdaQuery(NotifyMessage.class)
                 .eq(deliveryStatus != null && !deliveryStatus.isBlank(), NotifyMessage::getDeliveryStatus, deliveryStatus)
                 .eq(recipientId != null, NotifyMessage::getRecipientId, recipientId)
@@ -70,8 +70,9 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
         return page;
     }
 
+    /** 必要详情（含完整正文/尝试流水）：仅限独立详情权限调用并记审计。 */
     @Override
-    public Map<String, Object> recordDetail(Long id) {
+    public Map<String, Object> recordFullDetail(Long id) {
         NotifyMessage message = messageMapper.selectById(id);
         if (message == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "发送记录不存在");
@@ -82,6 +83,31 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
                         .orderByAsc(NotifySendAttempt::getAttemptNo));
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("message", message);
+        detail.put("attempts", attempts);
+        return detail;
+    }
+
+    public Map<String, Object> recordDetail(Long id) {
+        NotifyMessage message = messageMapper.selectById(id);
+        if (message == null) {
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "发送记录不存在");
+        }
+        List<NotifySendAttempt> attempts = attemptMapper.selectList(
+                Wrappers.lambdaQuery(NotifySendAttempt.class)
+                        .eq(NotifySendAttempt::getMessageId, id)
+                        .orderByAsc(NotifySendAttempt::getAttemptNo));
+        Map<String, Object> detail = new LinkedHashMap<>();
+        // 最小暴露：详情默认省略完整正文；正文/尝试流水经 /notify/records/{id}/detail 独立权限读取
+        NotifyMessage masked = new NotifyMessage();
+        masked.setId(message.getId());
+        masked.setRecipientId(message.getRecipientId());
+        masked.setTitle(message.getTitle());
+        masked.setBizType(message.getBizType());
+        masked.setBizId(message.getBizId());
+        masked.setChannel(message.getChannel());
+        masked.setDeliveryStatus(message.getDeliveryStatus());
+        masked.setCreateTime(message.getCreateTime());
+        detail.put("message", masked);
         detail.put("attempts", attempts);
         return detail;
     }
@@ -143,6 +169,14 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
                 .bizType(parseBizType(message.getBizType()))
                 .bizId(message.getBizId())
                 .tenantId(message.getTenantId())
+                // I6：重发沿用原投递的稳定身份与固化的模板版本，不新建第二条业务通知
+                .eventType(message.getEventType() == null || message.getEventType().isBlank()
+                        ? "SYSTEM" : message.getEventType())
+                .occurrenceNo(message.getOccurrenceNo() == null ? 1L : message.getOccurrenceNo())
+                .templateId(message.getTemplateId())
+                .templateVersion(message.getTemplateVersion())
+                .linkType(message.getLinkType())
+                .linkId(message.getLinkId())
                 .build();
 
         int attemptNo = nextAttemptNo(id);
@@ -220,4 +254,42 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
             return NotifyBizType.SYSTEM;
         }
     }
+    @Override
+    public PageResult<com.sw.ck.notify.dto.NotifyRecordSummaryDTO> pageRecords(
+            PageParam pageParam, String deliveryStatus, Long recipientId, String keyword,
+            LocalDateTime timeFrom, LocalDateTime timeTo) {
+        PageResult<NotifyMessage> raw = pageEntities(pageParam, deliveryStatus, recipientId, keyword,
+                timeFrom, timeTo);
+        com.sw.ck.notify.dto.NotifyRecordSummaryDTO[] mapped = raw.getRecords().stream()
+                .map(this::toSummary).toArray(com.sw.ck.notify.dto.NotifyRecordSummaryDTO[]::new);
+        return new com.sw.ck.common.page.PageResult<com.sw.ck.notify.dto.NotifyRecordSummaryDTO>() {{
+            setRecords(java.util.Arrays.asList(mapped));
+            setTotal(raw.getTotal());
+            setPageNum(raw.getPageNum());
+            setPageSize(raw.getPageSize());
+        }};
+    }
+
+    private com.sw.ck.notify.dto.NotifyRecordSummaryDTO toSummary(NotifyMessage m) {
+        com.sw.ck.notify.dto.NotifyRecordSummaryDTO dto = new com.sw.ck.notify.dto.NotifyRecordSummaryDTO();
+        dto.setId(m.getId());
+        dto.setTitle(m.getTitle());
+        dto.setBizType(m.getBizType());
+        dto.setBizId(m.getBizId());
+        dto.setRecipientId(m.getRecipientId());
+        dto.setRecipientMask(maskRecipient(m.getRecipientId()));
+        dto.setChannel(m.getChannel());
+        dto.setDeliveryStatus(m.getDeliveryStatus());
+        dto.setTemplateId(m.getTemplateId());
+        dto.setTemplateVersion(m.getTemplateVersion());
+        dto.setAttemptCount(nextAttemptNo(m.getId()));
+        dto.setCreateTime(m.getCreateTime());
+        return dto;
+    }
+
+    /** 接收人脱敏：仅展示编号形态，不返回联系方式。 */
+    private String maskRecipient(Long recipientId) {
+        return recipientId == null ? null : ("U" + recipientId);
+    }
+
 }

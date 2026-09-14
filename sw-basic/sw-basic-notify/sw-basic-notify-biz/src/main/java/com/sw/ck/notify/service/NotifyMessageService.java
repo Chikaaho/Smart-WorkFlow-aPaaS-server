@@ -90,4 +90,20 @@ public interface NotifyMessageService extends BaseService<NotifyMessage> {
      * 按用户ID列表查询当前租户内的有效用户ID（排除停用/已删除/跨租户）。
      */
     List<Long> findValidUserIds(List<Long> userIds);
+
+    // ==================== I6 扩展 ====================
+
+    /** 按业务稳定身份查一次既有业务通知（幂等判定）；channel 匹配某一投递行。 */
+    NotifyMessage findByIdentity(Long tenantId, String eventType, String bizId, Long occurrenceNo,
+                                 Long recipientId, String channel);
+
+    /** 收件箱服务端真分页（稳定排序：create_time desc, id desc）。 */
+    com.sw.ck.common.page.PageResult<NotifyMessage> pageInbox(com.sw.ck.common.page.PageParam pageParam,
+            Long recipientId, Boolean read, String eventType, String keyword);
+
+    /** 当前用户未读数。 */
+    long unreadCount(Long recipientId);
+
+    /** 全部已读（返回受影响行数）。 */
+    int markAllRead(Long recipientId);
 }
