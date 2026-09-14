@@ -1,6 +1,7 @@
 package com.sw.ck.system.service.impl;
 
 import com.sw.ck.common.crypto.AesGcmCipher;
+import org.springframework.beans.factory.ObjectProvider;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.system.entity.NotifySubjectBinding;
@@ -51,10 +52,12 @@ public class NotifySubjectBindingServiceImpl implements NotifySubjectBindingServ
     @Autowired
     public NotifySubjectBindingServiceImpl(NotifySubjectBindingMapper bindingMapper,
                                            SysUserMapper sysUserMapper,
-                                           AesGcmCipher notifySubjectCipher) {
+                                           ObjectProvider<AesGcmCipher> notifySubjectCipher) {
         this.bindingMapper = bindingMapper;
         this.sysUserMapper = sysUserMapper;
-        this.notifySubjectCipher = notifySubjectCipher;
+        // I5/I6 窄测试上下文（AuthFlow 等 TestConfig）不装配 AesGcmCipher：依赖惰性化，
+        // 无密钥上下文调用绑定/解密时明确失败，不静默降级为明文
+        this.notifySubjectCipher = notifySubjectCipher.getIfAvailable();
     }
 
     @Override
@@ -80,6 +83,9 @@ public class NotifySubjectBindingServiceImpl implements NotifySubjectBindingServ
         NotifySubjectBinding binding = new NotifySubjectBinding();
         binding.setUserId(userId);
         binding.setProvider(providerKey);
+        if (notifySubjectCipher == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "主体加密密钥未装配，拒绝绑定");
+        }
         binding.setSubjectCipher(notifySubjectCipher.encrypt(subject));
         binding.setSubjectDigest(sha256(subject));
         binding.setBindStatus(STATUS_ACTIVE);
