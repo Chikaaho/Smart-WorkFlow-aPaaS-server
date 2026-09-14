@@ -31,7 +31,7 @@ class I6G7UpgradeDrillH2Test {
             + "deleted SMALLINT NOT NULL DEFAULT 0, tenant_id BIGINT NOT NULL DEFAULT 0, version BIGINT NOT NULL DEFAULT 0";
 
     @Test
-    @DisplayName("G7 从 V58 基线的既有消息/模板/尝试升级到 V90：同一 ID 回读一致")
+    @DisplayName("G7 从 V58 基线的既有消息/模板/尝试升级到 V92：同一 ID 回读一致")
     void upgradeFromV58PreservesLegacyObjects() throws Exception {
         Files.deleteIfExists(new java.io.File("./target/i6-g7-upgrade-db.mv.db").toPath());
 
@@ -56,15 +56,15 @@ class I6G7UpgradeDrillH2Test {
                     + "VALUES (1, 1, 1, 'IN_APP', 'SUCCESS', 0, 100, 0)");
         }
 
-        // ---------- 3. 继续升级到 V90（I6 终点） ----------
+        // ---------- 3. 继续升级到 V92（I6 终点） ----------
         Flyway chain = Flyway.configure().dataSource(DB, USER, PASSWORD)
                 .locations(allLocations)
                 .baselineOnMigrate(true)
                 .target(org.flywaydb.core.api.MigrationVersion.LATEST)
                 .load();
         var r90 = chain.migrate();
-        assertTrue(r90.success, "V58 → V90 升级应成功");
-        assertEquals("90", chain.info().current().getVersion().getVersion(),
+        assertTrue(r90.success, "基线 → V92 升级应成功");
+        assertEquals("92", chain.info().current().getVersion().getVersion(),
                 "升级终点须为 V90");
 
         // ---------- 4. 同一 ID 回读：行数与语义一致，增量列可解释 ----------
