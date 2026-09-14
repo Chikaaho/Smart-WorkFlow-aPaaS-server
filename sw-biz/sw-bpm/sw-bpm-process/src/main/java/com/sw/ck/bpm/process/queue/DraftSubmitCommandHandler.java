@@ -90,7 +90,7 @@ public class DraftSubmitCommandHandler implements BpmCommandHandler {
     public void onFinalFailure(CommandEnvelope envelope, String reason) {
         // 有界重试耗尽：草稿转 FAILED，可修正后重新提交（D3：失败保留内容）
         String draftId = envelope.getCommandKey().split(":")[1];
-        BpmDraft draft = draftService.getById(draftId);
+        BpmDraft draft = draftService.getById(Long.valueOf(envelope.getCommandKey().split(":")[1]));
         if (draft == null) {
             return;
         }
