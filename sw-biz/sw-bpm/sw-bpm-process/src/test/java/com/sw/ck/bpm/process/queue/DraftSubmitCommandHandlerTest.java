@@ -64,7 +64,7 @@ class DraftSubmitCommandHandlerTest {
     @DisplayName("正常：幂等键 DRAFT_SUBMIT:{draftId}:{submitSeq}；草稿转 SUBMITTED 且记录 recordId")
     void handle_shouldSubmitAndMarkDraftSubmitted() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.EDITING.getCode());
-        when(draftService.getById("5")).thenReturn(d);
+        when(draftService.getById(5L)).thenReturn(d);
         when(facade.submit(anyString(), anyMap(), anyString(), nullable(String.class))).thenReturn("rec-009");
         CommandEnvelope envelope = envelope("5", 1);
         envelope.setPayload(objectMapper.writeValueAsString(Map.of(
@@ -89,7 +89,7 @@ class DraftSubmitCommandHandlerTest {
     void handle_shouldSkipAlreadySubmittedDraft() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.SUBMITTED.getCode());
         d.setResultRecordId("rec-001");
-        when(draftService.getById("5")).thenReturn(d);
+        when(draftService.getById(5L)).thenReturn(d);
 
         String result = handler.handle(envelope("5", 1));
 
@@ -101,7 +101,7 @@ class DraftSubmitCommandHandlerTest {
     @Test
     @DisplayName("草稿不存在 → 抛异常")
     void handle_shouldThrowWhenDraftMissing() {
-        when(draftService.getById("5")).thenReturn(null);
+        when(draftService.getById(5L)).thenReturn(null);
 
         assertThatThrownBy(() -> handler.handle(envelope("5", 1)))
                 .isInstanceOf(IllegalStateException.class)
@@ -112,7 +112,7 @@ class DraftSubmitCommandHandlerTest {
     @DisplayName("facade 抛异常 → 异常传播")
     void handle_shouldPropagateFacadeException() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.EDITING.getCode());
-        when(draftService.getById("5")).thenReturn(d);
+        when(draftService.getById(5L)).thenReturn(d);
         when(facade.submit(anyString(), anyMap(), anyString(), nullable(String.class)))
                 .thenThrow(new RuntimeException("表单服务不可用"));
         CommandEnvelope envelope = envelope("5", 1);
@@ -127,7 +127,7 @@ class DraftSubmitCommandHandlerTest {
     @DisplayName("P0 草稿命令将 P0 通道传给表单 Facade")
     void handle_shouldPropagateP0ChannelToFormFacade() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.EDITING.getCode());
-        when(draftService.getById("5")).thenReturn(d);
+        when(draftService.getById(5L)).thenReturn(d);
         when(facade.submit(anyString(), anyMap(), anyString(), anyString())).thenReturn("rec-p0");
         CommandEnvelope envelope = envelope("5", 1);
         envelope.setChannel(CommandChannelEnum.P0);
@@ -143,7 +143,7 @@ class DraftSubmitCommandHandlerTest {
     @DisplayName("onFinalFailure：草稿转 FAILED 且记录 lastError")
     void onFinalFailure_shouldMarkDraftFailed() {
         BpmDraft d = draft("5", DraftStatusEnum.SUBMITTING.getCode());
-        when(draftService.getById("5")).thenReturn(d);
+        when(draftService.getById(5L)).thenReturn(d);
 
         handler.onFinalFailure(envelope("5", 1), "始终失败");
 

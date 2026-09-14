@@ -1,8 +1,10 @@
 package com.sw.ck.system.notify;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.notify.api.NotifyTargetResolver;
 import com.sw.ck.system.entity.SysUser;
+import com.sw.ck.system.mapper.NotifySubjectBindingMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -20,6 +22,12 @@ public class NotifyTargetResolverImpl implements NotifyTargetResolver {
 
     @Autowired
     private SysUserMapper sysUserMapper;
+
+    @Autowired
+    private NotifySubjectBindingMapper subjectBindingMapper;
+
+    @Autowired
+    private AesGcmCipher notifySubjectCipher;
 
     @Override
     public String resolveEmail(Long userId) {
@@ -44,10 +52,24 @@ public class NotifyTargetResolverImpl implements NotifyTargetResolver {
     }
 
     @Override
-    public String resolveProviderSubject(Long userId, String provider) {
-        // I5 认证链权威：sys_sso_user_binding.external_id 仅存 SHA-256 摘要（不落明文）。
-        // 通知渠道所需的明文主体标识（open_id / userid）需独立的映射源，Owner 侧裁决。
-        // 当前返回 null → 适配器明确失败（不计入成功；等待 Owner 提供映射源后接入）。
-        return null;
+    public String resolveProviderSubject(Long tenantId, Long userId, String provider) {
+        // I6 G5a-I：sw_notify_subject_binding 为通知主体权威（与 I5 SSO 摘要语义
+        // 独立，不复用/不反解 sys_sso_user_binding）；仅 ACTIVE 绑定可解析，
+        // DISABLED / 未绑定 / 跨租户 → null → 渠道适配器明确失败。
+        if (tenantId == null || userId == null || provider == null || provider.isBlank()) {
+            return null;
+        }
+        // 异步投递线程无 LoginUserHolder：租户由投递请求权威携带（显式 tenant_id 条件）
+        com.sw.ck.system.entity.NotifySubjectBinding binding =
+                subjectBindingMapper.selectActive(tenantId, userId, provider.trim().toUpperCase());
+        if (binding == null || !"ACTIVE".equals(binding.getBindStatus())) {
+            return null;
+        }
+        try {
+            return notifySubjectCipher.decrypt(binding.getSubjectCipher());
+        } catch (Exception e) {
+            // 密文无法解密（密钥轮换后遗留等）→ 明确失败，不静默用摘要冒充
+            return null;
+        }
     }
 }

@@ -38,7 +38,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
             w.eq(NotifyRule::getEventType, query.getEventType());
         }
         if (query.getEnabled() != null) {
-            w.eq(NotifyRule::getEnabled, Boolean.TRUE.equals(query.getEnabled()) ? 1 : 0);
+            w.eq(NotifyRule::getEnabled, Boolean.TRUE.equals(query.getEnabled()));
         }
         if (StringUtils.hasText(query.getKeyword())) {
             String kw = query.getKeyword();
@@ -64,7 +64,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         dto.setRecipientRule(r.getRecipientRule());
         dto.setRequiredFlag(r.getRequiredFlag() != null && r.getRequiredFlag() == 1);
         dto.setFailurePolicy(r.getFailurePolicy());
-        dto.setEnabled(r.getEnabled() != null && r.getEnabled() == 1);
+        dto.setEnabled(Boolean.TRUE.equals(r.getEnabled()));
         dto.setRemark(r.getRemark());
         return dto;
     }
@@ -104,7 +104,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     @Override
     public void toggleRule(Long id, boolean enabled) {
         NotifyRule entity = requireEntity(id);
-        entity.setEnabled(enabled ? 1 : 0);
+        entity.setEnabled(enabled);
         ruleMapper.updateById(entity);
     }
 
@@ -115,7 +115,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         }
         return ruleMapper.selectList(Wrappers.<NotifyRule>lambdaQuery()
                 .eq(NotifyRule::getEventType, eventType)
-                .eq(NotifyRule::getEnabled, 1)
+                .eq(NotifyRule::getEnabled, true)
                 .orderByAsc(NotifyRule::getId));
     }
 
@@ -164,7 +164,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         r.setRecipientRule(dto.getRecipientRule());
         r.setRequiredFlag(Boolean.TRUE.equals(dto.getRequiredFlag()) ? 1 : 0);
         r.setFailurePolicy("MANUAL".equals(dto.getFailurePolicy()) ? "MANUAL" : "RETRY");
-        r.setEnabled(dto.getEnabled() == null || Boolean.TRUE.equals(dto.getEnabled()) ? 1 : 0);
+        r.setEnabled(dto.getEnabled() == null || Boolean.TRUE.equals(dto.getEnabled()));
         r.setRemark(dto.getRemark());
         return r;
     }

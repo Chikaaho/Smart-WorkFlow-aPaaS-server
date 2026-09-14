@@ -78,15 +78,15 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "全链迁移应成功");
-        assertEquals(90, result.migrationsExecuted,
-                "全链迁移计数应为 90（88 + I6 V89 通知域数据模型 + V90 通知管理菜单），实际: " + result.migrationsExecuted);
+        assertEquals(91, result.migrationsExecuted,
+                "全链迁移计数应为 91（88 + I6 V89 通知域数据模型 + V90 通知管理菜单 + V91 主体绑定），实际: " + result.migrationsExecuted);
     }
 
     @Test
     @DisplayName("全链迁移后：info().applied() 共 55 条，包含 P58 通知渠道与流程节点能力迁移")
     void appliedMigrationCount_shouldBe35() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(90, applied.length, "已应用迁移数应为 90");
+        assertEquals(91, applied.length, "已应用迁移数应为 91");
         boolean v8Seen = false;
         boolean v14Seen = false;
         boolean v31Seen = false;

@@ -54,7 +54,7 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
 
     @Override
     public NotifySendResult send(NotifySendRequest request) {
-        String userid = targetResolver.resolveProviderSubject(request.getRecipientId(), "WECHAT_WORK");
+        String userid = targetResolver.resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "WECHAT_WORK");
         if (userid == null || userid.isBlank()) {
             return NotifySendResult.builder().channel(channel()).status("FAILED")
                     .failureReason("无法解析接收人企业微信主体，拒绝发送").build();

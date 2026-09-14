@@ -44,7 +44,7 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
             NotifyChannelStatusDTO dto = new NotifyChannelStatusDTO();
             dto.setChannel(row.getChannel());
             dto.setSystemConfigured(live.contains(row.getChannel()) || "IN_APP".equalsIgnoreCase(row.getChannel()));
-            dto.setTenantEnabled(row.getEnabled() != null && row.getEnabled() == 1);
+            dto.setTenantEnabled(Boolean.TRUE.equals(row.getEnabled()));
             dto.setSenderDisplay(row.getSenderDisplay());
             dto.setConfigSummary(row.getConfigSummary());
             list.add(dto);
@@ -69,12 +69,12 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
         if (existing == null) {
             NotifyChannelConfig row = new NotifyChannelConfig();
             row.setChannel(value);
-            row.setEnabled(enabled ? 1 : 0);
+            row.setEnabled(enabled);
             row.setSenderDisplay(senderDisplay);
             row.setConfigSummary(configSummary);
             configMapper.insert(row);
         } else {
-            existing.setEnabled(enabled ? 1 : 0);
+            existing.setEnabled(enabled);
             existing.setSenderDisplay(senderDisplay);
             existing.setConfigSummary(configSummary);
             configMapper.updateById(existing);
@@ -91,7 +91,7 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
         }
         NotifyChannelConfig row = configMapper.selectOne(Wrappers.<NotifyChannelConfig>lambdaQuery()
                 .eq(NotifyChannelConfig::getChannel, channel));
-        return row != null && row.getEnabled() != null && row.getEnabled() == 1;
+        return row != null && Boolean.TRUE.equals(row.getEnabled());
     }
 
     private boolean tenantChannelAvailable(String value) {

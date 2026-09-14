@@ -13,6 +13,12 @@ spring:
     exclude:
       # pgvector 需 PostgreSQL 且需单一 EmbeddingModel，dev 的 H2 + 双 AI 模型冲突，排除
       - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+  mail:
+    host: 127.0.0.1
+    port: 2525
+    properties:
+      mail.smtp.auth: false
+      mail.smtp.starttls.enable: false
 
   datasource:
     dynamic:
@@ -23,7 +29,7 @@ spring:
       datasource:
         master:
           driver-class-name: org.postgresql.Driver
-          url: jdbc:postgresql://127.0.0.1:5432/smart_workflow
+          url: jdbc:postgresql://127.0.0.1:5432/${PG_DATABASE:smart_workflow}
           username: ${PG_USERNAME:}
           password: ${PG_PASSWORD:}
         # 扩展库示例：IoT 独立 H2 内存库
@@ -56,9 +62,11 @@ spring:
 logging:
   level:
     root: info
-    com.sw.ck: debug
-    org.springframework.jdbc: debug
-    com.baomidou.mybatisplus: debug
+    # I6 G3f：mapper 命名空间行级日志一并收敛（联系方式/正文/密文零进普通日志）
+    com.sw.ck: info
+    org.springframework.jdbc: info
+    com.baomidou.mybatisplus: info
+    org.mybatis: info
 
 # ======================== 外部数据源（dev 用 H2 测试密钥） ========================
 sw:
@@ -77,6 +85,16 @@ sw:
     enabled: true
   external-datasource:
     cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+  notify:
+    channels:
+      EMAIL:
+        enabled: true
+        host: 127.0.0.1
+        port: 2525
+        starttls: false
+        from: i6-dev-local@example.invalid
+        username: ""
+        password: ${SMTP_PASSWORD:}
   iot:
     enabled: true
     cipher:

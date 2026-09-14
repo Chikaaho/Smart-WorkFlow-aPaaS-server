@@ -176,6 +176,9 @@ public class TaskActionService {
             recordAction(task, loginUser, effectiveRequest, action, "RETURNED", processVariables,
                     commandId, nextReturnRound(processInstanceId));
             publishProcessEvent(processInstanceId, loginUser, BpmNotifyTrigger.PROCESS_RETURNED);
+            // 方向 §6-96 退回：新办理轮次重建任务后必须可生成新通知（同轮次唯一身份），
+            // 不被过宽唯一键误杀；受众=重建任务的 assignee/candidates（缺 task 或非数字仅 warn 不阻断）
+            publishReturnedRoundTodoCreated(processInstanceId, loginUser);
             return com.sw.ck.common.response.R.ok();
         }
 
@@ -533,8 +536,7 @@ public class TaskActionService {
     }
 
     private void publishProcessEvent(String processInstanceId, LoginUser loginUser,
-                                     BpmNotifyTrigger trigger) {
-        BpmInstance instance = bpmInstanceService
+                                     BpmNotifyTrigger trigger) {        BpmInstance instance = bpmInstanceService
                 .findByProcessInstanceId(processInstanceId)
                 .orElse(null);
         if (instance == null) {
@@ -553,6 +555,43 @@ public class TaskActionService {
         domainEventPublisher.publish(event);
         log.debug("流程结果事件已发布: trigger={}, processInstanceId={}, initiatorId={}",
                 trigger, processInstanceId, instance.getInitiatorId());
+    }
+
+    /**
+     * 退回新轮次 TODO_CREATED：与 ProcessStartService.publishTodoCreatedEvent 同一语义（经
+     * Facade 查询重建任务的 assignee/candidates 逐人发布），轮次身份按新 task 唯一，
+     * 与上一轮待办不冲突、不误杀。仅异常路径 warn，不阻断退回主事务。
+     */
+    private void publishReturnedRoundTodoCreated(String processInstanceId, LoginUser loginUser) {
+        try {
+            java.util.List<BpmTaskDTO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId);
+            BpmTaskDTO matchedTask = tasks.stream().findFirst().orElse(null);
+            if (matchedTask == null) {
+                log.warn("流程 {} 退回后无重建待办 task，跳过新轮次 TODO_CREATED 通知", processInstanceId);
+                return;
+            }
+            java.util.LinkedHashSet<String> recipientIds = new java.util.LinkedHashSet<>();
+            if (matchedTask.getAssignee() != null) recipientIds.add(matchedTask.getAssignee());
+            if (matchedTask.getCandidateUserIds() != null) {
+                recipientIds.addAll(matchedTask.getCandidateUserIds());
+            }
+            for (String recipient : recipientIds) {
+                Long recipientId;
+                try {
+                    recipientId = Long.valueOf(recipient);
+                } catch (NumberFormatException e) {
+                    log.warn("退回新轮次 task participant 非数字格式: participant={}，跳过该 TODO_CREATED 通知", recipient);
+                    continue;
+                }
+                domainEventPublisher.publish(new BpmNotifyEvent(BpmNotifyTrigger.TODO_CREATED,
+                        recipientId, loginUser.getTenantId(), loginUser.getUserId(), matchedTask.getTaskId()));
+            }
+            log.info("退回新轮次 TODO_CREATED 事件已发布: taskId={}, recipients={}",
+                    matchedTask.getTaskId(), recipientIds);
+        } catch (Exception e) {
+            log.warn("退回新轮次通知失败（不回滚退回）: processInstanceId={}, exceptionClass={}",
+                    processInstanceId, e.getClass().getSimpleName());
+        }
     }
 
     private String asString(Object value) {

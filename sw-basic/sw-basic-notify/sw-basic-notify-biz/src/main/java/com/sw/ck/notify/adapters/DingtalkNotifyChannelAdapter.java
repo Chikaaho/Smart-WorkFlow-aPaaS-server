@@ -54,7 +54,7 @@ public class DingtalkNotifyChannelAdapter implements NotifyChannelAdapter {
 
     @Override
     public NotifySendResult send(NotifySendRequest request) {
-        String userid = targetResolver.resolveProviderSubject(request.getRecipientId(), "DINGTALK");
+        String userid = targetResolver.resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "DINGTALK");
         if (userid == null || userid.isBlank()) {
             return NotifySendResult.builder().channel(channel()).status("FAILED")
                     .failureReason("无法解析接收人钉钉主体，拒绝发送").build();

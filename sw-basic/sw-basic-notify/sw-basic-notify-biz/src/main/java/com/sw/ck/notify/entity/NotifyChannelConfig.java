@@ -20,7 +20,7 @@ public class NotifyChannelConfig extends BaseEntity {
     private String channel;
 
     @TableField("enabled")
-    private Integer enabled;
+    private Boolean enabled;
 
     /** 展示用发件人标识（如邮件 From、短信签名；非秘密） */
     @TableField("sender_display")

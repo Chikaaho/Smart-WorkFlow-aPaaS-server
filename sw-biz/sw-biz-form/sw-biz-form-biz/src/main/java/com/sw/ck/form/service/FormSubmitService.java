@@ -378,10 +378,12 @@ public class FormSubmitService {
             String colName = ColumnValidation.physicalColumnName(fieldName, FieldType.valueOf(def.type()));
             Object value = effectiveData.get(fieldName);
 
-            // BOOL 类型转换：true/false → 1/0
+            // BOOL 类型转换：true/false → 1/0；PG 严格类型要求 DATE/NUMBER 按列语义转换
             if ("BOOL".equals(def.type())) {
                 value = FormFieldValidator.convertBoolValue(value);
             }
+            // PG 严格类型（H2 宽松语义掩盖）：DATE 字符串 → LocalDate，NUMBER 字符串 → BigDecimal
+            value = convertTypedValue(def.type(), value);
             // MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列
             value = serializeListValue(def.type(), value);
 
@@ -576,6 +578,29 @@ public class FormSubmitService {
     }
 
     // ==================== 内部工具方法 ====================
+
+    /**
+     * 按字段类型把 JSON 提交值转为动态列语义类型（PG 严格强类型；
+     * DATE→java.time.LocalDate，NUMBER→java.math.BigDecimal；不可转换即失败）。
+     */
+    private Object convertTypedValue(String type, Object value) {
+        if (value == null || value instanceof String == false) {
+            return value;
+        }
+        String text = (String) value;
+        try {
+            if ("DATE".equals(type)) {
+                return java.time.LocalDate.parse(text);
+            }
+            if ("NUMBER".equals(type)) {
+                return new java.math.BigDecimal(text);
+            }
+        } catch (RuntimeException e) {
+            throw new org.springframework.dao.InvalidDataAccessApiUsageException(
+                    "字段类型转换失败: " + type + " 值=" + text, e);
+        }
+        return value;
+    }
 
     /**
      * MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列（其余类型原值返回）。

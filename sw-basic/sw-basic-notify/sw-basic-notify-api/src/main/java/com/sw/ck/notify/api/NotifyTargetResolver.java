@@ -33,7 +33,7 @@ public interface NotifyTargetResolver {
      * <p>服务端按当前租户权威解析；缺失/无效用户返回 null，明确失败；
      * 不接受客户端原始地址旁路。</p>
      */
-    default String resolveProviderSubject(Long userId, String provider) {
+    default String resolveProviderSubject(Long tenantId, Long userId, String provider) {
         return null;
     }
 }

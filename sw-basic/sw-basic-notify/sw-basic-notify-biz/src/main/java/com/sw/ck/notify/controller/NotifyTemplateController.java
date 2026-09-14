@@ -166,12 +166,20 @@ public class NotifyTemplateController {
         String title;
         String content;
         try {
-            title = renderService.render(t.getTitleTemplate(), request.getVariables());
-            content = renderService.render(t.getContentTemplate(), request.getVariables());
+            title = renderService.renderWithContract(t.getTitleTemplate(), request.getVariables(), t.getVariablesAllowed());
+            content = renderService.renderWithContract(t.getContentTemplate(), request.getVariables(), t.getVariablesAllowed());
         } catch (TemplateRenderException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), e.getMessage());
         }
-        // 3. 落库（渲染结果即最终内容，历史不随模板变化）
+        // 3. 模板直发稳定身份幂等（方向 §3.3）：同一 (租户+事件+对象+接收人+渠道)
+        // 的重复直发回照既有通知，不产生第二条消息/唯一索引冲突
+        NotifyMessage existing = messageService.lambdaQuery()
+                .eq(NotifyMessage::getRecipientId, request.getRecipientId())
+                .eq(NotifyMessage::getBizType, NotifyBizType.SYSTEM.name())
+                .eq(NotifyMessage::getBizId, t.getTemplateCode())
+                .eq(NotifyMessage::getDeleted, 0)
+                .last("LIMIT 1")
+                .one();
         NotifyMessage msg = new NotifyMessage();
         msg.setRecipientId(request.getRecipientId());
         msg.setTitle(title);
@@ -179,6 +187,11 @@ public class NotifyTemplateController {
         msg.setBizType(NotifyBizType.SYSTEM.name());
         msg.setBizId(t.getTemplateCode());
         msg.setRead(false);
+        if (existing != null) {
+            log.info("模板直发幂等回照: code={}, recipient={}, msgId={}",
+                    t.getTemplateCode(), request.getRecipientId(), existing.getId());
+            return R.ok(existing.getId());
+        }
         messageService.save(msg);
         log.info("模板通知已发送: code={}, recipient={}, msgId={}",
                 t.getTemplateCode(), request.getRecipientId(), msg.getId());

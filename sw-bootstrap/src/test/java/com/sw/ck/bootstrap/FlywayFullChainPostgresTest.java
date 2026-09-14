@@ -90,8 +90,8 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(result.success, "全链迁移应成功");
-        assertEquals(88, result.migrationsExecuted,
-                "全链迁移计数应为 88（86 + I6 V89/V90），实际: "
+        assertEquals(89, result.migrationsExecuted,
+                "全链迁移计数应为 89（86 + I6 V89/V90 + V91 主体绑定），实际: "
                         + result.migrationsExecuted);
     }
 
@@ -106,7 +106,7 @@ class FlywayFullChainPostgresTest {
     @DisplayName("全链迁移后：info().applied() 共 53 条，包含 P58 通知渠道与流程节点能力迁移")
     void appliedMigrationCount_shouldBe35() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
-        assertEquals(88, applied.length, "已应用迁移数应为 88");
+        assertEquals(89, applied.length, "已应用迁移数应为 89");
         boolean v8Seen = false;
         boolean v14Seen = false;
         boolean v31Seen = false;
@@ -329,7 +329,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立既有库应成功");
-        assertEquals(88, first.migrationsExecuted, "既有库应含全部 88 条，实际: " + first.migrationsExecuted);
+        assertEquals(89, first.migrationsExecuted, "既有库应含全部 89 条，实际: " + first.migrationsExecuted);
 
         // 原始 V13 的 L58 内容（修改前）：DROP INDEX IF EXISTS sw_form_def_form_key_key;
         String originalV13Line = "DROP INDEX IF EXISTS sw_form_def_form_key_key;";

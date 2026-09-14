@@ -140,8 +140,8 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         NotifyTemplate t = requireEnabledByCode(templateCode);
         // 2. 渲染（与 renderPreview 共用同一实现，杜绝双规则漂移）
         try {
-            String title = renderService.render(t.getTitleTemplate(), variables);
-            String content = renderService.render(t.getContentTemplate(), variables);
+            String title = renderService.renderWithContract(t.getTitleTemplate(), variables, t.getVariablesAllowed());
+            String content = renderService.renderWithContract(t.getContentTemplate(), variables, t.getVariablesAllowed());
             return new TemplatePreviewResult(title, content);
         } catch (TemplateRenderException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), e.getMessage());
@@ -224,6 +224,8 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         try {
             renderService.extractVariables(dto.getTitleTemplate());
             renderService.extractVariables(dto.getContentTemplate());
+            // I6 §3.4：变量类型契约（name 或 name:TYPE）入库前必须可判定
+            renderService.parseContract(dto.getVariablesAllowed());
         } catch (TemplateRenderException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), e.getMessage());
         }
@@ -251,7 +253,8 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         t.setName(dto.getName());
         t.setTitleTemplate(dto.getTitleTemplate());
         t.setContentTemplate(dto.getContentTemplate());
-        t.setEnabled(Boolean.TRUE.equals(dto.getEnabled()));
+        // 新建未显式声明 enabled 视为启用（发布语义）；显式 false 才停用
+        t.setEnabled(dto.getEnabled() == null || Boolean.TRUE.equals(dto.getEnabled()));
         t.setRemark(dto.getRemark());
         t.setEventType(dto.getEventType());
         t.setChannel(dto.getChannel());

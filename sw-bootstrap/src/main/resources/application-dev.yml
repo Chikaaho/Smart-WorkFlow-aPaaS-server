@@ -83,9 +83,13 @@ spring:
 logging:
   level:
     root: info
-    com.sw.ck: debug
-    org.springframework.jdbc: debug
-    com.baomidou.mybatisplus: debug
+    # I6 G3f：Slf4jImpl 的行级日志挂在 mapper 命名空间（com.sw.ck.*）下，一并收敛到 info
+    com.sw.ck: info
+    # I6 G3f 收敛：条行级 SQL 输出（Row/Parameters）会把联系方式、密文与正文带入普通日志，
+    # 方向 §5-8/§3.6 要求受影响范围零残留，dev 只保留 info 级 SQL（结构可用，数据不落日志）
+    org.springframework.jdbc: info
+    com.baomidou.mybatisplus: info
+    org.mybatis: info
 
 # 开发文档入口仅 dev profile 开放（默认全局关闭）
 springdoc:

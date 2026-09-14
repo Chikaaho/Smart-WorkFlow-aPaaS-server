@@ -42,7 +42,7 @@ public class NotifyRule extends BaseEntity {
     private String failurePolicy;
 
     @TableField("enabled")
-    private Integer enabled;
+    private Boolean enabled;
 
     @TableField("remark")
     private String remark;

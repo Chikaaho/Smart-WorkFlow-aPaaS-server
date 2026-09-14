@@ -26,5 +26,5 @@ public class NotifySubscription extends BaseEntity {
     private String channel;
 
     @TableField("enabled")
-    private Integer enabled;
+    private Boolean enabled;
 }

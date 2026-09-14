@@ -93,7 +93,7 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
         return ruleMapper.selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers
                 .<NotifyRule>lambdaQuery()
                 .eq(NotifyRule::getEventType, eventType)
-                .eq(NotifyRule::getEnabled, 1));
+                .eq(NotifyRule::getEnabled, true));
     }
 
     /** 仅显式登记的关闭偏好生效；未登记默认启用（新事件不被误关）。 */

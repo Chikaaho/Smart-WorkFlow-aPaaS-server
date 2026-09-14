@@ -44,7 +44,7 @@ public class NotifySubscriptionServiceImpl implements NotifySubscriptionService 
                     NotifySubscriptionView v = new NotifySubscriptionView();
                     v.setEventType(s.getEventType());
                     v.setChannel(s.getChannel());
-                    v.setEnabled(s.getEnabled() != null && s.getEnabled() == 1);
+                    v.setEnabled(Boolean.TRUE.equals(s.getEnabled()));
                     return v;
                 }).toList();
     }
@@ -72,7 +72,7 @@ public class NotifySubscriptionServiceImpl implements NotifySubscriptionService 
             s.setUserId(userId);
             s.setEventType(item.getEventType());
             s.setChannel(item.getChannel());
-            s.setEnabled(Boolean.FALSE.equals(item.getEnabled()) ? 0 : 1);
+            s.setEnabled(!Boolean.FALSE.equals(item.getEnabled()));
             subscriptionMapper.insert(s);
         }
     }
@@ -81,7 +81,7 @@ public class NotifySubscriptionServiceImpl implements NotifySubscriptionService 
     public boolean canOptOut(String eventType, String channel) {
         List<NotifyRule> rules = ruleMapper.selectList(Wrappers.<NotifyRule>lambdaQuery()
                 .eq(NotifyRule::getEventType, eventType)
-                .eq(NotifyRule::getEnabled, 1));
+                .eq(NotifyRule::getEnabled, true));
         // 必须送达规则（required=1）存在时，该规则渠道链中的站内信不可被关闭
         for (NotifyRule r : rules) {
             if (r.getRequiredFlag() == null || r.getRequiredFlag() != 1) {

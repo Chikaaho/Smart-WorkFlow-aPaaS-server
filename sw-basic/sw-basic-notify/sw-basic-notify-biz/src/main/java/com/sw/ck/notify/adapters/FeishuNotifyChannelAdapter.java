@@ -56,7 +56,7 @@ public class FeishuNotifyChannelAdapter implements NotifyChannelAdapter {
 
     @Override
     public NotifySendResult send(NotifySendRequest request) {
-        String openId = targetResolver.resolveProviderSubject(request.getRecipientId(), "FEISHU");
+        String openId = targetResolver.resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "FEISHU");
         if (openId == null || openId.isBlank()) {
             return NotifySendResult.builder().channel(channel()).status("FAILED")
                     .failureReason("无法解析接收人飞书主体，拒绝发送").build();
