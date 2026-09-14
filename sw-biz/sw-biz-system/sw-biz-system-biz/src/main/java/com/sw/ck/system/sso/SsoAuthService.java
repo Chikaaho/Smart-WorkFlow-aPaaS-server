@@ -12,8 +12,10 @@ import com.sw.ck.system.mapper.SsoAuthStateMapper;
 import com.sw.ck.system.mapper.SsoProviderConfigMapper;
 import com.sw.ck.system.mapper.SsoUserBindingMapper;
 import com.sw.ck.system.service.SysUserService;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +25,7 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -61,6 +64,8 @@ public class SsoAuthService {
     private final SsoCallbackPolicy callbackPolicy;
     private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
     private final org.springframework.transaction.support.TransactionTemplate consumeTxTemplate;
+    private final com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService;
+    private final com.sw.ck.system.service.RefreshTokenService refreshTokenService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public SsoAuthService(SsoProviderConfigMapper configMapper,
@@ -72,7 +77,11 @@ public class SsoAuthService {
                           AesGcmCipher cipher,
                           SsoCallbackPolicy callbackPolicy,
                           com.sw.ck.system.service.TenantValidityService tenantValidityService,
-                          org.springframework.transaction.PlatformTransactionManager transactionManager) {
+                          org.springframework.transaction.PlatformTransactionManager transactionManager,
+                          @org.springframework.beans.factory.annotation.Autowired(required = false)
+                          com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService,
+                          @org.springframework.beans.factory.annotation.Autowired(required = false)
+                          com.sw.ck.system.service.RefreshTokenService refreshTokenService) {
         org.springframework.transaction.support.TransactionTemplate tpl = null;
         if (transactionManager != null) {
             tpl = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
@@ -92,6 +101,31 @@ public class SsoAuthService {
         this.cipher = cipher;
         this.callbackPolicy = callbackPolicy;
         this.tenantValidityService = tenantValidityService;
+        this.loginUserCacheService = loginUserCacheService;
+        this.refreshTokenService = refreshTokenService;
+    }
+
+    /**
+     * 进程启动时复核已启用 Provider 的配置完整性。
+     * <p>
+     * 配置保存入口的校验只能保护当前写入请求；如果数据库中残留空值、占位值或
+     * 无法解密的密文，必须在 prod 进程启动阶段 fail-fast，不能等到第一次登录
+     * 才把错误暴露为 Provider 外呼失败。停用 Provider 明确跳过该门禁，确保可
+     * 通过先停用再修复凭据的安全下线路径。
+     * </p>
+     */
+    @PostConstruct
+    void validateEnabledProviderConfigsAtStartup() {
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            List<SsoProviderConfig> enabledConfigs = configMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoProviderConfig>lambdaQuery()
+                            .eq(SsoProviderConfig::getEnabled, 1));
+            for (SsoProviderConfig config : enabledConfigs) {
+                requireProvider(config.getProvider());
+                validateEnabledConfig(config.getAppId(), null, config);
+            }
+        }
     }
 
     // ==================== 配置管理 ====================
@@ -123,11 +157,14 @@ public class SsoAuthService {
                                 .eq(SsoProviderConfig::getAppId, appId)
                                 .ne(updatingSameRow, SsoProviderConfig::getTenantId, current.getTenantId()));
                 if (conflicts != null && conflicts > 0) {
-                    audit(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), null, null,
+                    auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), null, null,
                             "app already registered by another tenant", current.getTenantId());
                     throw new IllegalStateException("该 Provider 应用已登记在其他租户，不能跨租户重复登记");
                 }
             }
+        }
+        if (enabled) {
+            validateEnabledConfig(appId, appSecret, config);
         }
         if (config == null) {
             config = new SsoProviderConfig();
@@ -203,6 +240,7 @@ public class SsoAuthService {
             // 登录前发起必须带租户上下文（租户级配置决定 Provider 凭据与绑定域）
             throw new IllegalStateException("租户上下文缺失，不能发起 SSO 授权");
         }
+        tenantValidityService.requireValid(tenantId);
         String state = randomToken(32);
         SsoAuthState stateRow = new SsoAuthState();
         stateRow.setStateValue(sha256(state));
@@ -283,27 +321,30 @@ public class SsoAuthService {
 
     private CallbackResult doHandleCallback(String provider, String code, String state) {
         if (code == null || code.isBlank() || state == null || state.isBlank()) {
-            audit(provider, "LOGIN_FAILED", "DENIED", null, null, null, "missing code/state");
+            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "missing code/state");
             throw new IllegalStateException("回调参数缺失");
         }
         String stateDigest = sha256(state);
         SsoAuthState stateRow = stateMapper.selectGlobalByState(stateDigest);
         if (stateRow == null) {
-            audit(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state not found");
+            auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state not found");
             throw new IllegalStateException("授权状态无效");
         }
         if (stateRow.getConsumed() != null && stateRow.getConsumed() == 1) {
-            audit(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state replayed");
+            auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state replayed", stateRow.getTenantId());
             throw new IllegalStateException("授权状态已消费");
         }
         if (stateRow.getExpireAt().isBefore(LocalDateTime.now())) {
-            audit(provider, "LOGIN_FAILED", "DENIED", null, null, null, "state expired");
+            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "state expired", stateRow.getTenantId());
             throw new IllegalStateException("授权状态已过期");
         }
         if (!provider.equals(stateRow.getProvider())) {
-            audit(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider mismatch");
+            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider mismatch", stateRow.getTenantId());
             throw new IllegalStateException("Provider 与授权状态不匹配");
         }
+        // 回调可能发生在 state 签发后租户被停用/过期的窗口内；在消费 state
+        // 与外呼前再次校验，确保失效租户既不能继续登录，也不产生 Provider 出站。
+        tenantValidityService.requireValid(stateRow.getTenantId());
         // 原子消费（I5 复验 G5b）：必须在外呼之前、且以独立事务提交——
         // 否则换票失败回滚会把 state 还原为未消费，重放会再次打穿到 Provider。
         final Long stateId = stateRow.getId();
@@ -313,21 +354,21 @@ public class SsoAuthService {
                         .eq(SsoAuthState::getConsumed, 0)
                         .set(SsoAuthState::getConsumed, 1)));
         if (consumed == null || consumed != 1) {
-            audit(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state concurrent replay");
+            auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state concurrent replay", stateRow.getTenantId());
             throw new IllegalStateException("授权状态已消费");
         }
 
         SsoProviderConfig config = loadEnabledConfigGlobal(provider, stateRow.getTenantId());
         if (config == null || config.getEnabled() != 1) {
-            audit(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider disabled");
+            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider disabled", stateRow.getTenantId());
             throw new IllegalStateException("该 Provider 未启用");
         }
         String externalId;
         try {
             externalId = clients.get(provider).exchangeExternalId(decryptConfig(config), code);
         } catch (SsoProviderClient.SsoProviderException e) {
-            audit(provider, "LOGIN_FAILED", "FAILED", null, null, sha256(externalFingerprint(e)),
-                    "provider exchange failed");
+            auditDenial(provider, "LOGIN_FAILED", "FAILED", null, null, sha256(externalFingerprint(e)),
+                    "provider exchange failed", stateRow.getTenantId());
             throw e;
         }
         String externalDigest = sha256(externalId);
@@ -339,7 +380,7 @@ public class SsoAuthService {
             return new CallbackResult(provider, stateRow.getTenantId(), externalId, externalDigest,
                     binding.getUserId(), stateRow.getRedirectPath(), true);
         }
-        audit(provider, "LOGIN_FAILED", "DENIED", null, null, externalDigest,
+        auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, externalDigest,
                 "not bound", stateRow.getTenantId());
         return new CallbackResult(provider, stateRow.getTenantId(), externalId, externalDigest,
                 null, stateRow.getRedirectPath(), false);
@@ -358,17 +399,18 @@ public class SsoAuthService {
             throw new IllegalStateException("租户上下文缺失，不能绑定");
         }
         Long tenantId = current.getTenantId();
+        tenantValidityService.requireValid(tenantId);
         // 摘要即权威：明文 externalId 不落 SQL/日志（I5 复验 G7b）
         String externalDigest = sha256(externalId);
         SsoUserBinding existingExternal = bindingMapper.selectActiveByExternal(provider, tenantId, externalDigest);
         if (existingExternal != null) {
-            audit(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), existingExternal.getUserId(),
+            auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), existingExternal.getUserId(),
                     externalDigest, "external id already bound");
             throw new IllegalStateException("该外部身份已绑定其他本地账号");
         }
         SsoUserBinding existingUser = bindingMapper.selectActiveByUser(provider, tenantId, userId);
         if (existingUser != null) {
-            audit(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
+            auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
                     externalDigest, "user already bound to another external id");
             throw new IllegalStateException("该本地账号已绑定其他外部身份");
         }
@@ -382,7 +424,7 @@ public class SsoAuthService {
                             .eq(SsoUserBinding::getBindStatus, "ACTIVE")
                             .ne(SsoUserBinding::getTenantId, tenantId));
             if (crossTenant != null && crossTenant > 0) {
-                audit(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
+                auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
                         externalDigest, "external subject already bound in another tenant");
                 throw new IllegalStateException("该外部身份已在其他租户绑定，不能跨租户重复绑定");
             }
@@ -394,20 +436,38 @@ public class SsoAuthService {
         binding.setExternalDigest(externalDigest);
         binding.setUserId(userId);
         binding.setBindStatus("ACTIVE");
-        bindingMapper.insert(binding);
+        try {
+            bindingMapper.insert(binding);
+        } catch (DuplicateKeyException e) {
+            // 并发绑定以数据库全局唯一键为最终仲裁；把失败侧收敛为可判定的业务拒绝，
+            // 避免控制器把唯一键竞争暴露成 500，也不创建角色/会话副作用。
+            auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
+                    externalDigest, "binding unique constraint rejected");
+            throw new IllegalStateException("该外部身份已在其他租户绑定，不能跨租户重复绑定", e);
+        }
         audit(provider, "BIND", "SUCCESS", current.getUserId(), userId, externalDigest, null);
     }
 
     /**
-     * 解绑：本地账号在当前租户内对指定 Provider 的有效绑定置 UNBOUND。
+     * 解绑：本地账号在当前租户内对指定 Provider 的有效绑定置 UNBOUND；
+     * 并按方向 §3.2「第三方解绑触发与风险相称的会话撤销」撤销当前会话：
+     * 清除登录缓存 + 按当前 access token 摘要写撤销标记（token 维度——同用户随后
+     * 建立的新会话不受影响，旧 token 无法借新会话的 userId 缓存复活）+ 撤销全部
+     * 既有 refresh token。
      */
     @Transactional
     public void unbind(String provider, Long userId) {
+        unbind(provider, userId, null);
+    }
+
+    @Transactional
+    public void unbind(String provider, Long userId, String currentToken) {
         requireProvider(provider);
         LoginUser current = LoginUserHolder.get();
         if (current == null || current.getTenantId() == null) {
             throw new IllegalStateException("租户上下文缺失，不能解绑");
         }
+        tenantValidityService.requireValid(current.getTenantId());
         SsoUserBinding binding = bindingMapper.selectActiveByUser(provider, current.getTenantId(), userId);
         if (binding == null) {
             throw new IllegalStateException("未找到有效绑定");
@@ -415,6 +475,16 @@ public class SsoAuthService {
         binding.setBindStatus("UNBOUND");
         bindingMapper.updateById(binding);
         audit(provider, "UNBIND", "SUCCESS", current.getUserId(), userId, binding.getExternalDigest(), null);
+        // 会话撤销（I5 §3.2）：清缓存 + token 摘要撤销标记（过滤器装载前检查）+ 撤 refresh
+        if (loginUserCacheService != null) {
+            loginUserCacheService.evict(userId);
+            if (currentToken != null && !currentToken.isBlank()) {
+                loginUserCacheService.markTokenRevoked(currentToken);
+            }
+        }
+        if (refreshTokenService != null) {
+            refreshTokenService.revokeAllForUserPublic(userId);
+        }
     }
 
     // ==================== 内部 ====================
@@ -443,6 +513,57 @@ public class SsoAuthService {
                 com.sw.ck.system.sso.WecomSsoProviderClient.parseExtra(config.getExtraConfig()));
     }
 
+    /**
+     * 启用 Provider 时拒绝空值和常见占位凭据；停用配置不要求凭据，便于安全下线。
+     * 已有有效密文可在更新非凭据字段时保留，明文只在当前调用栈内短暂出现。
+     */
+    private void validateEnabledConfig(String appId, String appSecret, SsoProviderConfig existing) {
+        if (isPlaceholder(appId)) {
+            throw new IllegalStateException("启用 Provider 必须配置有效 appId 与 secret");
+        }
+        if (appSecret != null && !appSecret.isBlank()) {
+            if (isPlaceholder(appSecret)) {
+                throw new IllegalStateException("启用 Provider 必须配置有效 appId 与 secret");
+            }
+            return;
+        }
+        if (existing == null || existing.getAppSecretEnc() == null
+                || existing.getAppSecretEnc().isBlank()) {
+            throw new IllegalStateException("启用 Provider 必须配置有效 appId 与 secret");
+        }
+        try {
+            if (isPlaceholder(cipher.decrypt(existing.getAppSecretEnc()))) {
+                throw new IllegalStateException("启用 Provider 必须配置有效 appId 与 secret");
+            }
+        } catch (IllegalStateException e) {
+            throw new IllegalStateException("启用 Provider 必须配置有效 appId 与 secret");
+        }
+    }
+
+    private boolean isPlaceholder(String value) {
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("placeholder")
+                || normalized.equals("changeme")
+                || normalized.equals("change-me")
+                || normalized.equals("example")
+                || normalized.equals("secret")
+                || normalized.equals("dummy")
+                || normalized.equals("test")
+                || normalized.startsWith("your-")
+                || normalized.startsWith("your_")
+                || normalized.startsWith("replace-me")
+                || normalized.startsWith("replace_with")
+                || normalized.startsWith("replacewith")
+                || normalized.startsWith("example-")
+                || normalized.startsWith("test-")
+                || normalized.startsWith("test_")
+                || (normalized.contains("${") && normalized.contains("}"))
+                || (normalized.startsWith("<") && normalized.endsWith(">"));
+    }
+
     private void audit(String provider, String eventType, String result, Long actorId,
                        Long localUserId, String externalDigest, String detail) {
         audit(provider, eventType, result, actorId, localUserId, externalDigest, detail, null);
@@ -454,28 +575,78 @@ public class SsoAuthService {
      */
     private void audit(String provider, String eventType, String result, Long actorId,
                        Long localUserId, String externalDigest, String detail, Long explicitTenantId) {
+        SsoAuditRecord record = buildAuditRecord(provider, eventType, result, actorId,
+                localUserId, externalDigest, detail, explicitTenantId);
         try {
-            SsoAuditRecord record = new SsoAuditRecord();
-            LoginUser current = LoginUserHolder.get();
-            record.setTenantId(explicitTenantId != null ? explicitTenantId
-                    : (current != null && current.getTenantId() != null ? current.getTenantId() : 0L));
-            record.setProvider(provider);
-            record.setEventType(eventType);
-            record.setResult(result);
-            record.setActorId(actorId != null ? actorId : (current != null ? current.getUserId() : null));
-            record.setLocalUserId(localUserId);
-            record.setExternalDigest(externalDigest);
-            record.setDetail(detail);
-            if (current == null) {
-                try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                             com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
-                    auditMapper.insert(record);
-                }
-            } else {
-                auditMapper.insert(record);
-            }
+            insertAudit(record);
         } catch (Exception e) {
             log.warn("SSO 审计写入失败: provider={}, event={}", provider, eventType, e);
+        }
+    }
+
+    /**
+     * 拒绝/重放/冲突审计：以独立事务（REQUIRES_NEW）立即提交。
+     * <p>
+     * 拒绝路径在审计后必然抛出业务异常，外层 {@code @Transactional} 会整体回滚；
+     * 若拒绝审计随外层事务回滚，重放、冲突与越权拒绝将无法按方向 §3.4/验收 #15
+     * 持久查询。成功路径审计仍随业务事务提交（与动作保持原子）。
+     * </p>
+     */
+    private void auditDenial(String provider, String eventType, String result, Long actorId,
+                             Long localUserId, String externalDigest, String detail, Long explicitTenantId) {
+        SsoAuditRecord record = buildAuditRecord(provider, eventType, result, actorId,
+                localUserId, externalDigest, detail, explicitTenantId);
+        try {
+            if (consumeTxTemplate != null) {
+                consumeTxTemplate.execute(status -> {
+                    insertAudit(record);
+                    return Boolean.TRUE;
+                });
+            } else {
+                insertAudit(record);
+            }
+        } catch (Exception e) {
+            log.warn("SSO 拒绝审计写入失败: provider={}, event={}", provider, eventType, e);
+        }
+    }
+
+    private void auditDenial(String provider, String eventType, String result, Long actorId,
+                             Long localUserId, String externalDigest, String detail) {
+        auditDenial(provider, eventType, result, actorId, localUserId, externalDigest, detail, null);
+    }
+
+    /** 控制器层越权/候选拒绝审计入口（独立事务提交，不回随响应路径丢失）。 */
+    public void auditRejection(String provider, String eventType, String detail) {
+        LoginUser current = LoginUserHolder.get();
+        auditDenial(provider, eventType, "DENIED",
+                current == null ? null : current.getUserId(), null, null, detail,
+                current == null ? null : current.getTenantId());
+    }
+
+    private SsoAuditRecord buildAuditRecord(String provider, String eventType, String result, Long actorId,
+                                            Long localUserId, String externalDigest, String detail, Long explicitTenantId) {
+        SsoAuditRecord record = new SsoAuditRecord();
+        LoginUser current = LoginUserHolder.get();
+        record.setTenantId(explicitTenantId != null ? explicitTenantId
+                : (current != null && current.getTenantId() != null ? current.getTenantId() : 0L));
+        record.setProvider(provider);
+        record.setEventType(eventType);
+        record.setResult(result);
+        record.setActorId(actorId != null ? actorId : (current != null ? current.getUserId() : null));
+        record.setLocalUserId(localUserId);
+        record.setExternalDigest(externalDigest);
+        record.setDetail(detail);
+        return record;
+    }
+
+    private void insertAudit(SsoAuditRecord record) {
+        if (LoginUserHolder.get() == null) {
+            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                auditMapper.insert(record);
+            }
+        } else {
+            auditMapper.insert(record);
         }
     }
 

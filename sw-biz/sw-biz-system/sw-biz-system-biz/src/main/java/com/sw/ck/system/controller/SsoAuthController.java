@@ -39,6 +39,7 @@ public class SsoAuthController {
     private final com.sw.ck.security.jwt.JwtTokenProvider jwtTokenProvider;
     private final com.sw.ck.security.jwt.JwtProperties jwtProperties;
     private final com.sw.ck.system.service.RefreshTokenService refreshTokenService;
+    private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
     @org.springframework.beans.factory.annotation.Value("${sw.security.cookie.secure:false}")
     private boolean cookieSecure;
     @org.springframework.beans.factory.annotation.Value("${sw.security.cookie.path:/api/auth/}")
@@ -49,13 +50,15 @@ public class SsoAuthController {
                              com.sw.ck.system.service.SysUserService sysUserService,
                              com.sw.ck.security.jwt.JwtTokenProvider jwtTokenProvider,
                              com.sw.ck.security.jwt.JwtProperties jwtProperties,
-                             com.sw.ck.system.service.RefreshTokenService refreshTokenService) {
+                             com.sw.ck.system.service.RefreshTokenService refreshTokenService,
+                             com.sw.ck.system.service.TenantValidityService tenantValidityService) {
         this.ssoAuthService = ssoAuthService;
         this.ticketStore = ticketStore;
         this.sysUserService = sysUserService;
         this.jwtTokenProvider = jwtTokenProvider;
         this.jwtProperties = jwtProperties;
         this.refreshTokenService = refreshTokenService;
+        this.tenantValidityService = tenantValidityService;
     }
 
     /**
@@ -134,8 +137,20 @@ public class SsoAuthController {
         if (session == null) {
             return R.fail(401, "登录票据无效或已过期");
         }
-        com.sw.ck.system.entity.SysUser user = sysUserService.getById(session.userId());
-        if (user == null || (user.getStatus() != null && user.getStatus() != 0)) {
+        try {
+            tenantValidityService.requireValid(session.tenantId());
+        } catch (IllegalStateException e) {
+            return R.fail(401, "租户无效或已停用/过期");
+        }
+        // 免认证兑换路径无登录态：租户拦截器 fail-closed 会拒绝生成过滤条件；
+        // 租户语义由显式谓词承担（票据载荷 tenantId + 账号行 tenantId 一致性校验）
+        com.sw.ck.system.entity.SysUser user;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            user = sysUserService.getById(session.userId());
+        }
+        if (user == null || !java.util.Objects.equals(user.getTenantId(), session.tenantId())
+                || (user.getStatus() != null && user.getStatus() != 0)) {
             return R.fail(401, "账号已停用");
         }
         String accessToken = jwtTokenProvider.generateToken(user.getId());
@@ -157,6 +172,11 @@ public class SsoAuthController {
         if (candidate == null) {
             return R.fail(401, "绑定票据无效或已过期");
         }
+        try {
+            tenantValidityService.requireValid(candidate.tenantId());
+        } catch (IllegalStateException e) {
+            return R.fail(401, "租户无效或已停用/过期");
+        }
         return R.ok(Map.of(
                 "provider", candidate.provider(),
                 "externalDigestPrefix", com.sw.ck.system.sso.SsoAuthService.digestPrefix(candidate.externalId())));
@@ -176,6 +196,8 @@ public class SsoAuthController {
             return R.fail(401, "绑定票据无效或已过期");
         }
         if (!current.getTenantId().equals(candidate.tenantId())) {
+            ssoAuthService.auditRejection(candidate.provider(), "CROSS_TENANT_REJECTED",
+                    "bind candidate tenant mismatch");
             return R.fail(403, "绑定候选与当前租户不匹配");
         }
         try {
@@ -225,20 +247,28 @@ public class SsoAuthController {
         return R.ok();
     }
 
-    /** 解绑。 */
+    /** 解绑（携带当前 access token：解绑触发该 token 的会话撤销——I5 §3.2）。 */
     @PostMapping("/unbind")
-    public R<Void> unbind(@RequestBody BindRequest request) {
+    public R<Void> unbind(@RequestBody BindRequest request,
+                          @org.springframework.web.bind.annotation.RequestHeader(value = "Authorization", required = false) String authorization) {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
             return R.fail(401, "未登录");
         }
         try {
-            ssoAuthService.unbind(request.provider(), current.getUserId());
+            ssoAuthService.unbind(request.provider(), current.getUserId(), bearerToken(authorization));
         } catch (IllegalStateException | IllegalArgumentException e) {
             log.warn("SSO 解绑被拒: reason={}", e.getMessage());
             return R.fail(400, e.getMessage());
         }
         return R.ok();
+    }
+
+    private String bearerToken(String authorization) {
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            return null;
+        }
+        return authorization.substring("Bearer ".length());
     }
 
     private String safeRedirect(String path) {

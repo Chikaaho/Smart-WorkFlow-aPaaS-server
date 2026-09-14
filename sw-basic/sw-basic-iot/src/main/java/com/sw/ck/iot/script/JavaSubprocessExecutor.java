@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,7 @@ public class JavaSubprocessExecutor {
                 permission java.lang.RuntimePermission "createClassLoader";
                 permission java.lang.RuntimePermission "getClassLoader";
                 permission java.lang.RuntimePermission "setContextClassLoader";
+                permission java.lang.RuntimePermission "setIO";
             };
             """;
 
@@ -100,7 +102,10 @@ public class JavaSubprocessExecutor {
             command.add("com.sw.ck.iot.script.JavaSubprocessRunner");
             command.add(workDir.toAbsolutePath().toString());
             command.add(className);
-            command.add(JSON.toJSONString(ScriptHostFunctions.baseInput(spec, spec.getInput())));
+            String inputJson = JSON.toJSONString(ScriptHostFunctions.baseInput(spec, spec.getInput()));
+            // Windows CreateProcess 会吞掉 JSON 参数中的双引号；用 Base64 传递协议
+            // 输入，保持跨平台子进程参数字节不变，再由 Runner 在隔离边界内解码。
+            command.add(Base64.getEncoder().encodeToString(inputJson.getBytes(StandardCharsets.UTF_8)));
 
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.redirectErrorStream(false);

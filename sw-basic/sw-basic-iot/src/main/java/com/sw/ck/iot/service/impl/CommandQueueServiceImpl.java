@@ -4,6 +4,8 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.CommandQueueService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -216,7 +218,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
      * 获取当前租户 ID。
      */
     private Long getCurrentTenantId() {
-        // 从 Spring Security 上下文中获取租户 ID
-        return null;
+        LoginUser current = LoginUserHolder.get();
+        return current == null ? null : current.getTenantId();
     }
 }

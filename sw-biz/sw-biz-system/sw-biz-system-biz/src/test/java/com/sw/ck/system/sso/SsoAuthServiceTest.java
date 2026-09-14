@@ -53,7 +53,7 @@ class SsoAuthServiceTest {
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
                 new SsoCallbackPolicy("", List.of()),
-                tenantValidityService, noopTxManager());
+                tenantValidityService, noopTxManager(), null, null);
         Mockito.when(stateMapper.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any()))
                 .thenAnswer(inv -> {
                     SsoAuthState s = inv.getArgument(0);
@@ -247,7 +247,7 @@ class SsoAuthServiceTest {
                         new DingtalkSsoProviderClient()),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                policy, validity, noopTxManager());
+                policy, validity, noopTxManager(), null, null);
     }
 
     @Test
@@ -341,6 +341,25 @@ class SsoAuthServiceTest {
     }
 
     @Test
+    @DisplayName("绑定并发唯一键竞争：失败侧转为业务拒绝且不产生成功审计")
+    void bind_uniqueConstraintRace_shouldFailClosed() {
+        loginAs(2L);
+        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
+                org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(null);
+        Mockito.when(bindingMapper.selectActiveByUser("WECOM", 2L, 2L)).thenReturn(null);
+        Mockito.when(bindingMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(bindingMapper.insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any()))
+                .thenThrow(new org.springframework.dao.DuplicateKeyException("global binding unique"));
+
+        assertThatThrownBy(() -> service.bind("WECOM", 2L, "subject-race"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("其他租户");
+        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                "CONFLICT_REJECTED".equals(a.getEventType()) && "DENIED".equals(a.getResult())));
+    }
+
+    @Test
     @DisplayName("回调：换票失败后 state 仍保持已消费，重放在外呼前拒绝（G5b）")
     void stateConsumedSurvivesProviderFailure_replayRejectedBeforeOutbound() {
         // lambdaUpdate 需要 MP TableInfo 缓存（单测上下文无 MapperScan 初始化）
@@ -356,7 +375,7 @@ class SsoAuthServiceTest {
                 Mockito.mock(SysUserService.class), List.of(failing),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                new SsoCallbackPolicy("", List.of()), mockedValidity(), noopTxManager());
+                new SsoCallbackPolicy("", List.of()), mockedValidity(), noopTxManager(), null, null);
         SsoAuthState fresh = new SsoAuthState();
         fresh.setId(7L); fresh.setProvider("WECOM"); fresh.setConsumed(0); fresh.setTenantId(1L);
         fresh.setExpireAt(LocalDateTime.now().plusSeconds(60));
@@ -373,6 +392,51 @@ class SsoAuthServiceTest {
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-y", "state-ok"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("已消费");
+    }
+
+    @Test
+    @DisplayName("回调：租户停用/过期 → 在消费 state 与外呼前拒绝（G6b）")
+    void handleCallback_invalidTenant_shouldRejectBeforeConsumeOrOutbound() {
+        com.sw.ck.system.service.TenantValidityService invalid =
+                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doThrow(new IllegalStateException("租户无效"))
+                .when(invalid).requireValid(100L);
+        SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of()), invalid);
+        SsoAuthState fresh = new SsoAuthState();
+        fresh.setId(17L);
+        fresh.setProvider("WECOM");
+        fresh.setTenantId(100L);
+        fresh.setConsumed(0);
+        fresh.setExpireAt(LocalDateTime.now().plusSeconds(60));
+        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(fresh);
+
+        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-x", "state-invalid-tenant"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("租户无效");
+        Mockito.verify(stateMapper, Mockito.never())
+                .update(org.mockito.ArgumentMatchers.eq(null), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("启用 Provider：三 Provider 均拒绝缺失/占位 secret；停用不要求 secret（G3b2）")
+    void saveConfig_enabledProvidersRequireRealCredentials() {
+        loginAs(2L);
+        Mockito.when(configMapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(configMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
+        for (String provider : SsoAuthService.PROVIDERS) {
+            assertThatThrownBy(() -> service.saveConfig(provider, true,
+                    "app-" + provider, null, null, null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("有效 appId 与 secret");
+            assertThatThrownBy(() -> service.saveConfig(provider, true,
+                    "app-" + provider, "placeholder", null, null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("有效 appId 与 secret");
+        }
+        service.saveConfig("WECOM", false, null, null, null, null);
+        Mockito.verify(configMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoProviderConfig>argThat(c -> c.getEnabled() == 1));
     }
 
     @Test

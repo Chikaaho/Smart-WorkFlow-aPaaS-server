@@ -215,6 +215,13 @@ public class RefreshTokenService {
                         .set(SysRefreshToken::getRevoked, 1));
     }
 
+    /**
+     * 公开撤销入口（I5 §3.2 第三方解绑会话撤销）：撤销该用户全部有效 refresh token。
+     */
+    public void revokeAllForUserPublic(Long userId) {
+        revokeAllForUser(userId);
+    }
+
     // ========== 内部 DTO ==========
 
     /**

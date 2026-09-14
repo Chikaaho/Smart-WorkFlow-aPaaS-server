@@ -62,5 +62,5 @@ merge into sys_sso_provider_config (id, create_time, update_time, deleted, tenan
 key (id)
 values (90001, current_timestamp, current_timestamp, 0, 100, 0,
         'WECOM', 1, 'ww-sentinel-app-id',
-        '3yG0yjO/a5JdqLRQZ8G0IKjFfeNVgUIT0YVSrph3sCQext/XLurz3J4GWA065jrhwb4OlA==',
+        'eDEMqN6EIcxVVGTdeVFKdTkJcLBOEMGOhgs6+am5nfe7NRKcXVhk+qvqcjin5J7+M6M=',
         '{"agentId":"1000002"}', '/workspace');

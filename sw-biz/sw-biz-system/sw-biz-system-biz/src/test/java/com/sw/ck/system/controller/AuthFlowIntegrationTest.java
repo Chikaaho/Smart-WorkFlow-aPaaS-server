@@ -1053,8 +1053,9 @@ class AuthFlowIntegrationTest {
         public JwtAuthenticationFilter jwtAuthenticationFilter(
                 JwtTokenProvider jwtTokenProvider,
                 LoginUserLoader loginUserLoader,
-                SecurityProperties securityProperties) {
-            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties);
+                SecurityProperties securityProperties,
+                com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService) {
+            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties, loginUserCacheService);
         }
 
         // ==================== ObjectMapper（JSON 序列化） ====================

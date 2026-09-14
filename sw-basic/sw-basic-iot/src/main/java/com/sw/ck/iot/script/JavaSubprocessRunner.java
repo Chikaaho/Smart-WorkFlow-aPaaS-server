@@ -4,6 +4,7 @@ import com.sw.ck.iot.script.api.IotScriptApi;
 import com.sw.ck.iot.script.api.IotJavaScript;
 
 import java.io.BufferedReader;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -13,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -39,6 +41,9 @@ public final class JavaSubprocessRunner {
      * 子进程入口：java -cp &lt;apiDir&gt; com.sw.ck.iot.script.JavaSubprocessRunner &lt;classesDir&gt; &lt;entryClass&gt; &lt;inputJson&gt;
      */
     public static void main(String[] args) {
+        // Windows 子 JVM 的 native.encoding 可能不是 UTF-8；父进程按 UTF-8
+        // 读取协议流，必须先固定 stdout 编码，否则中文安全拒绝信息会损坏。
+        System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
         if (args.length < 3) {
             System.out.println(PREFIX_ERROR + MiniJson.write(Map.of("error", "参数不足")));
             return;
@@ -55,7 +60,8 @@ public final class JavaSubprocessRunner {
             if (!apiInterface.isAssignableFrom(entryClass)) {
                 throw new IllegalArgumentException("脚本类未实现 IotJavaScript: " + args[1]);
             }
-            Map<String, Object> input = MiniJson.parseObject(args[2]);
+            String inputJson = new String(Base64.getDecoder().decode(args[2]), StandardCharsets.UTF_8);
+            Map<String, Object> input = MiniJson.parseObject(inputJson);
             Object script = entryClass.getDeclaredConstructor().newInstance();
             // RpcApi 同样经 scriptLoader 加载，保证与接口参数类型一致
             Object api = Class.forName("com.sw.ck.iot.script.JavaSubprocessRunner$RpcApi",

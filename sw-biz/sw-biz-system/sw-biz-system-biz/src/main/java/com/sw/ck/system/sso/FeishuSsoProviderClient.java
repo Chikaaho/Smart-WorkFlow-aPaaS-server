@@ -40,8 +40,10 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
 
     @Override
     public String buildAuthorizeUrl(SsoProviderConfigView config, String redirectUri, String state) {
+        // response_type=code 为官方授权 URL 必带固定值（iteration-10 文档对照 G8-DOC-FEISHU 补齐）
         return AUTHORIZE_URL + "?app_id=" + urlEncode(config.appId())
                 + "&redirect_uri=" + urlEncode(redirectUri)
+                + "&response_type=code"
                 + "&state=" + urlEncode(state);
     }
 

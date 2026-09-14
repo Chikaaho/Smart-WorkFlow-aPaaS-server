@@ -10,6 +10,7 @@ import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
+import com.sw.ck.system.api.tenant.TenantValidityFacade;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -28,6 +29,8 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 
 /**
  * I4 §3.4 行为证据：签名校验、时间窗、防重放、scope 拒绝、幂等键只产生一次业务效果、
@@ -125,6 +128,26 @@ class OpenApiServiceTest {
         Map<String, Object> second = service.start(context, "leave_form", Map.of("days", 1),
                 "record-1", null);
         assertThat(second).containsEntry("idempotentReplay", true);
+    }
+
+    @Test
+    void shouldRejectInvalidTenantBeforeWritingNonce() {
+        TenantValidityFacade validity = mock(TenantValidityFacade.class);
+        when(validity.isValid(1L)).thenReturn(false);
+        OpenApiAuthService guardedAuth = new OpenApiAuthService(appMapper, nonceMapper, validity);
+        OpenApiApp app = app();
+        when(appMapper.selectOne(any())).thenReturn(app);
+        String body = "{}";
+        String timestamp = String.valueOf(System.currentTimeMillis() / 1000);
+        String nonce = "invalid-tenant-" + System.nanoTime();
+        String signature = OpenApiAuthService.sign(app.getSecretHash(), app.getAppId(),
+                timestamp, nonce, body);
+
+        assertThatThrownBy(() -> guardedAuth.authenticate(app.getAppId(), timestamp, nonce,
+                signature, body, "PROCESS_START"))
+                .isInstanceOfSatisfying(BaseException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(OpenApiErrorCode.TENANT_INVALID.getCode()));
+        verify(nonceMapper, never()).insert(any(com.sw.ck.openapi.biz.entity.OpenApiNonce.class));
     }
 
     @Test

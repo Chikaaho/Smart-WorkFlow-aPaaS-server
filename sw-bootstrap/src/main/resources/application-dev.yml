@@ -48,7 +48,8 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       database: ${REDIS_DATABASE:0}
-      password: ${REDIS_PASSWORD:1}
+      # 本地开发默认连接无认证 Redis；需要认证时由 REDIS_PASSWORD 显式注入。
+      password: ${REDIS_PASSWORD:}
 
   ai:
     openai:
@@ -117,6 +118,8 @@ sw:
       # 本地调试需显式设置 SW_DEBUG_AUTH_ENABLED=true；不设置则保持关闭。
       enabled: ${SW_DEBUG_AUTH_ENABLED:false}
     sso:
+      # devseed 中的 Provider 密文使用同一把开发密钥；prod 仍必须由 SW_SSO_CIPHER_KEY 注入。
+      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
       # I5 复验：Provider 回调白名单（与 Spring permit-list 分离）。默认相对路径模式；
       # 集成验证经环境注入绝对基址与白名单（逗号分隔）。
       callback-base-url: ${SW_SSO_CALLBACK_BASE_URL:}

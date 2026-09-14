@@ -82,6 +82,11 @@ public class OpenApiAuthService {
                 signature.toLowerCase().getBytes(StandardCharsets.UTF_8))) {
             throw new BaseException(OpenApiErrorCode.SIGN_INVALID);
         }
+        // 租户有效性必须早于 nonce 写入：停用/过期租户的签名请求不得留下任何
+        // 认证副作用，也不得建立代理上下文。
+        if (tenantValidityFacade != null && !tenantValidityFacade.isValid(app.getTenantId())) {
+            throw new BaseException(OpenApiErrorCode.TENANT_INVALID);
+        }
         try {
             OpenApiNonce row = new OpenApiNonce();
             row.setAppId(appId);
@@ -98,11 +103,6 @@ public class OpenApiAuthService {
             }
         } catch (DuplicateKeyException e) {
             throw new BaseException(OpenApiErrorCode.NONCE_REUSED);
-        }
-        // 租户有效性（I5 复验 G2a）：应用所属租户停用/过期/缺失时 fail closed，
-        // 不得建立代理上下文
-        if (tenantValidityFacade != null && !tenantValidityFacade.isValid(app.getTenantId())) {
-            throw new BaseException(OpenApiErrorCode.TENANT_INVALID);
         }
         List<String> scopes = app.getScopes() == null ? List.of()
                 : List.of(app.getScopes().split(","));

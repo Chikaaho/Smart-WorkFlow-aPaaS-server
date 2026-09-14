@@ -368,7 +368,8 @@ class AgentToolConfigControllerTest {
                 JwtTokenProvider jwtTokenProvider,
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties) {
-            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties);
+            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
+            org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
         }
 
         @Bean

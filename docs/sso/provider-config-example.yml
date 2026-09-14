@@ -1,0 +1,42 @@
+# ======================================================================
+# I5 三方 SSO Provider 接入 · 非秘密配置样例（默认禁用态）
+# ======================================================================
+# 用途：Owner 注入真实凭据前的可直接填值模板。本文件仅为样例，不被
+# Spring 自动装载；真实凭据只经环境变量/密钥设施注入，禁止入库本文件。
+# 秘密口径：本文件任何位置不得出现真实 appId/secret；填值时以 __SET_ME__
+# 标记的条目一律在注入前替换为真实值，且真实值只进入运行环境。
+# ======================================================================
+
+# ------------------------------------------------------------------
+# 1) 运行环境密钥与回调白名单（系统级，启动即生效）
+# ------------------------------------------------------------------
+# SSO Provider secret 的 AES-256-GCM 加密密钥（Base64，32 字节）。
+# 缺失或空白时启动失败（fail-fast，见 application.yml sw.security.sso.cipher-key）。
+# SW_SSO_CIPHER_KEY: __SET_ME_BASE64_32B__
+#
+# 服务端对外基址（https://host[/prefix]）。留空 = 相对路径模式（同源前端代理）。
+# 配置后回调 URL 必须命中下方白名单前缀，否则 fail closed。
+# SW_SSO_CALLBACK_BASE_URL: __SET_ME_HTTPS_BASE__
+#
+# 允许的回调 URL 前缀白名单（逗号分隔）。每个 Provider 的回调路径固定为：
+#   {BASE}/api/auth/sso/{provider}/callback    （provider 小写：wecom / feishu / dingtalk）
+# SW_SSO_CALLBACK_ALLOWLIST: __SET_ME_HTTPS_BASE__/api/auth/sso/wecom/callback,__SET_ME_HTTPS_BASE__/api/auth/sso/feishu/callback,__SET_ME_HTTPS_BASE__/api/auth/sso/dingtalk/callback
+
+# ------------------------------------------------------------------
+# 2) 租户级 Provider 配置行（sys_sso_provider_config，默认全部禁用）
+# ------------------------------------------------------------------
+# 字段：provider(WECOM/FEISHU/DINGTALK)、enabled(1/0)、app_id、
+#       app_secret_enc(AES-256-GCM 密文，密钥=SW_SSO_CIPHER_KEY)、
+#       extra_config(JSON；WECOM 需含 agentId)、redirect_path
+# 禁用态样例（enabled=0，凭据留哨兵，保存不要求凭据，便于安全下线）：
+#   provider='WECOM',    enabled=0, app_id='__SET_ME_CORPID__',      app_secret_enc=NULL, extra_config='{"agentId":"__SET_ME_AGENTID__"}', redirect_path='/workspace'
+#   provider='FEISHU',   enabled=0, app_id='__SET_ME_APP_ID__',     app_secret_enc=NULL, extra_config='{}', redirect_path='/workspace'
+#   provider='DINGTALK', enabled=0, app_id='__SET_ME_APP_KEY__',    app_secret_enc=NULL, extra_config='{}', redirect_path='/workspace'
+# secret 明文只允许在保存动作的当前调用栈内出现并由 AesGcmCipher 加密；
+# 注入与启用步骤见同目录 owner-acceptance-handbook.md。
+# ------------------------------------------------------------------
+# 3) 启用边界 fail-fast（已内建，无需配置）
+# ------------------------------------------------------------------
+# 启用（enabled=1）时，appId/secret 为空值、示例值或占位值（placeholder/
+# changeme/example/your-*/replace-me/__SET_ME__ 等）一律在启用边界直接拒绝，
+# 不会延迟到真实用户回调才暴露。

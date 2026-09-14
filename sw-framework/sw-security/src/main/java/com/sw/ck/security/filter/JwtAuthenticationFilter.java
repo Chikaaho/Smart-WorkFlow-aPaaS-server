@@ -2,6 +2,7 @@ package com.sw.ck.security.filter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.response.R;
+import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.security.config.SecurityProperties;
 import com.sw.ck.security.holder.LoginUser;
@@ -50,6 +51,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final LoginUserLoader loginUserLoader;
     private final SecurityProperties securityProperties;
+    private final LoginUserCacheService loginUserCacheService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -84,6 +86,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         } catch (Exception e) {
             // 仅 token 自身的解析/校验失败 → 视为未认证，交由 AuthenticationEntryPoint 统一吐 401。
             log.warn("JWT 认证失败: {}", e.getMessage());
+            return true;
+        }
+        // I5 §3.2 会话撤销（第三方解绑）：token 摘要维度的撤销检查先于装载——
+        // 被撤销 token 即使与其他会话共享 userId 缓存也不得复活，新 token 不受影响
+        if (loginUserCacheService.isTokenRevoked(token)) {
             return true;
         }
         LoginUser loginUser;

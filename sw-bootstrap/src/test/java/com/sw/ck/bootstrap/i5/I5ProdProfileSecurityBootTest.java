@@ -215,9 +215,21 @@ class I5ProdProfileSecurityBootTest {
         String cipher = tryBoot(noCipher);
         System.out.println("[G3b] 缺凭据加密密钥: " + cipher);
         org.assertj.core.api.Assertions.assertThat(cipher).containsAnyOf("cipher", "AES", "密钥");
-        // 4) Druid：生产 profile 无应用级 Druid 控制台/连接凭据概念（配置事实）——
-        //    生产数据库认证边界由 master.datasource 用户名/密码承担，PG 拒绝错误凭据即失败
-        System.out.println("[G3b] Druid: 生产无 Druid 应用级凭据开关；master PG 账号/密码错误由 PG 认证拒绝（见 V1/V13 声明）");
+        // 4) 错误 PostgreSQL 用户名/密码 → 真实 PG 认证拒绝，不能只依赖配置声明。
+        Map<String, Object> wrongPg = new HashMap<>();
+        wrongPg.put("spring.datasource.dynamic.datasource.master.username", "i5-wrong-user");
+        wrongPg.put("spring.datasource.dynamic.datasource.master.password", "i5-wrong-password");
+        String pg = tryBoot(wrongPg);
+        System.out.println("[G3b] 错误 PG 凭据: " + pg);
+        org.assertj.core.api.Assertions.assertThat(pg)
+                .as("真实 PostgreSQL 错误用户名/密码必须阻止 prod 启动")
+                .isNotNull()
+                // Embedded PostgreSQL 当前以 trust 认证初始化；错误用户名会被 PG
+                // 以“角色不存在”拒绝，不能把应用能启动误判为凭据已验证。
+                .contains("i5-wrong-user");
+        // 5) Druid：生产 profile 无应用级 Druid 控制台/连接凭据概念；
+        //    生产数据库认证边界由 master.datasource 用户名/密码承担，PG 拒绝错误凭据即失败。
+        System.out.println("[G3b] Druid: 生产无 Druid 应用级凭据开关；真实 master PG 错误凭据已由 PostgreSQL 拒绝");
     }
 
     @Test
