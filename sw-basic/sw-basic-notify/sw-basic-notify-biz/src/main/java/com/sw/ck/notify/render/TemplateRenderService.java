@@ -28,6 +28,9 @@ import java.util.regex.Pattern;
 @Service
 public class TemplateRenderService {
 
+    /** 单变量值长度上限（I6 §3.4 超长发送前明确失败） */
+    private static final int MAX_VARIABLE_LENGTH = 2000;
+
     /** ${...} 片段匹配（含非法形式，用于统一拒绝） */
     private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([^}]*)}");
 
@@ -60,6 +63,11 @@ public class TemplateRenderService {
                 missing.add(rawName);
                 m.appendReplacement(sb, Matcher.quoteReplacement(m.group(0)));
             } else {
+                // 方向 §3.4：变量超过长度限制在发送前明确失败
+                if (value.length() > MAX_VARIABLE_LENGTH) {
+                    throw new TemplateRenderException(
+                            "变量 " + rawName + " 超过长度限制（" + MAX_VARIABLE_LENGTH + " 字符）");
+                }
                 // 变量值按字面文本替换（quoteReplacement 防 $ 与 \ 被二次解释）
                 m.appendReplacement(sb, Matcher.quoteReplacement(value));
             }

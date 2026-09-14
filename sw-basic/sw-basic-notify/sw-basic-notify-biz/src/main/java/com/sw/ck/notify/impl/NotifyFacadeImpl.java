@@ -89,6 +89,10 @@ public class NotifyFacadeImpl implements NotifyFacade {
             return NotifySendResult.builder().channel(NotifyChannel.IN_APP)
                     .status("FAILED").failureReason("通知请求或渠道为空").build();
         }
+        NotifySendResult forged = forgedTenantGuard(request);
+        if (forged != null) {
+            return forged;
+        }
         // 1) 调用方显式幂等键优先
         if (hasText(request.getIdempotencyKey())) {
             NotifyMessage existing = notifyMessageService.findByIdempotencyKey(request.getIdempotencyKey());
@@ -145,6 +149,10 @@ public class NotifyFacadeImpl implements NotifyFacade {
             return NotifySendResult.builder().channel(NotifyChannel.IN_APP)
                     .status("FAILED").failureReason("通知请求或渠道为空").build();
         }
+        NotifySendResult forged = forgedTenantGuard(request);
+        if (forged != null) {
+            return forged;
+        }
         if (request.getChannel() == NotifyChannel.IN_APP) {
             return NotifySendResult.builder().channel(NotifyChannel.IN_APP).status("SUCCESS").build();
         }
@@ -175,6 +183,21 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     // ==================== 内部：身份与持久化 ====================
 
+    /** 方向 §3.6 反向护栏：登录上下文存在时请求租户不得与之冲突；返回非空即拒绝。 */
+    private NotifySendResult forgedTenantGuard(NotifySendRequest request) {
+        com.sw.ck.security.holder.LoginUser principal = com.sw.ck.security.holder.LoginUserHolder.get();
+        if (principal != null && principal.getTenantId() != null
+                && request.getTenantId() != null
+                && !principal.getTenantId().equals(request.getTenantId())) {
+            log.warn("通知租户伪造拒绝: loginTenant={}, requestTenant={}", principal.getTenantId(), request.getTenantId());
+            return NotifySendResult.builder().channel(request.getChannel())
+                    .status("FAILED")
+                    .failureReason("请求租户与认证租户不一致，拒绝写入")
+                    .build();
+        }
+        return null;
+    }
+
     private NotifyMessage findByIdentityRow(NotifySendRequest request) {
         if (request.getTenantId() == null || !hasText(request.getEventType())
                 || !hasText(request.getBizId()) || request.getRecipientId() == null) {
@@ -196,6 +219,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
     }
 
     private NotifySendResult persistDelivery(NotifySendRequest request, NotifySendResult result) {
+        // 方向 §3.6 反向护栏二：持久化层防御性复核（登录权威租户优先）。
         String status = result.getStatus() == null ? "FAILED" : result.getStatus();
         String failureClass = failureClassOf(result);
         NotifyMessage msg = new NotifyMessage();

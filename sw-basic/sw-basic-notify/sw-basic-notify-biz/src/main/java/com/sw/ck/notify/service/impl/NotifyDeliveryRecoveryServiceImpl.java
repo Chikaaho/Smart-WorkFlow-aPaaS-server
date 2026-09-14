@@ -107,6 +107,11 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
             }
             String status = result.getStatus() == null ? "FAILED" : result.getStatus();
             String failureClass = "SUCCESS".equals(status) ? null : classify(result.getFailureReason());
+            int newRetry = priorRetry + 1;
+            if (!"SUCCESS".equals(status) && newRetry >= MAX_RETRY_COUNT) {
+                // 明确终态：重试预算耗尽后不再属于可重试，交由记录页人工处理
+                failureClass = "RETRY_EXHAUSTED";
+            }
             finishAttempt(msg, attemptNo, result, failureClass);
             writeTerminal(msg, result, failureClass);
             log.info("投递恢复完成: id={}, attemptNo={}, status={}, failureClass={}",
