@@ -51,7 +51,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
     }
 
     @Override
-    @Scheduled(fixedDelay = 60_000)
+    @Scheduled(fixedDelayString = "${sw.notify.recovery.fixed-delay-ms:60000}")
     public int recoverDue() {
         List<NotifyMessage> due;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
@@ -78,40 +78,47 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
 
     private boolean recoverOne(NotifyMessage msg) {
         int priorRetry = msg.getRetryCount() == null ? 0 : msg.getRetryCount();
-        int claim = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
-                .set(NotifyMessage::getDeliveryStatus, "RESENDING")
-                .setSql("retry_count = retry_count + 1")
-                .eq(NotifyMessage::getId, msg.getId())
-                .eq(NotifyMessage::getDeliveryStatus, msg.getDeliveryStatus())
-                .eq(NotifyMessage::getRetryCount, priorRetry));
-        if (claim == 0) {
-            return false;
-        }
-        int attemptNo = priorRetry + 2;
+        boolean claimed;
         NotifySendResult result;
-        try {
-            LoginUserHolder.set(systemUser(msg));
-            result = notifyFacade.attemptDelivery(buildRequest(msg));
-        } catch (Exception e) {
-            log.warn("投递恢复异常，按失败回写: id={}, exceptionClass={}", msg.getId(),
-                    e.getClass().getSimpleName());
-            result = NotifySendResult.builder().channel(NotifyChannel.valueOf(msg.getChannel()))
-                    .status("FAILED").failureReason("恢复投递异常: " + e.getClass().getSimpleName()).build();
-        } finally {
-            LoginUserHolder.clear();
+        // 恢复轮运行在无登录身份的调度线程：跨租户扫描与写回均显式挂起租户过滤，
+        // 每次写回都携带行自身的权威 tenant_id，业务列不受切换影响。
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            int claim = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
+                    .set(NotifyMessage::getDeliveryStatus, "RESENDING")
+                    .setSql("retry_count = retry_count + 1")
+                    .eq(NotifyMessage::getId, msg.getId())
+                    .eq(NotifyMessage::getDeliveryStatus, msg.getDeliveryStatus())
+                    .eq(NotifyMessage::getRetryCount, priorRetry));
+            if (claim == 0) {
+                return false;
+            }
+            claimed = true;
+            int attemptNo = priorRetry + 2;
+            try {
+                LoginUserHolder.set(systemUser(msg));
+                result = notifyFacade.attemptDelivery(buildRequest(msg));
+            } catch (Exception e) {
+                log.warn("投递恢复异常，按失败回写: id={}, exceptionClass={}", msg.getId(),
+                        e.getClass().getSimpleName());
+                result = NotifySendResult.builder().channel(NotifyChannel.valueOf(msg.getChannel()))
+                        .status("FAILED").failureReason("恢复投递异常: " + e.getClass().getSimpleName()).build();
+            } finally {
+                LoginUserHolder.clear();
+            }
+            String status = result.getStatus() == null ? "FAILED" : result.getStatus();
+            String failureClass = "SUCCESS".equals(status) ? null : classify(result.getFailureReason());
+            finishAttempt(msg, attemptNo, result, failureClass);
+            writeTerminal(msg, result, failureClass);
+            log.info("投递恢复完成: id={}, attemptNo={}, status={}, failureClass={}",
+                    msg.getId(), attemptNo, status, failureClass);
         }
-        String status = result.getStatus() == null ? "FAILED" : result.getStatus();
-        String failureClass = "SUCCESS".equals(status) ? null : classify(result.getFailureReason());
-        finishAttempt(msg, attemptNo, result, failureClass);
-        writeTerminal(msg, result, failureClass);
-        log.info("投递恢复完成: id={}, attemptNo={}, status={}, failureClass={}",
-                msg.getId(), attemptNo, status, failureClass);
-        return true;
+        return claimed && result != null;
     }
 
     private void finishAttempt(NotifyMessage msg, int attemptNo, NotifySendResult result, String failureClass) {
         try {
             NotifySendAttempt attempt = new NotifySendAttempt();
+            attempt.setTenantId(msg.getTenantId());
             attempt.setMessageId(msg.getId());
             attempt.setAttemptNo(attemptNo);
             attempt.setChannel(msg.getChannel());
@@ -123,7 +130,8 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
             attempt.setFinishedAt(LocalDateTime.now());
             attemptMapper.insert(attempt);
         } catch (Exception e) {
-            // 流水为辅助审计，不阻断恢复主链路
+            log.warn("恢复轮尝试流水记录失败（不阻断恢复）: id={}, attemptNo={}, error={}", msg.getId(), attemptNo,
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
     }
 

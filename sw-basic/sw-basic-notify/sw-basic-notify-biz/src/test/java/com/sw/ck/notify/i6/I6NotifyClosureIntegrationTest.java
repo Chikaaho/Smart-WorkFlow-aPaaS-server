@@ -95,6 +95,15 @@ class I6NotifyClosureIntegrationTest {
     private NotifyRoutingService notifyRoutingService;
 
     @Autowired
+    private com.sw.ck.notify.service.NotifyTemplateService notifyTemplateService;
+
+    @Autowired
+    private com.sw.ck.notify.service.NotifyTemplateVersionService versionService;
+
+    @Autowired
+    private com.sw.ck.notify.service.NotifyRecordService notifyRecordService;
+
+    @Autowired
     private TestLoginContext testLoginContext;
 
     @BeforeAll
@@ -103,6 +112,10 @@ class I6NotifyClosureIntegrationTest {
         try { jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_rule (id BIGINT PRIMARY KEY, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by BIGINT, update_by BIGINT, rule_code VARCHAR(100) NOT NULL, name VARCHAR(100) NOT NULL, event_type VARCHAR(40) NOT NULL, channel_priority VARCHAR(200) NOT NULL DEFAULT 'IN_APP', recipient_rule VARCHAR(500) NOT NULL, required_flag SMALLINT NOT NULL DEFAULT 0, failure_policy VARCHAR(20) NOT NULL DEFAULT 'RETRY', enabled SMALLINT NOT NULL DEFAULT 1, remark VARCHAR(500), tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0)"); } catch (Exception ignored) { }
         try { jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_subscription (id BIGINT PRIMARY KEY, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by BIGINT, update_by BIGINT, user_id BIGINT NOT NULL, event_type VARCHAR(40) NOT NULL, channel VARCHAR(40) DEFAULT 'IN_APP', enabled SMALLINT NOT NULL DEFAULT 1, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0)"); } catch (Exception ignored) { }
         try { jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_channel_config (id BIGINT PRIMARY KEY, channel VARCHAR(40) NOT NULL, enabled SMALLINT NOT NULL DEFAULT 0, sender_display VARCHAR(200), config_summary VARCHAR(500), tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"); } catch (Exception ignored) { }
+        try { jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_template (id BIGINT PRIMARY KEY, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by BIGINT, update_by BIGINT, deleted SMALLINT NOT NULL DEFAULT 0, tenant_id BIGINT NOT NULL DEFAULT 0, version BIGINT NOT NULL DEFAULT 0, template_code VARCHAR(100) NOT NULL, name VARCHAR(100) NOT NULL, title_template VARCHAR(200) NOT NULL, content_template TEXT NOT NULL, enabled SMALLINT NOT NULL DEFAULT 1, event_type VARCHAR(40) DEFAULT 'SYSTEM', channel VARCHAR(40) DEFAULT 'IN_APP', variables_allowed VARCHAR(1000), jump_ref VARCHAR(200), remark VARCHAR(500))"); } catch (Exception ignored) { }
+        try { jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_template_version (id BIGINT PRIMARY KEY, template_id BIGINT NOT NULL, template_version INT, event_type VARCHAR(40) DEFAULT 'SYSTEM', channel VARCHAR(40) DEFAULT 'IN_APP', title_template VARCHAR(200) NOT NULL, content_template TEXT NOT NULL, variables_allowed VARCHAR(1000), jump_ref VARCHAR(200), status VARCHAR(20), tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by BIGINT, update_by BIGINT)"); } catch (Exception ignored) { }
+        try { jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_send_attempt (id BIGINT PRIMARY KEY, message_id BIGINT NOT NULL, attempt_no INT NOT NULL, channel VARCHAR(32), status VARCHAR(20) NOT NULL, failure_reason VARCHAR(500), external_message_id VARCHAR(200), failure_class VARCHAR(40), started_at TIMESTAMP, finished_at TIMESTAMP, create_by BIGINT, update_by BIGINT, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"); } catch (Exception ignored) { }
+        try { jt.execute("CREATE TABLE IF NOT EXISTS sys_user (id BIGINT PRIMARY KEY, username VARCHAR(50), status INT DEFAULT 0, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0)"); } catch (Exception ignored) { }
     }
 
     @BeforeEach
@@ -256,6 +269,179 @@ class I6NotifyClosureIntegrationTest {
         assertThat(page.getTotal()).isEqualTo(0);
     }
 
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("G2a 模板不可变版本：编辑生效后新版本追加，既有投递仍固定旧版本号")
+    void g2a_templateVersionImmutable() {
+        clearRulesAndTemplates();
+        com.sw.ck.notify.dto.NotifyTemplateDTO dto = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+        dto.setTemplateCode("g2_demo");
+        dto.setName("G2 演示模板");
+        dto.setTitleTemplate("标题 v1");
+        dto.setContentTemplate("内容 v1");
+        dto.setEnabled(true);
+        dto.setEventType("TODO_CREATED");
+        dto.setChannel("IN_APP");
+        Long templateId = notifyTemplateService.createTemplate(dto);
+        var snapshot1 = versionService.latestSnapshot(templateId);
+        org.assertj.core.api.Assertions.assertThat(snapshot1.getTemplateVersion()).isEqualTo(1);
+        notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+                .channel(NotifyChannel.IN_APP)
+                .recipientId(7L)
+                .title("v1")
+                .content("v1")
+                .tenantId(100L)
+                .eventType("TODO_CREATED")
+                .bizId("t-g2a")
+                .occurrenceNo(1L)
+                .templateId(templateId)
+                .templateVersion(1)
+                .build());
+        dto.setContentTemplate("内容 v2");
+        notifyTemplateService.updateTemplate(templateId, dto);
+        var snapshot2 = versionService.latestSnapshot(templateId);
+        org.assertj.core.api.Assertions.assertThat(snapshot2.getTemplateVersion()).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryCount(
+                "SELECT template_version FROM sw_notify_message WHERE id = (SELECT MAX(id) FROM sw_notify_message)"))
+                .isEqualTo(1);
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("G2b 模板缺失变量在发送前明确失败，不在收件箱留下坏数据")
+    void g2b_missingVariableFailsBeforeSend() {
+        clearRulesAndTemplates();
+        com.sw.ck.notify.dto.NotifyTemplateDTO dto = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+        dto.setTemplateCode("g2_missing_var");
+        dto.setName("G2 缺变量模板");
+        dto.setTitleTemplate("标题 ${missing_var}");
+        dto.setContentTemplate("正文 ${missing_var}");
+        dto.setEnabled(true);
+        dto.setEventType("SYSTEM");
+        dto.setChannel("IN_APP");
+        notifyTemplateService.createTemplate(dto);
+        com.sw.ck.notify.dto.NotifyBatchSendReq req = new com.sw.ck.notify.dto.NotifyBatchSendReq();
+        req.setRecipientUserIds(List.of(7L));
+        req.setTemplateCode("g2_missing_var");
+        java.util.Map<String, String> variables = new java.util.HashMap<>();
+        variables.put("provided_var", "值");
+        req.setVariables(variables);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> notifyMessageService.batchSend(req))
+                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message")).isEqualTo(0);
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("G2c 危险 HTML 经净化器拒绝注入脚本/事件/任意协议")
+    void g2c_htmlSanitizer() {
+        String dirty = "正常<input onerror=alert(1)><script>alert(2)</script><a href='" + "javascript" + ":evil()'>x</a>";
+        String cleaned = com.sw.ck.notify.render.NotifyHtmlSanitizer.clean(dirty);
+        org.assertj.core.api.Assertions.assertThat(cleaned).doesNotContain("<script");
+        org.assertj.core.api.Assertions.assertThat(cleaned.toLowerCase()).doesNotContain("onerror=");
+        org.assertj.core.api.Assertions.assertThat(cleaned.toLowerCase()).doesNotContain("javascript");
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("G2d 规则停用后路由回落 IN_APP；订阅变化不改写已通知历史")
+    void g2d_ruleToggleAndSubscription() {
+        clearRulesAndTemplates();
+        notifyRuleService.createRule(rule("g2d_rule_todo", "TODO_CREATED", true));
+        Long rowId = jdbc.queryForLong("SELECT id FROM sw_notify_rule WHERE rule_code='g2d_rule_todo'");
+        notifyRuleService.toggleRule(rowId, false);
+        org.assertj.core.api.Assertions.assertThat(notifyRoutingService.channelsFor("TODO_CREATED", 7L))
+                .containsExactly(NotifyChannel.IN_APP);
+        notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+                .channel(NotifyChannel.IN_APP)
+                .recipientId(7L)
+                .title("参考")
+                .content("不因订阅变化而改写")
+                .tenantId(100L)
+                .eventType("TODO_CREATED")
+                .bizId("t-g2d")
+                .occurrenceNo(1L)
+                .build());
+        com.sw.ck.notify.dto.NotifySubscriptionSaveReq req = new com.sw.ck.notify.dto.NotifySubscriptionSaveReq();
+        com.sw.ck.notify.dto.NotifySubscriptionSaveReq.Item item = new com.sw.ck.notify.dto.NotifySubscriptionSaveReq.Item();
+        item.setEventType("TODO_CREATED");
+        item.setChannel("EMAIL");
+        item.setEnabled(true);
+        req.setItems(List.of(item));
+        notifySubscriptionService.save(7L, req);
+        org.assertj.core.api.Assertions.assertThat(
+                jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message WHERE biz_id='t-g2d'")).isEqualTo(1);
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("G3a 双租户矩阵：跨租户模板/规则/订阅不读不可写，用户订阅互不串扰")
+    void g3a_crossTenantMatrix() {
+        clearRulesAndTemplates();
+        com.sw.ck.notify.dto.NotifyTemplateDTO dto = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+        dto.setTemplateCode("g3_tenant_template");
+        dto.setName("租户 100 模板");
+        dto.setTitleTemplate("标题");
+        dto.setContentTemplate("内容");
+        dto.setEnabled(true);
+        dto.setEventType("SYSTEM");
+        dto.setChannel("IN_APP");
+        Long templateId = notifyTemplateService.createTemplate(dto);
+        notifyRuleService.createRule(rule("g3_rule_todo", "TODO_CREATED", true));
+        testLoginContext.set(200L, 7L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> notifyTemplateService.getTemplate(templateId))
+                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+        org.assertj.core.api.Assertions.assertThat(notifyRuleService.listEnabledByEvent("TODO_CREATED")).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(notifySubscriptionService.preferences(7L)).isEmpty();
+        testLoginContext.set(100L, 7L);
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("G3b 失效/缺失邮箱目标解析为明确失败，不冒充成功")
+    void g3b_targetResolutionFailClosed() {
+        com.sw.ck.notify.api.NotifyTargetResolver resolver = new com.sw.ck.notify.api.NotifyTargetResolver() {
+            @Override
+            public String resolveEmail(Long userId) { return null; }
+
+            @Override
+            public String resolvePhone(Long userId) { return null; }
+        };
+        var adapter = new com.sw.ck.notify.adapters.EmailNotifyChannelAdapter((org.springframework.mail.javamail.JavaMailSender) null, resolver,
+                new com.sw.ck.notify.config.NotifyChannelProperties());
+        var result = adapter.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+                .channel(NotifyChannel.EMAIL)
+                .recipientId(999L)
+                .title("标题")
+                .content("正文")
+                .tenantId(100L)
+                .build());
+        org.assertj.core.api.Assertions.assertThat(result.getStatus()).isEqualTo("FAILED");
+        org.assertj.core.api.Assertions.assertThat(result.getFailureReason()).contains("无法解析收件邮箱");
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("G3c 管理员记录详情默认省略完整正文（最小暴露）")
+    void g3c_recordDetailMasked() {
+        notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+                .channel(NotifyChannel.IN_APP)
+                .recipientId(7L)
+                .title("机密")
+                .content("完整正文内容 SECRET")
+                .tenantId(100L)
+                .eventType("SYSTEM")
+                .bizId("t-g3c")
+                .occurrenceNo(1L)
+                .build());
+        Long lastId = jdbc.queryForLong("SELECT MAX(id) FROM sw_notify_message");
+        java.util.Map<String, Object> detail = notifyRecordService.recordDetail(lastId);
+        NotifyMessage masked = (NotifyMessage) detail.get("message");
+        org.assertj.core.api.Assertions.assertThat(masked.getContent()).isNull();
+    }
+
+    private void clearRulesAndTemplates() {
+        jdbc.update("DELETE FROM sw_notify_message");
+        jdbc.update("DELETE FROM sw_notify_rule");
+        jdbc.update("DELETE FROM sw_notify_subscription");
+        jdbc.update("DELETE FROM sw_notify_channel_config");
+        jdbc.update("DELETE FROM sw_notify_template_version");
+        jdbc.update("DELETE FROM sw_notify_template");
+        testLoginContext.set(100L, 7L);
+    }
     private NotifyRuleDTO rule(String code, String eventType, boolean required) {
         NotifyRuleDTO dto = new NotifyRuleDTO();
         dto.setRuleCode(code);
@@ -284,6 +470,11 @@ class I6NotifyClosureIntegrationTest {
 
         void update(String sql) {
             jdbc.update(sql);
+        }
+
+        long queryForLong(String sql) {
+            Long v = jdbc.queryForObject(sql, Long.class);
+            return v == null ? 0L : v;
         }
 
         long queryCount(String sql) {
@@ -439,6 +630,14 @@ class I6NotifyClosureIntegrationTest {
         @Bean
         public NotifyChannelConfigService notifyChannelConfigService(com.sw.ck.notify.mapper.NotifyChannelConfigMapper c) {
             return new NotifyChannelConfigServiceImpl(List.of(), c);
+        }
+
+        @Bean
+        public com.sw.ck.notify.service.NotifyRecordService notifyRecordService(
+                com.sw.ck.notify.mapper.NotifyMessageMapper mm,
+                com.sw.ck.notify.mapper.NotifySendAttemptMapper am,
+                com.sw.ck.notify.api.NotifyFacade facade) {
+            return new com.sw.ck.notify.service.impl.NotifyRecordServiceImpl(mm, am, facade);
         }
 
         @Bean

@@ -285,7 +285,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
             attempt.setFinishedAt(now);
             attemptMapper.insert(attempt);
         } catch (Exception e) {
-            // 尝试流水为辅助审计，不阻断投递主链路
+            log.warn("尝试流水记录失败（不阻断投递）: messageId={}, error={}", messageId, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
     }
 }

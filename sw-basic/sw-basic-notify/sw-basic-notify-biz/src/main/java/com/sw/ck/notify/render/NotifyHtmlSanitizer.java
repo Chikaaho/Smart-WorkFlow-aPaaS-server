@@ -11,8 +11,8 @@ import java.util.regex.Pattern;
 public final class NotifyHtmlSanitizer {
 
     private static final Pattern SCRIPT = Pattern.compile("(?is)<script[^>]*>.*?</script>|<script[^>]*/?>");
-    private static final Pattern EVENT_ATTRS = Pattern.compile("(?is)\son[a-z]+\s*=\s*\"[^\"]*\"|\son[a-z]+\s*=\s*'[^']*'");
-    private static final Pattern SCHEME = Pattern.compile("(?is)(href|src)\s*=\s*(\"|')\s*(javascript|data|vbscript):[^\"']*(\"|')");
+    private static final Pattern EVENT_ATTRS = Pattern.compile("(?is)\\son[a-z]+(\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+))?");
+    private static final Pattern SCHEME = Pattern.compile("(?is)(href|src)\\s*=\\s*(\"|')\\s*(javascript|data|vbscript):[^\"']*(\"|')");
 
     private NotifyHtmlSanitizer() {
     }

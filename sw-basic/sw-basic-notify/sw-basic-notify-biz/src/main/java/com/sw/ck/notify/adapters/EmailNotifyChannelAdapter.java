@@ -41,8 +41,9 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
                                      com.sw.ck.notify.config.NotifyChannelProperties props) {
         this.mailSender = mailSender;
         this.targetResolver = targetResolver;
-        this.from = props.getChannels().get("EMAIL").getFrom();
-        this.port = props.getChannels().get("EMAIL").getPort();
+        com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps emailProps = props.getChannels() == null ? null : props.getChannels().get("EMAIL");
+        this.from = emailProps == null ? null : emailProps.getFrom();
+        this.port = emailProps == null ? null : emailProps.getPort();
     }
 
     @Override
