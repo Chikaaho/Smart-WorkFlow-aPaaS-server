@@ -51,6 +51,10 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
 
     private static final String APPROVER_CONFIG_ELEMENT = "approverConfig";
 
+    /** 审批意见表单可用组件集合（组件适用矩阵，I3 §4.10；与 ApprovalOpinionValidator 口径一致）。 */
+    private static final java.util.Set<String> OPINION_SUPPORTED_TYPES = java.util.Set.of(
+            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE");
+
     /** Flowable 扩展命名空间（BPMN 2.0 XSD 允许 {@code flowable:*} 属性） */
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
     private static final String FLOWABLE_PREFIX = "flowable";
@@ -81,9 +85,7 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                         new BpmNodeConfigField("approver", "审批人（兼容）", "object", false,
                                 Map.of("approverTypes", List.of(NodeApproverType.DESIGNATED))),
                         new BpmNodeConfigField("participant", "参与人", "object", true,
-                                Map.of("strategies", List.of(ParticipantStrategy.FIXED_USER,
-                                        ParticipantStrategy.ROLE, ParticipantStrategy.EXPRESSION,
-                                        ParticipantStrategy.ADAPTER))),
+                                Map.of("strategies", ParticipantStrategy.ALL)),
                         new BpmNodeConfigField("opinionForm", "审批意见表单", "object", false, Map.of()),
                         new BpmNodeConfigField("returnTargets", "可退回节点", "array", false, Map.of())),
                 "2",
@@ -116,9 +118,7 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                     "审批人类型不能为空"));
         }
         if (config.containsKey("participant")) {
-            if (!List.of(ParticipantStrategy.FIXED_USER, ParticipantStrategy.ROLE,
-                    ParticipantStrategy.EXPRESSION, ParticipantStrategy.ADAPTER)
-                    .contains(approverType.toUpperCase())) {
+            if (!ParticipantStrategy.ALL.contains(approverType.toUpperCase())) {
                 return List.of(configError(node, BpmErrorCode.PARTICIPANT_TYPE_NOT_IMPLEMENTED,
                         "未实现的参与人策略: " + approverType));
             }
@@ -142,6 +142,26 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
             return List.of(configError(node, BpmErrorCode.APPROVER_RESOLVE_EMPTY,
                     "参与人配置值不能为空"));
         }
+        // 意见表单组件适用矩阵（I3 §4.10）：不可用组件（富文本、表格、外键等）
+        // 必须在设计端/发布校验被拒，不得带病发布；类型集合与 ApprovalOpinionValidator 一致。
+        Object opinionFormObj = config.get("opinionForm");
+        if (opinionFormObj instanceof Map<?, ?> opinionForm
+                && opinionForm.get("fields") instanceof Collection<?> opinionFields) {
+            for (Object fieldObj : opinionFields) {
+                if (!(fieldObj instanceof Map<?, ?> field)) {
+                    return List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
+                            "审批意见表单字段定义不合法"));
+                }
+                Object typeObj = field.get("type");
+                String fieldType = typeObj == null ? null
+                        : String.valueOf(typeObj).trim().toUpperCase();
+                if (fieldType == null || fieldType.isBlank()
+                        || !OPINION_SUPPORTED_TYPES.contains(fieldType)) {
+                    return List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
+                            "审批意见表单组件不可用: " + fieldType));
+                }
+            }
+        }
         return List.of();
     }
 
@@ -161,6 +181,29 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                 return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
                         "ROLE 必须配置非空角色编码");
             }
+        } else if (ParticipantStrategy.DEPT_LEADER.equalsIgnoreCase(strategy)) {
+            Collection<?> values = value instanceof Collection<?> collection ? collection : List.of(value);
+            if (values.isEmpty() || values.stream().anyMatch(item -> {
+                try { return Long.parseLong(String.valueOf(item)) <= 0; }
+                catch (Exception e) { return true; }
+            })) {
+                return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "DEPT_LEADER 只能配置正整数部门 ID");
+            }
+        } else if (ParticipantStrategy.POST.equalsIgnoreCase(strategy)) {
+            Collection<?> values = value instanceof Collection<?> collection ? collection : List.of(value);
+            if (values.isEmpty() || values.stream().anyMatch(item -> item == null || String.valueOf(item).isBlank())) {
+                return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "POST 必须配置非空岗位编码");
+            }
+        } else if (ParticipantStrategy.DEPT_POST.equalsIgnoreCase(strategy)) {
+            if (!(value instanceof java.util.Map<?, ?> mapping)
+                    || toPositiveLong(mapping.get("deptId")) == null
+                    || mapping.get("postCode") == null
+                    || String.valueOf(mapping.get("postCode")).isBlank()) {
+                return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "DEPT_POST 必须配置 {deptId, postCode}（正整数部门 ID + 非空岗位编码）");
+            }
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(strategy)) {
             if (!(value instanceof String expression) || expression.isBlank()) {
                 return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
@@ -174,6 +217,18 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
             }
         }
         return null;
+    }
+
+    private Long toPositiveLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue() > 0 ? number.longValue() : null;
+        }
+        try {
+            long parsed = Long.parseLong(String.valueOf(value));
+            return parsed > 0 ? parsed : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private GraphValidationError configError(GraphElement node, BpmErrorCode errorCode, String message) {

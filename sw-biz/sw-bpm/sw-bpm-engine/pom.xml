@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>0.1.0</version>
         <relativePath>../../../pom.xml</relativePath>
     </parent>
 
@@ -48,6 +48,12 @@
         <dependency>
             <groupId>com.sw.ck</groupId>
             <artifactId>sw-biz-system-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- bpm 依赖 form（唯一允许方向）：实现 form-api 的 ExtDatasourceQueryPort 适配 -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-biz-form-api</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

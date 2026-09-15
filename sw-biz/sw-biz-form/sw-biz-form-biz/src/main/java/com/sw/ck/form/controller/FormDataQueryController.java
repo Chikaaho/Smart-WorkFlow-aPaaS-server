@@ -6,6 +6,7 @@ import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.service.FormDataQueryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -36,6 +37,7 @@ public class FormDataQueryController {
      * @return {@code R<PageResult<Map<String, Object>>>} 分页结果
      */
     @PostMapping("/{formKey}/query")
+    @PreAuthorize("@ss.hasPermi('form:data:query')")
     public R<PageResult<Map<String, Object>>> queryData(@PathVariable("formKey") String formKey,
                                                          @RequestBody FormDataQueryRequest request) {
         log.info("Form data query: formKey={}, page={}, size={}, filters={}",

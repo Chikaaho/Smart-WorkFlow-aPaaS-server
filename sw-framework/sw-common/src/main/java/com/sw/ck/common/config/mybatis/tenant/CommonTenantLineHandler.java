@@ -1,7 +1,6 @@
 package com.sw.ck.common.config.mybatis.tenant;
 
 import com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler;
-import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.common.security.LoginContextProvider;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.LongValue;
@@ -25,8 +24,11 @@ public class CommonTenantLineHandler implements TenantLineHandler {
     @Override
     public Expression getTenantId() {
         Long tenantId = loginContextProvider.getTenantId();
-        long value = tenantId != null ? tenantId : Long.parseLong(CommonConstants.SUPER_TENANT_ID);
-        return new LongValue(value);
+        if (tenantId == null) {
+            // 认证上下文缺失时 fail closed：不把无身份读写静默归入租户 0
+            throw new IllegalStateException("租户上下文缺失，拒绝生成租户过滤条件（业务请求必须携带已认证身份）");
+        }
+        return new LongValue(tenantId);
     }
 
     @Override
@@ -42,6 +44,10 @@ public class CommonTenantLineHandler implements TenantLineHandler {
      */
     @Override
     public boolean ignoreTable(String tableName) {
+        // 认证身份装载期（登录前无租户上下文）挂起租户行过滤；业务读写不得使用
+        if (TenantLineSuspension.isSuspended()) {
+            return true;
+        }
         String currentDs = DynamicDataSourceContextHolder.peek();
         if (currentDs != null && !"master".equals(currentDs)) {
             log.debug("TenantLineHandler: skip tenant filter on non-master DS '{}', table '{}'", currentDs, tableName);

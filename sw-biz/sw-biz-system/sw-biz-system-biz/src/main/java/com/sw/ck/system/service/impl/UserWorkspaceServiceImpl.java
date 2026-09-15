@@ -26,8 +26,8 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
 
     private static final Logger log = LoggerFactory.getLogger(UserWorkspaceServiceImpl.class);
 
-    /** 组件键白名单（v0.0.2 首批四组件） */
-    private static final Set<String> COMPONENT_KEYS = Set.of("todo", "myInitiated", "cc", "favoriteItems");
+    /** 组件键白名单（v0.0.2 首批四组件；I4 §3.7 扩展草稿与消息入口；I4 G4a 补「我的已办」） */
+    private static final Set<String> COMPONENT_KEYS = Set.of("todo", "myProcessed", "myInitiated", "cc", "favoriteItems", "drafts", "messages");
     private static final int MAX_LAYOUT_BYTES = 64 * 1024;
     private static final int MAX_FAVORITES = 20;
 
@@ -80,7 +80,6 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
             row.setLayoutJson(json);
             row.setCreateTime(LocalDateTime.now());
             row.setUpdateTime(LocalDateTime.now());
-            row.setTenantId(0L);
             row.setDeleted(0);
             row.setVersion(0L);
             workspaceMapper.insert(row);
@@ -153,23 +152,38 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
         todo.put("visible", true);
         todo.put("order", 1);
         todo.put("span", 1);
+        Map<String, Object> myProcessed = new LinkedHashMap<>();
+        myProcessed.put("key", "myProcessed");
+        myProcessed.put("visible", true);
+        myProcessed.put("order", 2);
+        myProcessed.put("span", 1);
         Map<String, Object> myInitiated = new LinkedHashMap<>();
         myInitiated.put("key", "myInitiated");
         myInitiated.put("visible", true);
-        myInitiated.put("order", 2);
+        myInitiated.put("order", 3);
         myInitiated.put("span", 1);
         Map<String, Object> cc = new LinkedHashMap<>();
         cc.put("key", "cc");
         cc.put("visible", true);
-        cc.put("order", 3);
+        cc.put("order", 4);
         cc.put("span", 1);
         Map<String, Object> favoriteItems = new LinkedHashMap<>();
         favoriteItems.put("key", "favoriteItems");
         favoriteItems.put("visible", true);
-        favoriteItems.put("order", 4);
+        favoriteItems.put("order", 5);
         favoriteItems.put("span", 1);
+        Map<String, Object> drafts = new LinkedHashMap<>();
+        drafts.put("key", "drafts");
+        drafts.put("visible", true);
+        drafts.put("order", 6);
+        drafts.put("span", 1);
+        Map<String, Object> messages = new LinkedHashMap<>();
+        messages.put("key", "messages");
+        messages.put("visible", true);
+        messages.put("order", 7);
+        messages.put("span", 1);
         Map<String, Object> layout = new LinkedHashMap<>();
-        layout.put("components", java.util.List.of(todo, myInitiated, cc, favoriteItems));
+        layout.put("components", java.util.List.of(todo, myProcessed, myInitiated, cc, favoriteItems, drafts, messages));
         layout.put("favoriteItemKeys", java.util.List.of());
         return layout;
     }

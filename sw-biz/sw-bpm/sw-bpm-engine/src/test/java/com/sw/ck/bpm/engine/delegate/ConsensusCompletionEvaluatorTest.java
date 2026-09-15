@@ -12,8 +12,17 @@ class ConsensusCompletionEvaluatorTest {
     private final ConsensusCompletionEvaluator evaluator = new ConsensusCompletionEvaluator();
 
     @Test
-    void anyRejectMustSettleAsNegative() {
+    void anyRejectMustNotSettleBeforeAllVoted() {
+        // I3 审查 02 裁决：ANY 负向不得在第一张否决票提前终结，须等全部参与人表决完成。
         DelegateExecution execution = execution(2, 0, 1, 1);
+
+        assertThat(evaluator.shouldComplete(execution, "ANY", 100)).isFalse();
+    }
+
+    @Test
+    void anyRejectSettlesNegativeAfterAllVotedWithoutApproval() {
+        // 全员否决（0 通过 / 2 完成）→ ANY 负向结算。
+        DelegateExecution execution = execution(2, 0, 2, 2);
 
         assertThat(evaluator.shouldComplete(execution, "ANY", 100)).isTrue();
     }

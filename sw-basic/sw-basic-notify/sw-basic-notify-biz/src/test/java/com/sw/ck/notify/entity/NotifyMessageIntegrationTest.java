@@ -117,6 +117,18 @@ class NotifyMessageIntegrationTest {
                     idempotency_key   varchar(200)
                 )
                 """);
+
+        // I6 收口新增列（IF NOT EXISTS 双方言兼容；存量 schema 与生产迁移同语义）
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS event_type varchar(40) not null default 'SYSTEM'"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS occurrence_no bigint not null default 1"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS template_id bigint"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS template_version int"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS link_type varchar(32)"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS link_id varchar(64)"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS retry_count int not null default 0"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS next_retry_time timestamp"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS failure_class varchar(40)"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jdbcTemplate.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS receipt_digest varchar(200)"); } catch (Exception ignored) { /* schema already migrated */ }
         // 索引无需手动创建（Flyway 脚本中已有），测试验证不依赖索引
     }
 

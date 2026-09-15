@@ -161,4 +161,57 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
         dto.setTaskId(ha.getTaskId());
         return dto;
     }
+    @Override
+    public java.util.Map<String, Object> getProcessVariables(String processInstanceId) {
+        java.util.Map<String, Object> variables = new java.util.LinkedHashMap<>();
+        try {
+            for (org.flowable.variable.api.history.HistoricVariableInstance var :
+                    historyService.createHistoricVariableInstanceQuery()
+                            .processInstanceId(processInstanceId)
+                            .list()) {
+                variables.put(var.getVariableName(), var.getValue());
+            }
+        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException e) {
+            return java.util.Map.of();
+        }
+        return variables;
+    }
+
+    @Override
+    public String getProcessInstanceStatus(String processInstanceId) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            return "NOT_FOUND";
+        }
+        ProcessInstance running = runtimeService.createProcessInstanceQuery()
+                .processInstanceId(processInstanceId).singleResult();
+        if (running != null) {
+            return "RUNNING";
+        }
+        try {
+            org.flowable.engine.history.HistoricProcessInstance historic =
+                    historyService.createHistoricProcessInstanceQuery()
+                            .processInstanceId(processInstanceId).singleResult();
+            if (historic == null) {
+                return "NOT_FOUND";
+            }
+            String deleteReason = historic.getDeleteReason();
+            if (deleteReason == null || deleteReason.isBlank()) {
+                return "APPROVED"; // 正常走完：无删除原因
+            }
+            return mapTerminalStatus(deleteReason);
+        } catch (RuntimeException e) {
+            return "UNKNOWN";
+        }
+    }
+
+    /** 删除原因 → 对外终态（I3/I4 动作语义映射，未知原因统一 TERMINATED）。 */
+    private String mapTerminalStatus(String reason) {
+        String normalized = reason == null ? "" : reason.toUpperCase();
+        if (normalized.contains("REJECT") || normalized.contains("DISAPPROVE")) return "REJECTED";
+        if (normalized.contains("WITHDRAW")) return "WITHDRAWN";
+        if (normalized.contains("DISCARD")) return "DISCARDED";
+        if (normalized.contains("FAILED") || normalized.contains("ERROR")) return "FAILED";
+        return "TERMINATED";
+    }
+
 }

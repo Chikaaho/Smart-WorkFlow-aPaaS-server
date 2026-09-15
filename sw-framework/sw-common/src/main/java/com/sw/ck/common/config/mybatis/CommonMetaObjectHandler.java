@@ -59,10 +59,10 @@ public class CommonMetaObjectHandler implements MetaObjectHandler {
     }
 
     /**
-     * 取不到登录态时，降级为超级租户 {@link CommonConstants#SUPER_TENANT_ID}。
+     * 业务写入租户归属取当前登录态；无登录态时保持 null 交由显式写入方决定
+     * （如迁移 seed、系统初始化行自带 tenant_id 默认值 0），不再静默降级超级租户。
      */
     private Long currentTenantId() {
-        Long tenantId = loginContextProvider.getTenantId();
-        return tenantId != null ? tenantId : Long.valueOf(CommonConstants.SUPER_TENANT_ID);
+        return loginContextProvider.getTenantId();
     }
 }

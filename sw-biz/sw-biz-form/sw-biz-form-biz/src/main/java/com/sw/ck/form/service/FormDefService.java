@@ -70,6 +70,12 @@ public interface FormDefService {
     void publish(String formId);
 
     /**
+     * 在同一已发布表单上发布新版本。
+     * <p>保留现有物理表与历史快照，仅为新增字段增量加列，并递增 formVersion。</p>
+     */
+    void publishNewVersion(String formId, String definition);
+
+    /**
      * 根据 ID 获取表单定义 DTO。
      */
     FormDefDTO getFormDef(String id);
@@ -157,4 +163,34 @@ public interface FormDefService {
      * @param id 表单 ID
      */
     void deleteDraft(String id);
+
+    // ==================== I2 生命周期与列表配置 ====================
+
+    /**
+     * 停用已发布表单（I2，方向 §4.4）。
+     * <p>
+     * 停用后禁止新的绑定、填报、正式提交和流程发起；既有运行实例、审批查看
+     * 和历史记录继续按冻结快照可读。动作落 sw_form_lifecycle_audit 审计。
+     * </p>
+     *
+     * @param id     表单 ID
+     * @param reason 停用原因（可空）
+     */
+    void disable(String id, String reason);
+
+    /** 重新启用已停用表单（动作落审计）。 */
+    void enable(String id, String reason);
+
+    /**
+     * 保存表单列表展示配置（I2，方向 §4.5）。
+     *
+     * @param formId     表单 ID（须已发布）
+     * @param configJson 列表配置 JSON（columns/filters/defaultSort/actions）
+     */
+    void saveListConfig(String formId, String configJson);
+
+    /**
+     * 读取表单列表展示配置；未配置返回 null（消费方可继续用派生默认）。
+     */
+    String getListConfig(String formId);
 }

@@ -22,6 +22,28 @@ public interface BpmProcessDefService {
     BpmProcessDef findByProcessKey(String processKey);
 
     /**
+     * 根据主键查询流程定义。
+     *
+     * @param id 流程定义 ID
+     * @return 流程定义实体（可能为 null）
+     */
+    BpmProcessDef findById(Long id);
+
+    /**
+     * 变更 IoT 接入开关（P21）。
+     *
+     * @param id   流程定义 ID
+     * @param flag 开关
+     * @return 更新后的实体
+     */
+    BpmProcessDef changeIotAccess(Long id, boolean flag);
+
+    /**
+     * 配置 A6 设备动作（三类设备来源 + 失败策略；JSON 存根）。
+     */
+    BpmProcessDef setIotDeviceAction(Long id, String actionJson);
+
+    /**
      * 创建流程定义（DRAFT 状态）。
      *
      * @param name    流程名称
@@ -50,6 +72,15 @@ public interface BpmProcessDefService {
      * @param graphJson 图 JSON 字符串
      */
     void saveDraftGraph(Long id, String graphJson);
+
+    /**
+     * 登记模板溯源关系（I4 §3.2）：仅 DRAFT 且未登记过时写入，历史与已发布定义不改写。
+     *
+     * @param id             流程定义 ID
+     * @param templateId     来源模板 ID
+     * @param templateVersion 复制时的模板版本
+     */
+    void markTemplateSource(Long id, Long templateId, Integer templateVersion);
 
     /**
      * 校验图（按 ID 读取定义中的图进行校验）。
@@ -125,4 +156,42 @@ public interface BpmProcessDefService {
      * @return 发布后的实体（含回填的 deployment_id / process_definition_id）
      */
     BpmProcessDef publish(Long id);
+
+    // ==================== I3 发布版本冻结 ====================
+
+    /**
+     * 列出流程定义全部发布版本（不含 graph_json）。
+     *
+     * @param defId 流程定义 ID
+     * @return 版本行列表（按版本号降序）
+     */
+    List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> listVersions(Long defId);
+
+    /**
+     * 读取指定发布版本的冻结图（ProcessGraph）。
+     *
+     * @param defId         流程定义 ID
+     * @param graphVersion  图版本号
+     * @return 冻结图对象
+     */
+    ProcessGraph getVersionGraph(Long defId, Integer graphVersion);
+
+    /**
+     * 挂起指定发布版本：仅禁止新实例发起，既有实例保持可解释。
+     * 挂起/激活只对当前最高版本有效（执行实例仍旧绑定其发起版本）。
+     *
+     * @param defId        流程定义 ID
+     * @param graphVersion 版本号
+     */
+    void suspendVersion(Long defId, Integer graphVersion);
+
+    /**
+     * 激活指定发布版本（恢复同一版本发起能力）。
+     */
+    void activateVersion(Long defId, Integer graphVersion);
+
+    /**
+     * 标记发布版本为 DISABLED（业务下线；不删除历史）。
+     */
+    void disableVersion(Long defId, Integer graphVersion);
 }

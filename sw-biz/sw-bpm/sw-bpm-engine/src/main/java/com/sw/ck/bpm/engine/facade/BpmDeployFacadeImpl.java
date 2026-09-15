@@ -119,4 +119,33 @@ public class BpmDeployFacadeImpl implements BpmDeployFacade {
             throw new UncheckedIOException(e);
         }
     }
+
+    @Override
+    public void suspendProcessDefinition(String processDefinitionId) {
+        if (processDefinitionId == null || processDefinitionId.isBlank()) {
+            throw new BaseException(BpmErrorCode.PROCESS_NOT_PUBLISHED);
+        }
+        repositoryService.suspendProcessDefinitionById(processDefinitionId, true, null);
+        log.info("BPM process definition suspended: processDefinitionId={}", processDefinitionId);
+    }
+
+    @Override
+    public void activateProcessDefinition(String processDefinitionId) {
+        if (processDefinitionId == null || processDefinitionId.isBlank()) {
+            throw new BaseException(BpmErrorCode.PROCESS_NOT_PUBLISHED);
+        }
+        repositoryService.activateProcessDefinitionById(processDefinitionId, true, null);
+        log.info("BPM process definition activated: processDefinitionId={}", processDefinitionId);
+    }
+
+    @Override
+    public String findProcessDefinitionIdByDeployment(String deploymentId) {
+        if (deploymentId == null || deploymentId.isBlank()) {
+            return null;
+        }
+        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery()
+                .deploymentId(deploymentId)
+                .singleResult();
+        return processDefinition == null ? null : processDefinition.getId();
+    }
 }

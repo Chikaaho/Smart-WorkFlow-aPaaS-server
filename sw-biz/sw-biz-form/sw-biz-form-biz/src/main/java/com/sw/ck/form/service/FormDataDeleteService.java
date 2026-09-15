@@ -104,12 +104,16 @@ public class FormDataDeleteService {
         // —— Step 4: CASCADE 软删子表 ——
         cascadeDeleteSubTableRecords(formDef.getId(), tableName, recordId, tenantId);
 
-        // —— Step 5: 软删主记录 ——
-        String deleteSql = "UPDATE \"" + tableName
-                + "\" SET \"deleted\" = 1 WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+        // —— Step 5: 软删主记录（I2：WHERE 叠加记录数据范围，服务端权威强制） ——
+        StringBuilder deleteWhere = new StringBuilder(
+                "\"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
+        List<Object> deleteParams = new ArrayList<>(List.of(recordId, tenantId));
+        FormDataScopeSupport.appendWhere(deleteWhere, deleteParams,
+                FormDataScopeSupport.resolve(loginUser, null, null));
+        String deleteSql = "UPDATE \"" + tableName + "\" SET \"deleted\" = 1 WHERE " + deleteWhere;
         int affected;
         try {
-            affected = jdbcTemplate.update(deleteSql, recordId, tenantId);
+            affected = jdbcTemplate.update(deleteSql, deleteParams.toArray());
         } catch (Exception e) {
             log.error("Soft-delete failed: table={}, recordId={}", tableName, recordId, e);
             throw new BaseException(FormErrorCode.DELETE_RECORD_NOT_EXIST, "删除失败: " + e.getMessage());

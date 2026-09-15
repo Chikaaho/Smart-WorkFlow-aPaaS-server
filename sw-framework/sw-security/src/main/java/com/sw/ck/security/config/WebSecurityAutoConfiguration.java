@@ -39,8 +39,9 @@ public class WebSecurityAutoConfiguration {
     @Bean
     public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
                                                              LoginUserLoader loginUserLoader,
-                                                             SecurityProperties securityProperties) {
-        return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties);
+                                                             SecurityProperties securityProperties,
+                                                             com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService) {
+        return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties, loginUserCacheService);
     }
 
     @Bean

@@ -67,4 +67,52 @@ public class IotDevice extends BaseEntity {
      */
     @TableField("last_online_time")
     private LocalDateTime lastOnlineTime;
+
+    /**
+     * 连接配置 ID（P21 平台化扩展）。
+     */
+    @TableField("connection_id")
+    private Long connectionId;
+
+    /**
+     * 本地产品 ID（P21 平台化扩展）。
+     */
+    @TableField("product_ref_id")
+    private Long productRefId;
+
+    /**
+     * 管理状态：DRAFT / PUBLISHED / DISABLED / RETIRED。
+     */
+    @TableField("manage_status")
+    private String manageStatus;
+
+    /**
+     * 可接入流程使用开关：1/0。
+     */
+    @TableField("process_access_enabled")
+    private Integer processAccessEnabled;
+
+    /**
+     * 最后上报时间。
+     */
+    @TableField("last_report_time")
+    private LocalDateTime lastReportTime;
+
+    /**
+     * 最后命令时间。
+     */
+    @TableField("last_command_time")
+    private LocalDateTime lastCommandTime;
+
+    /**
+     * 标签（逗号分隔）。
+     */
+    @TableField("labels")
+    private String labels;
+
+    /**
+     * 扩展 JSON。
+     */
+    @TableField("ext_json")
+    private String extJson;
 }

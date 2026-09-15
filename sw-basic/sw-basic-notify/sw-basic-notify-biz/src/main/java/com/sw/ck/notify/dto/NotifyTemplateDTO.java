@@ -29,4 +29,15 @@ public class NotifyTemplateDTO {
 
     /** 备注 */
     private String remark;
+
+
+    /* I6 扩展字段 */
+    /** 事件类型 */
+    private String eventType;
+    /** 渠道 */
+    private String channel;
+    /** 变量白名单（逗号分隔；空=允许全部合法变量名） */
+    private String variablesAllowed;
+    /** 受控跳转目标引用 */
+    private String jumpRef;
 }

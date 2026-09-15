@@ -7,6 +7,7 @@ import com.sw.ck.bpm.api.node.BpmNodeCapabilityDTO;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -224,6 +225,86 @@ public class BpmProcessDefController {
         BpmProcessDef published = bpmProcessDefService.publish(id);
         log.info("流程定义已发布: id={}", id);
         return R.ok(published);
+    }
+
+    // ==================== I3 发布版本冻结 ====================
+
+    /** 按流程定义 key 读取定义 + 图（实例详情图查看复用同一图契约）。 */
+    @GetMapping("/by-key/{processKey}")
+    public R<ProcessGraph> getDefByKey(@PathVariable String processKey) {
+        BpmProcessDef entity = bpmProcessDefService.findByProcessKey(processKey);
+        if (entity == null) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.NOT_FOUND.getCode(),
+                    "流程定义不存在");
+        }
+        return R.ok(parseGraph(entity.getGraphJson()));
+    }
+
+    /** 列出流程定义全部发布版本（不含 graph_json）。 */
+    @PreAuthorize("@ss.hasPermi('workflow:def:view')")
+    @GetMapping("/{id}/versions")
+    public R<List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion>> listVersions(@PathVariable Long id) {
+        return R.ok(bpmProcessDefService.listVersions(id));
+    }
+
+    /** 读取指定发布版本的冻结图。 */
+    @PreAuthorize("@ss.hasPermi('workflow:def:view')")
+    @GetMapping("/{id}/versions/{version}/graph")
+    public R<ProcessGraph> versionGraph(@PathVariable Long id, @PathVariable Integer version) {
+        return R.ok(bpmProcessDefService.getVersionGraph(id, version));
+    }
+
+    /** 挂起当前发布版本（仅禁止新实例；既有实例可解释）。 */
+    @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:suspend')")
+    @PostMapping("/{id}/versions/{version}/suspend")
+    public R<Void> suspendVersion(@PathVariable Long id, @PathVariable Integer version) {
+        bpmProcessDefService.suspendVersion(id, version);
+        log.info("发布版本已挂起: id={}, version={}", id, version);
+        return R.ok();
+    }
+
+    /** 激活当前发布版本（恢复同一版本发起能力）。 */
+    @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:suspend')")
+    @PostMapping("/{id}/versions/{version}/activate")
+    public R<Void> activateVersion(@PathVariable Long id, @PathVariable Integer version) {
+        bpmProcessDefService.activateVersion(id, version);
+        log.info("发布版本已激活: id={}, version={}", id, version);
+        return R.ok();
+    }
+
+    /**
+     * IoT 接入开关（P21）：仅允许 IoT 事件规则/受控脚本发起的流程模板开关。
+     * <p>
+     * 服务端强制校验：仅已发布定义可开启；关闭后触发时明确拒绝。
+     * </p>
+     */
+    @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
+    @PostMapping("/{id}/iot-access/{flag}")
+    public R<BpmProcessDef> changeIotAccess(@PathVariable Long id, @PathVariable boolean flag) {
+        BpmProcessDef def = bpmProcessDefService.findById(id);
+        if (def == null) {
+            return R.fail(404, "流程定义不存在: id=" + id);
+        }
+        if (flag && !"PUBLISHED".equals(def.getStatus())) {
+            return R.fail(400, "仅已发布流程定义可开启 IoT 接入: " + def.getProcessKey());
+        }
+        return R.ok(bpmProcessDefService.changeIotAccess(id, flag));
+    }
+
+    /**
+     * A6 设备动作配置（三类设备来源 + 失败策略）。
+     */
+    @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
+    @PostMapping("/{id}/iot-device-action")
+    public R<BpmProcessDef> setIotDeviceAction(@PathVariable Long id,
+                                               @RequestBody java.util.Map<String, Object> body) {
+        String actionJson = body.get("action") == null ? null
+                : com.alibaba.fastjson2.JSON.toJSONString(body.get("action"));
+        return R.ok(bpmProcessDefService.setIotDeviceAction(id, actionJson));
     }
 
     /**

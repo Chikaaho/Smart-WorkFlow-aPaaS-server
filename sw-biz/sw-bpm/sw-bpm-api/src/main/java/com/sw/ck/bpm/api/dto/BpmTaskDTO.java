@@ -47,4 +47,13 @@ public class BpmTaskDTO {
 
     /** 任务完成时间（仅已办/historic 任务有值，进行中任务为 null） */
     private Date endTime;
+
+    /** 委托：原责任人（owner；I3 DELEGATE 语义）。 */
+    private String owner;
+
+    /** 委托状态：DELEGATED / RESOLVED / null（非委托任务）。 */
+    private String delegationState;
+
+    /** 任务归属的发起人 ID（任务详情展示）。 */
+    private String initiatorId;
 }

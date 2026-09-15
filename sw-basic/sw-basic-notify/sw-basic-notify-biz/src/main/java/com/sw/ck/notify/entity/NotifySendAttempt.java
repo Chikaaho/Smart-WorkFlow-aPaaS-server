@@ -40,4 +40,16 @@ public class NotifySendAttempt extends BaseEntity {
 
     @TableField("external_message_id")
     private String externalMessageId;
+
+
+    /* I6 扩展字段 */
+    @TableField("failure_class")
+    private String failureClass;
+
+    @TableField("started_at")
+    private java.time.LocalDateTime startedAt;
+
+    @TableField("finished_at")
+    private java.time.LocalDateTime finishedAt;
 }
+

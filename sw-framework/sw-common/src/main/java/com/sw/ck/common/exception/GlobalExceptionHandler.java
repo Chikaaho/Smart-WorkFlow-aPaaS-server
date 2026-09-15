@@ -41,6 +41,62 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 请求体不可读（JSON 非法/类型不匹配）→ HTTP 400 + 受控业务码。
+     * P21 G5a：畸形请求不得落入 500，须返回客户端可控错误。
+     */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public R<Void> handleMessageNotReadable(org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        log.warn("request body not readable: {}", ex.getMessage());
+        return R.fail(400, "请求体非法: " + ex.getMostSpecificCause().getMessage());
+    }
+
+    /**
+     * 参数类型/取值不匹配 → HTTP 400 + 受控业务码。
+     */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public R<Void> handleTypeMismatch(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
+        log.warn("argument type mismatch: {}", ex.getMessage());
+        return R.fail(400, "参数非法: " + ex.getName());
+    }
+
+    /**
+     * 业务参数校验类异常（对象不存在等）→ HTTP 400 受控错误，不得落入 500。
+     */
+    @ExceptionHandler(java.lang.IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public R<Void> handleIllegalArgument(java.lang.IllegalArgumentException ex) {
+        log.warn("illegal argument: {}", ex.getMessage());
+        return R.fail(400, ex.getMessage());
+    }
+
+    /**
+     * @Valid 参数校验失败 → HTTP 400 受控错误，不得落入 500。
+     */
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public R<Void> handleValidation(org.springframework.web.bind.MethodArgumentNotValidException ex) {
+        String detail = ex.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(f -> f.getField() + " " + f.getDefaultMessage())
+                .orElse("参数非法");
+        log.warn("validation failed: {}", detail);
+        return R.fail(400, "参数非法: " + detail);
+    }
+
+    /**
+     * 静态资源/未映射路径 → HTTP 404 受控结果，不得落入 500（I5 复验 G2a：
+     * 匿名或路径错误必须是可判定结果，"系统异常" 不得掩盖认证/路由语义）。
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public R<Void> handleNoResource(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        log.warn("no resource: {}", ex.getResourcePath());
+        return R.fail(404, "资源不存在");
+    }
+
+    /**
      * 未分类 / 基础设施故障 → HTTP 500 + body 500。
      * system.md §8：基础设施故障必须落 5xx，不得伪装为 200。
      */

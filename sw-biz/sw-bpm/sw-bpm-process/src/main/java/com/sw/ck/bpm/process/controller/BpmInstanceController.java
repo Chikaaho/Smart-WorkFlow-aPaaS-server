@@ -9,6 +9,7 @@ import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ParticipantNameService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -54,15 +55,24 @@ public class BpmInstanceController {
     private final BpmRuntimeFacade bpmRuntimeFacade;
     private final BpmProcessDefService bpmProcessDefService;
     private final UserQueryFacade userQueryFacade;
+    private final ParticipantNameService participantNameService;
+    private final com.sw.ck.security.support.PermissionService permissionService;
+    private final com.sw.ck.bpm.process.mapper.CopyRecordMapper copyRecordMapper;
 
     public BpmInstanceController(BpmInstanceService bpmInstanceService,
                                   BpmRuntimeFacade bpmRuntimeFacade,
                                   BpmProcessDefService bpmProcessDefService,
-                                  UserQueryFacade userQueryFacade) {
+                                  UserQueryFacade userQueryFacade,
+                                  ParticipantNameService participantNameService,
+                                  com.sw.ck.security.support.PermissionService permissionService,
+                                  com.sw.ck.bpm.process.mapper.CopyRecordMapper copyRecordMapper) {
         this.bpmInstanceService = bpmInstanceService;
         this.bpmRuntimeFacade = bpmRuntimeFacade;
         this.bpmProcessDefService = bpmProcessDefService;
         this.userQueryFacade = userQueryFacade;
+        this.participantNameService = participantNameService;
+        this.permissionService = permissionService;
+        this.copyRecordMapper = copyRecordMapper;
     }
 
     /**
@@ -79,6 +89,7 @@ public class BpmInstanceController {
      * @return 分页实例列表
      */
     @GetMapping
+    @org.springframework.security.access.prepost.PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     public R<PageResult<InstanceListItemDTO>> listInstances(PageParam pageParam,
                                                              InstanceFilterDTO filter) {
         PageResult<BpmInstance> page = bpmInstanceService.pageInstances(pageParam, filter);
@@ -115,12 +126,32 @@ public class BpmInstanceController {
         BpmInstance instance = bpmInstanceService.findByProcessInstanceId(processInstanceId)
                 .orElseThrow(() -> new BaseException(
                         CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在"));
+        assertInstanceReadable(instance, processInstanceId);
 
         List<String> activeNodeIds = bpmRuntimeFacade.getActiveActivityIds(processInstanceId);
         List<BpmActivityDTO> flowTrace = bpmRuntimeFacade.queryHistoricActivities(processInstanceId);
 
-        // 审批人展示名富化（可读身份回显；查询失败不阻断详情）
-        Map<Long, String> assigneeNames = resolveUserNames(flowTrace.stream()
+        // 候选模式任务在 Flowable 历史中无 assignee（引擎层 approver 兜底会误填为发起人），
+        // 权威参与人以节点进入时冻结的快照为准：快照命中即覆盖（I1 G5b）。
+        // 任务级快照优先：动态并行多分支共用同一 node_key，节点级覆盖会把多条分支
+        // 改写为同一办理人（I4 G1a），taskId 命中才回退节点级。
+        Map<String, Long> nodeAssignees = participantNameService.resolveNodeAssignees(processInstanceId);
+        Map<String, Long> taskAssignees = participantNameService.resolveTaskAssignees(processInstanceId);
+        flowTrace.forEach(a -> {
+            if ("userTask".equals(a.getActivityType())) {
+                Long pid = a.getTaskId() != null ? taskAssignees.get(a.getTaskId()) : null;
+                if (pid == null) {
+                    pid = nodeAssignees.get(a.getActivityId());
+                }
+                if (pid != null) {
+                    a.setAssignee(String.valueOf(pid));
+                }
+            }
+        });
+
+        // 审批人展示名富化（快照冻结名优先，可读身份不随后续改名重写；查询失败不阻断详情）
+        Map<Long, String> assigneeNames = participantNameService.resolveDisplayNames(processInstanceId,
+                flowTrace.stream()
                 .map(BpmActivityDTO::getAssignee)
                 .filter(a -> a != null && a.matches("\\d+"))
                 .map(Long::valueOf)
@@ -131,7 +162,8 @@ public class BpmInstanceController {
             }
         });
 
-        InstanceDetailDTO dto = toDetailDTO(instance, activeNodeIds, flowTrace);
+        InstanceDetailDTO dto = toDetailDTO(instance, activeNodeIds, flowTrace,
+                bpmRuntimeFacade.getProcessVariables(processInstanceId).get("formData"));
 
         log.debug("实例详情查询: processInstanceId={}, activeNodes={}, flowTraceSize={}",
                 processInstanceId, activeNodeIds.size(), flowTrace.size());
@@ -139,6 +171,54 @@ public class BpmInstanceController {
     }
 
     // ==================== 内部方法 ====================
+
+    /**
+     * 实例详情对象权限（I4 §3.3/§4：数据范围作用于明细，跨用户零串读）。
+     * <p>
+     * 允许读取：超级管理员；持有 workflow:monitor:view 的运营身份；
+     * 发起人本人；该实例的参与人（历史/活跃任务办理人）；抄送接收人。
+     * 其余身份一律拒绝，前端隐藏不替代服务端拒绝。
+     * </p>
+     */
+    private void assertInstanceReadable(BpmInstance instance, String processInstanceId) {
+        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        if (loginUser == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED.getCode(), "未认证");
+        }
+        if (loginUser.isSuperAdmin()) {
+            return;
+        }
+        if (permissionService.hasPermi("workflow:monitor:view")) {
+            return;
+        }
+        if (instance.getInitiatorId() != null
+                && instance.getInitiatorId().equals(loginUser.getUserId())) {
+            return;
+        }
+        try {
+            boolean participant = bpmRuntimeFacade.queryHistoricActivities(processInstanceId).stream()
+                    .anyMatch(a -> "userTask".equals(a.getActivityType())
+                            && loginUser.getUserId() != null
+                            && loginUser.getUserId().toString().equals(a.getAssignee()));
+            if (participant) {
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("实例参与人读取判定失败，按无参与处理: processInstanceId={}, {}",
+                    processInstanceId, e.getMessage());
+        }
+        Long copyCount = copyRecordMapper.selectCount(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.sw.ck.bpm.process.entity.CopyRecord>()
+                        .eq(com.sw.ck.bpm.process.entity.CopyRecord::getProcessInstanceId, processInstanceId)
+                        .eq(com.sw.ck.bpm.process.entity.CopyRecord::getRecipientId,
+                                String.valueOf(loginUser.getUserId())));
+        if (copyCount != null && copyCount > 0) {
+            return;
+        }
+        log.warn("实例详情越权拒绝: processInstanceId={}, currentUser={}",
+                processInstanceId, loginUser.getUserId());
+        throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权查看该流程实例");
+    }
 
     /**
      * 将 BpmInstance 实体裁剪为列表项 DTO，并富化 processName。
@@ -196,8 +276,14 @@ public class BpmInstanceController {
      */
     private InstanceDetailDTO toDetailDTO(BpmInstance instance,
                                            List<String> activeNodeIds,
-                                           List<BpmActivityDTO> flowTrace) {
+                                           List<BpmActivityDTO> flowTrace,
+                                           Object formDataVariable) {
         InstanceDetailDTO dto = new InstanceDetailDTO();
+        if (formDataVariable instanceof Map<?, ?> formDataMap) {
+            java.util.Map<String, Object> formData = new java.util.LinkedHashMap<>();
+            formDataMap.forEach((k, v) -> formData.put(String.valueOf(k), v));
+            dto.setFormData(formData);
+        }
         // 继承 InstanceListItemDTO 的字段
         dto.setId(instance.getId());
         dto.setProcessInstanceId(instance.getProcessInstanceId());

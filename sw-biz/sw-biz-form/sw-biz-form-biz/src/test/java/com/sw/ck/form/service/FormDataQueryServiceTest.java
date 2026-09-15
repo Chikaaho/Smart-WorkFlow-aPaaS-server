@@ -102,6 +102,13 @@ class FormDataQueryServiceTest {
 
     @BeforeEach
     void setUp() {
+        // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
+        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+            i5TenantZeroSetup.setUserId(0L);
+            i5TenantZeroSetup.setTenantId(0L);
+            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+        }
         createMetadataTables();
 
         LoginUser loginUser = new LoginUser();
@@ -289,6 +296,55 @@ class FormDataQueryServiceTest {
         assertThat(result.getRecords()).hasSize(2);
         assertThat(result.getTotal()).isEqualTo(2);
         assertThat(result.getRecords().get(0).get("title")).isEqualTo("Alpha");
+    }
+
+    // ==================== 测试 3b：系统主键 id 过滤（引用显示名解析依赖） ====================
+
+    @Test
+    @DisplayName("系统列 id EQ → 精确返回该行；id 非 EQ → 拒绝")
+    void filter_systemIdEq_shouldReturnSingleRow_andNonEqRejected() {
+        var setup = setupQueryForm("id_eq");
+        String tableName = setup.tableName;
+        String targetId = UUID.randomUUID().toString();
+
+        jdbcTemplate.update(
+                "INSERT INTO \"" + tableName + "\" (\"id\", \"tenant_id\", \"deleted\", \"create_time\", \"create_by\", \"update_time\", \"update_by\", \"version\", \"title\") "
+                        + "VALUES (?, ?, 0, NOW(), ?, NOW(), ?, 0, ?)",
+                targetId, TEST_TENANT_ID, TEST_USER_ID, TEST_USER_ID, "Target");
+        jdbcTemplate.update(
+                "INSERT INTO \"" + tableName + "\" (\"id\", \"tenant_id\", \"deleted\", \"create_time\", \"create_by\", \"update_time\", \"update_by\", \"version\", \"title\") "
+                        + "VALUES (?, ?, 0, NOW(), ?, NOW(), ?, 0, ?)",
+                UUID.randomUUID().toString(), TEST_TENANT_ID, TEST_USER_ID, TEST_USER_ID, "Other");
+
+        // 正向：id EQ 精确返回该行
+        FormDataQueryRequest request = new FormDataQueryRequest();
+        request.setPageNum(1);
+        request.setPageSize(10);
+        FormDataFilter eqFilter = new FormDataFilter();
+        eqFilter.setField("id");
+        eqFilter.setOp(FilterOp.EQ);
+        eqFilter.setValue(targetId);
+        request.setFilters(List.of(eqFilter));
+
+        PageResult<Map<String, Object>> result = formDataQueryService.queryFormData(setup.formKey, request);
+        assertThat(result.getTotal()).isEqualTo(1);
+        assertThat(result.getRecords().get(0).get("id")).isEqualTo(targetId);
+        assertThat(result.getRecords().get(0).get("title")).isEqualTo("Target");
+
+        // 反向：id LIKE 拒绝（系统列仅放行 EQ）
+        FormDataQueryRequest likeRequest = new FormDataQueryRequest();
+        likeRequest.setPageNum(1);
+        likeRequest.setPageSize(10);
+        FormDataFilter likeFilter = new FormDataFilter();
+        likeFilter.setField("id");
+        likeFilter.setOp(FilterOp.LIKE);
+        likeFilter.setValue(targetId);
+        likeRequest.setFilters(List.of(likeFilter));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> formDataQueryService.queryFormData(setup.formKey, likeRequest))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("仅支持 EQ");
     }
 
     // ==================== 测试 4：LIKE 过滤 (TEXT) ====================
@@ -910,6 +966,33 @@ class FormDataQueryServiceTest {
             dbConfig.setLogicNotDeleteValue("0");
             globalConfig.setDbConfig(dbConfig);
             factory.setGlobalConfig(globalConfig);
+
+            // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
+            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
+                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+                        @Override public Long getUserId() {
+                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            return u != null ? u.getUserId() : null;
+                        }
+                        @Override public Long getTenantId() {
+                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            return u != null ? u.getTenantId() : null;
+                        }
+                        @Override public Long getDeptId() { return null; }
+                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
+                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        }
+                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public boolean isSuperAdmin() { return false; }
+                    });
+            i5MetaObjectHandler.setFormIdFiller(meta -> {
+                Object original = meta.getOriginalObject();
+                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                }
+            });
+            globalConfig.setMetaObjectHandler(i5MetaObjectHandler);
+
 
             MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
             interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());

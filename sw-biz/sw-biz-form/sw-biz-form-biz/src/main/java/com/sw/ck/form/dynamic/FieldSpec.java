@@ -110,6 +110,31 @@ public class FieldSpec {
         return new FieldSpec(name, FieldType.LABEL, null, null, null);
     }
 
+    /** 时间：HH:mm:ss → TIME 列 */
+    public static FieldSpec time(String name) {
+        return new FieldSpec(name, FieldType.TIME, null, null, null);
+    }
+
+    /** 人员选择：值=有效用户 ID → VARCHAR(64) */
+    public static FieldSpec user(String name) {
+        return new FieldSpec(name, FieldType.USER, null, null, null);
+    }
+
+    /** 部门选择：值=有效部门 ID → VARCHAR(64) */
+    public static FieldSpec dept(String name) {
+        return new FieldSpec(name, FieldType.DEPT, null, null, null);
+    }
+
+    /** 公式：服务端重算，落 NUMERIC(20,6) 结果列；expression 在 definition 冻结 */
+    public static FieldSpec formula(String name) {
+        return new FieldSpec(name, FieldType.FORMULA, null, null, null);
+    }
+
+    /** 受控外部数据源：dsBinding 在 definition 冻结，值列存服务端解析摘要 JSON */
+    public static FieldSpec datasource(String name) {
+        return new FieldSpec(name, FieldType.DATASOURCE, null, null, null);
+    }
+
     // ============ 查询 ============
 
     public String getFieldName() {

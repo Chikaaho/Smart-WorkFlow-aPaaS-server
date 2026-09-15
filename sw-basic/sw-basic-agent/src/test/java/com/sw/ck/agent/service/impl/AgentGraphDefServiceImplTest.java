@@ -259,6 +259,15 @@ class AgentGraphDefServiceImplTest {
         service.create("图-B");
         service.create("图-C");
 
+        // 同毫秒创建的行 update_time 相同会使 ORDER BY 次序不稳定：
+        // 显式拉开 update_time，使「update_time 倒序」断言确定化
+        jdbcTemplate.update("UPDATE sw_agent_graph_def SET update_time = ? WHERE name = '图-A'",
+                java.time.LocalDateTime.now().minusMinutes(2));
+        jdbcTemplate.update("UPDATE sw_agent_graph_def SET update_time = ? WHERE name = '图-B'",
+                java.time.LocalDateTime.now().minusMinutes(1));
+        jdbcTemplate.update("UPDATE sw_agent_graph_def SET update_time = ? WHERE name = '图-C'",
+                java.time.LocalDateTime.now());
+
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(1);
         pageParam.setPageSize(2);

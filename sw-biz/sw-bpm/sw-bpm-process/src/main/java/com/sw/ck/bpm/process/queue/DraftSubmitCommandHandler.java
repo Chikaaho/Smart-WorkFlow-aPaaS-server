@@ -46,7 +46,9 @@ public class DraftSubmitCommandHandler implements BpmCommandHandler {
 
     @Override
     public String handle(CommandEnvelope envelope) throws Exception {
-        BpmDraft draft = draftService.getById(envelope.getCommandKey().split(":")[1]);
+        // 命令键第二段为 draftId（DRAFT_SUBMIT:<draftId>:<submitSeq>）；
+        // PG 侧 bigint 列不接受 varchar 比较（H2 宽松语义掩盖），显式解析为 Long
+        BpmDraft draft = draftService.getById(Long.valueOf(envelope.getCommandKey().split(":")[1]));
         if (draft == null) {
             throw new IllegalStateException("草稿不存在: " + envelope.getCommandKey());
         }
@@ -88,7 +90,7 @@ public class DraftSubmitCommandHandler implements BpmCommandHandler {
     public void onFinalFailure(CommandEnvelope envelope, String reason) {
         // 有界重试耗尽：草稿转 FAILED，可修正后重新提交（D3：失败保留内容）
         String draftId = envelope.getCommandKey().split(":")[1];
-        BpmDraft draft = draftService.getById(draftId);
+        BpmDraft draft = draftService.getById(Long.valueOf(envelope.getCommandKey().split(":")[1]));
         if (draft == null) {
             return;
         }

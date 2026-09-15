@@ -49,11 +49,17 @@ public class BpmInstance extends BaseEntity {
     private Long initiatorId;
 
     /**
-     * 实例状态：RUNNING / APPROVED / REJECTED / FAILED。
+     * 实例状态：RUNNING / APPROVED / REJECTED / FAILED / WITHDRAWN / DISCARDED。
      * <p>
      * 落库 VARCHAR，接收入 {@link InstanceStatusEnum#getCode()}。
      * </p>
      */
     @TableField("status")
     private String status;
+
+    /**
+     * 发起时绑定的发布图版本号（I3 §4.3；发起时刻 def.published_version 快照）。
+     */
+    @TableField("def_version")
+    private Integer defVersion;
 }

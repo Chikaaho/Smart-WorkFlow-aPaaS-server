@@ -9,7 +9,13 @@ public enum FormStatusEnum {
     DRAFT("DRAFT", "草稿"),
 
     /** 发布态：动态宽表已建，表名/字段名冻结 */
-    PUBLISHED("PUBLISHED", "已发布");
+    PUBLISHED("PUBLISHED", "已发布"),
+
+    /**
+     * 停用态（I2）：禁止新的绑定、填报、正式提交和流程发起；
+     * 既有运行实例、审批查看和历史记录继续按冻结快照可读。
+     */
+    DISABLED("DISABLED", "已停用");
 
     private final String code;
     private final String label;
@@ -33,6 +39,10 @@ public enum FormStatusEnum {
 
     public boolean isPublished() {
         return this == PUBLISHED;
+    }
+
+    public boolean isDisabled() {
+        return this == DISABLED;
     }
 
     public static FormStatusEnum fromCode(String code) {

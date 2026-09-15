@@ -5,6 +5,7 @@ import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.service.DeptQuery;
 import com.sw.ck.system.service.SysDeptService;
 import jakarta.validation.Valid;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -32,6 +33,7 @@ public class DeptController {
      * </p>
      */
     @GetMapping("/tree")
+    @PreAuthorize("@ss.hasPermi('system:dept:list')")
     public R<List<SysDept>> tree(@RequestParam(required = false) String name,
                                  @RequestParam(required = false) Integer status) {
         DeptQuery query = new DeptQuery();
@@ -44,6 +46,7 @@ public class DeptController {
      * 获取部门详情。
      */
     @GetMapping("/{id}")
+    @PreAuthorize("@ss.hasPermi('system:dept:list')")
     public R<SysDept> get(@PathVariable Long id) {
         return R.ok(sysDeptService.getById(id));
     }
@@ -52,6 +55,7 @@ public class DeptController {
      * 创建部门。
      */
     @PostMapping
+    @PreAuthorize("@ss.hasPermi('system:dept:create')")
     public R<Long> create(@Valid @RequestBody SysDept dept) {
         return R.ok(sysDeptService.create(dept));
     }
@@ -60,6 +64,7 @@ public class DeptController {
      * 更新部门。
      */
     @PutMapping
+    @PreAuthorize("@ss.hasPermi('system:dept:update')")
     public R<Void> update(@Valid @RequestBody SysDept dept) {
         sysDeptService.update(dept);
         return R.ok();
@@ -69,6 +74,7 @@ public class DeptController {
      * 删除部门（逻辑删除，含子部门/在职用户校验）。
      */
     @DeleteMapping("/{id}")
+    @PreAuthorize("@ss.hasPermi('system:dept:delete')")
     public R<Void> delete(@PathVariable Long id) {
         sysDeptService.delete(id);
         return R.ok();

@@ -42,12 +42,31 @@ public class BpmVerificationRunner implements CommandLineRunner {
     public void run(String... args) {
         log.info("========== BPM 外部数据源执行引擎仿真验证开始 ==========");
 
+        // 仅 dev 验证骨架：以系统操作人身份（租户 0）运行——本 Runner 无真实登录态，
+        // I5 fail-closed 的租户/元数据填充要求显式声明归属，不再静默回落
+        com.sw.ck.security.holder.LoginUser systemOperator = new com.sw.ck.security.holder.LoginUser();
+        systemOperator.setUserId(0L);
+        systemOperator.setTenantId(0L);
+        systemOperator.setUsername("verify-runner");
+        com.sw.ck.security.holder.LoginUserHolder.set(systemOperator);
+        try {
+            doVerify();
+        } finally {
+            com.sw.ck.security.holder.LoginUserHolder.clear();
+        }
+        log.info("========== BPM 外部数据源执行引擎仿真验证完成 ==========");
+    }
+
+    private void doVerify() {
+
         // 持久库（PG local profile / dev 外接库）重启时，上次运行的残留行会让
         // uk_sw_bpm_ext_ds_name(name, deleted) 唯一键在插入或逻辑删除时冲突。
         // 该行是本 Runner 自造的验证夹具，物理清除是幂等重跑的前提。
         jdbcTemplate.update("DELETE FROM sw_bpm_ext_datasource WHERE name = ?", "verify-h2-self");
 
-        // 创建指向 H2 自身的测试数据源
+        // 创建指向 H2 自身的测试数据源（仅 dev 验证骨架：显式携带租户 0 并挂起
+        // 租户过滤——本 Runner 无登录态运行，I5 fail-closed 元数据/租户填充要求
+        // 边界真实成立的系统行显式声明归属）
         ExternalDatasource ds = new ExternalDatasource();
         ds.setName("verify-h2-self");
         ds.setType("h2");
@@ -56,7 +75,11 @@ public class BpmVerificationRunner implements CommandLineRunner {
         ds.setUsername("sa");
         ds.setReadOnly(0);
         ds.setEnabled(1);
-        dsService.saveWithEncryption(ds, "");
+        ds.setTenantId(0L);
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            dsService.saveWithEncryption(ds, "");
+        }
         Long dsId = ds.getId();
         log.info("[验证] 测试数据源已创建: id={}, name={}", dsId, ds.getName());
 
@@ -120,7 +143,5 @@ public class BpmVerificationRunner implements CommandLineRunner {
         // ---- 清理 ----
         dsService.removeById(dsId);
         log.info("[验证] 测试数据源已删除");
-
-        log.info("========== BPM 外部数据源执行引擎仿真验证完成 ==========");
     }
 }

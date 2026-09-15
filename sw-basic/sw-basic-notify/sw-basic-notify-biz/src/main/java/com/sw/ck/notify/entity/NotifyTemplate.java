@@ -47,4 +47,16 @@ public class NotifyTemplate extends BaseEntity {
     /** 备注 */
     @TableField("remark")
     private String remark;
+    /* I6 扩展字段 */
+    @TableField("event_type")
+    private String eventType;
+
+    @TableField("channel")
+    private String channel;
+
+    @TableField("variables_allowed")
+    private String variablesAllowed;
+
+    @TableField("jump_ref")
+    private String jumpRef;
 }

@@ -8,6 +8,8 @@ import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.service.IotDeviceService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -158,8 +160,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
      * 获取当前租户 ID（从 SecurityContext 中提取）。
      */
     private Long getCurrentTenantId() {
-        // 从 Spring Security 上下文中获取租户 ID
-        // 实际实现依赖于 TenantLineHandler 拦截器
-        return null;
+        LoginUser current = LoginUserHolder.get();
+        return current == null ? null : current.getTenantId();
     }
 }

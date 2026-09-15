@@ -30,6 +30,22 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
     private final AtomicLong idGen = new AtomicLong(1000);
 
     @Override
+    public Long requeueFailed(CommandEnvelope envelope) {
+        BpmCommand command = store.get(envelope.getCommandId());
+        if (command == null || !CommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
+            throw new IllegalStateException("requeueFailed 仅接受已存在且 FAILED 的命令");
+        }
+        command.setStatus(CommandStatusEnum.PENDING.getCode());
+        command.setPayload(envelope.getPayload());
+        command.setRetryCount(0);
+        command.setFailureReason(null);
+        command.setNextRetryAt(null);
+        command.setResult(null);
+        envelope.setCommandId(command.getId());
+        return command.getId();
+    }
+
+    @Override
     public Long enqueue(CommandEnvelope envelope) {
         boolean conflict = store.values().stream()
                 .anyMatch(c -> envelope.getTenantId().equals(c.getTenantId())

@@ -1,12 +1,23 @@
 package com.sw.ck.bpm.api.participant;
 
 import java.util.List;
+import java.util.Map;
 
 /** 引擎到流程业务持久化层的单向防腐接缝。 */
 public interface ParticipantSnapshotRecorder {
 
     void record(String processInstanceId, String nodeKey, String taskId,
                 List<String> participantIds, Long tenantId);
+
+    /**
+     * 记录快照并冻结参与人展示名（I1 历史身份不被改写）：此后用户改名/停用
+     * 不影响该轮次的可读身份回显。displayNames 缺失的参与人名字段落为 null。
+     * 默认实现退化为不带姓名的 record，兼容既有外部实现。
+     */
+    default void record(String processInstanceId, String nodeKey, String taskId,
+                        List<String> participantIds, Map<String, String> displayNames, Long tenantId) {
+        record(processInstanceId, nodeKey, taskId, participantIds, tenantId);
+    }
 
     /** 首个有效动作结算候选快照，其余候选转为不可处理并保留原因。 */
     default void settle(String processInstanceId, String nodeKey, String taskId,

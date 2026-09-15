@@ -167,6 +167,21 @@ class RoleMenusContractAndSecurityTest {
                 """);
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sys_role_menu_tenant ON sys_role_menu (tenant_id, role_id, menu_id, deleted)");
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sys_role_tenant_code ON sys_role (tenant_id, code, deleted)");
+        // 角色成员表：PUT /menus 后的 fail-secure 成员反查（kickOutMembers）依赖真实表
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sys_user_role (
+                    id                bigint          not null primary key,
+                    user_id           bigint          not null,
+                    role_id           bigint          not null,
+                    create_time       timestamp       not null default current_timestamp,
+                    create_by         bigint,
+                    update_time       timestamp       not null default current_timestamp,
+                    update_by         bigint,
+                    deleted           smallint        not null default 0,
+                    tenant_id         bigint          not null default 0,
+                    version           bigint          not null default 0
+                )
+                """);
     }
 
     // ==================== 前置/后置 ====================
@@ -176,6 +191,7 @@ class RoleMenusContractAndSecurityTest {
         jdbcTemplate.update("DELETE FROM sys_role_menu");
         jdbcTemplate.update("DELETE FROM sys_role");
         jdbcTemplate.update("DELETE FROM sys_menu");
+        jdbcTemplate.update("DELETE FROM sys_user_role");
 
         // 角色：1=superadmin（built_in=true，受保护），2=admin（built_in=false，不受保护），3=租户 5 的角色
         jdbcTemplate.update("""
@@ -203,6 +219,12 @@ class RoleMenusContractAndSecurityTest {
         insertRoleMenu(2L, 2L, 200L, 0L);
         insertRoleMenu(3L, 2L, 201L, 0L);
         insertRoleMenu(4L, 3L, 300L, 5L);
+
+        // 角色 2 的成员：PUT /menus 后 fail-secure 成员反查真实命中（loader 缺装配按容忍路径跳过驱逐）
+        jdbcTemplate.update("""
+                INSERT INTO sys_user_role (id, user_id, role_id, deleted, tenant_id, version)
+                VALUES (1, 100, 2, 0, 0, 0)
+                """);
 
         TestAuthenticationFilter.permissions = List.of();
         TestAuthenticationFilter.superAdmin = false;
@@ -323,6 +345,10 @@ class RoleMenusContractAndSecurityTest {
     @DisplayName("PUT /menus body=null → 语义=清空（updateMenuIds 对 null 返回前已删除全部绑定）")
     void putMenus_withNullBody_shouldClearAll() throws Exception {
         TestAuthenticationFilter.permissions = List.of("system:role:update");
+        // service 级直调无认证过滤器：显式建立种子数据所属的租户 0 上下文（I5 fail-closed 后不再隐式回落）
+        com.sw.ck.security.holder.LoginUserHolder.set(new com.sw.ck.security.holder.LoginUser() {{
+            setUserId(1L); setTenantId(0L); setPermissions(java.util.List.of());
+        }});
         // 经服务方法直接验证 null 语义：先删后插中的删除已执行，null 不插入任何行
         sysRoleService.updateMenuIds(2L, null);
         assertThat(countRoleMenuRows(2L))

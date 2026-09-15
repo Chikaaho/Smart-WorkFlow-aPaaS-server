@@ -43,7 +43,7 @@ public class BpmProcessDef extends BaseEntity {
     private Integer defVersion;
 
     /**
-     * 状态：DRAFT / PUBLISHED。本刀恒 DRAFT。
+     * 状态：DRAFT / PUBLISHED / SUSPENDED / DISABLED。本刀恒 DRAFT。
      */
     @TableField("status")
     private String status;
@@ -71,4 +71,31 @@ public class BpmProcessDef extends BaseEntity {
      */
     @TableField("category_id")
     private Long categoryId;
+
+    /**
+     * IoT 接入开关（P21）：仅「已发布 + 开关启用」的模板允许被 IoT 事件规则/受控脚本发起。
+     */
+    @TableField("iot_access_enabled")
+    private Boolean iotAccessEnabled;
+
+    /**
+     * A6 设备动作配置 JSON（FIXED/FORM_FIELD/VARIABLE 三类来源 + 失败策略）。
+     */
+    @TableField("iot_device_action_json")
+    private String iotDeviceActionJson;
+
+    /**
+     * 已发布的最高版本号（I3 §4.3；发布时与冻结版本行同步）。
+     */
+    @TableField("published_version")
+    private Integer publishedVersion;
+
+    /**
+     * 模板溯源（I4 §3.2）：本定义由哪个模板复制创建；模板版本可追溯。
+     */
+    @TableField("source_template_id")
+    private Long sourceTemplateId;
+
+    @TableField("source_template_version")
+    private Integer sourceTemplateVersion;
 }

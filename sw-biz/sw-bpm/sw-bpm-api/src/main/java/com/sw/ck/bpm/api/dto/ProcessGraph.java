@@ -37,6 +37,9 @@ public class ProcessGraph implements Serializable {
     /** 图元素列表（节点 + 边）。 */
     private List<GraphElement> elements;
 
+    /** 图契约版本（I3 起第一方设计器显式坐标契约 = 2；null = 旧版遗留图）。 */
+    private Integer contractVersion;
+
     /** 画布元数据（不透明，原样透传）。 */
     private Map<String, Object> canvas;
 }

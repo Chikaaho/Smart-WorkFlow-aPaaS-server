@@ -6,9 +6,12 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.UserPageQuery;
+import com.sw.ck.system.service.UserPostAssociation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,9 +43,19 @@ public class UserController {
         private Integer status;
         private Long deptId;
         private List<Long> roleIds;
-        private List<Long> postIds;
+        /** 岗位任职（岗位在部门内承担；deptId 缺省回落用户主部门） */
+        private List<PostAssignment> posts;
         /** 明文密码 — 新建时必填，更新时为空表示不修改 */
         private String plainPassword;
+    }
+
+    /** 内嵌 DTO：岗位任职（postId + 可选任职部门 deptId） */
+    @Data
+    @AllArgsConstructor
+    @NoArgsConstructor
+    public static class PostAssignment {
+        private Long postId;
+        private Long deptId;
     }
 
     /**
@@ -76,7 +89,7 @@ public class UserController {
     @Transactional(rollbackFor = Exception.class)
     public R<Long> create(@Valid @RequestBody UserFormRequest req) {
         SysUser user = toEntity(req);
-        Long id = sysUserService.createWithAssociations(user, req.getPlainPassword(), req.getRoleIds(), req.getPostIds());
+        Long id = sysUserService.createWithAssociations(user, req.getPlainPassword(), req.getRoleIds(), toPostAssociations(req.getPosts()));
         return R.ok(id);
     }
 
@@ -88,7 +101,7 @@ public class UserController {
     @Transactional(rollbackFor = Exception.class)
     public R<Void> update(@Valid @RequestBody UserFormRequest req) {
         SysUser user = toEntity(req);
-        sysUserService.updateWithAssociations(user, req.getPlainPassword(), req.getRoleIds(), req.getPostIds());
+        sysUserService.updateWithAssociations(user, req.getPlainPassword(), req.getRoleIds(), toPostAssociations(req.getPosts()));
         return R.ok();
     }
 
@@ -117,12 +130,16 @@ public class UserController {
 
     @GetMapping("/{id}/posts")
     @PreAuthorize("@ss.hasPermi('system:user:list')")
-    public R<List<Long>> posts(@PathVariable Long id) { return R.ok(sysUserService.listPostIds(id)); }
+    public R<List<PostAssignment>> posts(@PathVariable Long id) {
+        return R.ok(sysUserService.listPosts(id).stream()
+                .map(row -> new PostAssignment(row.getPostId(), row.getDeptId()))
+                .toList());
+    }
 
     @PutMapping("/{id}/posts")
     @PreAuthorize("@ss.hasPermi('system:user:update')")
-    public R<Void> updatePosts(@PathVariable Long id, @RequestBody List<Long> postIds) {
-        sysUserService.updatePostIds(id, postIds); return R.ok();
+    public R<Void> updatePosts(@PathVariable Long id, @RequestBody List<PostAssignment> posts) {
+        sysUserService.updatePosts(id, toPostAssociations(posts)); return R.ok();
     }
 
     /** UserFormRequest → SysUser 转换 */
@@ -137,7 +154,15 @@ public class UserController {
         user.setStatus(req.getStatus());
         user.setDeptId(req.getDeptId());
         user.setRoleIds(req.getRoleIds());
-        user.setPostIds(req.getPostIds());
         return user;
+    }
+
+    private List<UserPostAssociation> toPostAssociations(List<PostAssignment> posts) {
+        if (posts == null) {
+            return null;
+        }
+        return posts.stream()
+                .map(item -> new UserPostAssociation(item.getPostId(), item.getDeptId()))
+                .toList();
     }
 }

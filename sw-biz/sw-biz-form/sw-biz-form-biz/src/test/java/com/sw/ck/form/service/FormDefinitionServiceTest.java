@@ -89,6 +89,13 @@ class FormDefinitionServiceTest {
 
     @BeforeEach
     void setUp() {
+        // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
+        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+            i5TenantZeroSetup.setUserId(0L);
+            i5TenantZeroSetup.setTenantId(0L);
+            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+        }
         createMetadataTables();
     }
 
@@ -425,22 +432,22 @@ class FormDefinitionServiceTest {
     // ==================== 测试 8：disabled 类型发布 → 拒绝 ====================
 
     @Test
-    @DisplayName("disabled 类型（EMAIL）发布 → 拒绝")
+    @DisplayName("disabled 类型（EMAIL）→ config 保存层即拒绝（与 publish 同口径 1205）")
     void publishWithDisabledType_shouldReject() {
         FormDefDTO draft = formDefService.createDraft("test_disabled", "测试禁用类型", null, null);
         createdFormIds.add(draft.getId());
-        formDefService.saveConfig(draft.getId(), """
+        // Z8/G14a 反向断言升级：禁止类型在 config 保存层即拒绝（FIELD_TYPE_DISABLED 1205），
+        // 不再依赖 publish 兜底；此前 saveConfig 允许 EMAIL 入库、publish 才拒。
+        assertThatThrownBy(() -> formDefService.saveConfig(draft.getId(), """
                 {"fields": [{"name": "email", "type": "EMAIL"}]}
-                """);
-
-        assertThatThrownBy(() -> formDefService.publish(draft.getId()))
+                """))
                 .isInstanceOf(BaseException.class)
                 .satisfies(e -> {
                     BaseException be = (BaseException) e;
                     assertThat(be.getCode()).isEqualTo(FormErrorCode.FIELD_TYPE_DISABLED.getCode());
                 });
 
-        // 确认无动态宽表被创建
+        // 确认无动态宽表被创建，定义仍是 DRAFT
         FormDefEntity entity = formDefMapper.selectById(draft.getId());
         assertThat(entity.getStatus()).isEqualTo(FormStatusEnum.DRAFT.getCode());
     }
@@ -791,6 +798,33 @@ class FormDefinitionServiceTest {
             dbConfig.setLogicNotDeleteValue("0");
             globalConfig.setDbConfig(dbConfig);
             factory.setGlobalConfig(globalConfig);
+
+            // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
+            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
+                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+                        @Override public Long getUserId() {
+                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            return u != null ? u.getUserId() : null;
+                        }
+                        @Override public Long getTenantId() {
+                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            return u != null ? u.getTenantId() : null;
+                        }
+                        @Override public Long getDeptId() { return null; }
+                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
+                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        }
+                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public boolean isSuperAdmin() { return false; }
+                    });
+            i5MetaObjectHandler.setFormIdFiller(meta -> {
+                Object original = meta.getOriginalObject();
+                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                }
+            });
+            globalConfig.setMetaObjectHandler(i5MetaObjectHandler);
+
 
             // MyBatis-Plus 插件
             MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();

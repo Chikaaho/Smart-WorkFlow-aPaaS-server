@@ -100,7 +100,10 @@ public class GraphValidator {
             if (type == null || nodeRegistry.find(type).isEmpty()) {
                 errors.add(err(node.getId(), BpmErrorCode.GRAPH_UNKNOWN_NODE_TYPE));
             } else {
-                errors.addAll(nodeRegistry.validateConfig(node));
+                // 注册器返回的配置错误统一补齐 nodeKey/edgeKey（I3 设计器定位锚）
+                for (GraphValidationError configError : nodeRegistry.validateConfig(node)) {
+                    errors.add(fillLocatorKeys(configError));
+                }
             }
         }
 
@@ -339,9 +342,24 @@ public class GraphValidator {
         return visited;
     }
 
+    /** 将注册器返回的错误补齐 nodeKey/edgeKey（元素 id 既是定位锚）。 */
+    private GraphValidationError fillLocatorKeys(GraphValidationError source) {
+        boolean edge = source.getElementId() != null && source.getElementId().startsWith("edge");
+        return GraphValidationError.builder()
+                .elementId(source.getElementId())
+                .edgeKey(edge ? source.getElementId() : null)
+                .nodeKey(edge ? null : source.getElementId())
+                .errorCode(source.getErrorCode())
+                .message(source.getMessage())
+                .build();
+    }
+
     private GraphValidationError err(String elementId, BpmErrorCode errorCode) {
+        boolean edge = elementId != null && elementId.startsWith("edge");
         return GraphValidationError.builder()
                 .elementId(elementId)
+                .edgeKey(edge ? elementId : null)
+                .nodeKey(edge ? null : elementId)
                 .errorCode(errorCode.getCode())
                 .message(errorCode.getMessage())
                 .build();

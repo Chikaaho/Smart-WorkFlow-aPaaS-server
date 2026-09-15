@@ -15,7 +15,12 @@ create table sw_bpm_process_def (
     deployment_id         varchar(64),
     process_definition_id varchar(64),
     graph_json            clob,
-    category_id           bigint
+    category_id           bigint,
+    iot_access_enabled    boolean not null default false,
+    iot_device_action_json text,
+    published_version     int,
+    source_template_id    bigint,
+    source_template_version int
 );
 
 create index idx_sw_bpm_proc_def_key on sw_bpm_process_def (process_key);

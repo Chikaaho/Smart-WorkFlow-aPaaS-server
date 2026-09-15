@@ -76,6 +76,16 @@ class NotifyBatchSendIntegrationTest {
         jt.execute("CREATE TABLE IF NOT EXISTS sys_user_role (user_id BIGINT NOT NULL, role_id BIGINT NOT NULL, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, PRIMARY KEY (user_id, role_id))");
         jt.execute("CREATE TABLE IF NOT EXISTS sys_dept (id BIGINT PRIMARY KEY, parent_id BIGINT DEFAULT 0, name VARCHAR(50) NOT NULL, code VARCHAR(50), status INT DEFAULT 0, tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
         jt.execute("CREATE TABLE IF NOT EXISTS sw_notify_message (id BIGINT PRIMARY KEY, recipient_id BIGINT NOT NULL, title VARCHAR(200) NOT NULL, content TEXT NOT NULL, biz_type VARCHAR(30) NOT NULL DEFAULT 'SYSTEM', biz_id VARCHAR(64), is_read BOOLEAN DEFAULT FALSE, channel VARCHAR(40) NOT NULL DEFAULT 'IN_APP', delivery_status VARCHAR(20) NOT NULL DEFAULT 'SUCCESS', external_message_id VARCHAR(200), failure_reason VARCHAR(500), idempotency_key VARCHAR(200), tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT DEFAULT 0, version BIGINT DEFAULT 0, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, create_by BIGINT, update_by BIGINT)");
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS event_type varchar(40)"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS occurrence_no BIGINT DEFAULT 1"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS template_id BIGINT"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS template_version INT"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS link_type VARCHAR(32)"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS link_id VARCHAR(64)"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS retry_count INT DEFAULT 0"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS next_retry_time TIMESTAMP"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS failure_class VARCHAR(40)"); } catch (Exception ignored) { }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS receipt_digest VARCHAR(200)"); } catch (Exception ignored) { };
 
         jt.update("INSERT INTO sys_dept VALUES(1,0,'技术部','tech',0,100,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)");
         jt.update("INSERT INTO sys_dept VALUES(2,0,'产品部','pm',0,100,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)");

@@ -4,6 +4,8 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.CommandQueueService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -185,21 +187,26 @@ public class CommandQueueServiceImpl implements CommandQueueService {
 
     @Override
     public List<IotDeviceCommand> getExpiredCommands() {
-        Long tenantId = getCurrentTenantId();
-        return commandMapper.selectExpired(LocalDateTime.now(), tenantId);
+        // 补偿调度线程无登录态：挂起租户过滤（补偿作业跨租户扫描过期命令）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return commandMapper.selectExpired(LocalDateTime.now(), null);
+        }
     }
 
     @Override
     public List<IotDeviceCommand> getStuckCommands(int stuckMinutes) {
-        Long tenantId = getCurrentTenantId();
-        LocalDateTime since = LocalDateTime.now().minusMinutes(stuckMinutes);
-        // 查询所有 QUEUED 状态且创建时间早于阈值的命令
-        return commandMapper.selectList(
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
-                        .eq(IotDeviceCommand::getTenantId, tenantId)
-                        .eq(IotDeviceCommand::getDeleted, 0)
-                        .eq(IotDeviceCommand::getStatus, "QUEUED")
-                        .le(IotDeviceCommand::getCreateTime, since));
+        // 补偿调度线程无登录态：挂起租户过滤（同 getExpiredCommands 口径）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            LocalDateTime since = LocalDateTime.now().minusMinutes(stuckMinutes);
+            // 查询所有 QUEUED 状态且创建时间早于阈值的命令
+            return commandMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
+                            .eq(IotDeviceCommand::getDeleted, 0)
+                            .eq(IotDeviceCommand::getStatus, "QUEUED")
+                            .le(IotDeviceCommand::getCreateTime, since));
+        }
     }
 
     @Override
@@ -211,7 +218,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
      * 获取当前租户 ID。
      */
     private Long getCurrentTenantId() {
-        // 从 Spring Security 上下文中获取租户 ID
-        return null;
+        LoginUser current = LoginUserHolder.get();
+        return current == null ? null : current.getTenantId();
     }
 }

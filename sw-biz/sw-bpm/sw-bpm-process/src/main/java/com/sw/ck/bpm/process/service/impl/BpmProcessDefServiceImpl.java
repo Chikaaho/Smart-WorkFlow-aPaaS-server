@@ -12,6 +12,7 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmDeployFacade;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
@@ -41,6 +42,8 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     private static final String FORM_STATUS_PUBLISHED = "PUBLISHED";
 
     private final BpmProcessDefMapper mapper;
+    private final com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper;
+    private final com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService;
     private final GraphValidator graphValidator;
     private final FormDefinitionService formDefinitionService;
     private final BpmDeployFacade bpmDeployFacade;
@@ -48,12 +51,16 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     private final ObjectMapper objectMapper;
 
     public BpmProcessDefServiceImpl(BpmProcessDefMapper mapper,
+                                    com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper,
+                                    com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService,
                                     GraphValidator graphValidator,
                                     FormDefinitionService formDefinitionService,
                                     BpmDeployFacade bpmDeployFacade,
                                     BpmFormBindingService formBindingService,
                                     ObjectMapper objectMapper) {
         this.mapper = mapper;
+        this.versionMapper = versionMapper;
+        this.nodeFunctionService = nodeFunctionService;
         this.graphValidator = graphValidator;
         this.formDefinitionService = formDefinitionService;
         this.bpmDeployFacade = bpmDeployFacade;
@@ -136,10 +143,41 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     @Transactional
     public void saveDraftGraph(Long id, String graphJson) {
         BpmProcessDef entity = getExisting(id);
+        // 基本格式检查：草稿允许暂时不完整，但必须是可解析的图文档
+        if (graphJson == null || graphJson.isBlank()
+                || parseGraph(graphJson) == null) {
+            throw new BaseException(BpmErrorCode.NODE_CONFIG_INVALID);
+        }
+        // 基本一致性检查（I3 §4.3 process_key 冻结）：图内 processKey 一律归一为
+        // 定义行权威值；已发布定义的 key 冻结不被草稿图覆盖或漂移
+        ProcessGraph incoming = parseGraph(graphJson);
+        if (incoming.getProcessKey() == null
+                || !incoming.getProcessKey().equals(entity.getProcessKey())) {
+            incoming.setProcessKey(entity.getProcessKey());
+            graphJson = toJson(incoming);
+        }
+        // 已发布定义再次编辑：形成新的草稿版本（版本单调递增；已发布冻结版本行不动）
+        if (entity.getPublishedVersion() != null && entity.getDefVersion() != null
+                && entity.getDefVersion() <= entity.getPublishedVersion()) {
+            entity.setDefVersion(entity.getPublishedVersion() + 1);
+            log.info("已发布定义再次编辑，草稿版本递增为 {}: defId={}", entity.getDefVersion(), id);
+        }
         entity.setGraphJson(graphJson);
-        // status 保持 DRAFT，不跑校验
         mapper.updateById(entity);
-        log.info("Saved draft graph: id={}", id);
+        log.info("Saved draft graph: id={}, draftVersion={}", id, entity.getDefVersion());
+    }
+
+    @Override
+    @Transactional
+    public void markTemplateSource(Long id, Long templateId, Integer templateVersion) {
+        BpmProcessDef entity = getExisting(id);
+        // 仅 DRAFT 未登记时写入：历史与已发布定义的溯源关系不被改写
+        if (!"DRAFT".equals(entity.getStatus()) || entity.getSourceTemplateId() != null) {
+            return;
+        }
+        entity.setSourceTemplateId(templateId);
+        entity.setSourceTemplateVersion(templateVersion);
+        mapper.updateById(entity);
     }
 
     @Override
@@ -192,6 +230,17 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     @Transactional
     public void deleteDef(Long id) {
         BpmProcessDef entity = getExisting(id);
+        // 安全删除：仅无发布版本的草稿可删除（已有发布/运行/历史引用的版本不可删）
+        if (entity.getPublishedVersion() != null && entity.getPublishedVersion() > 0) {
+            throw new BaseException(BpmErrorCode.VERSION_STATE_INVALID);
+        }
+        long referenceCount = formBindingService.lambdaQuery()
+                .eq(BpmFormBinding::getProcessDefKey, entity.getProcessKey())
+                .eq(BpmFormBinding::getActive, Boolean.TRUE)
+                .count();
+        if (referenceCount > 0) {
+            throw new BaseException(BpmErrorCode.VERSION_STATE_INVALID);
+        }
         mapper.deleteById(entity.getId());
         log.info("Soft-deleted process def: id={}", id);
     }
@@ -250,6 +299,14 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         // 注意：查询已有历史需额外扫库，此处仅守住已 PUBLISHED 的当前记录
         // 若存在此前已发布的版本但删了，当前为 DRAFT 的新记录，则允许新 key
 
+        // ========== ②c 节点函数发布期校验（I3 §4.9，零部署失败即拒绝） ==========
+        List<GraphValidationError> functionErrors =
+                nodeFunctionService.validateForPublish(graph, def.getTenantId());
+        if (!functionErrors.isEmpty()) {
+            GraphValidationError firstError = functionErrors.get(0);
+            throw new BaseException(firstError.getErrorCode(), firstError.getMessage());
+        }
+
         // ========== ③ 翻译 ==========
         byte[] bpmnXml = bpmDeployFacade.translateToBpmn(graph);
 
@@ -278,10 +335,173 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
             log.info("Form binding activated: formKey={} -> processDefKey={}", formKey, newProcessKey);
         }
 
-        log.info("Process def published: id={}, processKey={}, deploymentId={}, processDefinitionId={}",
-                id, newProcessKey, deployResult.getDeploymentId(), deployResult.getProcessDefinitionId());
+        // ========== ⑥ I3 冻结发布版本 ==========
+        // 版本号单调递增：草稿版本 ≤ 已发布版本时视为新一轮编辑，冲到 published+1
+        Integer frozenVersion = def.getDefVersion() == null ? 1 : def.getDefVersion();
+        if (def.getPublishedVersion() != null && frozenVersion <= def.getPublishedVersion()) {
+            frozenVersion = def.getPublishedVersion() + 1;
+            def.setDefVersion(frozenVersion);
+        }
+        if (versionExists(id, frozenVersion)) {
+            throw new BaseException(BpmErrorCode.VERSION_STATE_INVALID);
+        }
+
+        BpmProcessDefVersion frozen = new BpmProcessDefVersion();
+        frozen.setDefId(id);
+        frozen.setGraphVersion(frozenVersion);
+        frozen.setStatus("PUBLISHED");
+        frozen.setName(graph.getName() != null ? graph.getName() : def.getName());
+        frozen.setFormKey(formKey);
+        frozen.setFormVersion(resolveFormVersion(graph.getFormKey()));
+        frozen.setFunctionVersions(resolveFunctionVersions(graph));
+        frozen.setGraphJson(def.getGraphJson());
+        frozen.setDeploymentId(deployResult.getDeploymentId());
+        frozen.setProcessDefinitionId(deployResult.getProcessDefinitionId());
+        try {
+            com.sw.ck.security.holder.LoginUser loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+            if (loginUser != null) {
+                frozen.setPublishedBy(loginUser.getUserId());
+            }
+        } catch (Exception ignored) {
+            // 非请求上下文（内部调用）允许为空
+        }
+        frozen.setPublishedAt(java.time.LocalDateTime.now());
+        versionMapper.insert(frozen);
+
+        // 只更新发布元数据列，避免把 graph_json 缺省值误写
+        BpmProcessDef patch = new BpmProcessDef();
+        patch.setId(id);
+        patch.setDeploymentId(deployResult.getDeploymentId());
+        patch.setProcessDefinitionId(deployResult.getProcessDefinitionId());
+        patch.setStatus(STATUS_PUBLISHED);
+        patch.setPublishedVersion(frozenVersion);
+        patch.setDefVersion(frozenVersion);
+        mapper.updateById(patch);
+
+        log.info("Process def published: id={}, processKey={}, version={}, deploymentId={}, processDefinitionId={}",
+                id, newProcessKey, frozenVersion, deployResult.getDeploymentId(),
+                deployResult.getProcessDefinitionId());
 
         return def;
+    }
+
+    private boolean versionExists(Long defId, Integer graphVersion) {
+        return versionMapper.selectCount(
+                Wrappers.<BpmProcessDefVersion>lambdaQuery()
+                        .eq(BpmProcessDefVersion::getDefId, defId)
+                        .eq(BpmProcessDefVersion::getGraphVersion, graphVersion)) > 0;
+    }
+
+    private String resolveFormVersion(String formKey) {
+        if (formKey == null || formKey.isBlank()) {
+            return null;
+        }
+        try {
+            FormDefDTO formDef = formDefinitionService.getFormDef(formKey);
+            return formDef == null ? null
+                    : formDef.getFormVersion() == null ? null : String.valueOf(formDef.getFormVersion());
+        } catch (Exception e) {
+            log.warn("读取表单版本失败: formKey={}", formKey);
+            return null;
+        }
+    }
+
+    /**
+     * 收集节点配置中引用的节点函数版本（funcKey → version），作为发布时冻结的清单 JSON。
+     * 约定：节点 config.functions = [{key,version}...]。
+     */
+    private String resolveFunctionVersions(ProcessGraph graph) {
+        Map<String, Object> mapping = new LinkedHashMap<>();
+        if (graph.getElements() == null) return "{}";
+        for (GraphElement element : graph.getElements()) {
+            if (!"node".equals(element.getKind())
+                    || element.getConfig() == null) {
+                continue;
+            }
+            Object functions = element.getConfig().get("functions");
+            if (functions instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> fn
+                            && fn.get("key") != null && fn.get("version") != null) {
+                        mapping.put(String.valueOf(fn.get("key")),
+                                fn.get(("version")));
+                    }
+                }
+            }
+        }
+        return toJson(mapping);
+    }
+
+    @Override
+    public List<BpmProcessDefVersion> listVersions(Long defId) {
+        getExisting(defId);
+        return versionMapper.selectList(
+                Wrappers.<BpmProcessDefVersion>lambdaQuery()
+                        .eq(BpmProcessDefVersion::getDefId, defId)
+                        .orderByDesc(BpmProcessDefVersion::getGraphVersion));
+    }
+
+    @Override
+    public ProcessGraph getVersionGraph(Long defId, Integer graphVersion) {
+        BpmProcessDefVersion version = getVersionRow(defId, graphVersion);
+        return parseGraph(version.getGraphJson());
+    }
+
+    @Override
+    @Transactional
+    public void suspendVersion(Long defId, Integer graphVersion) {
+        BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
+        bpmDeployFacade.suspendProcessDefinition(version.getProcessDefinitionId());
+        patchVersionStatus(version.getId(), "SUSPENDED");
+        log.info("发布版本已挂起: defId={}, version={}", defId, graphVersion);
+    }
+
+    @Override
+    @Transactional
+    public void activateVersion(Long defId, Integer graphVersion) {
+        BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
+        bpmDeployFacade.activateProcessDefinition(version.getProcessDefinitionId());
+        patchVersionStatus(version.getId(), "PUBLISHED");
+        log.info("发布版本已激活: defId={}, version={}", defId, graphVersion);
+    }
+
+    @Override
+    @Transactional
+    public void disableVersion(Long defId, Integer graphVersion) {
+        BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
+        // DISABLED = 业务下线标记：同样挂起 Flowable 定义，历史回看不删除
+        bpmDeployFacade.suspendProcessDefinition(version.getProcessDefinitionId());
+        patchVersionStatus(version.getId(), "DISABLED");
+        log.info("发布版本已下线: defId={}, version={}", defId, graphVersion);
+    }
+
+    private BpmProcessDefVersion getVersionRow(Long defId, Integer graphVersion) {
+        BpmProcessDefVersion version = versionMapper.selectOne(
+                Wrappers.<BpmProcessDefVersion>lambdaQuery()
+                        .eq(BpmProcessDefVersion::getDefId, defId)
+                        .eq(BpmProcessDefVersion::getGraphVersion, graphVersion));
+        if (version == null) {
+            throw new BaseException(BpmErrorCode.PROCESS_DEF_NOT_FOUND);
+        }
+        return version;
+    }
+
+    private BpmProcessDefVersion requireLatestVersion(Long defId, Integer graphVersion) {
+        BpmProcessDef def = getExisting(defId);
+        BpmProcessDefVersion version = getVersionRow(defId, graphVersion);
+        if (def.getPublishedVersion() == null
+                || !def.getPublishedVersion().equals(graphVersion)) {
+            // 只有当前最高发布版本可挂起/激活/下线，避免历史版本双活
+            throw new BaseException(BpmErrorCode.VERSION_STATE_INVALID);
+        }
+        return version;
+    }
+
+    private void patchVersionStatus(Long id, String status) {
+        BpmProcessDefVersion patch = new BpmProcessDefVersion();
+        patch.setId(id);
+        patch.setStatus(status);
+        versionMapper.updateById(patch);
     }
 
     // ==================== 内部方法 ====================
@@ -365,4 +585,44 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
                 .canvas(Collections.emptyMap())
                 .build();
     }
+    @Override
+    public BpmProcessDef findById(Long id) {
+        return mapper.selectById(id);
+    }
+
+    @Override
+    @Transactional
+    public BpmProcessDef changeIotAccess(Long id, boolean flag) {
+        BpmProcessDef def = mapper.selectById(id);
+        if (def == null) {
+            throw new IllegalArgumentException("流程定义不存在: id=" + id);
+        }
+        if (flag && !"PUBLISHED".equals(def.getStatus())) {
+            throw new IllegalStateException("仅已发布流程定义可开启 IoT 接入: " + def.getProcessKey());
+        }
+        BpmProcessDef patch = new BpmProcessDef();
+        patch.setId(id);
+        patch.setIotAccessEnabled(flag);
+        mapper.updateById(patch);
+        log.info("流程定义 IoT 接入开关已变更: id={}, processKey={}, enabled={}", id, def.getProcessKey(), flag);
+        return mapper.selectById(id);
+    }
+
+    @Override
+    @Transactional
+    public BpmProcessDef setIotDeviceAction(Long id, String actionJson) {
+        BpmProcessDef def = mapper.selectById(id);
+        if (def == null) {
+            throw new IllegalArgumentException("流程定义不存在: id=" + id);
+        }
+        if (actionJson != null && !actionJson.isBlank()) {
+            com.alibaba.fastjson2.JSON.parseObject(actionJson);
+        }
+        BpmProcessDef patch = new BpmProcessDef();
+        patch.setId(id);
+        patch.setIotDeviceActionJson(actionJson);
+        mapper.updateById(patch);
+        return mapper.selectById(id);
+    }
+
 }

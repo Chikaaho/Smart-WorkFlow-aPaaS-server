@@ -972,7 +972,9 @@ public class FormImportExportService {
         if (formDef == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
-        if (!"PUBLISHED".equals(formDef.getStatus())) {
+        boolean exportExisting = "导出数据".equals(action)
+                && "DISABLED".equals(formDef.getStatus());
+        if (!"PUBLISHED".equals(formDef.getStatus()) && !exportExisting) {
             throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED,
                     "表单 '" + formKey + "' 未发布，不能" + action);
         }

@@ -32,16 +32,31 @@ public class NotifyMessageServiceImpl
 
     private static final int MAX_BATCH_RECIPIENTS = 500;
 
+    private static String eventTypeIfPresent() {
+        return "SYSTEM";
+    }
+
     private final NotifyTemplateService templateService;
     private final TemplateRenderService templateRenderService;
     private final LoginContextProvider loginContextProvider;
+    private final com.sw.ck.notify.service.NotifyTemplateVersionService templateVersionService;
 
     public NotifyMessageServiceImpl(NotifyTemplateService templateService,
                                     TemplateRenderService templateRenderService,
                                     LoginContextProvider loginContextProvider) {
+        // 兼容既有测试与直接构造；生产容器走四参构造（模板版本必装）
+        this(templateService, templateRenderService, loginContextProvider, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public NotifyMessageServiceImpl(NotifyTemplateService templateService,
+                                    TemplateRenderService templateRenderService,
+                                    LoginContextProvider loginContextProvider,
+                                    com.sw.ck.notify.service.NotifyTemplateVersionService templateVersionService) {
         this.templateService = templateService;
         this.templateRenderService = templateRenderService;
         this.loginContextProvider = loginContextProvider;
+        this.templateVersionService = templateVersionService;
     }
 
     @Override
@@ -109,14 +124,26 @@ public class NotifyMessageServiceImpl
         // 5. 渲染内容
         String title;
         String content;
+        Long pinnedTemplateId = null;
+        Integer pinnedTemplateVersion = null;
         if (hasTemplate) {
             NotifyTemplate template = templateService.getEnabledByCode(req.getTemplateCode());
             if (template == null) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "模板不存在或已停用：" + req.getTemplateCode());
             }
+            // I6：按最新发布快照渲染，投递固定引用模板版本（历史不可被后续编辑改写）
+            var snapshot = templateVersionService.latestSnapshot(template.getId());
+            String titleTemplate = template.getTitleTemplate();
+            String contentTemplate = template.getContentTemplate();
+            if (snapshot != null) {
+                pinnedTemplateId = snapshot.getTemplateId();
+                pinnedTemplateVersion = snapshot.getTemplateVersion();
+                titleTemplate = snapshot.getTitleTemplate();
+                contentTemplate = snapshot.getContentTemplate();
+            }
             Map<String, String> variables = req.getVariables() != null ? req.getVariables() : Map.of();
-            title = templateRenderService.render(template.getTitleTemplate(), variables);
-            content = templateRenderService.render(template.getContentTemplate(), variables);
+            title = templateRenderService.render(titleTemplate, variables);
+            content = templateRenderService.render(contentTemplate, variables);
         } else {
             title = req.getTitle();
             content = req.getContent();
@@ -131,6 +158,10 @@ public class NotifyMessageServiceImpl
             msg.setContent(content);
             msg.setBizType("SYSTEM");
             msg.setRead(false);
+            msg.setEventType(eventTypeIfPresent());
+            msg.setOccurrenceNo(1L);
+            msg.setTemplateId(pinnedTemplateId);
+            msg.setTemplateVersion(pinnedTemplateVersion);
             // 旧批量入口依赖真实表默认值；新渠道入口由 NotifyFacade 显式写入渠道和结果。
             messages.add(msg);
         }
@@ -258,5 +289,59 @@ public class NotifyMessageServiceImpl
         }
         Long tenantId = loginContextProvider.getTenantId();
         return getBaseMapper().selectValidUserIds(userIds, tenantId);
+    }
+
+    // ==================== I6 扩展 ====================
+
+    @Override
+    public NotifyMessage findByIdentity(Long tenantId, String eventType, String bizId, Long occurrenceNo,
+                                        Long recipientId, String channel) {
+        if (tenantId == null || eventType == null || eventType.isBlank()
+                || bizId == null || bizId.isBlank() || recipientId == null || channel == null) {
+            return null;
+        }
+        return getBaseMapper().selectOne(com.baomidou.mybatisplus.core.toolkit.Wrappers.<NotifyMessage>lambdaQuery()
+                .eq(NotifyMessage::getTenantId, tenantId)
+                .eq(NotifyMessage::getEventType, eventType)
+                .eq(NotifyMessage::getBizId, bizId)
+                .eq(NotifyMessage::getOccurrenceNo, occurrenceNo == null ? 1L : occurrenceNo)
+                .eq(NotifyMessage::getRecipientId, recipientId)
+                .eq(NotifyMessage::getChannel, channel)
+                .last("LIMIT 1"));
+    }
+
+    @Override
+    public com.sw.ck.common.page.PageResult<NotifyMessage> pageInbox(
+            com.sw.ck.common.page.PageParam pageParam, Long recipientId, Boolean read, String eventType,
+            String keyword) {
+        var wrapper = lambdaQuery()
+                .eq(NotifyMessage::getRecipientId, recipientId)
+                .eq(eventType != null && !eventType.isBlank(), NotifyMessage::getEventType, eventType)
+                .eq(NotifyMessage::getChannel, "IN_APP");
+        if (read != null) {
+            wrapper.eq(NotifyMessage::getRead, read);
+        }
+        if (StringUtils.hasText(keyword)) {
+            String pattern = "%" + keyword + "%";
+            wrapper.and(w -> w.like(NotifyMessage::getTitle, pattern)
+                    .or().like(NotifyMessage::getContent, pattern));
+        }
+        wrapper.orderByDesc(NotifyMessage::getCreateTime).orderByDesc(NotifyMessage::getId);
+        return getBaseMapper().selectPage(pageParam, wrapper.getWrapper());
+    }
+
+    @Override
+    public long unreadCount(Long recipientId) {
+        return lambdaQuery().eq(NotifyMessage::getRecipientId, recipientId)
+                .eq(NotifyMessage::getRead, false).count();
+    }
+
+    @Override
+    public int markAllRead(Long recipientId) {
+        return getBaseMapper().update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<NotifyMessage>()
+                        .set(NotifyMessage::getRead, true)
+                        .eq(NotifyMessage::getRecipientId, recipientId)
+                        .eq(NotifyMessage::getRead, false));
     }
 }

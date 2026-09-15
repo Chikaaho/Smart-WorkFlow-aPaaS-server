@@ -70,15 +70,17 @@ public class BpmDraftController {
     @GetMapping
     public R<PageResult<BpmDraft>> list(PageParam pageParam) {
         var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
-        long total = draftService.lambdaQuery()
-                .eq(BpmDraft::getCreateBy, loginUser.getUserId())
-                .count();
-        List<BpmDraft> records = draftService.lambdaQuery()
+        List<BpmDraft> readable = draftService.lambdaQuery()
                 .eq(BpmDraft::getCreateBy, loginUser.getUserId())
                 .orderByDesc(BpmDraft::getUpdateTime)
-                .last("LIMIT " + pageParam.getPageSize()
-                        + " OFFSET " + (pageParam.getPageNum() - 1) * pageParam.getPageSize())
-                .list();
+                .list().stream()
+                .filter(draftSubmitService::canCurrentUserView)
+                .toList();
+        long total = readable.size();
+        long offset = (long) Math.max(pageParam.getPageNum() - 1, 0) * pageParam.getPageSize();
+        int from = (int) Math.min(offset, readable.size());
+        int to = (int) Math.min((long) from + pageParam.getPageSize(), readable.size());
+        List<BpmDraft> records = readable.subList(from, to);
         PageResult<BpmDraft> page = new PageResult<>();
         page.setRecords(records);
         page.setTotal(total);

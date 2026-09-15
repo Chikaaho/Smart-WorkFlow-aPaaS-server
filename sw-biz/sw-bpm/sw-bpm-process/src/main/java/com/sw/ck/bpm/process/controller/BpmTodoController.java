@@ -64,6 +64,7 @@ public class BpmTodoController {
     private final TaskActionService taskActionService;
     private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
 
     public BpmTodoController(BpmTaskFacade bpmTaskFacade,
                              BpmInstanceService bpmInstanceService,
@@ -71,12 +72,25 @@ public class BpmTodoController {
                              TaskActionService taskActionService,
                              com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+        this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
+                approvalActionService, objectMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BpmTodoController(BpmTaskFacade bpmTaskFacade,
+                             BpmInstanceService bpmInstanceService,
+                             BpmProcessDefService bpmProcessDefService,
+                             TaskActionService taskActionService,
+                             com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
+                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
         this.taskActionService = taskActionService;
         this.approvalActionService = approvalActionService;
         this.objectMapper = objectMapper;
+        this.participantNameService = participantNameService;
     }
 
     /**
@@ -141,6 +155,11 @@ public class BpmTodoController {
     @PostMapping("/{taskId}/reject")
     public R<Void> reject(@PathVariable String taskId,
                           @RequestBody(required = false) ApprovalActionRequest request) {
+        // 语义分离（I3 §4.4）：请求体明确携带 DISAPPROVE → 参与人不通过意见交节点结算；
+        // 缺省或明确 REJECT → 流程级驳回终态。端点不得强制改写语义枚举。
+        if (request != null && request.getAction() != null) {
+            return taskActionService.execute(taskId, request);
+        }
         ApprovalActionRequest actionRequest = request == null ? new ApprovalActionRequest() : request;
         actionRequest.setAction(ApprovalAction.REJECT);
         return taskActionService.execute(taskId, actionRequest);
@@ -163,6 +182,20 @@ public class BpmTodoController {
         BpmTaskDTO task = bpmTaskFacade.getTask(taskId);
         if (task == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
+        }
+        // 对象权限（I4 §3.7：消息摘要与深链再次执行对象权限）：仅任务办理人、
+        // 超级管理员或持有监控查看权限的运营身份可读，其余身份服务端拒绝
+        var loginUser = LoginUserHolder.get();
+        boolean allowed = loginUser != null && (
+                loginUser.isSuperAdmin()
+                || (loginUser.getPermissions() != null
+                        && loginUser.getPermissions().contains("workflow:monitor:view"))
+                || (task.getAssignee() != null
+                        && task.getAssignee().equals(String.valueOf(loginUser.getUserId()))));
+        if (!allowed) {
+            log.warn("任务详情越权拒绝: taskId={}, currentUser={}",
+                    taskId, loginUser == null ? null : loginUser.getUserId());
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权查看该任务");
         }
 
         TaskDetailRespDTO dto = new TaskDetailRespDTO();
@@ -257,8 +290,14 @@ public class BpmTodoController {
                 }
             }
         }
-        // 审批人展示名富化（可读身份回显；查询失败不阻断详情）
-        Map<Long, String> historyNames = taskActionService.resolveUserNames(historyTasks.stream()
+        // 审批人展示名富化（快照冻结名优先，历史身份不随后续改名重写；查询失败不阻断详情）
+        Map<Long, String> historyNames = participantNameService != null
+                ? participantNameService.resolveDisplayNames(task.getProcessInstanceId(), historyTasks.stream()
+                .map(BpmTaskDTO::getAssignee)
+                .filter(a -> a != null && a.matches("\\d+"))
+                .map(Long::valueOf)
+                .collect(Collectors.toSet()))
+                : taskActionService.resolveUserNames(historyTasks.stream()
                 .map(BpmTaskDTO::getAssignee)
                 .filter(a -> a != null && a.matches("\\d+"))
                 .map(Long::valueOf)

@@ -87,6 +87,7 @@ abstract class NodeDelegateSupport {
     }
 
     protected boolean shouldBlock(Map<String, Object> config) {
-        return !"CONTINUE".equalsIgnoreCase(String.valueOf(config.getOrDefault("failureStrategy", "BLOCK")));
+        // I6 §3.2：纯通知节点入队后即可推进；仅显式 BLOCK 才回滚该节点步骤
+        return "BLOCK".equalsIgnoreCase(String.valueOf(config.getOrDefault("failureStrategy", "CONTINUE")));
     }
 }

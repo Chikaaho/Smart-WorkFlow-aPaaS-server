@@ -529,6 +529,8 @@ class AuthMenusContractAndSecurityTest {
     @Test
     @DisplayName("service 级：角色停用后 getMenuTree(该用户, false) → 空列表")
     void service_getMenuTree_roleDisabled_shouldReturnEmptyList() {
+        // service 级直调无认证过滤器：显式建立种子数据所属的租户 0 上下文（I5 fail-closed 后不再隐式回落）
+        LoginUserHolder.set(tenantZeroUser());
         jdbcTemplate.update("UPDATE sys_role SET status = 0 WHERE id = 2");
 
         assertThat(sysMenuService.getMenuTree(1L, false))
@@ -554,6 +556,7 @@ class AuthMenusContractAndSecurityTest {
     @Test
     @DisplayName("service 级：getMenuTree(无绑定 userId, false) → 空列表")
     void service_getMenuTree_userWithoutBindings_shouldReturnEmptyList() {
+        LoginUserHolder.set(tenantZeroUser());
         assertThat(sysMenuService.getMenuTree(2L, false))
                 .as("无绑定用户 service 级应返回空列表")
                 .isEmpty();
@@ -562,6 +565,7 @@ class AuthMenusContractAndSecurityTest {
     @Test
     @DisplayName("service 级：多角色重复绑定同一菜单 → 去重后树只含绑定行")
     void service_getMenuTree_userWithMultipleRoles_shouldDeduplicateAndFilterByBindings() {
+        LoginUserHolder.set(tenantZeroUser());
         // u5 同时持 admin(2)→[100,110,111,120] 与 assist(3)→[100]：100 经两条路径绑定
         List<AuthMenuVO> tree = sysMenuService.getMenuTree(5L, false);
 
@@ -577,6 +581,15 @@ class AuthMenusContractAndSecurityTest {
         assertThat(countAllIds(tree).stream().filter("100"::equals).count())
                 .as("重复绑定不应产生重复节点")
                 .isEqualTo(1);
+    }
+
+    /** 种子数据所属租户 0 的测试身份（service 级直调用）。 */
+    private com.sw.ck.security.holder.LoginUser tenantZeroUser() {
+        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        user.setUserId(1L);
+        user.setTenantId(0L);
+        user.setPermissions(java.util.List.of());
+        return user;
     }
 
     /** 平铺返回树内全部节点 id（含递归 children）。 */
@@ -643,6 +656,8 @@ class AuthMenusContractAndSecurityTest {
     @Test
     @DisplayName("角色停用 vs 启用（真实装配）：停用角色从 roles 剔除，按钮 permission 不再装配")
     void provider_roleStatus_shouldRevokeRolesMenusAndPermissions() {
+        // service 级 getMenuTree 直调无认证过滤器：显式建立租户 0 上下文（I5 fail-closed）
+        LoginUserHolder.set(tenantZeroUser());
         // ---- 启用角色用户 u3：roles=[admin]，permissions 含绑定按钮权限 ----
         com.sw.ck.security.holder.LoginUser active = userDetailsProvider.loadByUserId(3L);
         assertThat(active.getRoles())

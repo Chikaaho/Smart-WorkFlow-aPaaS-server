@@ -69,6 +69,13 @@ public class FormDataUpdateService {
     private final FormIdGenerator idGenerator;
     private final DictFacade dictFacade;
     private final FormFieldValidator formFieldValidator;
+    /** I2 写路径增补（可选注入；既有测试构造不受影响）。 */
+    private FormFieldEnrichmentService enrichment;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setEnrichment(FormFieldEnrichmentService enrichment) {
+        this.enrichment = enrichment;
+    }
 
     public FormDataUpdateService(FormDefService formDefService,
                                   FormDefMapper formDefMapper,
@@ -136,13 +143,17 @@ public class FormDataUpdateService {
         // —— Step 3: 加载字段定义 ——
         Map<String, Object> submittedData = request.getData();
         if (submittedData == null) {
-            submittedData = Map.of();
+            // 公式重算会对该 Map 做 remove/put，必须可变；Map.of() 不可变会让
+            // enrichForWrite 抛 UnsupportedOperationException（500 而非业务拒绝）。
+            submittedData = new java.util.HashMap<>();
         }
         Map<String, FormFieldValidator.FieldDef> fieldDefs =
                 formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
 
-        // —— Step 4: 查主记录存在且未删（同时取 version 做乐观锁校验） ——
-        Long storedVersion = checkRecordExistsAndGetVersion(tableName, recordId, tenantId);
+        // —— Step 4: 查主记录存在且未删（I2：叠加记录数据范围；同时取 version 做乐观锁校验） ——
+        com.sw.ck.common.datascope.DataScopeFilter recordScope =
+                FormDataScopeSupport.resolve(loginUser, null, null);
+        Long storedVersion = checkRecordExistsAndGetVersion(tableName, recordId, tenantId, recordScope);
 
         // —— Step 5: 乐观锁校验 ——
         Long requestVersion = request.getVersion();
@@ -155,14 +166,19 @@ public class FormDataUpdateService {
         }
 
         // —— Step 6: 主表字段校验（复用量产校验口径 1400-1404） ——
+        if (enrichment != null) {
+            // I2：字段编辑权限闸门 + 公式服务端重算 + USER/DEPT/DATASOURCE 对象校验与解析
+            enrichment.enrichForWrite(formDef.getId(), submittedData);
+            fieldDefs = formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
+        }
         formFieldValidator.validateFields(fieldDefs, submittedData, dictFacade);
 
-        // —— Step 7: 主表整量 UPDATE ——
+        // —— Step 7: 主表整量 UPDATE（WHERE 叠加记录数据范围） ——
         int affected = updateMainRecord(tableName, fieldDefs, submittedData,
-                recordId, requestVersion, tenantId, userId);
+                recordId, requestVersion, tenantId, userId, recordScope);
         if (affected == 0) {
             // 检查之间记录可能被删
-            Long currentVersion = checkRecordExistsAndGetVersion(tableName, recordId, tenantId);
+            Long currentVersion = checkRecordExistsAndGetVersion(tableName, recordId, tenantId, recordScope);
             if (currentVersion == null) {
                 throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "记录已被删除");
             }
@@ -190,12 +206,15 @@ public class FormDataUpdateService {
      *
      * @return 当前版本号；记录不存在返回 null
      */
-    private Long checkRecordExistsAndGetVersion(String tableName, String recordId, Long tenantId) {
-        String sql = "SELECT \"version\" FROM \"" + tableName
-                + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+    private Long checkRecordExistsAndGetVersion(String tableName, String recordId, Long tenantId,
+                                                com.sw.ck.common.datascope.DataScopeFilter recordScope) {
+        StringBuilder sql = new StringBuilder("SELECT \"version\" FROM \"" + tableName
+                + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
+        List<Object> params = new ArrayList<>(List.of(recordId, tenantId));
+        FormDataScopeSupport.appendWhere(sql, params, recordScope);
         List<Map<String, Object>> rows;
         try {
-            rows = jdbcTemplate.queryForList(sql, recordId, tenantId);
+            rows = jdbcTemplate.queryForList(sql.toString(), params.toArray());
         } catch (Exception e) {
             log.error("Record existence check failed: table={}, recordId={}", tableName, recordId, e);
             throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询记录失败: " + e.getMessage());
@@ -230,7 +249,8 @@ public class FormDataUpdateService {
                                   String recordId,
                                   Long currentVersion,
                                   Long tenantId,
-                                  Long userId) {
+                                  Long userId,
+                                  com.sw.ck.common.datascope.DataScopeFilter recordScope) {
         // 构建 SET 子句：用户列 + 审计列
         List<String> setParts = new ArrayList<>();
         List<Object> params = new ArrayList<>();
@@ -244,6 +264,13 @@ public class FormDataUpdateService {
 
             if ("BOOL".equals(def.type())) {
                 value = FormFieldValidator.convertBoolValue(value);
+            }
+            if ("DATASOURCE".equals(def.type()) && value instanceof Map<?, ?> jsonValue) {
+                try {
+                    value = objectMapper.writeValueAsString(jsonValue);
+                } catch (JsonProcessingException e) {
+                    throw new BaseException(FormErrorCode.SUBMIT_FAILED, "数据源摘要序列化失败");
+                }
             }
 
             setParts.add("\"" + colName + "\" = ?");
@@ -263,8 +290,11 @@ public class FormDataUpdateService {
         params.add(currentVersion);
         params.add(tenantId);
 
+        StringBuilder where = new StringBuilder("\"id\" = ? AND \"version\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
+        FormDataScopeSupport.appendWhere(where, params, recordScope);
+
         String sql = "UPDATE \"" + tableName + "\" SET " + String.join(", ", setParts)
-                + " WHERE \"id\" = ? AND \"version\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+                + " WHERE " + where;
 
         log.debug("Update SQL: {}", sql);
         return jdbcTemplate.update(sql, params.toArray());

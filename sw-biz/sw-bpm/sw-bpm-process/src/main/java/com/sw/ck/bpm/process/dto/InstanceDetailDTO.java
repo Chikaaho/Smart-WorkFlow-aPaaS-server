@@ -26,4 +26,9 @@ public class InstanceDetailDTO extends InstanceListItemDTO {
 
     /** 全部历史活动节点（含已完成 + 进行中），按结束时间升序。进行中节点 endTime=null 排末尾 */
     private List<BpmActivityDTO> flowTrace;
+
+    /**
+     * 流程变量中的表单数据（P21 G3b：IoT 触发流程的表单详情回查）。
+     */
+    private java.util.Map<String, Object> formData;
 }

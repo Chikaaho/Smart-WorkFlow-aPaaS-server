@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import com.sw.ck.notify.api.NotifyChannel;
+import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.UrgeRespDTO;
@@ -49,6 +51,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
     private final BpmTaskFacade bpmTaskFacade;
     private final UrgeRecordMapper urgeRecordMapper;
     private final NotifyFacade notifyFacade;
+    private final com.sw.ck.notify.api.NotifyRoutingService notifyRoutingService;
     private final JdbcTemplate jdbcTemplate;
 
     public BpmUrgeServiceImpl(BpmInstanceService bpmInstanceService,
@@ -56,10 +59,21 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                               UrgeRecordMapper urgeRecordMapper,
                               NotifyFacade notifyFacade,
                               JdbcTemplate jdbcTemplate) {
+        this(bpmInstanceService, bpmTaskFacade, urgeRecordMapper, notifyFacade, null, jdbcTemplate);
+    }
+
+@org.springframework.beans.factory.annotation.Autowired
+    public BpmUrgeServiceImpl(BpmInstanceService bpmInstanceService,
+                              BpmTaskFacade bpmTaskFacade,
+                              UrgeRecordMapper urgeRecordMapper,
+                              NotifyFacade notifyFacade,
+                              com.sw.ck.notify.api.NotifyRoutingService notifyRoutingService,
+                              JdbcTemplate jdbcTemplate) {
         this.bpmInstanceService = bpmInstanceService;
         this.bpmTaskFacade = bpmTaskFacade;
         this.urgeRecordMapper = urgeRecordMapper;
         this.notifyFacade = notifyFacade;
+        this.notifyRoutingService = notifyRoutingService;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -153,15 +167,28 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
             return reject(instance, loginUser.getUserId(), "活动任务无待办人，不能催办");
         }
 
-        // 通知当前实际待办人（站内渠道，复用既有 NotifyFacade 语义）
+        // I6 统一投递权威：催办 = TASK_URGE 事件，渠道/订阅由路由裁决（IN_APP 保底），
+        // 每次催办具有新的稳定发生标识（冷却窗批次），站内信至少送达。
         Long firstTarget = targets.iterator().next();
         for (Long target : targets) {
-            notifyFacade.send(new SendNotifyCommand(target,
-                    "催办提醒",
-                    "您有待办任务被催办：实例 " + instance.getProcessInstanceId(),
-                    NotifyBizType.WF_TODO,
-                    instance.getProcessInstanceId(),
-                    loginUser.getTenantId()));
+            java.util.List<NotifyChannel> urgeChannels = notifyRoutingService == null
+                    ? java.util.List.of(NotifyChannel.IN_APP)
+                    : notifyRoutingService.channelsFor("TASK_URGE", target);
+            for (NotifyChannel channel : urgeChannels) {
+                notifyFacade.send(NotifySendRequest.builder()
+                        .channel(channel)
+                        .recipientId(target)
+                        .title("催办提醒")
+                        .content("您有待办任务被催办：实例 " + instance.getProcessInstanceId())
+                        .bizType(NotifyBizType.WF_TODO)
+                        .bizId(instance.getProcessInstanceId())
+                        .tenantId(loginUser.getTenantId())
+                        .eventType("TASK_URGE")
+                        .occurrenceNo(urgeOccurrence())
+                        .linkType("WF_PROCESS")
+                        .linkId(instance.getProcessInstanceId())
+                        .build());
+            }
         }
 
         UrgeRecord record = new UrgeRecord();
@@ -177,6 +204,11 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                 instance.getProcessInstanceId(), loginUser.getUserId(), targets);
         return UrgeRespDTO.builder().result(RESULT_ACCEPTED)
                 .detail("已通知待办人: " + targets).recordId(record.getId()).build();
+    }
+
+    /** 同一冷却窗口内并发催办共享同一发生次序（10 分钟窗，与既有冷却唯一键同粒度）。 */
+    private Long urgeOccurrence() {
+        return System.currentTimeMillis() / 600000L;
     }
 
     private UrgeRespDTO reject(BpmInstance instance, Long operator, String reason) {

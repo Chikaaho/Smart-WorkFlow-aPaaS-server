@@ -62,6 +62,10 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
             return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
                     "参与人策略不能为空"));
         }
+        if (!ParticipantStrategy.ALL.contains(selected.toUpperCase())) {
+            return List.of(error(node, BpmErrorCode.PARTICIPANT_TYPE_NOT_IMPLEMENTED,
+                    "未实现的参与人策略: " + selected));
+        }
         if (participant.get("value") == null && !"ADAPTER".equalsIgnoreCase(selected)) {
             return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
                     "参与人值不能为空"));
@@ -72,7 +76,32 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
                 return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
                         "适配器标识不能为空"));
         }
-        if (ParticipantStrategy.FIXED_USER.equalsIgnoreCase(selected)) {
+        if (ParticipantStrategy.DEPT_LEADER.equalsIgnoreCase(selected)) {
+            Collection<?> values = participant.get("value") instanceof Collection<?> collection
+                    ? collection : List.of(participant.get("value"));
+            if (values.isEmpty() || values.stream().anyMatch(item -> {
+                try { return Long.parseLong(String.valueOf(item)) <= 0; }
+                catch (Exception e) { return true; }
+            })) {
+                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "DEPT_LEADER 只能配置正整数部门 ID"));
+            }
+        } else if (ParticipantStrategy.POST.equalsIgnoreCase(selected)) {
+            Collection<?> values = participant.get("value") instanceof Collection<?> collection
+                    ? collection : List.of(participant.get("value"));
+            if (values.isEmpty() || values.stream().anyMatch(item -> item == null || String.valueOf(item).isBlank())) {
+                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "POST 必须配置非空岗位编码"));
+            }
+        } else if (ParticipantStrategy.DEPT_POST.equalsIgnoreCase(selected)) {
+            if (!(participant.get("value") instanceof java.util.Map<?, ?> mapping)
+                    || mapping.get("deptId") == null
+                    || mapping.get("postCode") == null
+                    || String.valueOf(mapping.get("postCode")).isBlank()) {
+                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "DEPT_POST 必须配置 {deptId, postCode}"));
+            }
+        } else if (ParticipantStrategy.FIXED_USER.equalsIgnoreCase(selected)) {
             Collection<?> values = participant.get("value") instanceof Collection<?> collection
                     ? collection : List.of(participant.get("value"));
             if (values.isEmpty() || values.stream().anyMatch(item -> {

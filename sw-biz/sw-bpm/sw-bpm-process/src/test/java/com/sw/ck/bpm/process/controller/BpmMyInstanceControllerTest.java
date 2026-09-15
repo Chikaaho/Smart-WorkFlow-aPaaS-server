@@ -45,7 +45,8 @@ class BpmMyInstanceControllerTest {
             mock(com.sw.ck.bpm.process.service.ApprovalActionService.class);
 
     private final BpmMyInstanceController controller = new BpmMyInstanceController(
-            bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService);
+            bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
+            null, null, null);
 
     @BeforeEach
     void setUp() {
@@ -147,7 +148,7 @@ class BpmMyInstanceControllerTest {
     void myInstanceDetail_shouldMergeActionRecordsIntoHistory() {
         BpmMyInstanceController enriched = new BpmMyInstanceController(
                 bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
-                approvalActionService, new com.fasterxml.jackson.databind.ObjectMapper());
+                approvalActionService, new com.fasterxml.jackson.databind.ObjectMapper(), null);
 
         when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);

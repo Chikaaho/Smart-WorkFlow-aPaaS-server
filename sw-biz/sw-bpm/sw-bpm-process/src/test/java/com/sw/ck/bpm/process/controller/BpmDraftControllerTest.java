@@ -77,6 +77,8 @@ class BpmDraftControllerTest {
         loginUser.setTenantId(0L);
         LoginUserHolder.set(loginUser);
         when(formDefinitionService.canCurrentUserInitiate(anyString())).thenReturn(true);
+        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(true);
+        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(true);
     }
 
     @AfterEach
@@ -96,6 +98,8 @@ class BpmDraftControllerTest {
         BpmDraft draft = new BpmDraft();
         draft.setId(id);
         draft.setCreateBy(2L);
+        draft.setTenantId(0L);
+        draft.setTenantId(0L);
         draft.setFormKey("leave_form");
         draft.setFormVersion(1L);
         draft.setProcessDefKey("leave_flow");
@@ -151,6 +155,20 @@ class BpmDraftControllerTest {
     @Nested
     @DisplayName("归属校验（非本人 FORBIDDEN）")
     class OwnershipTests {
+
+        @Test
+        @DisplayName("get：本人但撤销 view 动作权限 → FORBIDDEN 且不返回草稿载荷")
+        void get_shouldRejectWhenViewActionRevoked() {
+            BpmDraft own = draft(6L, DraftStatusEnum.EDITING.getCode());
+            own.setPayload("{\"secret\":\"should-not-leak\"}");
+            when(draftService.getById(6L)).thenReturn(own);
+            when(formDefinitionService.canCurrentUserPerformAction("leave_form", "view"))
+                    .thenReturn(false);
+
+            assertThatThrownBy(() -> controller.get(6L))
+                    .isInstanceOf(BaseException.class)
+                    .hasMessageContaining("无权访问");
+        }
 
         @Test
         @DisplayName("get：非本人访问 → FORBIDDEN")

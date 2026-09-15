@@ -38,6 +38,25 @@ public class FormDefinitionController {
         this.formDefService = formDefService;
     }
 
+    // ==================== 能力目录 ====================
+
+    /**
+     * 服务端权威字段类型能力响应（Z8/G14a）：组件目录的唯一 HTTP 权威来源。
+     * 返回全部 22 类及其 enabled 状态；校验/矩阵/前端目录必须由本端点驱动，
+     * 不接受源码枚举或前端常量替代。
+     */
+    @GetMapping("/field-types")
+    public R<java.util.List<java.util.Map<String, Object>>> fieldTypes() {
+        java.util.List<java.util.Map<String, Object>> list = new java.util.ArrayList<>();
+        for (com.sw.ck.form.dynamic.FieldType ft : com.sw.ck.form.dynamic.FieldType.values()) {
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("type", ft.name());
+            row.put("enabled", ft.isEnabled());
+            list.add(row);
+        }
+        return R.ok(list);
+    }
+
     // ==================== 草稿管理 ====================
 
     /**
@@ -157,6 +176,51 @@ public class FormDefinitionController {
         log.info("Publishing form: id={}", id);
         formDefService.publish(id);
         return R.ok();
+    }
+
+    /** 在同一物理表上发布新表单版本，保留历史快照与既有记录。 */
+    @PreAuthorize("@ss.hasPermi('form:design:publish')")
+    @PostMapping("/{id}/publish-version")
+    public R<Void> publishNewVersion(@PathVariable("id") String id,
+                                     @RequestBody FormConfigSaveReq req) {
+        log.info("Publishing form version: id={}", id);
+        formDefService.publishNewVersion(id, req == null ? null : req.getDefinition());
+        return R.ok();
+    }
+
+    // ==================== I2 生命周期 / 列表配置 / 外部数据源 ====================
+
+    /** 停用已发布表单（禁新绑定/填报/提交/发起；历史与既有实例按冻结快照可读）。 */
+    @PreAuthorize("@ss.hasPermi('form:design:publish')")
+    @PostMapping("/{id}/disable")
+    public R<Void> disable(@PathVariable("id") String id,
+                           @RequestBody(required = false) java.util.Map<String, String> body) {
+        formDefService.disable(id, body == null ? null : body.get("reason"));
+        return R.ok();
+    }
+
+    /** 重新启用已停用表单。 */
+    @PreAuthorize("@ss.hasPermi('form:design:publish')")
+    @PostMapping("/{id}/enable")
+    public R<Void> enable(@PathVariable("id") String id,
+                          @RequestBody(required = false) java.util.Map<String, String> body) {
+        formDefService.enable(id, body == null ? null : body.get("reason"));
+        return R.ok();
+    }
+
+    /** 保存表单列表展示配置（字段/顺序/筛选/默认排序/允许动作）。 */
+    @PreAuthorize("@ss.hasPermi('form:design:save')")
+    @PutMapping("/{id}/list-config")
+    public R<Void> saveListConfig(@PathVariable("id") String id,
+                                  @RequestBody java.util.Map<String, String> body) {
+        formDefService.saveListConfig(id, body == null ? null : body.get("config"));
+        return R.ok();
+    }
+
+    /** 读取表单列表展示配置；未配置返回 data=null（前端可用派生默认）。 */
+    @GetMapping("/{id}/list-config")
+    public R<String> getListConfig(@PathVariable("id") String id) {
+        return R.ok(formDefService.getListConfig(id));
     }
 
     // ==================== 查询（渲染接口） ====================

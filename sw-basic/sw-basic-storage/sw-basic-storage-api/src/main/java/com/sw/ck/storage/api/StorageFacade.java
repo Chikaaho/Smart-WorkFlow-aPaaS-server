@@ -47,4 +47,13 @@ public interface StorageFacade {
      * @return 文件访问 URL
      */
     String getUrl(String storageKey);
+
+    /**
+     * 判断存储文件是否存在（未逻辑删除）。
+     * <p>供表单等业务模块校验附件/图片引用的真实性（I2 §4.1 对象校验）。</p>
+     *
+     * @param storageKey 存储唯一标识
+     * @return true = 存在
+     */
+    boolean exists(String storageKey);
 }

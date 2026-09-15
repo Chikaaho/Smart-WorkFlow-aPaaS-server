@@ -120,6 +120,14 @@ class UserGroupDataScopeIntegrationTest {
     }
 
     private Long createGroup(String code, String name, Long... memberIds) {
+        // I5 fail-closed：种子/建组动作发生在 loginAs 之前，显式建立租户 0 上下文
+        //（原实现依赖无上下文回落租户 0 的隐式填充）
+        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+            com.sw.ck.security.holder.LoginUser bootstrap = new com.sw.ck.security.holder.LoginUser();
+            bootstrap.setUserId(0L);
+            bootstrap.setTenantId(0L);
+            com.sw.ck.security.holder.LoginUserHolder.set(bootstrap);
+        }
         SysUserGroup withMembers = new SysUserGroup();
         withMembers.setGroupCode(code);
         withMembers.setGroupName(name);

@@ -81,6 +81,15 @@ public class RefreshTokenService {
     @Transactional(rollbackFor = Exception.class)
     public RefreshTokenRotation rotateRefreshToken(String rawToken, long refreshExpireSeconds) {
         String tokenHash = sha256(rawToken);
+        // refresh 请求无 access 会话，租户上下文缺失属正常路径；行级租户语义由行内
+        // tenant_id 承载，查询按 token_hash 全局唯一索引定位（I5 fail-closed 兼容）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return rotateRefreshTokenSuspended(tokenHash, refreshExpireSeconds);
+        }
+    }
+
+    private RefreshTokenRotation rotateRefreshTokenSuspended(String tokenHash, long refreshExpireSeconds) {
         // 1. 查找 token
         SysRefreshToken existing = sysRefreshTokenMapper.selectOne(
                 new LambdaQueryWrapper<SysRefreshToken>()
@@ -129,16 +138,20 @@ public class RefreshTokenService {
         if (rawToken == null || rawToken.isEmpty()) {
             return; // 幂等：无 token 即已登出
         }
-        String tokenHash = sha256(rawToken);
-        SysRefreshToken existing = sysRefreshTokenMapper.selectOne(
-                new LambdaQueryWrapper<SysRefreshToken>()
-                        .eq(SysRefreshToken::getTokenHash, tokenHash)
-        );
-        if (existing == null) {
-            return; // 幂等：token 不存在即已登出
+        // 登出可能发生在 access 过期后（无租户上下文）；按 token_hash 全局定位
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            String tokenHash = sha256(rawToken);
+            SysRefreshToken existing = sysRefreshTokenMapper.selectOne(
+                    new LambdaQueryWrapper<SysRefreshToken>()
+                            .eq(SysRefreshToken::getTokenHash, tokenHash)
+            );
+            if (existing == null) {
+                return; // 幂等：token 不存在即已登出
+            }
+            revokeTokenById(existing.getId());
+            log.debug("Refresh token revoked for userId={}, tokenId={}", existing.getUserId(), existing.getId());
         }
-        revokeTokenById(existing.getId());
-        log.debug("Refresh token revoked for userId={}, tokenId={}", existing.getUserId(), existing.getId());
     }
 
     /**
@@ -146,12 +159,15 @@ public class RefreshTokenService {
      */
     public Long findUserIdByToken(String rawToken) {
         if (rawToken == null || rawToken.isEmpty()) return null;
-        String tokenHash = sha256(rawToken);
-        SysRefreshToken existing = sysRefreshTokenMapper.selectOne(
-                new LambdaQueryWrapper<SysRefreshToken>()
-                        .eq(SysRefreshToken::getTokenHash, tokenHash)
-        );
-        return existing != null ? existing.getUserId() : null;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            String tokenHash = sha256(rawToken);
+            SysRefreshToken existing = sysRefreshTokenMapper.selectOne(
+                    new LambdaQueryWrapper<SysRefreshToken>()
+                            .eq(SysRefreshToken::getTokenHash, tokenHash)
+            );
+            return existing != null ? existing.getUserId() : null;
+        }
     }
 
     // ========== 内部方法 ==========
@@ -197,6 +213,13 @@ public class RefreshTokenService {
                         .eq(SysRefreshToken::getUserId, userId)
                         .eq(SysRefreshToken::getRevoked, 0)
                         .set(SysRefreshToken::getRevoked, 1));
+    }
+
+    /**
+     * 公开撤销入口（I5 §3.2 第三方解绑会话撤销）：撤销该用户全部有效 refresh token。
+     */
+    public void revokeAllForUserPublic(Long userId) {
+        revokeAllForUser(userId);
     }
 
     // ========== 内部 DTO ==========

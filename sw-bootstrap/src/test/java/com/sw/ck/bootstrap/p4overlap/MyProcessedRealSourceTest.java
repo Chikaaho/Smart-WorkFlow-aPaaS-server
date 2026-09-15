@@ -121,7 +121,10 @@ class MyProcessedRealSourceTest {
         public BpmProcessDefService bpmProcessDefService(com.sw.ck.bpm.process.mapper.BpmProcessDefMapper mapper,
                                                          ObjectMapper objectMapper) {
             // 仅用到 findByProcessKey（真实 mapper 查询）；图校验/部署等编辑能力本测试不触达
-            return new BpmProcessDefServiceImpl(mapper, null, null, null, null, objectMapper);
+            return new BpmProcessDefServiceImpl(mapper,
+                    org.mockito.Mockito.mock(com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper.class),
+                    org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.NodeFunctionService.class),
+                    null, null, null, null, objectMapper);
         }
 
         @Bean

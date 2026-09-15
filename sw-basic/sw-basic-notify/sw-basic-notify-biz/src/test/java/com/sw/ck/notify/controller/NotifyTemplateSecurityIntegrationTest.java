@@ -166,6 +166,10 @@ class NotifyTemplateSecurityIntegrationTest {
                     remark            varchar(500)
                 )
                 """);
+        try { jt.execute("ALTER TABLE sw_notify_template ADD COLUMN IF NOT EXISTS event_type varchar(40) not null default 'SYSTEM'"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_template ADD COLUMN IF NOT EXISTS channel varchar(40) not null default 'IN_APP'"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_template ADD COLUMN IF NOT EXISTS variables_allowed varchar(1000)"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_template ADD COLUMN IF NOT EXISTS jump_ref varchar(200)"); } catch (Exception ignored) { /* schema already migrated */ }
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_notify_message (
                     id                bigint not null primary key,
@@ -189,6 +193,18 @@ class NotifyTemplateSecurityIntegrationTest {
                     idempotency_key   varchar(200)
                 )
                 """);
+
+        // I6 收口新增列（IF NOT EXISTS 双方言兼容；存量 schema 与生产迁移同语义）
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS event_type varchar(40) not null default 'SYSTEM'"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS occurrence_no bigint not null default 1"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS template_id bigint"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS template_version int"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS link_type varchar(32)"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS link_id varchar(64)"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS retry_count int not null default 0"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS next_retry_time timestamp"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS failure_class varchar(40)"); } catch (Exception ignored) { /* schema already migrated */ }
+        try { jt.execute("ALTER TABLE sw_notify_message ADD COLUMN IF NOT EXISTS receipt_digest varchar(200)"); } catch (Exception ignored) { /* schema already migrated */ }
         jt.execute("DROP INDEX IF EXISTS uk_sw_notify_template_tenant_code");
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_notify_template_tenant_code "
                 + "ON sw_notify_template (tenant_id, template_code, deleted)");
@@ -871,7 +887,8 @@ class NotifyTemplateSecurityIntegrationTest {
                 JwtTokenProvider jwtTokenProvider,
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties) {
-            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties);
+            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
+                    org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
         }
 
         @Bean

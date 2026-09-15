@@ -8,7 +8,6 @@ import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.entity.DraftStatusEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
-import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.dto.FormDefDTO;
@@ -157,16 +156,13 @@ public class DraftSubmitService {
     }
 
     /**
-     * 受理前租户边界（审查03 §3.3）：当前调度线程按部署事实仅可靠消费超租户(0)命令。
-     * 非超租户命令若受理将永久 PENDING，故必须在受理前明确拒绝，不产生命令。
+     * 受理前租户边界（I5 收口）：命令信封承载租户语义，消费侧按信封租户还原身份并
+     * 一致性校验；任何有效租户的命令均可受理，不再以「仅超租户可消费」为由拒绝。
+     * 缺失租户上下文仍 fail closed。
      */
     private void requireConsumableTenant(LoginUser loginUser) {
-        if (loginUser == null) {
+        if (loginUser == null || loginUser.getTenantId() == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
-        }
-        if (!CommonConstants.SUPER_TENANT_ID.equals(String.valueOf(loginUser.getTenantId()))) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
-                    "当前租户未开通流程命令通道，不能发起审批");
         }
     }
 
@@ -177,12 +173,37 @@ public class DraftSubmitService {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "草稿不存在");
         }
         LoginUser loginUser = LoginUserHolder.get();
-        if (!loginUser.getUserId().equals(draft.getCreateBy())) {
+        if (loginUser == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
+        }
+        if (!isSameTenant(loginUser, draft) || !loginUser.getUserId().equals(draft.getCreateBy())) {
             log.warn("草稿越权拒绝: draftId={}, owner={}, currentUser={}",
                     id, draft.getCreateBy(), loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该草稿");
         }
+        if (!formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view")) {
+            log.warn("草稿视图权限拒绝: draftId={}, formKey={}, currentUser={}",
+                    id, draft.getFormKey(), loginUser.getUserId());
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该草稿");
+        }
         return draft;
+    }
+
+    /** 草稿列表过滤使用：不抛出业务异常，不向撤权主体泄露草稿对象。 */
+    public boolean canCurrentUserView(BpmDraft draft) {
+        LoginUser loginUser = LoginUserHolder.get();
+        return loginUser != null
+                && draft != null
+                && loginUser.getUserId() != null
+                && loginUser.getUserId().equals(draft.getCreateBy())
+                && isSameTenant(loginUser, draft)
+                && formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view");
+    }
+
+    private boolean isSameTenant(LoginUser loginUser, BpmDraft draft) {
+        return loginUser.getTenantId() != null
+                && draft.getTenantId() != null
+                && loginUser.getTenantId().equals(draft.getTenantId());
     }
 
     /** 已发布表单校验（保存/提交共用）。 */

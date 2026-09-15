@@ -9,9 +9,14 @@ import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.spi.ApproverResolver;
 import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
+import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.system.api.user.UserQueryFacade;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.common.exception.BaseException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -56,11 +61,15 @@ public class ProcessStartService {
     private static final Logger log = LoggerFactory.getLogger(ProcessStartService.class);
 
     private final BpmFormBindingService bindingService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sw.ck.bpm.process.service.BpmProcessDefService bpmProcessDefService;
     private final ApproverResolver approverResolver;
     private final BpmRuntimeFacade bpmRuntimeFacade;
     private final BpmTaskFacade bpmTaskFacade;
     private final BpmInstanceService bpmInstanceService;
     private final DomainEventPublisher domainEventPublisher;
+    /** 可选：发起前置校验发起人在本租户有效且启用（I1）。 */
+    private final UserQueryFacade userQueryFacade;
 
     public ProcessStartService(BpmFormBindingService bindingService,
                                 ApproverResolver approverResolver,
@@ -68,12 +77,25 @@ public class ProcessStartService {
                                 BpmTaskFacade bpmTaskFacade,
                                 BpmInstanceService bpmInstanceService,
                                 DomainEventPublisher domainEventPublisher) {
+        this(bindingService, approverResolver, bpmRuntimeFacade, bpmTaskFacade,
+                bpmInstanceService, domainEventPublisher, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ProcessStartService(BpmFormBindingService bindingService,
+                                ApproverResolver approverResolver,
+                                BpmRuntimeFacade bpmRuntimeFacade,
+                                BpmTaskFacade bpmTaskFacade,
+                                BpmInstanceService bpmInstanceService,
+                                DomainEventPublisher domainEventPublisher,
+                                ObjectProvider<UserQueryFacade> userQueryFacade) {
         this.bindingService = bindingService;
         this.approverResolver = approverResolver;
         this.bpmRuntimeFacade = bpmRuntimeFacade;
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.domainEventPublisher = domainEventPublisher;
+        this.userQueryFacade = userQueryFacade == null ? null : userQueryFacade.getIfAvailable();
     }
 
     /**
@@ -95,6 +117,9 @@ public class ProcessStartService {
             log.info("表单 {} 无启用绑定，跳过流程发起", cmd.getFormKey());
             return;
         }
+
+        // 0. 发起人有效性前置校验（I1）：停用/跨租户/已删除用户不得发起流程
+        requireActiveInitiator(cmd);
         BpmFormBinding binding;
         if (cmd.getProcessDefKey() != null && !cmd.getProcessDefKey().isBlank()) {
             binding = bindings.stream()
@@ -162,6 +187,11 @@ public class ProcessStartService {
         instance.setBusinessKey(cmd.getRecordId());
         instance.setFormKey(cmd.getFormKey());
         instance.setInitiatorId(cmd.getSubmitter());
+        // I3 §4.3：运行实例绑定明确的发布版本（发起时刻 def.published_version 快照）
+        BpmProcessDef startedDef = bpmProcessDefServiceByName(binding);
+        if (startedDef != null && startedDef.getPublishedVersion() != null) {
+            instance.setDefVersion(startedDef.getPublishedVersion());
+        }
         // Flowable 可能在 startProcess 返回前就完成无人工节点的流程。此时若无条件写
         // RUNNING，会产生“引擎已到 End、业务记录仍运行中”的假终态；沿用审批完成路径
         // 的 APPROVED 语义。
@@ -180,6 +210,31 @@ public class ProcessStartService {
         } else {
             log.info("流程启动后已到达终态，跳过 TODO_CREATED 通知: processInstanceId={}",
                     processInstanceId);
+        }
+    }
+
+    /** 查定义行以绑定发布版本（bpmProcessDefService 可选注入；查不到返回 null）。 */
+    private BpmProcessDef bpmProcessDefServiceByName(BpmFormBinding binding) {
+        if (bpmProcessDefService == null) {
+            return null;
+        }
+        try {
+            return bpmProcessDefService.findByProcessKey(binding.getProcessDefKey());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 发起人必须在本租户内有效且启用；userQueryFacade 缺失时跳过（兼容单测装配）。 */
+    private void requireActiveInitiator(StartCommand cmd) {
+        if (userQueryFacade == null || cmd.getSubmitter() == null) {
+            return;
+        }
+        List<Long> active = userQueryFacade.findActiveUserIds(List.of(cmd.getSubmitter()), cmd.getTenantId());
+        if (active == null || active.isEmpty()) {
+            log.error("流程发起人无效: submitter={}, tenantId={}, formKey={}",
+                    cmd.getSubmitter(), cmd.getTenantId(), cmd.getFormKey());
+            throw new BaseException(BpmErrorCode.INSTANCE_INITIATOR_INVALID);
         }
     }
 

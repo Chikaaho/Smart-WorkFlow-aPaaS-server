@@ -90,4 +90,29 @@ public class UserFacadeImpl implements UserQueryFacade {
         if (roleCodes == null || roleCodes.isEmpty() || tenantId == null) return List.of();
         return sysUserMapper.selectActiveUserIdsByRoleCodes(List.copyOf(roleCodes), tenantId);
     }
+
+    @Override
+    public List<Long> findActiveUserIdsByDeptLeaders(Collection<Long> deptIds, Long tenantId) {
+        if (deptIds == null || deptIds.isEmpty() || tenantId == null) return List.of();
+        List<Long> distinct = deptIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty()) return List.of();
+        return sysUserMapper.selectActiveUserIdsByDeptLeaders(distinct, tenantId);
+    }
+
+    @Override
+    public List<Long> findActiveUserIdsByPostCodes(Collection<String> postCodes, Long tenantId) {
+        if (postCodes == null || postCodes.isEmpty() || tenantId == null) return List.of();
+        List<String> distinct = postCodes.stream()
+                .filter(code -> code != null && !code.isBlank()).distinct().toList();
+        if (distinct.isEmpty()) return List.of();
+        return sysUserMapper.selectActiveUserIdsByPostCodes(distinct, tenantId);
+    }
+
+    @Override
+    public List<Long> findActiveUserIdsByDeptAndPost(Long deptId, String postCode, Long tenantId) {
+        if (deptId == null || deptId <= 0 || postCode == null || postCode.isBlank() || tenantId == null) {
+            return List.of();
+        }
+        return sysUserMapper.selectActiveUserIdsByDeptAndPost(deptId, postCode, tenantId);
+    }
 }

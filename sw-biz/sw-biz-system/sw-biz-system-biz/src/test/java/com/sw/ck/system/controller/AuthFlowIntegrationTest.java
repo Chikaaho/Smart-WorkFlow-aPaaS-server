@@ -131,6 +131,31 @@ class AuthFlowIntegrationTest {
 
     @BeforeAll
     static void createTables(@Autowired JdbcTemplate jt) {
+        // sys_tenant（I5：租户有效性校验）
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sys_tenant (
+                    id                bigint          not null primary key,
+                    name              varchar(100)    not null,
+                    code              varchar(50)     not null,
+                    status            smallint        not null default 0,
+                    description       clob,
+                    contact_name      varchar(50),
+                    contact_phone     varchar(20),
+                    contact_email     varchar(100),
+                    expire_time       timestamp,
+                    domain_name       varchar(100),
+                    create_time       timestamp       not null default current_timestamp,
+                    create_by         bigint,
+                    update_time       timestamp       not null default current_timestamp,
+                    update_by         bigint,
+                    deleted           smallint        not null default 0,
+                    tenant_id         bigint          not null default 0,
+                    version           bigint          not null default 0
+                )
+                """);
+        jt.execute("MERGE INTO sys_tenant (id, name, code, status, deleted, tenant_id, version) "
+                + "KEY (id) VALUES (0, '默认租户', 'default', 0, 0, 0, 0)");
+
         // sys_user
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sys_user (
@@ -1006,9 +1031,11 @@ class AuthFlowIntegrationTest {
                 SysRoleMapper sysRoleMapper,
                 SysRoleMenuMapper sysRoleMenuMapper,
                 SysMenuMapper sysMenuMapper,
-                SysRoleDeptMapper sysRoleDeptMapper) {
+                SysRoleDeptMapper sysRoleDeptMapper,
+                com.sw.ck.system.mapper.SysTenantMapper sysTenantMapper) {
             return new UserDetailsProviderImpl(sysUserService, sysUserRoleMapper, sysRoleMapper,
-                    sysRoleMenuMapper, sysMenuMapper, sysRoleDeptMapper);
+                    sysRoleMenuMapper, sysMenuMapper, sysRoleDeptMapper,
+                    new com.sw.ck.system.service.TenantValidityService(sysTenantMapper));
         }
 
         // ==================== RefreshTokenService ====================
@@ -1026,8 +1053,9 @@ class AuthFlowIntegrationTest {
         public JwtAuthenticationFilter jwtAuthenticationFilter(
                 JwtTokenProvider jwtTokenProvider,
                 LoginUserLoader loginUserLoader,
-                SecurityProperties securityProperties) {
-            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties);
+                SecurityProperties securityProperties,
+                com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService) {
+            return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties, loginUserCacheService);
         }
 
         // ==================== ObjectMapper（JSON 序列化） ====================
@@ -1077,6 +1105,12 @@ class AuthFlowIntegrationTest {
         // ==================== 控制器 ====================
 
         @Bean
+        public com.sw.ck.system.service.TenantValidityService tenantValidityService(
+                com.sw.ck.system.mapper.SysTenantMapper sysTenantMapper) {
+            return new com.sw.ck.system.service.TenantValidityService(sysTenantMapper);
+        }
+
+        @Bean
         public AuthController authController(
                 UserDetailsProvider userDetailsProvider,
                 PasswordEncoder passwordEncoder,
@@ -1086,10 +1120,12 @@ class AuthFlowIntegrationTest {
                 RefreshTokenService refreshTokenService,
                 LoginUserLoader loginUserLoader,
                 LoginChallengeService loginChallengeService,
-                com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager) {
+                com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager,
+                com.sw.ck.system.service.TenantValidityService tenantValidityService) {
             return new AuthController(userDetailsProvider, passwordEncoder,
                     jwtTokenProvider, sysUserService, jwtProperties,
-                    refreshTokenService, loginUserLoader, loginChallengeService, rsaLoginKeyManager);
+                    refreshTokenService, loginUserLoader, loginChallengeService, rsaLoginKeyManager,
+                    tenantValidityService);
         }
 
         @Bean

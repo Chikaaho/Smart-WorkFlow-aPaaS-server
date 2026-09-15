@@ -45,12 +45,23 @@ public class BpmNotifyEvent implements Serializable {
      */
     private final String bizId;
 
+    /**
+     * 同一事件类型的业务发生次序（I6：新一轮办理/再次提醒为新的稳定发生标识；缺省 1）。
+     */
+    private final Long occurrenceNo;
+
     public BpmNotifyEvent(BpmNotifyTrigger trigger, Long recipientId,
                           Long tenantId, Long actorUserId, String bizId) {
+        this(trigger, recipientId, tenantId, actorUserId, bizId, 1L);
+    }
+
+    public BpmNotifyEvent(BpmNotifyTrigger trigger, Long recipientId,
+                          Long tenantId, Long actorUserId, String bizId, Long occurrenceNo) {
         this.trigger = trigger;
         this.recipientId = recipientId;
         this.tenantId = tenantId;
         this.actorUserId = actorUserId;
         this.bizId = bizId;
+        this.occurrenceNo = occurrenceNo == null ? 1L : occurrenceNo;
     }
 }

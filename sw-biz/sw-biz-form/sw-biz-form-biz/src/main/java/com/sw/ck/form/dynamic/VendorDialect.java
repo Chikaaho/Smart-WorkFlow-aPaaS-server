@@ -40,6 +40,10 @@ public enum VendorDialect {
                 case REFERENCE -> "VARCHAR(36)";
                 case MULTISELECT -> "VARCHAR(1000)";
                 case ATTACHMENT, IMAGE -> "CLOB";
+                case TIME -> "TIME";
+                case USER, DEPT -> "VARCHAR(64)";
+                case FORMULA -> "NUMERIC(20,6)";
+                case DATASOURCE -> "CLOB";
                 case TABLE, LABEL -> throw new IllegalArgumentException(
                         FieldType.class.getSimpleName() + " " + fieldType + " is not a column type");
                 // disabled 占位成员 — 无列映射
@@ -70,6 +74,10 @@ public enum VendorDialect {
                 case REFERENCE -> "VARCHAR(36)";
                 case MULTISELECT -> "VARCHAR(1000)";
                 case ATTACHMENT, IMAGE -> "TEXT";
+                case TIME -> "TIME";
+                case USER, DEPT -> "VARCHAR(64)";
+                case FORMULA -> "NUMERIC(20,6)";
+                case DATASOURCE -> "TEXT";
                 case TABLE, LABEL -> throw new IllegalArgumentException(
                         FieldType.class.getSimpleName() + " " + fieldType + " is not a column type");
                 // disabled 占位成员 — 无列映射

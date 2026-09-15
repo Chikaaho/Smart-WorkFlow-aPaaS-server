@@ -1,10 +1,24 @@
 # ===================================================================
 # Smart-WorkFlow 开发环境配置
 # ===================================================================
+ch:
+  dev:
+    test-mock: true
+
 server:
   port: 8080
 
+# I5 收口：Druid 监控台仅在 dev profile 显式开启（默认全局关闭）；
+# 开发文档入口仅 dev profile 开放（默认全局关闭）。
+# 注意：本文件 spring 顶层键只出现一次——SnakeYAML 对重复顶层键 fail-fast。
 spring:
+  druid:
+    stat-view-servlet:
+      enabled: true
+      url-pattern: /druid/*
+      login-username: ${DRUID_USERNAME:dev-admin}
+      login-password: ${DRUID_PASSWORD:dev-admin-only-local}
+
   autoconfigure:
     exclude:
       # pgvector 需 PostgreSQL 且需单一 EmbeddingModel，dev 的 H2 + 双 AI 模型冲突，排除
@@ -34,13 +48,29 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       database: ${REDIS_DATABASE:0}
-      password: ${REDIS_PASSWORD:1}
+      # 本地开发默认连接无认证 Redis；需要认证时由 REDIS_PASSWORD 显式注入。
+      password: ${REDIS_PASSWORD:}
 
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:sk-your-openai-api-key}
     ollama:
       base-url: http://localhost:11434
+
+  flyway:
+    locations:
+      - classpath:db/migration/{vendor}
+      - classpath:db/migration/bpm/{vendor}
+      - classpath:db/migration/notify/{vendor}
+      - classpath:db/migration/form/{vendor}
+      - classpath:db/migration/storage/{vendor}
+      - classpath:db/migration/job/{vendor}
+      - classpath:db/migration/agent/{vendor}
+      - classpath:db/migration/iot/{vendor}
+      - classpath:db/migration/openapi/{vendor}
+      - classpath:db/migration/system/{vendor}
+      # I5 复验：dev 专用可控测试身份夹具（仅 dev profile）
+      - classpath:db/migration/devseed/{vendor}
 
   flowable:
     database-schema-update: false
@@ -53,9 +83,20 @@ spring:
 logging:
   level:
     root: info
-    com.sw.ck: debug
-    org.springframework.jdbc: debug
-    com.baomidou.mybatisplus: debug
+    # I6 G3f：Slf4jImpl 的行级日志挂在 mapper 命名空间（com.sw.ck.*）下，一并收敛到 info
+    com.sw.ck: info
+    # I6 G3f 收敛：条行级 SQL 输出（Row/Parameters）会把联系方式、密文与正文带入普通日志，
+    # 方向 §5-8/§3.6 要求受影响范围零残留，dev 只保留 info 级 SQL（结构可用，数据不落日志）
+    org.springframework.jdbc: info
+    com.baomidou.mybatisplus: info
+    org.mybatis: info
+
+# 开发文档入口仅 dev profile 开放（默认全局关闭）
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
 
 # ======================== 外部数据源（dev 用 H2 测试密钥） ========================
 sw:
@@ -80,8 +121,17 @@ sw:
     debug-auth:
       # 本地调试需显式设置 SW_DEBUG_AUTH_ENABLED=true；不设置则保持关闭。
       enabled: ${SW_DEBUG_AUTH_ENABLED:false}
+    sso:
+      # devseed 中的 Provider 密文使用同一把开发密钥；prod 仍必须由 SW_SSO_CIPHER_KEY 注入。
+      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+      # I5 复验：Provider 回调白名单（与 Spring permit-list 分离）。默认相对路径模式；
+      # 集成验证经环境注入绝对基址与白名单（逗号分隔）。
+      callback-base-url: ${SW_SSO_CALLBACK_BASE_URL:}
+      callback-allowlist: ${SW_SSO_CALLBACK_ALLOWLIST:}
   iot:
     enabled: true
+    cipher:
+      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
     tencent:
       enabled: false
       provider-mode: mock

@@ -1,11 +1,18 @@
 package com.sw.ck.form.service;
 
 import com.sw.ck.common.datascope.DataScopeFilter;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
+import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormIdGenerator;
+import com.sw.ck.form.mapper.FormConfigMapper;
+import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.dict.DictFacade;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -64,18 +71,32 @@ class FormDataIsolationIntegrationTest {
         }
 
         @Bean
-        com.sw.ck.form.mapper.FormDefMapper formDefMapper() {
-            return Mockito.mock(com.sw.ck.form.mapper.FormDefMapper.class);
+        FormDefMapper formDefMapper() {
+            FormDefMapper mock = Mockito.mock(FormDefMapper.class);
+            FormDefEntity entity = new FormDefEntity();
+            entity.setId("form-isolation-1");
+            entity.setFormKey("isol_test");
+            entity.setStatus("PUBLISHED");
+            entity.setPhysicalTableName(TABLE);
+            when(mock.selectOne(Mockito.any())).thenReturn(entity);
+            when(mock.selectById(Mockito.any())).thenReturn(entity);
+            return mock;
         }
 
         @Bean
-        com.sw.ck.form.mapper.FormConfigMapper formConfigMapper() {
-            com.sw.ck.form.mapper.FormConfigMapper mock = Mockito.mock(com.sw.ck.form.mapper.FormConfigMapper.class);
+        FormConfigMapper formConfigMapper() {
+            FormConfigMapper mock = Mockito.mock(FormConfigMapper.class);
             com.sw.ck.form.entity.FormConfigEntity config = new com.sw.ck.form.entity.FormConfigEntity();
             config.setFormId("form-isolation-1");
             config.setDefinition("{\"fields\":[{\"name\":\"name\",\"label\":\"姓名\",\"type\":\"TEXT\"}]}");
             when(mock.selectList(Mockito.any())).thenReturn(List.of(config));
             return mock;
+        }
+
+        @Bean
+        FormFieldValidator formFieldValidator(FormConfigMapper formConfigMapper,
+                                               com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+            return new FormFieldValidator(formConfigMapper, objectMapper);
         }
 
         @Bean
@@ -85,6 +106,18 @@ class FormDataIsolationIntegrationTest {
                                                   com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                                                   FormDefService formDefService) {
             return new FormDataQueryService(formDefService, fdm, fcm, jdbcTemplate, objectMapper);
+        }
+
+        @Bean
+        FormDataUpdateService formDataUpdateService(FormDefService formDefService,
+                                                     FormDefMapper formDefMapper,
+                                                     FormConfigMapper formConfigMapper,
+                                                     JdbcTemplate jdbcTemplate,
+                                                     com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                                                     FormFieldValidator formFieldValidator) {
+            return new FormDataUpdateService(formDefService, formDefMapper, formConfigMapper,
+                    jdbcTemplate, objectMapper, new FormIdGenerator(),
+                    Mockito.mock(DictFacade.class), formFieldValidator);
         }
 
         @Bean
@@ -107,6 +140,9 @@ class FormDataIsolationIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    FormDataUpdateService updateService;
 
     @BeforeEach
     void createTableAndData() {
@@ -188,5 +224,72 @@ class FormDataIsolationIntegrationTest {
         PageResult<Map<String, Object>> r =
                 queryService.queryFormData("isol_test", req(50), DataScopeFilter.self(null));
         assertEquals(0L, r.getTotal());
+    }
+
+    @Test
+    @DisplayName("原始输出：双租户本租户读成功，跨租户读写均以 1507 拒绝且零副作用")
+    void rawCrossTenantReadWriteEvidence() {
+        long tenantA = 1L;
+        long tenantB = 2L;
+        String recordA = "t1-a";
+        String recordB = "t2-a";
+
+        loginAs(tenantA, 11L);
+        Map<String, Object> ownA = queryService.getRecordDetail("isol_test", recordA);
+        long aBefore = queryService.queryFormData("isol_test", req(50)).getTotal();
+
+        int aReadBCode = catchCode(() -> queryService.getRecordDetail("isol_test", recordB));
+        int aWriteBCode = catchCode(() -> updateService.updateRecord("isol_test", recordB,
+                updateRequest("跨租户 A→B", 0L)));
+        long aAfter = queryService.queryFormData("isol_test", req(50)).getTotal();
+
+        loginAs(tenantB, 21L);
+        Map<String, Object> ownB = queryService.getRecordDetail("isol_test", recordB);
+        long bBefore = queryService.queryFormData("isol_test", req(50)).getTotal();
+
+        int bReadACode = catchCode(() -> queryService.getRecordDetail("isol_test", recordA));
+        int bWriteACode = catchCode(() -> updateService.updateRecord("isol_test", recordA,
+                updateRequest("跨租户 B→A", 0L)));
+        long bAfter = queryService.queryFormData("isol_test", req(50)).getTotal();
+
+        System.out.println("tenantA=" + tenantA);
+        System.out.println("tenantB=" + tenantB);
+        System.out.println("recordIdA=" + recordA);
+        System.out.println("recordIdB=" + recordB);
+        System.out.println("tenantAOwnRead=" + ownA.get("name"));
+        System.out.println("tenantBOwnRead=" + ownB.get("name"));
+        System.out.println("aReadBCode=" + aReadBCode);
+        System.out.println("aWriteBCode=" + aWriteBCode);
+        System.out.println("bReadACode=" + bReadACode);
+        System.out.println("bWriteACode=" + bWriteACode);
+        System.out.println("tenantARecordCountBefore=" + aBefore);
+        System.out.println("tenantARecordCountAfter=" + aAfter);
+        System.out.println("tenantBRecordCountBefore=" + bBefore);
+        System.out.println("tenantBRecordCountAfter=" + bAfter);
+
+        assertEquals(2L, aBefore);
+        assertEquals(aBefore, aAfter);
+        assertEquals(1L, bBefore);
+        assertEquals(bBefore, bAfter);
+        assertEquals(1507, aReadBCode);
+        assertEquals(1507, aWriteBCode);
+        assertEquals(1507, bReadACode);
+        assertEquals(1507, bWriteACode);
+    }
+
+    private FormDataUpdateRequest updateRequest(String name, Long version) {
+        FormDataUpdateRequest request = new FormDataUpdateRequest();
+        request.setData(Map.of("name", name));
+        request.setVersion(version);
+        return request;
+    }
+
+    private int catchCode(Runnable action) {
+        try {
+            action.run();
+            return -1;
+        } catch (BaseException e) {
+            return e.getCode();
+        }
     }
 }

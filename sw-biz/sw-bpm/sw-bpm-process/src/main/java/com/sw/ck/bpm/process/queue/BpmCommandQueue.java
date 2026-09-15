@@ -76,6 +76,14 @@ public interface BpmCommandQueue {
     int reclaimStale(LocalDateTime staleBefore);
 
     /**
+     * FAILED 终态命令重新提交（R5/G4b 补全）：复用同一 command_key 行重置为
+     * PENDING 并覆盖 payload；唯一键 (tenant_id, command_key) 语义下不允许新插同键行。
+     *
+     * @return 复用的命令 ID
+     */
+    Long requeueFailed(CommandEnvelope envelope);
+
+    /**
      * 按受理标识查询（回查统一来源）。
      */
     Optional<CommandEnvelope> findById(Long commandId);

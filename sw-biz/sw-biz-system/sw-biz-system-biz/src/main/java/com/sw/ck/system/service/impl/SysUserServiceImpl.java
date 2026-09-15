@@ -1,10 +1,14 @@
 package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.service.BaseServiceImpl;
+import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysUser;
+import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.entity.SysUserRole;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
@@ -15,12 +19,15 @@ import com.sw.ck.system.entity.SysRole;
 import com.sw.ck.system.mapper.SysPostMapper;
 import com.sw.ck.system.entity.SysPost;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.UserPostAssociation;
 import com.sw.ck.system.service.UserPageQuery;
+import com.sw.ck.security.cache.LoginUserLoader;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.List;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -33,31 +40,51 @@ public class SysUserServiceImpl
         extends BaseServiceImpl<SysUserMapper, SysUser>
         implements SysUserService {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(SysUserServiceImpl.class);
+
     private final PasswordEncoder passwordEncoder;
     private final SysUserRoleMapper sysUserRoleMapper;
     private final SysUserPostMapper sysUserPostMapper;
     private final SysRoleMapper sysRoleMapper;
     private final SysPostMapper sysPostMapper;
+    private final SysDeptMapper sysDeptMapper;
+
+    /** 可选协同组件：启停/撤权/删号后立即踢出登录缓存，保证权限即时收敛。 */
+    private final LoginUserLoader loginUserLoader;
 
     public SysUserServiceImpl(PasswordEncoder passwordEncoder) {
-        this(passwordEncoder, null, null, null, null);
+        this(passwordEncoder, null, null, null, null, null, null);
+    }
+
+    public SysUserServiceImpl(PasswordEncoder passwordEncoder, SysUserRoleMapper sysUserRoleMapper,
+                              SysUserPostMapper sysUserPostMapper, SysRoleMapper sysRoleMapper,
+                              SysPostMapper sysPostMapper) {
+        this(passwordEncoder, sysUserRoleMapper, sysUserPostMapper, sysRoleMapper, sysPostMapper, null, null);
     }
 
     @Autowired
     public SysUserServiceImpl(PasswordEncoder passwordEncoder, SysUserRoleMapper sysUserRoleMapper,
                               SysUserPostMapper sysUserPostMapper, SysRoleMapper sysRoleMapper,
-                              SysPostMapper sysPostMapper) {
+                              SysPostMapper sysPostMapper, SysDeptMapper sysDeptMapper,
+                              @org.springframework.context.annotation.Lazy LoginUserLoader loginUserLoader) {
         this.passwordEncoder = passwordEncoder;
         this.sysUserRoleMapper = sysUserRoleMapper;
         this.sysUserPostMapper = sysUserPostMapper;
         this.sysRoleMapper = sysRoleMapper;
         this.sysPostMapper = sysPostMapper;
+        this.sysDeptMapper = sysDeptMapper;
+        this.loginUserLoader = loginUserLoader;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long create(SysUser user, String plainPassword) {
         Objects.requireNonNull(plainPassword, "密码不能为空");
+        // 用户名唯一性前置校验：唯一索引兜底会以 DuplicateKeyException 形式漏出为 500
+        if (user.getUsername() != null && getByUsername(user.getUsername()) != null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "用户名已存在");
+        }
         user.setPassword(passwordEncoder.encode(plainPassword));
         save(user);
         return user.getId();
@@ -65,10 +92,10 @@ public class SysUserServiceImpl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long createWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<Long> postIds) {
+    public Long createWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<UserPostAssociation> posts) {
         Long id = create(user, plainPassword);
         updateRoleIds(id, roleIds);
-        updatePostIds(id, postIds);
+        updatePosts(id, posts);
         return id;
     }
 
@@ -85,20 +112,36 @@ public class SysUserServiceImpl
             }
         }
         updateById(user);
+        // 启停/部门调整/资料变更后立即收敛该用户会话与权限
+        kickOut(user.getId());
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updateWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<Long> postIds) {
+    public void updateWithAssociations(SysUser user, String plainPassword, List<Long> roleIds, List<UserPostAssociation> posts) {
         update(user, plainPassword);
-        updateRoleIds(user.getId(), roleIds);
-        updatePostIds(user.getId(), postIds);
+        // null = 本次更新未提及该关联，保持不变；空数组才表示清空。
+        // 否则部分更新（如启停/改名）会静默摧毁既有角色/任职（I1 G5b 证据链发现）
+        if (roleIds != null) {
+            updateRoleIds(user.getId(), roleIds);
+        }
+        if (posts != null) {
+            updatePosts(user.getId(), posts);
+        }
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        // 解除角色/岗位关联（逻辑删保留轨迹），再删用户并立即收敛会话
+        if (sysUserRoleMapper != null) {
+            sysUserRoleMapper.delete(Wrappers.lambdaQuery(SysUserRole.class).eq(SysUserRole::getUserId, id));
+        }
+        if (sysUserPostMapper != null) {
+            sysUserPostMapper.delete(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, id));
+        }
         removeById(id);
+        kickOut(id);
     }
 
     @Override
@@ -115,7 +158,8 @@ public class SysUserServiceImpl
 
     @Override
     public SysUser getByUsername(String username) {
-        return lambdaQuery().eq(SysUser::getUsername, username).one();
+        // 登录前无租户上下文：用户名全局唯一（uk 不含 tenant_id），必须跨租户解析，否则非 0 租户账号无法认证
+        return baseMapper.selectGlobalByUsername(username);
     }
 
     @Override
@@ -149,27 +193,77 @@ public class SysUserServiceImpl
             relation.setRoleId(roleId);
             sysUserRoleMapper.insert(relation);
         });
+        // 撤权/授权立即生效
+        kickOut(userId);
     }
 
     @Override
-    public List<Long> listPostIds(Long userId) {
+    public List<UserPostAssociation> listPosts(Long userId) {
         if (sysUserPostMapper == null) return List.of();
         return sysUserPostMapper.selectList(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, userId))
-                .stream().map(SysUserPost::getPostId).filter(Objects::nonNull).distinct().toList();
+                .stream()
+                .filter(row -> row.getPostId() != null)
+                .map(row -> new UserPostAssociation(row.getPostId(), row.getDeptId()))
+                .toList();
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updatePostIds(Long userId, List<Long> postIds) {
+    public void updatePosts(Long userId, List<UserPostAssociation> posts) {
         if (sysUserPostMapper == null) return;
-        List<Long> valid = postIds == null ? List.of() : postIds.stream().filter(Objects::nonNull).distinct()
-                .map(id -> sysPostMapper.selectById(id)).filter(Objects::nonNull)
-                .filter(p -> p.getStatus() != null && p.getStatus() == 1).map(SysPost::getId).toList();
-        if (postIds != null && valid.size() != postIds.stream().filter(Objects::nonNull).distinct().count())
-            throw new IllegalArgumentException("只能绑定启用的岗位");
+        List<SysUserPost> rows = buildPostRows(userId, posts);
         sysUserPostMapper.delete(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, userId));
         purgeSoftDeletedPostLinks(userId);
-        valid.forEach(postId -> { SysUserPost r = new SysUserPost(); r.setUserId(userId); r.setPostId(postId); sysUserPostMapper.insert(r); });
+        rows.forEach(sysUserPostMapper::insert);
+        // 岗位任职变化立即收敛（岗位供流程选人消费，属组织权威数据）
+        kickOut(userId);
+    }
+
+    /**
+     * 校验并构造任职行：岗位必须启用；deptId 为空回落用户主部门，
+     * 非空必须是本租户内未删除部门；按 (postId, deptId) 去重。
+     */
+    private List<SysUserPost> buildPostRows(Long userId, List<UserPostAssociation> posts) {
+        if (posts == null || posts.isEmpty()) {
+            return List.of();
+        }
+        Long fallbackDeptId = null;
+        List<SysUserPost> rows = new ArrayList<>();
+        List<String> seen = new ArrayList<>();
+        for (UserPostAssociation association : posts) {
+            if (association == null || association.getPostId() == null) {
+                continue;
+            }
+            SysPost post = sysPostMapper.selectById(association.getPostId());
+            if (post == null || post.getStatus() == null || post.getStatus() != 1) {
+                throw new IllegalArgumentException("只能绑定启用的岗位");
+            }
+            Long deptId = association.getDeptId();
+            if (deptId == null) {
+                if (fallbackDeptId == null) {
+                    SysUser user = getById(userId);
+                    fallbackDeptId = user == null ? null : user.getDeptId();
+                }
+                deptId = fallbackDeptId;
+            } else if (sysDeptMapper != null) {
+                SysDept dept = sysDeptMapper.selectById(deptId);
+                if (dept == null) {
+                    throw new BaseException(CommonErrorCode.PARAM_ERROR, "任职部门不存在或已删除");
+                }
+            }
+            Long effectiveDeptId = deptId == null ? 0L : deptId;
+            String dedupeKey = association.getPostId() + ":" + effectiveDeptId;
+            if (seen.contains(dedupeKey)) {
+                continue;
+            }
+            seen.add(dedupeKey);
+            SysUserPost row = new SysUserPost();
+            row.setUserId(userId);
+            row.setPostId(association.getPostId());
+            row.setDeptId(effectiveDeptId);
+            rows.add(row);
+        }
+        return rows;
     }
 
     @Override
@@ -180,6 +274,28 @@ public class SysUserServiceImpl
         user.setId(userId);
         user.setPassword(passwordEncoder.encode(plainPassword));
         updateById(user);
+        kickOut(userId);
+    }
+
+    /**
+     * 权限/身份变更后立即踢出登录缓存；下一次请求回查最新状态（停用即 401）。
+     * fail-secure：驱逐失败（缓存中间件不可用等基础设施异常）向上抛出，由调用方事务
+     * 回滚，变更明确失败且可审计，杜绝“变更成功但旧会话仍持旧权限”的窗口。
+     * 仅容忍登录缓存装配缺失（NoSuchBeanDefinitionException，只出现在手工构造的
+     * 非生产上下文；生产由 SecurityAutoConfiguration 恒创建 LoginUserLoader）。
+     */
+    private void kickOut(Long userId) {
+        if (userId == null || loginUserLoader == null) {
+            return;
+        }
+        try {
+            loginUserLoader.kickOut(userId);
+        } catch (org.springframework.beans.factory.NoSuchBeanDefinitionException e) {
+            // 非生产装配上下文：无登录缓存可驱逐
+        } catch (Exception e) {
+            log.error("用户权限/身份变更后踢出登录缓存失败，变更将回滚 userId={}", userId, e);
+            throw e;
+        }
     }
 
     private void purgeSoftDeletedRoleLinks(Long userId) {
@@ -194,6 +310,10 @@ public class SysUserServiceImpl
 
     private Long currentTenantId() {
         com.sw.ck.security.holder.LoginUser loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
-        return loginUser == null || loginUser.getTenantId() == null ? 0L : loginUser.getTenantId();
+        if (loginUser == null || loginUser.getTenantId() == null) {
+            // 软删链接清理按租户隔离；租户上下文缺失属异常路径，fail closed 不落租户 0
+            throw new IllegalStateException("用户关联清理缺少租户上下文");
+        }
+        return loginUser.getTenantId();
     }
 }

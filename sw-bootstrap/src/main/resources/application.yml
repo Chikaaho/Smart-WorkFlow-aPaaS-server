@@ -50,10 +50,12 @@ spring:
   # ======================== Druid 监控页面 ========================
   druid:
     stat-view-servlet:
-      enabled: true
+      # I5 收口：监控台默认关闭（仅 dev/local profile 显式开启）；凭据不再提供仓库默认值，
+      # 开启时必须经环境变量注入，缺失/占位即无可用凭据
+      enabled: false
       url-pattern: /druid/*
-      login-username: ${DRUID_USERNAME:admin}
-      login-password: ${DRUID_PASSWORD:admin}
+      login-username: ${DRUID_USERNAME:}
+      login-password: ${DRUID_PASSWORD:}
 
   # ======================== Flyway（主迁移，绑定主数据源） ========================
   flyway:
@@ -67,6 +69,10 @@ spring:
       - classpath:db/migration/job/{vendor}
       - classpath:db/migration/agent/{vendor}
       - classpath:db/migration/iot/{vendor}
+      - classpath:db/migration/openapi/{vendor}
+      - classpath:db/migration/system/{vendor}
+      # I5：dev 专用可控测试夹具目录（仅 application-dev.yml 覆盖装载；生产不包含）
+      # classpath:db/migration/devseed/{vendor}
     baseline-on-migrate: true
     validate-on-migrate: true
     out-of-order: false
@@ -168,16 +174,20 @@ sw:
     token-header: Authorization
     token-prefix: "Bearer "
     permit-urls:
-      - /swagger-ui.html
-      - /swagger-ui/**
-      - /v3/api-docs/**
-      - /doc.html
-      - /webjars/**
-      - /actuator/**
       - /auth/challenge
       - /auth/login
       - /auth/refresh
       - /auth/logout
+      - /auth/sso/*/callback
+      - /auth/sso/ticket
+      - /auth/sso/candidate
+      - /auth/sso/*/authorize-login
+      - /openapi/v1/**
+      # I5 收口：仅放行无详情的最小健康探针（liveness/readiness），详细健康、
+      # 指标、环境与管理入口一律需要认证；swagger 调试入口不再随生产开放
+      - /actuator/health
+      - /actuator/health/liveness
+      - /actuator/health/readiness
     debug-auth:
       # 仅 dev/test + 回环 + 显式开关同时成立时才会生效，默认关闭。
       enabled: ${SW_DEBUG_AUTH_ENABLED:false}
@@ -199,6 +209,9 @@ sw:
       digest-secret: ${SW_LOGIN_DIGEST_SECRET:}
       # 轮换窗口内的旧版本私钥，可选；生产经密钥设施注入
       rsa-extra-keys: {}
+    # I5：SSO Provider 凭据 AES-256-GCM 加密密钥（Base64）；缺失/空白时启动失败
+    sso:
+      cipher-key: ${SW_SSO_CIPHER_KEY:}
     jwt:
       secret: ${JWT_SECRET:smart-workflow-jwt-secret-CHANGE-ME-IN-PRODUCTION-please}
       expire-seconds: 7200
@@ -211,7 +224,7 @@ mybatis-plus:
   type-aliases-package: com.sw.ck.**.entity
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl # I6 G3f：行级 SQL 走 Slf4j，服从日志级别（org.mybatis=info），联系方式/正文/密文零进普通日志
   global-config:
     banner: false
     db-config:
@@ -227,21 +240,27 @@ logging:
     com.sw.ck: debug
 
 # ======================== Actuator ========================
+# I5 收口：默认最小暴露（仅 health，不带详情）；开发/运维需要更多端点时在
+# 对应 profile 显式覆盖，且 /actuator/** 不再进入认证白名单（见 sw.security.permit-urls）
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health
   endpoint:
     health:
-      show-details: always
+      show-details: never
   metrics:
     tags:
       application: ${spring.application.name}
 
 # ======================== SpringDoc ========================
+# I5 收口：开发文档与调试入口默认关闭，不随生产 profile 自动开放；
+# dev/local profile 需要时显式覆盖 springdoc.api-docs.enabled=true
 springdoc:
-  swagger-ui:
-    path: /swagger-ui.html
   api-docs:
-    path: /v3/api-docs
+    enabled: false
+  swagger-ui:
+    enabled: false
+    path: /swagger-ui.html
+  api-docs-path: /v3/api-docs

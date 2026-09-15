@@ -44,4 +44,26 @@ public class ApprovalActionServiceImpl extends BaseServiceImpl<ApprovalActionRec
                 .eq(ApprovalActionRecord::getActorId, actorId)
                 .count();
     }
+
+    @Override
+    public boolean upsertDuplicate(ApprovalActionRecord record) {
+        ApprovalActionRecord existing = lambdaQuery()
+                .eq(ApprovalActionRecord::getTenantId, record.getTenantId())
+                .eq(ApprovalActionRecord::getTaskId, record.getTaskId())
+                .eq(ApprovalActionRecord::getActorId, record.getActorId())
+                .eq(ApprovalActionRecord::getAction, record.getAction())
+                .last("LIMIT 1")
+                .one();
+        if (existing == null) {
+            return save(record);
+        }
+        // 同键幂等：结算状态/明细/意见以最新一次动作为准，保留原行身份
+        existing.setSettlementStatus(record.getSettlementStatus());
+        existing.setDetail(record.getDetail());
+        existing.setOpinionData(record.getOpinionData());
+        if (record.getOpinionFormSnapshot() != null) {
+            existing.setOpinionFormSnapshot(record.getOpinionFormSnapshot());
+        }
+        return updateById(existing);
+    }
 }

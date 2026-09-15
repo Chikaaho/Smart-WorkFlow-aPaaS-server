@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
@@ -63,16 +64,16 @@ public class CommandAcceptService {
         if (loginUser == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
-        // 受理前租户边界：与草稿提交一致，非超租户命令当前无可靠消费路径，受理前明确拒绝。
-        if (!com.sw.ck.common.constant.CommonConstants.SUPER_TENANT_ID
-                .equals(String.valueOf(loginUser.getTenantId()))) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
-                    "当前租户未开通流程命令通道，不能提交审批命令");
+        // 受理前租户边界（I5 收口）：命令信封承载租户语义，消费侧按信封租户还原身份并
+        // 一致性校验；任何有效租户的命令均可受理，不再以「仅超租户可消费」为由拒绝。
+        if (loginUser.getTenantId() == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "租户上下文缺失，不能提交审批命令");
         }
         CommandTypeEnum type = switch (action) {
             case APPROVE -> CommandTypeEnum.TASK_APPROVE;
             case REJECT -> CommandTypeEnum.TASK_REJECT;
             case RETURN -> CommandTypeEnum.TASK_RETURN;
+            default -> throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED);
         };
         String commandKey = type.getCode() + ":" + taskId + ":" + loginUser.getUserId();
         String lockKey = loginUser.getTenantId() + ":" + commandKey;
@@ -98,6 +99,14 @@ public class CommandAcceptService {
         if (existing != null && !"FAILED".equals(existing.getStatus())) {
             log.info("审批命令幂等命中: key={}, commandId={}", commandKey, existing.getCommandId());
             return toResp(existing, false);
+        }
+
+        // FAILED 终态允许重新提交：唯一键 (tenant_id, command_key) 语义下复用同键行重置入队，
+        // 不走新插（同键新插必撞唯一键且事务已污染，无法再走幂等返回）
+        if (existing != null) {
+            existing.setPayload(toPayload(taskId, action, request));
+            commandQueue.requeueFailed(existing);
+            return toResp(existing, true);
         }
 
         CommandEnvelope envelope = new CommandEnvelope();

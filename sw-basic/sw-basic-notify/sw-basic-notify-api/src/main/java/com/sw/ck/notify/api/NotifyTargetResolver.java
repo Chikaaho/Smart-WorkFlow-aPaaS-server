@@ -25,4 +25,26 @@ public interface NotifyTargetResolver {
      * @return 手机号，无法解析时返回 null
      */
     String resolvePhone(Long userId);
+
+    /**
+     * 按明确租户解析 PHONE，并返回不含明文号码的判定结果。
+     * 默认实现保持旧 SPI 兼容；系统身份源应覆盖该方法以提供完整状态。
+     */
+    default NotifyTargetResolution resolvePhoneForTenant(Long tenantId, Long userId) {
+        String phone = resolvePhone(userId);
+        return phone == null || phone.isBlank()
+                ? NotifyTargetResolution.of("UNRESOLVED", "SYS_USER", null)
+                : NotifyTargetResolution.of("RESOLVED", "SYS_USER", null);
+    }
+
+    // ==================== I6 扩展 ====================
+
+    /**
+     * 解析用户在某 Provider 的稳定外部主体标识（open_id / userid 等）。
+     * <p>服务端按当前租户权威解析；缺失/无效用户返回 null，明确失败；
+     * 不接受客户端原始地址旁路。</p>
+     */
+    default String resolveProviderSubject(Long tenantId, Long userId, String provider) {
+        return null;
+    }
 }

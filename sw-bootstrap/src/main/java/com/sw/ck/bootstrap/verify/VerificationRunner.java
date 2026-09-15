@@ -43,6 +43,23 @@ public class VerificationRunner implements CommandLineRunner {
     public void run(String... args) {
         log.info("========== 多数据源 + 租户 DS 感知验证开始 ==========");
 
+        // 仅 dev 验证骨架：以系统操作人身份（租户 0）运行——I5 fail-closed 的租户
+        // 拦截器要求业务查询携带已认证身份，本 Runner 无真实登录态
+        com.sw.ck.security.holder.LoginUser systemOperator = new com.sw.ck.security.holder.LoginUser();
+        systemOperator.setUserId(0L);
+        systemOperator.setTenantId(0L);
+        systemOperator.setUsername("verify-runner");
+        com.sw.ck.security.holder.LoginUserHolder.set(systemOperator);
+        try {
+            doVerify();
+        } finally {
+            com.sw.ck.security.holder.LoginUserHolder.clear();
+        }
+        log.info("========== 多数据源验证完成 ==========");
+    }
+
+    private void doVerify() {
+
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
         // 1. 在 iot 扩展库创建临时验证表（扩展库不入 Flyway）
@@ -79,7 +96,5 @@ public class VerificationRunner implements CommandLineRunner {
         } finally {
             DynamicDataSourceContextHolder.poll();
         }
-
-        log.info("========== 多数据源验证完成 ==========");
     }
 }

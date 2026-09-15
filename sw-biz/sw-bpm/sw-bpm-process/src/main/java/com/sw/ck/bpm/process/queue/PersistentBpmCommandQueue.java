@@ -56,6 +56,32 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     }
 
     @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Long requeueFailed(CommandEnvelope envelope) {
+        BpmCommand command = commandService.lambdaQuery()
+                .eq(BpmCommand::getTenantId, envelope.getTenantId())
+                .eq(BpmCommand::getCommandKey, envelope.getCommandKey())
+                .last("LIMIT 1")
+                .one();
+        if (command == null || !CommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
+            throw new IllegalStateException(
+                    "requeueFailed 仅接受已存在且 FAILED 的命令: " + envelope.getCommandKey());
+        }
+        command.setStatus(CommandStatusEnum.PENDING.getCode());
+        command.setPayload(envelope.getPayload());
+        command.setRetryCount(0);
+        command.setFailureReason(null);
+        command.setNextRetryAt(null);
+        command.setClaimedAt(null);
+        command.setClaimToken(null);
+        command.setResult(null);
+        commandService.updateById(command);
+        envelope.setCommandId(command.getId());
+        log.info("FAILED 命令已重新入队: commandId={}, key={}", command.getId(), command.getCommandKey());
+        return command.getId();
+    }
+
+    @Override
     public Optional<CommandEnvelope> findByKey(Long tenantId, String commandKey) {
         BpmCommand command = commandService.lambdaQuery()
                 .eq(BpmCommand::getTenantId, tenantId)
@@ -68,6 +94,17 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     @Override
     public List<CommandEnvelope> claimDue(List<CommandChannelEnum> channels, int limit) {
         LocalDateTime now = LocalDateTime.now();
+        // 调度线程无登录态，租户拦截器会追加错误的 tenant_id 条件导致非零租户命令
+        // 永久不可领取；命令消费的租户语义由信封 tenant_id 承载并在消费前校验，
+        // 领取本身必须跨租户扫描（I5 收口：移除「仅可靠消费租户 0」的受理边界）。
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return claimDueSuspended(channels, limit, now);
+        }
+    }
+
+    private List<CommandEnvelope> claimDueSuspended(List<CommandChannelEnum> channels, int limit,
+                                                    LocalDateTime now) {
         List<BpmCommand> candidates = commandService.lambdaQuery()
                 .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
                 .in(BpmCommand::getChannel, channels.stream().map(Enum::name).toList())
@@ -203,13 +240,18 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     @Override
     public int reclaimStale(LocalDateTime staleBefore) {
-        boolean updated = commandService.lambdaUpdate()
-                .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
-                .lt(BpmCommand::getClaimedAt, staleBefore)
-                .set(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
-                .set(BpmCommand::getClaimToken, null)
-                .update();
-        return updated ? 1 : 0;
+        // 调度线程无登录态：与 claimDue 同口径挂起租户过滤（孤儿命令为全局对象，
+        // 按状态与领取时间回收，不涉及租户语义）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            boolean updated = commandService.lambdaUpdate()
+                    .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
+                    .lt(BpmCommand::getClaimedAt, staleBefore)
+                    .set(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                    .set(BpmCommand::getClaimToken, null)
+                    .update();
+            return updated ? 1 : 0;
+        }
     }
 
     @Override
