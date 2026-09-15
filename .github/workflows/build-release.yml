@@ -9,6 +9,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # 登录挑战链（P45/I5）与通知工作台用例（I6）在测试期真实读写 Redis；
+    # runner 镜像默认不提供该服务，缺失时相关 Boot 用例必然失败。
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
