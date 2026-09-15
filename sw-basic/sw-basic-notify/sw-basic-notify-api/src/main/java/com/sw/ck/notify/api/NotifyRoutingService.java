@@ -13,4 +13,12 @@ public interface NotifyRoutingService {
 
     /** 事件是否必须送达（required 规则存在时为 true）。 */
     boolean required(String eventType);
+
+    /**
+     * 选择该租户该事件/渠道当前已发布的模板快照。
+     * <p>找不到合法快照返回 {@code null}，调用方不得用未版本化文案冒充模板发送。</p>
+     */
+    default NotifyTemplateSelection templateFor(String eventType, NotifyChannel channel, Long tenantId) {
+        return null;
+    }
 }

@@ -78,15 +78,15 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "全链迁移应成功");
-        assertEquals(92, result.migrationsExecuted,
-                "全链迁移计数应为 92（88 + I6 V89 通知域数据模型 + V90 通知管理菜单 + V91 主体绑定 + V92 boolean 迁移），实际: " + result.migrationsExecuted);
+        assertEquals(93, result.migrationsExecuted,
+                "全链迁移计数应为 93（92 个版本迁移 + I6 菜单可重复对账迁移），实际: " + result.migrationsExecuted);
     }
 
     @Test
     @DisplayName("全链迁移后：info().applied() 共 55 条，包含 P58 通知渠道与流程节点能力迁移")
     void appliedMigrationCount_shouldBe35() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(92, applied.length, "已应用迁移数应为 92");
+        assertEquals(93, applied.length, "已应用迁移数应为 93");
         boolean v8Seen = false;
         boolean v14Seen = false;
         boolean v31Seen = false;
@@ -98,6 +98,9 @@ class FlywayFullChainH2Test {
         boolean v38Seen = false;
         boolean v39Seen = false;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
+            if (info.getVersion() == null) {
+                continue;
+            }
             if ("8".equals(info.getVersion().getVersion())) {
                 v8Seen = true;
             }
@@ -219,7 +222,7 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult first = toV32.migrate();
         assertTrue(first.success, "先迁移至 V32 应成功");
-        assertEquals(32, first.migrationsExecuted, "V32 阶段应执行 32 条，实际: " + first.migrationsExecuted);
+        assertEquals(33, first.migrationsExecuted, "V32 阶段应执行 33 条（含 I6 菜单可重复对账迁移），实际: " + first.migrationsExecuted);
 
         Flyway full = Flyway.configure()
                 .dataSource(upgradeUrl, USER, PASSWORD)
@@ -276,7 +279,7 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult first = toV33.migrate();
         assertTrue(first.success, "先迁移至 V33 应成功");
-        assertEquals(33, first.migrationsExecuted, "V33 阶段应执行 33 条，实际: " + first.migrationsExecuted);
+        assertEquals(34, first.migrationsExecuted, "V33 阶段应执行 34 条（含 I6 菜单可重复对账迁移），实际: " + first.migrationsExecuted);
 
         Flyway full = Flyway.configure()
                 .dataSource(upgradeUrl, USER, PASSWORD)
@@ -513,7 +516,7 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult first = toV36.migrate();
         assertTrue(first.success, "V1→V36 应成功");
-        assertEquals(36, first.migrationsExecuted, "V36 阶段应执行 36 条，实际: " + first.migrationsExecuted);
+        assertEquals(37, first.migrationsExecuted, "V36 阶段应执行 37 条（含 I6 菜单可重复对账迁移），实际: " + first.migrationsExecuted);
 
         // 2. 输出起点当前版本 V36（info().current()）
         org.flywaydb.core.api.MigrationInfoService infoBefore = toV36.info();

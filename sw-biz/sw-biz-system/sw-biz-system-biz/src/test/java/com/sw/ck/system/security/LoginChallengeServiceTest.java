@@ -73,6 +73,29 @@ class LoginChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("local profile 显式开启 test-mock 时沿用固定验证码 1234")
+    void testMock_shouldUseFixedCaptchaOnLocalProfile() {
+        LoginSecurityProperties properties = properties("unit-test-digest-secret");
+        DevProperties devProperties = new DevProperties();
+        devProperties.setTestMock(true);
+        CapturingStore store = new CapturingStore();
+        org.springframework.mock.env.MockEnvironment environment =
+                new org.springframework.mock.env.MockEnvironment();
+        environment.setActiveProfiles("local");
+        LoginChallengeService service = new LoginChallengeService(
+                store,
+                new RsaLoginKeyManager(properties),
+                properties,
+                new PngCaptchaRenderer(),
+                devProperties,
+                environment);
+
+        LoginChallengeService.ChallengeView challenge = service.create();
+
+        assertThat(service.verifyCaptcha(challenge.captchaId(), "1234")).isNotNull();
+    }
+
+    @Test
     @DisplayName("prod profile 即使误开 test-mock 也不返回固定验证码（I5 fail closed）")
     void testMock_shouldBeIgnoredOnProdProfile() {
         LoginSecurityProperties properties = properties("unit-test-digest-secret");

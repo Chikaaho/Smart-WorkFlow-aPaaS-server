@@ -2,6 +2,8 @@ package com.sw.ck.bpm.engine.listener;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.event.BpmNotifyEvent;
+import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverContext;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+import com.sw.ck.common.event.DomainEventPublisher;
 
 import java.util.List;
 import java.util.Map;
@@ -64,6 +67,8 @@ public class ApprovalTaskListener implements TaskListener {
     private final ParticipantResolverRegistry participantResolverRegistry;
     private final ParticipantSnapshotRecorder participantSnapshotRecorder;
     private final UserQueryFacade userQueryFacade;
+    /** 任务创建通知统一经领域事件发布，监听器在事务提交后异步落通知。 */
+    private final DomainEventPublisher domainEventPublisher;
     /** 可选生命周期端口（I3：代理改派 + 时限登记；未装配时跳过）。 */
     @Autowired(required = false)
     private transient org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort> lifecycleEntryPort;
@@ -73,7 +78,7 @@ public class ApprovalTaskListener implements TaskListener {
                                 @org.springframework.beans.factory.annotation.Qualifier("approverResolverMap")
                                 Map<String, NodeApproverResolver> resolverMap,
                                 ObjectMapper objectMapper) {
-        this(repositoryService, resolverMap, objectMapper, null, null, null);
+        this(repositoryService, resolverMap, objectMapper, null, null, null, null);
     }
 
     @Autowired
@@ -83,7 +88,8 @@ public class ApprovalTaskListener implements TaskListener {
                                 ObjectMapper objectMapper,
                                 ParticipantResolverRegistry participantResolverRegistry,
                                 ObjectProvider<ParticipantSnapshotRecorder> participantSnapshotRecorder,
-                                ObjectProvider<UserQueryFacade> userQueryFacade) {
+                                ObjectProvider<UserQueryFacade> userQueryFacade,
+                                DomainEventPublisher domainEventPublisher) {
         this.repositoryService = repositoryService;
         this.resolverMap = resolverMap;
         this.objectMapper = objectMapper;
@@ -91,6 +97,7 @@ public class ApprovalTaskListener implements TaskListener {
         this.participantSnapshotRecorder = participantSnapshotRecorder == null
                 ? null : participantSnapshotRecorder.getIfAvailable();
         this.userQueryFacade = userQueryFacade == null ? null : userQueryFacade.getIfAvailable();
+        this.domainEventPublisher = domainEventPublisher;
     }
 
     @Override
@@ -200,6 +207,7 @@ public class ApprovalTaskListener implements TaskListener {
         }
 
         // 单用户继续使用原生 assignee；多人统一作为候选任务，避免只取首人
+        List<String> notificationUsers = userIds;
         if (userIds.size() == 1) {
             String nodeConfigJson;
             try {
@@ -235,6 +243,7 @@ public class ApprovalTaskListener implements TaskListener {
                             delegateTask.getId(), e.getMessage());
                 }
             }
+            notificationUsers = effectiveUsers;
             delegateTask.setAssignee(effectiveUsers.get(0));
         } else {
             for (String userId : userIds) {
@@ -263,6 +272,40 @@ public class ApprovalTaskListener implements TaskListener {
 
         log.info("Task assignee set: taskId={}, nodeKey={}, assignee={}",
                 delegateTask.getId(), nodeKey, userIds.size() == 1 ? userIds.get(0) : "CANDIDATES");
+
+        publishNextTaskTodoCreated(delegateTask, tenantId, processInstanceId, notificationUsers);
+    }
+
+    /**
+     * 任务创建回调位于引擎推进事务内；以任务本身的已解析参与人发布事件，
+     * 让 AFTER_COMMIT 监听器在任务可查询后写入 TODO_CREATED。首个任务没有
+     * lastApprovalActorId，因此仍由启动服务负责首轮通知。
+     */
+    private void publishNextTaskTodoCreated(DelegateTask task, Long tenantId,
+                                            String processInstanceId,
+                                            List<String> recipients) {
+        if (domainEventPublisher == null || task.getVariable("lastApprovalActorId") == null
+                || recipients == null || recipients.isEmpty()) {
+            return;
+        }
+        Long actorId = parseLong(task.getVariable("lastApprovalActorId"));
+        if (actorId == null) {
+            actorId = parseLong(task.getVariable("submitter"));
+        }
+        if (actorId == null) {
+            log.warn("下一个任务缺少审批操作人，跳过 TODO_CREATED: processInstanceId={}",
+                    processInstanceId);
+            return;
+        }
+        for (String recipient : recipients) {
+            Long recipientId = parseLong(recipient);
+            if (recipientId == null) {
+                log.warn("task participant 非数字格式，跳过 TODO_CREATED: participant={}", recipient);
+                continue;
+            }
+            domainEventPublisher.publish(new BpmNotifyEvent(
+                    BpmNotifyTrigger.TODO_CREATED, recipientId, tenantId, actorId, task.getId()));
+        }
     }
 
     private Long parseLong(Object value) {

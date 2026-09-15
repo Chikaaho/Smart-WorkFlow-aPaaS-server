@@ -4,6 +4,9 @@ import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.entity.NotifyRule;
 import com.sw.ck.notify.mapper.NotifyRuleMapper;
 import com.sw.ck.notify.mapper.NotifySubscriptionMapper;
+import com.sw.ck.notify.mapper.NotifyTemplateVersionMapper;
+import com.sw.ck.notify.entity.NotifyTemplateVersion;
+import com.sw.ck.notify.api.NotifyTemplateSelection;
 import com.sw.ck.notify.service.NotifyChannelConfigService;
 import com.sw.ck.notify.api.NotifyRoutingService;
 import com.sw.ck.notify.service.NotifySubscriptionService;
@@ -26,13 +29,23 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
     private final NotifyRuleMapper ruleMapper;
     private final NotifyChannelConfigService channelConfigService;
     private final NotifySubscriptionService subscriptionService;
+    private final NotifyTemplateVersionMapper templateVersionMapper;
 
     public NotifyRoutingServiceImpl(NotifyRuleMapper ruleMapper,
                                     NotifyChannelConfigService channelConfigService,
                                     NotifySubscriptionService subscriptionService) {
+        this(ruleMapper, channelConfigService, subscriptionService, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public NotifyRoutingServiceImpl(NotifyRuleMapper ruleMapper,
+                                    NotifyChannelConfigService channelConfigService,
+                                    NotifySubscriptionService subscriptionService,
+                                    NotifyTemplateVersionMapper templateVersionMapper) {
         this.ruleMapper = ruleMapper;
         this.channelConfigService = channelConfigService;
         this.subscriptionService = subscriptionService;
+        this.templateVersionMapper = templateVersionMapper;
     }
 
     @Override
@@ -85,6 +98,31 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
     public boolean required(String eventType) {
         return enabledRules(eventType).stream().anyMatch(r ->
                 r.getRequiredFlag() != null && r.getRequiredFlag() == 1);
+    }
+
+    @Override
+    public NotifyTemplateSelection templateFor(String eventType, NotifyChannel channel, Long tenantId) {
+        if (templateVersionMapper == null || eventType == null || eventType.isBlank()
+                || channel == null || tenantId == null) {
+            return null;
+        }
+        NotifyTemplateVersion snapshot = templateVersionMapper.selectOne(
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<NotifyTemplateVersion>lambdaQuery()
+                        .eq(NotifyTemplateVersion::getTenantId, tenantId)
+                        .eq(NotifyTemplateVersion::getEventType, eventType)
+                        .eq(NotifyTemplateVersion::getChannel, channel.name())
+                        .eq(NotifyTemplateVersion::getStatus, "RELEASED")
+                        .orderByDesc(NotifyTemplateVersion::getTemplateId)
+                        .orderByDesc(NotifyTemplateVersion::getTemplateVersion)
+                        .last("LIMIT 1"));
+        if (snapshot == null || snapshot.getTemplateId() == null
+                || snapshot.getTemplateVersion() == null
+                || snapshot.getTitleTemplate() == null || snapshot.getTitleTemplate().isBlank()
+                || snapshot.getContentTemplate() == null || snapshot.getContentTemplate().isBlank()) {
+            return null;
+        }
+        return new NotifyTemplateSelection(snapshot.getTemplateId(), snapshot.getTemplateVersion(),
+                snapshot.getTitleTemplate(), snapshot.getContentTemplate());
     }
 
     // ==================== 内部 ====================

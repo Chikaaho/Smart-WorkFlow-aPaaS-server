@@ -189,6 +189,9 @@ public class TaskActionService {
                 case DISAPPROVE -> "DISAPPROVED";
                 default -> "APPROVED";
             });
+            // 引擎在本次事务内创建下一个人工任务时，用该稳定变量把通知事件
+            // 的操作人绑定到实际推进流程的审批人，而不是回退到发起人。
+            variables.put("lastApprovalActorId", loginUser.getUserId());
         }
         try {
             if (assigned) bpmTaskFacade.complete(taskId, variables);
@@ -249,8 +252,9 @@ public class TaskActionService {
                 || action == ApprovalAction.REJECT
                 || ((!legacyInvocation && action == ApprovalAction.DISAPPROVE)
                     && !isConsensusTask(task)
-                    && (nodeDisapprovePolicy(task) == null
-                        || "TERMINATE".equalsIgnoreCase(nodeDisapprovePolicy(task))));
+                         && (nodeDisapprovePolicy(task) == null
+                         || "TERMINATE".equalsIgnoreCase(nodeDisapprovePolicy(task))));
+
         if (processGone) {
             // 节点结算（会签负向结算等）可能已在本次 complete 的事务内写终态并发通知。
             // 实例已非 RUNNING 时，本动作以投票人自身 action 推导终态会覆盖真实结算结果

@@ -26,6 +26,17 @@ public interface NotifyTargetResolver {
      */
     String resolvePhone(Long userId);
 
+    /**
+     * 按明确租户解析 PHONE，并返回不含明文号码的判定结果。
+     * 默认实现保持旧 SPI 兼容；系统身份源应覆盖该方法以提供完整状态。
+     */
+    default NotifyTargetResolution resolvePhoneForTenant(Long tenantId, Long userId) {
+        String phone = resolvePhone(userId);
+        return phone == null || phone.isBlank()
+                ? NotifyTargetResolution.of("UNRESOLVED", "SYS_USER", null)
+                : NotifyTargetResolution.of("RESOLVED", "SYS_USER", null);
+    }
+
     // ==================== I6 扩展 ====================
 
     /**

@@ -90,8 +90,8 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(result.success, "全链迁移应成功");
-        assertEquals(90, result.migrationsExecuted,
-                "全链迁移计数应为 90（86 + I6 V89/V90 + V91 主体绑定 + V92 boolean 迁移），实际: "
+        assertEquals(91, result.migrationsExecuted,
+                "全链迁移计数应为 91（90 个版本迁移 + I6 菜单可重复对账迁移），实际: "
                         + result.migrationsExecuted);
     }
 
@@ -106,7 +106,7 @@ class FlywayFullChainPostgresTest {
     @DisplayName("全链迁移后：info().applied() 共 53 条，包含 P58 通知渠道与流程节点能力迁移")
     void appliedMigrationCount_shouldBe35() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
-        assertEquals(90, applied.length, "已应用迁移数应为 90");
+        assertEquals(91, applied.length, "已应用迁移数应为 91");
         boolean v8Seen = false;
         boolean v14Seen = false;
         boolean v31Seen = false;
@@ -118,6 +118,9 @@ class FlywayFullChainPostgresTest {
         boolean v38Seen = false;
         boolean v39Seen = false;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
+            if (info.getVersion() == null) {
+                continue;
+            }
             if ("8".equals(info.getVersion().getVersion())) {
                 v8Seen = true;
             }
@@ -296,7 +299,7 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(first.success, "先迁移至 V32 应成功");
-        assertEquals(32, first.migrationsExecuted, "V32 阶段应执行 32 条，实际: " + first.migrationsExecuted);
+        assertEquals(33, first.migrationsExecuted, "V32 阶段应执行 33 条（含 I6 菜单可重复对账迁移），实际: " + first.migrationsExecuted);
 
         // 既有库全量升级：只应执行 V33/V34/V35/V36 四条
         Flyway full = Flyway.configure()
@@ -329,7 +332,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立既有库应成功");
-        assertEquals(90, first.migrationsExecuted, "既有库应含全部 90 条，实际: " + first.migrationsExecuted);
+        assertEquals(91, first.migrationsExecuted, "既有库应含全部 91 条，实际: " + first.migrationsExecuted);
 
         // 原始 V13 的 L58 内容（修改前）：DROP INDEX IF EXISTS sw_form_def_form_key_key;
         String originalV13Line = "DROP INDEX IF EXISTS sw_form_def_form_key_key;";
