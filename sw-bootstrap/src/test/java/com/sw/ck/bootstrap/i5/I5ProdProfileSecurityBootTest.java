@@ -50,6 +50,8 @@ class I5ProdProfileSecurityBootTest {
         // securityLoginContextProvider（自动配置）覆盖 common 的兜底 bean，
         // 与真实 StarterApplication 启动的最终语义一致
         props.put("spring.main.allow-bean-definition-overriding", "true");
+        // 本类前提：prod 下固定验证码开关被误开，profile 门禁仍须拒绝固定答案
+        props.put("ch.dev.test-mock", "true");
         props.put("sw.security.jwt.secret", "i5-prod-test-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "i5-prod-test-digest-secret");
@@ -66,7 +68,9 @@ class I5ProdProfileSecurityBootTest {
                     ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("i5ProdTestLoginContextProvider", provider);
                 })
-                .run();
+                // profile 必须在 Environment 准备期激活：initializer 晚于配置数据加载，
+                // 只在其中写 spring.profiles.active 会保留 application.yml 的默认 local profile。
+                .run("--spring.profiles.active=prod");
         String port = app.getEnvironment().getProperty("local.server.port");
         base = "http://127.0.0.1:" + port + "/api";
         assertThat(app.isActive()).isTrue();
@@ -85,6 +89,8 @@ class I5ProdProfileSecurityBootTest {
         props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        // prod 下 sw.iot.enabled=true，IoT 凭据加密独立取 sw.iot.cipher.cipher-key（同构共享口默认 SW_CIPHER_KEY）
+        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         return props;
     }
 
@@ -144,7 +150,7 @@ class I5ProdProfileSecurityBootTest {
                         ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
                                 .registerBeanDefinition("i5ProdTestLoginContextProvider2", provider);
                     })
-                    .run()
+                    .run("--spring.profiles.active=prod")
                     .close();
             org.assertj.core.api.Assertions.fail("缺 JWT 密钥的 prod 启动应 fail-fast");
         } catch (Exception e) {
@@ -180,7 +186,7 @@ class I5ProdProfileSecurityBootTest {
                         ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
                                 .registerBeanDefinition("i5G3bLoginContextProvider", provider);
                     })
-                    .run()
+                    .run("--spring.profiles.active=prod")
                     .close();
             return null;
         } catch (Exception e) {
