@@ -2,6 +2,7 @@ package com.sw.ck.bootstrap.i6;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.TestInstance;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -35,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * migrate() 完成全链升级（不重建、不删数据、不换对象）。
  * </p>
  */
-@DisplayName("I6 G7b 真实 PG 旧基线 V87 → V92 升级")
+@DisplayName("I6 G7b 真实 PG 旧基线 V87 → V93 升级")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class I6G7bOldBaselineUpgradePostgresTest {
 
@@ -63,12 +65,20 @@ class I6G7bOldBaselineUpgradePostgresTest {
 
     @BeforeAll
     void verifyOldBaselineAndUpgrade() throws Exception {
+        // 连接探测：无本机真实 PG 的场景（如 CI runner）按外部环境事实跳过，不做 H2 替代；
+        // 与 p21 H7TenantIsolationIntegrationTest 同口径。
+        try (Connection probe = DriverManager.getConnection(URL, USER, PASSWORD)) {
+            assertTrue(probe.isValid(5), "i6_g7b_pg 连接应有效");
+        } catch (SQLException e) {
+            Assumptions.assumeTrue(false,
+                    "本机 PostgreSQL(" + URL + ") 不可用：G7b 真实 PG 升级演练跳过，等强度由 FlywayFullChainPostgresTest 承载");
+        }
         try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {
-            // 1. 旧基线身份确认（幂等：已处 V92 终点则跳过升级仅做同 ID 校验）
+            // 1. 旧基线身份确认（幂等：已处升级终点则做链尾前向补齐后仅做同 ID 校验）
             String current;
             try (ResultSet rs = stmt.executeQuery(
-                    "SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1")) {
+                    "SELECT version FROM flyway_schema_history WHERE success = true AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")) {
                 assertTrue(rs.next(), "i6_g7b_pg 应处于受支持旧基线或已升级终点");
                 current = rs.getString(1);
             }
@@ -79,17 +89,18 @@ class I6G7bOldBaselineUpgradePostgresTest {
                         new int[]{90001, 90002, 90003});
                 // 3. 真实修复（旧校验和记录为当前校验和，非重建/非删除）
                 Flyway.configure().dataSource(URL, USER, PASSWORD).locations(APP_LOCATIONS).load().repair();
-                // 4. 全链升级
-                var result = Flyway.configure().dataSource(URL, USER, PASSWORD).locations(APP_LOCATIONS).load().migrate();
-                assertTrue(result.success, "V87→V92 全链升级应成功");
-                System.out.println("[G7b] migrationsExecuted=" + result.migrationsExecuted);
-                try (ResultSet rs2 = stmt.executeQuery(
-                        "SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1")) {
-                    assertTrue(rs2.next());
-                    assertEquals("92", rs2.getString(1), "升级终点应为 V92");
-                }
             } else {
-                assertEquals("92", current, "G7b 库应处于 V87 基线或 V92 升级终点");
+                assertTrue("92".equals(current) || "93".equals(current),
+                        "G7b 库应处于 V87 基线或链尾升级终点，实际: " + current);
+            }
+            // 4. 全链升级到链尾：V87 起为真实全链升级，已升级库为 V93 前向补齐（幂等）
+            var result = Flyway.configure().dataSource(URL, USER, PASSWORD).locations(APP_LOCATIONS).load().migrate();
+            assertTrue(result.success, "V87→V93 全链升级应成功");
+            System.out.println("[G7b] migrationsExecuted=" + result.migrationsExecuted);
+            try (ResultSet rs2 = stmt.executeQuery(
+                    "SELECT version FROM flyway_schema_history WHERE success = true AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")) {
+                assertTrue(rs2.next());
+                assertEquals("93", rs2.getString(1), "升级终点应为 V93");
             }
         }
     }
