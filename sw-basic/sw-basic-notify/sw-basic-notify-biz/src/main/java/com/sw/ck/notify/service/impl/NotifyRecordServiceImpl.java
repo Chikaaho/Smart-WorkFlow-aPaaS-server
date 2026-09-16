@@ -196,7 +196,7 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
             result = NotifySendResult.builder()
                     .channel(parseChannel(message.getChannel()))
                     .status(STATUS_FAILED)
-                    .failureReason("重发投递异常: " + e.getMessage())
+                    .failureReason("重发投递失败，请稍后重试：" + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200))
                     .build();
         }
         String latest = result.getStatus() == null ? STATUS_FAILED : result.getStatus();

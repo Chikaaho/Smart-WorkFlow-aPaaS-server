@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
@@ -218,9 +219,8 @@ public class BpmDraftController {
             return draftSubmitService.resolveUniqueActiveProcessDefKey(formKey);
         } catch (BaseException ex) {
             // 没有有效绑定时仍允许保存未完成草稿；正式提交会再次明确拒绝。
-            if (ex.getCode() == CommonErrorCode.PARAM_ERROR.getCode()
-                    && ex.getMessage() != null
-                    && ex.getMessage().contains("尚未关联")) {
+            // 按稳定语义键判定，不依赖异常文案（P61-S-BPM-16：文案不得作为业务分支依据）。
+            if (BpmErrorCode.DRAFT_NO_ACTIVE_BINDING.equals(ex.getErrorKey())) {
                 return null;
             }
             throw ex;

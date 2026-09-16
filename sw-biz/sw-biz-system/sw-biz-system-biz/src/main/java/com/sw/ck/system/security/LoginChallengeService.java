@@ -184,17 +184,25 @@ public class LoginChallengeService {
 
     private static final java.util.HexFormat HexFormat = java.util.HexFormat.of();
 
-    /** 认证业务异常：code 为稳定机器错误码，message 为外显提示 */
+    /** 认证业务异常：code 为既有机器错误码，errorKey 为稳定语义键，message 为外显提示 */
     public static class AuthException extends RuntimeException {
         private final int code;
+
+        private final String errorKey;
 
         public AuthException(AuthErrorCode errorCode) {
             super(errorCode.getMessage());
             this.code = errorCode.getCode();
+            this.errorKey = errorCode.getErrorKey();
         }
 
         public int getCode() {
             return code;
+        }
+
+        /** 稳定语义键，供调用方分流而不必依赖数值码或文案（P61 §3.1）。 */
+        public String getErrorKey() {
+            return errorKey;
         }
     }
 }

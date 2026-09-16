@@ -23,7 +23,14 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException)
             throws IOException {
+        // 未认证一律给同一结论：不区分缺失/过期/被撤销，也不回显 token 或解析细节。
+        // 语言由请求 Accept-Language 决定（P61 §3.3，过滤器层经共享消息源解析）。
         JsonResponseWriter.write(response, objectMapper, HttpServletResponse.SC_UNAUTHORIZED,
-                R.fail(CommonErrorCode.UNAUTHORIZED.getCode(), CommonErrorCode.UNAUTHORIZED.getMessage()));
+                R.fail(CommonErrorCode.UNAUTHORIZED.getCode(),
+                        CommonErrorCode.UNAUTHORIZED.getErrorKey(),
+                        com.sw.ck.common.i18n.LocalizedMessages.text(
+                                CommonErrorCode.UNAUTHORIZED.getErrorKey(),
+                                CommonErrorCode.UNAUTHORIZED.getMessage()),
+                        com.sw.ck.common.trace.EventRef.current()));
     }
 }

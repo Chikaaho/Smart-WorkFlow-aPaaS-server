@@ -108,17 +108,22 @@ public class SwJobBean extends QuartzJobBean {
             } else if ("FLOW".equals(jobInfo.getJobType())) {
                 executeFlow(jobInfo);
             } else {
-                throw new IllegalStateException("未知任务类型: " + jobInfo.getJobType());
+                throw new IllegalStateException("任务类型未配置正确，请联系管理员处理");
             }
 
             // 成功
             jobLog.setExecStatus(ExecStatus.SUCCESS.name());
             jobLog.setResultMsg("执行成功");
         } catch (Exception e) {
-            log.error("定时任务 {}（{}）执行失败", jobId, jobInfo.getJobName(), e);
+            // P61：完整栈只进日志并与事件引用绑定；sw_job_log 会被任务日志接口原样返回，
+            // 因此只落安全结论与引用，不落栈、类名、SQL、路径或第三方原文。
+            String eventRef = "job-" + jobId + "-" + jobLog.getStartTime()
+                    .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+            log.error("定时任务 {}（{}）执行失败: eventRef={}", jobId, jobInfo.getJobName(), eventRef, e);
             jobLog.setExecStatus(ExecStatus.FAILED.name());
-            jobLog.setResultMsg(e.getMessage());
-            jobLog.setExceptionStack(getStackTrace(e));
+            jobLog.setResultMsg("任务执行失败，请稍后重试；若持续出现请提供事件引用联系管理员");
+            jobLog.setExceptionStack("ref=" + eventRef + " category="
+                    + com.sw.ck.common.exception.FailureCategory.SYSTEM_FAULT.name());
         } finally {
             // 5. 更新日志
             jobLog.setEndTime(LocalDateTime.now());
@@ -139,10 +144,10 @@ public class SwJobBean extends QuartzJobBean {
 
     private void executeBean(JobInfo jobInfo) throws Exception {
         if (jobInfo.getBeanName() == null || jobInfo.getBeanName().isBlank()) {
-            throw new IllegalStateException("BEAN 类型任务缺少 beanName");
+            throw new IllegalStateException("任务未配置执行处理器，请先完成配置");
         }
         if (handlerMap == null || !handlerMap.containsKey(jobInfo.getBeanName())) {
-            throw new IllegalStateException("未找到 JobHandler Bean: " + jobInfo.getBeanName());
+            throw new IllegalStateException("任务配置的执行处理器当前不可用，请联系管理员处理");
         }
         JobHandler handler = handlerMap.get(jobInfo.getBeanName());
         handler.execute(jobInfo.getBeanParams());
@@ -150,7 +155,7 @@ public class SwJobBean extends QuartzJobBean {
 
     private void executeFlow(JobInfo jobInfo) {
         if (jobInfo.getFlowDefKey() == null || jobInfo.getFlowDefKey().isBlank()) {
-            throw new IllegalStateException("FLOW 类型任务缺少 flowDefKey");
+            throw new IllegalStateException("任务未配置要发起的流程，请先完成配置");
         }
         ScheduledFlowTriggerEvent event = new ScheduledFlowTriggerEvent(
                 jobInfo.getId(),
@@ -161,12 +166,5 @@ public class SwJobBean extends QuartzJobBean {
         );
         eventPublisher.publish(event);
         log.info("FLOW 定时任务事件已发布: jobId={}, flowDefKey={}", jobInfo.getId(), jobInfo.getFlowDefKey());
-    }
-
-    private String getStackTrace(Exception e) {
-        java.io.StringWriter sw = new java.io.StringWriter();
-        java.io.PrintWriter pw = new java.io.PrintWriter(sw);
-        e.printStackTrace(pw);
-        return sw.toString();
     }
 }

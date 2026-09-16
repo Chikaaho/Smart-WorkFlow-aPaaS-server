@@ -553,12 +553,13 @@ class FormDataQueryServiceTest {
     // ==================== 测试 10：非法组合 - RICH_TEXT 不可筛选 ====================
 
     @Test
-    @DisplayName("RICH_TEXT EQ → 拒，抛 QUERY_FILTER_FIELD_NOT_FILTERABLE")
+    @DisplayName("RICH_TEXT EQ → 拒，抛 QUERY_FILTER_FIELD_NOT_FILTERABLE 且消息用显示名（R3a）")
     void filter_richText_shouldReject() {
         var setup = setupQueryForm("rich_text");
 
         FormDataQueryRequest request = new FormDataQueryRequest();
         FormDataFilter filter = new FormDataFilter();
+        // 字段可查看（非 viewDenied），拒绝消息因此必须用 definition 的 label 而非字段键
         filter.setField("content");
         filter.setOp(FilterOp.EQ);
         filter.setValue("test");
@@ -569,6 +570,7 @@ class FormDataQueryServiceTest {
                 .satisfies(e -> {
                     BaseException be = (BaseException) e;
                     assertThat(be.getCode()).isEqualTo(FormErrorCode.QUERY_FILTER_FIELD_NOT_FILTERABLE.getCode());
+                    assertThat(be.getMessage()).contains("内容").doesNotContain("content");
                 });
     }
 

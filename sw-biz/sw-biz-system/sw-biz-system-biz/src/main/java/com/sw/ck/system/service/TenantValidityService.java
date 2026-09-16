@@ -68,10 +68,11 @@ public class TenantValidityService {
 
     /**
      * 校验失败时抛出 IllegalStateException（用于登录/装载等必须中断的路径）。
+     * <p>异常文案不携带租户标识；租户号只进上面的结构化日志，避免其随响应外显。</p>
      */
     public void requireValid(Long tenantId) {
         if (!isValid(tenantId)) {
-            throw new IllegalStateException("租户无效或已停用/过期: tenantId=" + tenantId);
+            throw new IllegalStateException("所属租户当前不可用");
         }
     }
 }

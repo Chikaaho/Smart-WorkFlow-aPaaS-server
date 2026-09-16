@@ -8,6 +8,8 @@ import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
+import com.sw.ck.notify.dto.NotifyBatchFailureCategory;
+import com.sw.ck.notify.dto.NotifyBatchItemFailure;
 import com.sw.ck.notify.dto.NotifyBatchSendReq;
 import com.sw.ck.notify.dto.NotifyBatchSendResp;
 import com.sw.ck.notify.entity.NotifyMessage;
@@ -169,35 +171,65 @@ public class NotifyController {
         // 缺省仍走既有 IN_APP 批量入口，保留其幂等边界不变。
         if (req != null && req.getChannel() != null && !req.getChannel().isBlank()
                 && !"IN_APP".equalsIgnoreCase(req.getChannel().trim())) {
-            NotifyChannel channel;
-            try {
-                channel = NotifyChannel.valueOf(req.getChannel().trim().toUpperCase());
-            } catch (IllegalArgumentException e) {
-                throw new BaseException(CommonErrorCode.PARAM_ERROR, "未知渠道: " + req.getChannel());
-            }
-            int count = notifyMessageService.resolveCount(req);
-            var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
-            int delivered = 0;
-            for (Long recipientId : notifyMessageService.resolveRecipientUserIds(req)) {
-                NotifySendResult result = notifyFacade.send(NotifySendRequest.builder()
-                        .channel(channel)
-                        .recipientId(recipientId)
-                        .title(req.getTitle())
-                        .content(req.getContent())
-                        .bizType(NotifyBizType.SYSTEM)
-                        .tenantId(loginUser == null || loginUser.getTenantId() == null
-                                ? null : loginUser.getTenantId())
-                        .idempotencyKey("batch:" + java.util.UUID.randomUUID() + ":" + recipientId)
-                        .build());
-                if ("SUCCESS".equals(result.getStatus())) {
-                    delivered++;
-                }
-            }
-            log.info("渠道批量发送完成: channel={}, recipients={}, delivered={}", channel, count, delivered);
-            return R.ok(new NotifyBatchSendResp(delivered));
+            return R.ok(batchSendByChannel(req));
         }
-        int count = notifyMessageService.batchSend(req);
-        return R.ok(new NotifyBatchSendResp(count));
+        return R.ok(notifyMessageService.batchSendWithOutcome(req));
+    }
+
+    /**
+     * 非 IN_APP 渠道批量：逐接收人独立投递，按结果分类汇总四项计数与安全失败明细。
+     *
+     * <p>逐项语义（P61 §3.5）：成功记成功；超时属可重试基础设施失败，已写入下次重试时间
+     * 由投递恢复调度接管，计为「处理中」而非失败；其余失败按是否可重试归类，配置类
+     * 失败不诱导用户重复操作。失败明细只带分类与本地化结论，不含第三方原文。</p>
+     */
+    private NotifyBatchSendResp batchSendByChannel(NotifyBatchSendReq req) {
+        NotifyChannel channel;
+        try {
+            channel = NotifyChannel.valueOf(req.getChannel().trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "未知渠道: " + req.getChannel());
+        }
+        int count = notifyMessageService.resolveCount(req);
+        var loginUser = LoginUserHolder.get();
+        String batchKey = java.util.UUID.randomUUID().toString();
+        int delivered = 0;
+        int processing = 0;
+        // 与站内信批量共用同一判定：请求中被丢弃的对象进入失败明细，
+        // 两条路由的「总量 = 成功 + 失败 + 处理中」对照同一个请求集合。
+        List<NotifyBatchItemFailure> failures =
+                new java.util.ArrayList<>(notifyMessageService.invalidRecipientFailures(req));
+        for (Long recipientId : notifyMessageService.resolveRecipientUserIds(req)) {
+            NotifySendResult result = notifyFacade.send(NotifySendRequest.builder()
+                    .channel(channel)
+                    .recipientId(recipientId)
+                    .title(req.getTitle())
+                    .content(req.getContent())
+                    .bizType(NotifyBizType.SYSTEM)
+                    .tenantId(loginUser == null || loginUser.getTenantId() == null
+                            ? null : loginUser.getTenantId())
+                    .idempotencyKey("batch:" + batchKey + ":" + recipientId)
+                    .build());
+            String status = result.getStatus() == null ? "FAILED" : result.getStatus();
+            switch (status) {
+                case "SUCCESS" -> delivered++;
+                case "TIMEOUT", "PENDING" -> processing++;
+                default -> failures.add(NotifyBatchItemFailure.of(String.valueOf(recipientId),
+                        failureCategoryOf(result)));
+            }
+        }
+        log.info("渠道批量发送完成: channel={}, recipients={}, delivered={}, processing={}, failed={}",
+                channel, count, delivered, processing, failures.size());
+        return NotifyBatchSendResp.sendResult(delivered, processing, failures);
+    }
+
+    /** 渠道投递结果 → 安全失败分类；不直出第三方原文。 */
+    private String failureCategoryOf(NotifySendResult result) {
+        String reason = result.getFailureReason() == null ? "" : result.getFailureReason();
+        if (reason.contains("未配置生产渠道适配器") || reason.contains("未配置")) {
+            return NotifyBatchFailureCategory.CHANNEL_NOT_CONFIGURED;
+        }
+        return NotifyBatchFailureCategory.DELIVERY_FAILED;
     }
 
     /**
@@ -210,6 +242,6 @@ public class NotifyController {
     @PreAuthorize("@ss.hasPermi('notify:batch:send')")
     public R<NotifyBatchSendResp> resolveCount(@RequestBody NotifyBatchSendReq req) {
         int count = notifyMessageService.resolveCount(req);
-        return R.ok(new NotifyBatchSendResp(count));
+        return R.ok(NotifyBatchSendResp.resolve(count));
     }
 }

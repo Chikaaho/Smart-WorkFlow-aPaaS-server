@@ -1,10 +1,14 @@
 package com.sw.ck.system.controller;
 
 import com.sw.ck.common.response.R;
+import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.model.TokenResponse;
+import com.sw.ck.common.i18n.LocalizedMessages;
+import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.sso.SsoAuthService;
+import com.sw.ck.system.sso.SsoRejectionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,6 +36,10 @@ import java.util.Map;
 public class SsoAuthController {
 
     private static final Logger log = LoggerFactory.getLogger(SsoAuthController.class);
+
+    /** 第三方登录未完成的统一结论；精确原因只进日志与 SSO 审计（P61 §3.6）。 */
+    private static final String SSO_LOGIN_FAILED_MSG =
+            "第三方登录未能完成，请返回登录页重新发起，或改用账号密码登录";
 
     private final SsoAuthService ssoAuthService;
     private final SsoTicketStore ticketStore;
@@ -88,10 +96,15 @@ public class SsoAuthController {
             return R.ok(Map.of(
                     "authorizeUrl", start.authorizeUrl(),
                     "state", start.state()));
-        } catch (IllegalStateException | IllegalArgumentException e) {
+        } catch (SsoRejectionException e) {
             // fail closed 必须返回可判定结果（不可 500/不可栈泄漏；不回显任何敏感值）
-            log.warn("SSO 登录前发起被拒: provider={}, reason={}", provider, e.getMessage());
-            return R.fail(400, e.getMessage());
+            log.warn("SSO 登录前发起被拒: eventRef={} errorKey={} detail={}",
+                    EventRef.current(), e.getErrorKey(), e.getMessage());
+            return R.failResolved(400, e.getErrorKey(), e.getMessage(), EventRef.current());
+        } catch (RuntimeException e) {
+            log.warn("SSO 登录前发起失败: eventRef={} detail={}", EventRef.current(), e.getMessage(), e);
+            return R.failResolved(400, SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG,
+                    EventRef.current());
         }
     }
 
@@ -115,15 +128,24 @@ public class SsoAuthController {
             }
             String ticket = ticketStore.issueCandidate(result.externalId(), result.tenantId(), result.provider());
             return java.util.Map.of("redirect", "/sso/bind?ticket=" + urlEncode(ticket));
-        } catch (IllegalStateException | IllegalArgumentException | com.sw.ck.system.sso.SsoProviderClient.SsoProviderException e) {
+        } catch (SsoRejectionException | IllegalStateException | IllegalArgumentException
+                 | com.sw.ck.system.sso.SsoProviderClient.SsoProviderException e) {
             return deny(provider, e);
         }
     }
 
     private R<Void> deny(String provider, Exception e) {
-        // 回调拒绝返回可判定结果：不回显 code/state 原文，不泄漏栈
-        log.warn("SSO 回调被拒: provider={}, reason={}", provider, e.getMessage());
-        return R.fail(400, "SSO 回调被拒绝: " + e.getMessage());
+        // 回调拒绝返回可判定结果：不回显 code/state 原文，不泄漏 Provider 配置、
+        // 三方响应、租户标识或回调白名单，也不泄漏栈。
+        if (e instanceof SsoRejectionException rejection) {
+            log.warn("SSO 回调被拒: eventRef={} provider={} errorKey={} detail={}",
+                    EventRef.current(), provider, rejection.getErrorKey(), rejection.getMessage());
+            return R.failResolved(400, rejection.getErrorKey(), rejection.getMessage(), EventRef.current());
+        }
+        log.warn("SSO 回调失败: eventRef={} provider={} detail={}",
+                EventRef.current(), provider, e.getMessage(), e);
+        return R.failResolved(400, SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG,
+                EventRef.current());
     }
 
     /**
@@ -135,12 +157,14 @@ public class SsoAuthController {
                                            jakarta.servlet.http.HttpServletResponse response) {
         SsoTicketStore.ConsumedSession session = ticketStore.consumeSession(body.get("ticket"));
         if (session == null) {
-            return R.fail(401, "登录票据无效或已过期");
+            return R.failResolved(401, SystemErrorKeys.SSO_TICKET_INVALID,
+                LocalizedMessages.text(SystemErrorKeys.SSO_TICKET_INVALID, "登录票据无效或已过期"), EventRef.current());
         }
         try {
             tenantValidityService.requireValid(session.tenantId());
         } catch (IllegalStateException e) {
-            return R.fail(401, "租户无效或已停用/过期");
+            return R.failResolved(401, SystemErrorKeys.SSO_TENANT_INVALID,
+                LocalizedMessages.text(SystemErrorKeys.SSO_TENANT_INVALID, "租户无效或已停用/过期"), EventRef.current());
         }
         // 免认证兑换路径无登录态：租户拦截器 fail-closed 会拒绝生成过滤条件；
         // 租户语义由显式谓词承担（票据载荷 tenantId + 账号行 tenantId 一致性校验）
@@ -151,7 +175,8 @@ public class SsoAuthController {
         }
         if (user == null || !java.util.Objects.equals(user.getTenantId(), session.tenantId())
                 || (user.getStatus() != null && user.getStatus() != 0)) {
-            return R.fail(401, "账号已停用");
+            return R.failResolved(401, SystemErrorKeys.SSO_ACCOUNT_UNAVAILABLE,
+                LocalizedMessages.text(SystemErrorKeys.SSO_ACCOUNT_UNAVAILABLE, "账号已停用"), EventRef.current());
         }
         String accessToken = jwtTokenProvider.generateToken(user.getId());
         String refreshToken = refreshTokenService.createRefreshToken(
@@ -170,12 +195,14 @@ public class SsoAuthController {
     public R<Map<String, Object>> candidate(@RequestBody Map<String, String> body) {
         SsoTicketStore.ConsumedCandidate candidate = ticketStore.peekCandidate(body.get("ticket"));
         if (candidate == null) {
-            return R.fail(401, "绑定票据无效或已过期");
+            return R.failResolved(401, SystemErrorKeys.SSO_TICKET_INVALID,
+                LocalizedMessages.text(SystemErrorKeys.SSO_TICKET_INVALID, "绑定票据无效或已过期"), EventRef.current());
         }
         try {
             tenantValidityService.requireValid(candidate.tenantId());
         } catch (IllegalStateException e) {
-            return R.fail(401, "租户无效或已停用/过期");
+            return R.failResolved(401, SystemErrorKeys.SSO_TENANT_INVALID,
+                LocalizedMessages.text(SystemErrorKeys.SSO_TENANT_INVALID, "租户无效或已停用/过期"), EventRef.current());
         }
         return R.ok(Map.of(
                 "provider", candidate.provider(),
@@ -189,22 +216,30 @@ public class SsoAuthController {
     public R<Void> bindCandidate(@RequestBody Map<String, String> body) {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
-            return R.fail(401, "未登录");
+            return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
+                LocalizedMessages.text(SystemErrorKeys.SESSION_REQUIRED, "未登录"), EventRef.current());
         }
         SsoTicketStore.ConsumedCandidate candidate = ticketStore.consumeCandidate(body.get("ticket"));
         if (candidate == null) {
-            return R.fail(401, "绑定票据无效或已过期");
+            return R.failResolved(401, SystemErrorKeys.SSO_TICKET_INVALID,
+                LocalizedMessages.text(SystemErrorKeys.SSO_TICKET_INVALID, "绑定票据无效或已过期"), EventRef.current());
         }
         if (!current.getTenantId().equals(candidate.tenantId())) {
             ssoAuthService.auditRejection(candidate.provider(), "CROSS_TENANT_REJECTED",
                     "bind candidate tenant mismatch");
-            return R.fail(403, "绑定候选与当前租户不匹配");
+            return R.failResolved(403, SystemErrorKeys.SSO_BINDING_TENANT_MISMATCH,
+                LocalizedMessages.text(SystemErrorKeys.SSO_BINDING_TENANT_MISMATCH, "绑定候选与当前租户不匹配"), EventRef.current());
         }
         try {
             ssoAuthService.bind(candidate.provider(), current.getUserId(), candidate.externalId());
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            log.warn("SSO 候选绑定被拒: reason={}", e.getMessage());
-            return R.fail(400, e.getMessage());
+        } catch (SsoRejectionException e) {
+            log.warn("SSO 候选绑定被拒: eventRef={} errorKey={} detail={}",
+                    EventRef.current(), e.getErrorKey(), e.getMessage());
+            return R.failResolved(400, e.getErrorKey(), e.getMessage(), EventRef.current());
+        } catch (RuntimeException e) {
+            log.warn("SSO 候选绑定失败: eventRef={} detail={}", EventRef.current(), e.getMessage(), e);
+            return R.failResolved(400, SystemErrorKeys.SSO_BINDING_CONFLICT,
+                    "绑定未能完成，请稍后重试或联系管理员处理", EventRef.current());
         }
         return R.ok();
     }
@@ -226,7 +261,8 @@ public class SsoAuthController {
     public R<Map<String, Object>> bindings() {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
-            return R.fail(401, "未登录");
+            return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
+                LocalizedMessages.text(SystemErrorKeys.SESSION_REQUIRED, "未登录"), EventRef.current());
         }
         return R.ok(ssoAuthService.listBindings(current.getUserId()));
     }
@@ -236,13 +272,19 @@ public class SsoAuthController {
     public R<Void> bind(@RequestBody BindRequest request) {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
-            return R.fail(401, "未登录");
+            return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
+                LocalizedMessages.text(SystemErrorKeys.SESSION_REQUIRED, "未登录"), EventRef.current());
         }
         try {
             ssoAuthService.bind(request.provider(), current.getUserId(), request.externalId());
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            log.warn("SSO 绑定被拒: reason={}", e.getMessage());
-            return R.fail(400, e.getMessage());
+        } catch (SsoRejectionException e) {
+            log.warn("SSO 绑定被拒: eventRef={} errorKey={} detail={}",
+                    EventRef.current(), e.getErrorKey(), e.getMessage());
+            return R.failResolved(400, e.getErrorKey(), e.getMessage(), EventRef.current());
+        } catch (RuntimeException e) {
+            log.warn("SSO 绑定失败: eventRef={} detail={}", EventRef.current(), e.getMessage(), e);
+            return R.failResolved(400, SystemErrorKeys.SSO_BINDING_CONFLICT,
+                    "绑定未能完成，请稍后重试或联系管理员处理", EventRef.current());
         }
         return R.ok();
     }
@@ -253,13 +295,19 @@ public class SsoAuthController {
                           @org.springframework.web.bind.annotation.RequestHeader(value = "Authorization", required = false) String authorization) {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
-            return R.fail(401, "未登录");
+            return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
+                LocalizedMessages.text(SystemErrorKeys.SESSION_REQUIRED, "未登录"), EventRef.current());
         }
         try {
             ssoAuthService.unbind(request.provider(), current.getUserId(), bearerToken(authorization));
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            log.warn("SSO 解绑被拒: reason={}", e.getMessage());
-            return R.fail(400, e.getMessage());
+        } catch (SsoRejectionException e) {
+            log.warn("SSO 解绑被拒: eventRef={} errorKey={} detail={}",
+                    EventRef.current(), e.getErrorKey(), e.getMessage());
+            return R.failResolved(400, e.getErrorKey(), e.getMessage(), EventRef.current());
+        } catch (RuntimeException e) {
+            log.warn("SSO 解绑失败: eventRef={} detail={}", EventRef.current(), e.getMessage(), e);
+            return R.failResolved(400, SystemErrorKeys.SSO_BINDING_NOT_FOUND,
+                    "解绑未能完成，请稍后重试或联系管理员处理", EventRef.current());
         }
         return R.ok();
     }

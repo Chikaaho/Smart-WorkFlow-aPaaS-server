@@ -2,6 +2,7 @@ package com.sw.ck.system.controller;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
+import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -14,6 +15,7 @@ import com.sw.ck.system.security.AuthErrorCode;
 import com.sw.ck.system.security.LoginChallengeService;
 import com.sw.ck.system.security.LoginChallengeStore;
 import com.sw.ck.system.security.RsaLoginKeyManager;
+import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.util.CookieUtils;
@@ -119,7 +121,7 @@ public class AuthController {
         } catch (LoginChallengeService.AuthException e) {
             log.warn("登录前置校验失败(1): code={}, captchaIdHash={}", e.getCode(),
                     RsaLoginKeyManager.sha256Hex(String.valueOf(request.getCaptchaId())));
-            return R.fail(e.getCode(), e.getMessage());
+            return authFail(e.getCode(), e.getErrorKey(), e.getMessage());
         }
 
         // 2. 验证码有效期（已在 verifyCaptcha 内按生成时间 + TTL 判定，异常同样收敛到 2102）
@@ -130,7 +132,7 @@ public class AuthController {
             loginChallengeService.verifyClientTime(request.getTimestamp());
         } catch (LoginChallengeService.AuthException e) {
             log.warn("登录前置校验失败(3): code={}", e.getCode());
-            return R.fail(e.getCode(), e.getMessage());
+            return authFail(e.getCode(), e.getErrorKey(), e.getMessage());
         }
 
         // 4. 原子消费挑战：并发/重复提交下最多一个请求进入密码认证；无论密码最终正确与否，
@@ -138,7 +140,7 @@ public class AuthController {
         if (!loginChallengeService.consume(request.getCaptchaId())) {
             log.warn("登录挑战已被消费或并发落败, captchaIdHash={}",
                     RsaLoginKeyManager.sha256Hex(String.valueOf(request.getCaptchaId())));
-            return R.fail(AuthErrorCode.CAPTCHA_ERROR.getCode(), AuthErrorCode.CAPTCHA_ERROR.getMessage());
+            return authFail(AuthErrorCode.CAPTCHA_ERROR);
         }
 
         // 5. RSA 解密（按挑战绑定的密钥版本；失败统一收敛“密码错误”，不暴露差异）
@@ -147,37 +149,38 @@ public class AuthController {
             plainPassword = rsaLoginKeyManager.decrypt(record.keyVersion(), request.getPassword());
         } catch (RsaLoginKeyManager.PasswordDecryptException e) {
             log.warn("密码解密失败: {}", e.getMessage());
-            return R.fail(AuthErrorCode.PASSWORD_ERROR.getCode(), AuthErrorCode.PASSWORD_ERROR.getMessage());
+            return authFail(AuthErrorCode.PASSWORD_ERROR);
         }
         if (plainPassword.length() > rsaLoginKeyManager.maxPlaintextBytes()) {
-            return R.fail(AuthErrorCode.PASSWORD_ERROR.getCode(), AuthErrorCode.PASSWORD_ERROR.getMessage());
+            return authFail(AuthErrorCode.PASSWORD_ERROR);
         }
 
         // 6. 账号与密码认证（沿用既有语义：账号不存在/密码不匹配统一“密码错误”）
         if (request.getUsername() == null || request.getUsername().isBlank()) {
-            return R.fail(AuthErrorCode.PASSWORD_ERROR.getCode(), AuthErrorCode.PASSWORD_ERROR.getMessage());
+            return authFail(AuthErrorCode.PASSWORD_ERROR);
         }
         log.info("用户登录: {}", request.getUsername());
         SysUser user = sysUserService.getByUsername(request.getUsername());
         if (user == null) {
-            return R.fail(AuthErrorCode.PASSWORD_ERROR.getCode(), AuthErrorCode.PASSWORD_ERROR.getMessage());
+            return authFail(AuthErrorCode.PASSWORD_ERROR);
         }
         if (!passwordEncoder.matches(plainPassword, user.getPassword())) {
-            return R.fail(AuthErrorCode.PASSWORD_ERROR.getCode(), AuthErrorCode.PASSWORD_ERROR.getMessage());
+            return authFail(AuthErrorCode.PASSWORD_ERROR);
         }
 
         // 7. 校验账号状态（0=正常 1=停用 2=锁定；null/未知值按停用处理，拒绝签发 token）
         String statusDenyMessage = statusDenyMessage(user.getStatus());
         if (statusDenyMessage != null) {
             log.warn("用户 {} 登录被拒绝: {}", request.getUsername(), statusDenyMessage);
-            return R.fail(401, statusDenyMessage);
+            return authFail(401, statusDenyKey(user.getStatus()), statusDenyMessage);
         }
 
         // 7b. 租户有效性（I5 §3.2）：租户不存在/停用/过期不得建立新会话
         if (!tenantValidityService.isValid(user.getTenantId())) {
             log.warn("用户 {} 登录被拒绝: 租户无效或已停用/过期, tenantId={}",
                     request.getUsername(), user.getTenantId());
-            return R.fail(401, "所属租户不可用，无法登录");
+            return authFail(401, SystemErrorKeys.TENANT_UNAVAILABLE,
+                    "所属企业当前不可用，无法登录，请联系管理员");
         }
 
         // 8. 签发 access token
@@ -204,7 +207,7 @@ public class AuthController {
         // 1. 从 cookie 读取 refresh token
         String rawToken = CookieUtils.getRefreshTokenFromCookie(request);
         if (rawToken == null || rawToken.isEmpty()) {
-            return R.fail(401, "未提供 refresh token");
+            return authFail(401, SystemErrorKeys.SESSION_REQUIRED, "登录状态已失效，请重新登录");
         }
         // 2. 校验 + 轮换
         try {
@@ -219,11 +222,13 @@ public class AuthController {
                 user = sysUserService.getById(rotation.userId());
             }
             String statusDenyMessage = user == null ? "账号已停用" : statusDenyMessage(user.getStatus());
+            String statusDenyErrorKey = user == null
+                    ? SystemErrorKeys.ACCOUNT_DISABLED : statusDenyKey(user.getStatus());
             if (statusDenyMessage != null) {
                 refreshTokenService.revokeRefreshToken(rotation.newRawToken());
                 CookieUtils.clearRefreshCookie(response, cookiePath);
                 log.warn("用户 {} refresh 被拒绝: {}", rotation.userId(), statusDenyMessage);
-                return R.fail(401, statusDenyMessage);
+                return authFail(401, statusDenyErrorKey, statusDenyMessage);
             }
             // 租户有效性（I5 §3.2）：租户停用/过期不得续期既有会话
             if (!tenantValidityService.isValid(user.getTenantId())) {
@@ -231,7 +236,8 @@ public class AuthController {
                 CookieUtils.clearRefreshCookie(response, cookiePath);
                 log.warn("用户 {} refresh 被拒绝: 租户无效或已停用/过期, tenantId={}",
                         rotation.userId(), user.getTenantId());
-                return R.fail(401, "所属租户不可用，会话已终止");
+                return authFail(401, SystemErrorKeys.TENANT_UNAVAILABLE,
+                    "所属企业当前不可用，登录状态已终止");
             }
             // 4. 下发新 refresh cookie
             CookieUtils.setRefreshCookie(response, rotation.newRawToken(),
@@ -243,7 +249,7 @@ public class AuthController {
         } catch (BaseException e) {
             // 轮换失败（无效/过期/重放）→ 清 cookie
             CookieUtils.clearRefreshCookie(response, cookiePath);
-            return R.fail(e.getCode(), e.getMessage());
+            return authFail(e.getCode(), e.getErrorKey(), e.getMessage());
         }
     }
 
@@ -286,14 +292,14 @@ public class AuthController {
     public R<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
-            return R.fail(401, "未登录");
+            return authFail(401, SystemErrorKeys.SESSION_REQUIRED, "登录状态已失效，请重新登录");
         }
         SysUser user = sysUserService.getById(current.getUserId());
         if (user == null) {
-            return R.fail(401, "用户不存在");
+            return authFail(401, SystemErrorKeys.SESSION_REQUIRED, "登录状态已失效，请重新登录");
         }
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
-            return R.fail(400, "旧密码错误");
+            return authFail(400, SystemErrorKeys.CREDENTIAL_MISMATCH, "当前密码不正确");
         }
         sysUserService.updatePassword(user.getId(), request.getNewPassword());
         loginUserLoader.kickOut(user.getId());
@@ -316,6 +322,24 @@ public class AuthController {
             return status != null && status == 2 ? "账号已锁定" : "账号已停用";
         }
         return null;
+    }
+
+    /** 账号状态对应的稳定语义键，与 {@link #statusDenyMessage(Integer)} 一一对应。 */
+    private String statusDenyKey(Integer status) {
+        return status != null && status == 2
+                ? SystemErrorKeys.ACCOUNT_LOCKED : SystemErrorKeys.ACCOUNT_DISABLED;
+    }
+
+    /**
+     * 认证链失败响应：同时携带数值码、稳定语义键与事件引用。
+     * <p>数值码与文案保持既有形态以兼容旧调用方；语义键供新调用方分流（P61 §3.1）。</p>
+     */
+    private <T> R<T> authFail(int code, String errorKey, String message) {
+        return R.fail(code, errorKey, message, EventRef.current());
+    }
+
+    private <T> R<T> authFail(AuthErrorCode errorCode) {
+        return authFail(errorCode.getCode(), errorCode.getErrorKey(), errorCode.getMessage());
     }
 
     /**

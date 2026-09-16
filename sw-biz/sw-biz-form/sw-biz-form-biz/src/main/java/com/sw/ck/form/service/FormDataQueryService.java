@@ -14,6 +14,7 @@ import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
+import com.sw.ck.form.service.FormFieldEnrichmentService;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
@@ -185,7 +186,8 @@ public class FormDataQueryService {
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 无物理表");
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST,
+                    "该表单尚未完成数据表初始化，请联系管理员处理");
         }
 
         // —— Step 2.5: 表名防御性校验 ——
@@ -198,7 +200,8 @@ public class FormDataQueryService {
         Set<String> viewDenied = viewDeniedFields(loginUser, formDef.getId());
 
         // —— Step 4: 校验过滤条件 ——
-        List<FilterClause> clauses = validateAndBuildClauses(request.getFilters(), fieldTypeMap, viewDenied);
+        List<FilterClause> clauses = validateAndBuildClauses(request.getFilters(), fieldTypeMap, viewDenied,
+                fieldDisplayFor(formDef.getId()));
 
         // —— Step 5: 构建列投影（I2：无 view 权字段不出响应） ——
         List<String> projectionColumns = buildProjection(fieldTypeMap, viewDenied);
@@ -236,7 +239,7 @@ public class FormDataQueryService {
             total = jdbcTemplate.queryForObject(countSql, Long.class, filterParams.toArray());
         } catch (Exception e) {
             log.error("Count query failed: table={}, sql={}", tableName, countSql, e);
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "查询失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "查询记录时系统未能完成，请稍后重试");
         }
         if (total == null) total = 0L;
 
@@ -256,7 +259,7 @@ public class FormDataQueryService {
             records = jdbcTemplate.queryForList(dataSql, dataParams.toArray());
         } catch (Exception e) {
             log.error("Data query failed: table={}, sql={}", tableName, dataSql, e);
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "查询失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "查询记录时系统未能完成，请稍后重试");
         }
 
         // —— Step 10: 构建 PageResult ——
@@ -299,7 +302,8 @@ public class FormDataQueryService {
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 无物理表");
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST,
+                    "该表单尚未完成数据表初始化，请联系管理员处理");
         }
         validateTableName(tableName);
 
@@ -328,7 +332,7 @@ public class FormDataQueryService {
             records = jdbcTemplate.queryForList(sql, detailParams.toArray());
         } catch (Exception e) {
             log.error("Detail query failed: table={}, recordId={}", tableName, recordId, e);
-            throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询记录时系统未能完成，请稍后重试");
         }
 
         if (records == null || records.isEmpty()) {
@@ -430,7 +434,7 @@ public class FormDataQueryService {
     private void validateTableName(String tableName) {
         if (!tableName.matches(TABLE_NAME_PATTERN)) {
             log.error("Table name '{}' does not match expected pattern '{}'", tableName, TABLE_NAME_PATTERN);
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表名格式异常");
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "该表单的数据表配置异常，请联系管理员处理");
         }
     }
 
@@ -540,7 +544,8 @@ public class FormDataQueryService {
      */
     private List<FilterClause> validateAndBuildClauses(List<FormDataFilter> filters,
                                                         Map<String, FieldType> fieldTypeMap,
-                                                        Set<String> viewDenied) {
+                                                        Set<String> viewDenied,
+                                                        Map<String, String> fieldDisplay) {
         if (filters == null || filters.isEmpty()) {
             return List.of();
         }
@@ -588,21 +593,25 @@ public class FormDataQueryService {
             FieldType fieldType = fieldTypeMap.get(field);
             if (fieldType == null || viewDenied.contains(field)) {
                 // 无 view 权字段与未知字段同口径拒绝，不确认其存在性
+                // 未知字段与无 view 权字段同口径：回显用户自己的输入串，并作为目录参数传出
                 throw new BaseException(FormErrorCode.QUERY_FILTER_FIELD_UNKNOWN,
-                        "过滤字段 '" + field + "' 不在表单定义中");
+                        new Object[]{field}, "过滤字段 '" + field + "' 不在表单定义中");
             }
 
             // —— 字段类型是否可筛选 ——
             if (NON_FILTERABLE_TYPES.contains(fieldType) || !fieldType.isEnabled()) {
+                // 目录条目带 {0}/{1}：用户看到的必须是字段显示名，不是内部 key
                 throw new BaseException(FormErrorCode.QUERY_FILTER_FIELD_NOT_FILTERABLE,
-                        "字段 '" + field + "'（类型 " + fieldType + "）不支持筛选");
+                        new Object[]{fieldDisplay.getOrDefault(field, field), fieldType},
+                        "字段「" + fieldDisplay.getOrDefault(field, field) + "」（类型 " + fieldType + "）不支持筛选");
             }
 
             // —— op 是否在该类型的合法集合中 ——
             Set<FilterOp> allowed = ALLOWED_OPS.get(fieldType);
             if (allowed == null || !allowed.contains(op)) {
                 throw new BaseException(FormErrorCode.QUERY_FILTER_OP_TYPE_MISMATCH,
-                        "操作符 " + op + " 不适用于字段 '" + field + "'（类型 " + fieldType + "）");
+                        new Object[]{fieldDisplay.getOrDefault(field, field)},
+                        "操作符 " + op + " 不适用于字段「" + fieldDisplay.getOrDefault(field, field) + "」");
             }
 
             // —— 值非空（空值过滤无意义） ——
@@ -614,7 +623,8 @@ public class FormDataQueryService {
             // —— 物理列名（唯一出口）；LABEL 非输入字段无可查询列 ——
             if (fieldType == com.sw.ck.form.dynamic.FieldType.LABEL) {
                 throw new BaseException(FormErrorCode.QUERY_FILTER_FIELD_NOT_FILTERABLE,
-                        "说明文字字段 '" + field + "' 不支持筛选");
+                        new Object[]{fieldDisplay.getOrDefault(field, field), fieldType},
+                        "说明文字字段「" + fieldDisplay.getOrDefault(field, field) + "」不支持筛选");
             }
             String physicalCol = ColumnValidation.physicalColumnName(field, fieldType);
 
@@ -782,6 +792,17 @@ public class FormDataQueryService {
      * I2：解析当前身份在指定表单上的无 view 权字段集合
      * （含 TABLE 子字段，键形如 {@code items.qty}；权限服务缺失时视为不设限）。
      */
+    /** 字段键 → 显示名（R3a）：筛选/操作符拒绝消息向用户展示 label 而非内部键。 */
+    private Map<String, String> fieldDisplayFor(String formId) {
+        try {
+            JsonNode root = objectMapper.readTree(loadDefinitionJsonForPermissions(formId));
+            JsonNode fields = root == null ? null : root.get("fields");
+            return FormFieldEnrichmentService.collectFieldLabels(fields);
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
     private Set<String> viewDeniedFields(LoginUser loginUser, String formId) {
         if (fieldPermissionService == null) {
             return Set.of();

@@ -338,12 +338,17 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
      * （实测 "429 - too many requests"），cause 链中不存在 RestClientResponseException。
      * 沿 cause 链逐层检查（穿透 langgraph4j CompletionException 等包装层），并保留
      * RestClientResponseException 状态码判断兜底（未来版本/非 Spring AI 路径）。
+     * <p>
+     * P61：Spring AI 1.0.4 的 {@code NonTransientAiException} 不暴露结构化状态码，
+     * 因此这里对<b>已实测固定的协议格式</b>做锚定解析——只接受以状态码开头的消息，
+     * 响应体内部出现数字串不会误判。该第三方格式依赖登记在
+     * {@code docs/governance/error-code-catalog.md}「第三方格式依赖」。
+     * </p>
      */
     private boolean isQuotaExceededException(Throwable t) {
         Throwable cur = t;
         while (cur != null) {
-            if (cur instanceof NonTransientAiException e
-                    && e.getMessage() != null && e.getMessage().contains("429")) {
+            if (cur instanceof NonTransientAiException e && statusCodeOf(e.getMessage()) == 429) {
                 return true;
             }
             if (cur instanceof RestClientResponseException rcre
@@ -353,6 +358,26 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
             cur = cur.getCause();
         }
         return false;
+    }
+
+    /**
+     * 解析 Spring AI 异常消息开头的 HTTP 状态码（格式 {@code "<status> - <body>"}）。
+     *
+     * @return 状态码；消息不是以合法状态码开头时返回 {@code -1}
+     */
+    private static int statusCodeOf(String message) {
+        if (message == null) {
+            return -1;
+        }
+        String trimmed = message.stripLeading();
+        int i = 0;
+        while (i < trimmed.length() && Character.isDigit(trimmed.charAt(i)) && i < 4) {
+            i++;
+        }
+        if (i == 0 || i >= trimmed.length() || trimmed.charAt(i) != ' ') {
+            return -1;
+        }
+        return Integer.parseInt(trimmed.substring(0, i));
     }
 
     /**
@@ -392,14 +417,8 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
      * 通过异常信息泄漏（方案 §12 风险表）。
      */
     private String summarizeError(Throwable t) {
-        Throwable cur = t;
-        String best = null;
-        while (cur != null) {
-            if (cur.getMessage() != null && !cur.getMessage().isBlank()) {
-                best = cur.getMessage();
-            }
-            cur = cur.getCause();
-        }
-        return best != null ? best : t.getClass().getSimpleName();
+        // P61：按异常类型分层——平台业务异常与编排自身状态失败保留可定位文案，
+        // 传输/服务商类异常替换为安全结论并写日志（见 AgentFailureSummarizer）。
+        return com.sw.ck.agent.orchestration.AgentFailureSummarizer.summarize(t);
     }
 }

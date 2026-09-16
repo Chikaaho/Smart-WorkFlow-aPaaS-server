@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.mapper.SysRefreshTokenMapper;
+import com.sw.ck.system.security.SystemErrorKeys;
 import org.apache.ibatis.reflection.MetaObject;
 import org.junit.jupiter.api.*;
 import org.mybatis.spring.annotation.MapperScan;
@@ -124,7 +125,7 @@ class RefreshTokenServiceTest {
         assertThatThrownBy(() ->
                 refreshTokenService.rotateRefreshToken(oldToken, EXPIRE_SECONDS))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("已被使用过");
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SESSION_REVOKED);
     }
 
     // ============ rotateRefreshToken（重放检测）============
@@ -142,13 +143,13 @@ class RefreshTokenServiceTest {
         assertThatThrownBy(() ->
                 refreshTokenService.rotateRefreshToken(token, EXPIRE_SECONDS))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("已被使用过");
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SESSION_REVOKED);
 
         // 修复核心验证：家族撤销已在新事务中提交，anotherToken 也应已被撤销
         assertThatThrownBy(() ->
                 refreshTokenService.rotateRefreshToken(anotherToken, EXPIRE_SECONDS))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("已被使用过");
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SESSION_REVOKED);
     }
 
     // ============ rotateRefreshToken（token 无效 / 过期）============
@@ -159,7 +160,7 @@ class RefreshTokenServiceTest {
         assertThatThrownBy(() ->
                 refreshTokenService.rotateRefreshToken("nonexistent-token-that-does-not-exist-in-db", EXPIRE_SECONDS))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("无效");
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.REFRESH_TOKEN_INVALID);
     }
 
     // ============ revokeRefreshToken ============
@@ -173,7 +174,7 @@ class RefreshTokenServiceTest {
         assertThatThrownBy(() ->
                 refreshTokenService.rotateRefreshToken(token, EXPIRE_SECONDS))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("已被使用过");
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SESSION_REVOKED);
     }
 
     @Test

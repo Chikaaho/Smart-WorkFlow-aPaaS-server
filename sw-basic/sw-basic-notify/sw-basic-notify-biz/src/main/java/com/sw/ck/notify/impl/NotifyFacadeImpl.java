@@ -136,8 +136,8 @@ public class NotifyFacadeImpl implements NotifyFacade {
                     e.getClass().getSimpleName());
             result = NotifySendResult.builder().channel(request.getChannel())
                     .status("FAILED")
-                    .failureReason("渠道适配器调用失败: "
-                            + (e.getMessage() == null ? "未知异常" : e.getMessage()))
+                    .failureReason("投递失败："
+                            + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 300))
                     .build();
         }
         return persistDelivery(request, result);
@@ -177,7 +177,8 @@ public class NotifyFacadeImpl implements NotifyFacade {
             return result;
         } catch (Exception e) {
             return NotifySendResult.builder().channel(request.getChannel()).status("FAILED")
-                    .failureReason(e.getMessage() == null ? "渠道适配器调用失败" : e.getMessage()).build();
+                    .failureReason("投递失败："
+                            + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 300)).build();
         }
     }
 

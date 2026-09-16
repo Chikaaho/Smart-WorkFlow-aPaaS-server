@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
@@ -287,7 +288,7 @@ class BpmDraftControllerTest {
 
             assertThatThrownBy(() -> controller.submit(5L))
                     .isInstanceOf(BaseException.class)
-                    .hasMessageContaining("尚未关联");
+                    .hasFieldOrPropertyWithValue("errorKey", BpmErrorCode.DRAFT_NO_ACTIVE_BINDING);
         }
 
         @Test
@@ -300,7 +301,7 @@ class BpmDraftControllerTest {
 
             assertThatThrownBy(() -> controller.submit(5L))
                     .isInstanceOf(BaseException.class)
-                    .hasMessageContaining("尚未关联");
+                    .hasFieldOrPropertyWithValue("errorKey", BpmErrorCode.DRAFT_NO_ACTIVE_BINDING);
         }
 
         @Test

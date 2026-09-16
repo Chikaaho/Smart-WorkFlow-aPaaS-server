@@ -128,4 +128,43 @@ class FormVisibilityRulesTest {
         data.put("a", "other");
         assertThat(rules.hiddenFields(any, data)).doesNotContain("b");
     }
+
+    @Test
+    @DisplayName("R3b：发布校验失败消息使用字段显示名，不回显内部字段键")
+    void validateMessagesUseFieldDisplayName() {
+        Map<String, String> fieldDisplay = new HashMap<>();
+        fieldDisplay.put("salary", "月薪");
+        fieldDisplay.put("dept", "部门");
+
+        // 重复规则：两个 target 相同 → 消息应展示「月薪」而不是 salary
+        String duplicate = "{\"rules\":{\"visibility\":["
+                + "{\"target\":\"salary\",\"logic\":\"ALL\",\"conditions\":[{\"field\":\"dept\",\"op\":\"EMPTY\"}]},"
+                + "{\"target\":\"salary\",\"logic\":\"ANY\",\"conditions\":[{\"field\":\"dept\",\"op\":\"NOT_EMPTY\"}]}]}}";
+        assertThatThrownBy(() -> rules.parseAndValidate(duplicate, fieldDisplay))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getMessage()).contains("月薪").doesNotContain("salary"));
+
+        // 循环依赖：salary → dept → salary → 消息应展示显示名
+        String cyclic = "{\"rules\":{\"visibility\":["
+                + "{\"target\":\"salary\",\"logic\":\"ALL\",\"conditions\":[{\"field\":\"dept\",\"op\":\"EMPTY\"}]},"
+                + "{\"target\":\"dept\",\"logic\":\"ALL\",\"conditions\":[{\"field\":\"salary\",\"op\":\"EMPTY\"}]}]}}";
+        assertThatThrownBy(() -> rules.parseAndValidate(cyclic, fieldDisplay))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getMessage()).contains("月薪").doesNotContain("salary"));
+
+        // op 非法：消息定位到条件字段时同样展示显示名
+        String badOp = "{\"rules\":{\"visibility\":["
+                + "{\"target\":\"salary\",\"logic\":\"ALL\","
+                + "\"conditions\":[{\"field\":\"dept\",\"op\":\"LIKE\",\"value\":\"x\"}]}]}}";
+        assertThatThrownBy(() -> rules.parseAndValidate(badOp, fieldDisplay))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getMessage()).contains("部门").doesNotContain("dept"));
+
+        // 未定义字段：只回显设计者自己输入的键（不泄露其他字段存在性），不构造显示名
+        String unknown = "{\"rules\":{\"visibility\":["
+                + "{\"target\":\"ghost\",\"logic\":\"ALL\",\"conditions\":[{\"field\":\"dept\",\"op\":\"EMPTY\"}]}]}}";
+        assertThatThrownBy(() -> rules.parseAndValidate(unknown, fieldDisplay))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getMessage()).contains("ghost"));
+    }
 }

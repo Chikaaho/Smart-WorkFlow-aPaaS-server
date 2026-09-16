@@ -18,6 +18,15 @@ spring:
 
     name: smart-workflow
 
+  # ======================== 用户消息目录（P61 §3.3 双语） ========================
+  # 键规则 error.<errorKey>；目录缺失的键回退到枚举中的 zh-CN 默认文案。
+  # 语言由请求 Accept-Language 决定（见 LocalizedMessages），errorKey/数值码/事件引用不随语言变化。
+  messages:
+    basename: i18n/messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+    use-code-as-default-message: false
+
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:prod}
 

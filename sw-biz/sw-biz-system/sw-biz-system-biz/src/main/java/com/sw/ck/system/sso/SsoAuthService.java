@@ -11,6 +11,7 @@ import com.sw.ck.system.mapper.SsoAuditRecordMapper;
 import com.sw.ck.system.mapper.SsoAuthStateMapper;
 import com.sw.ck.system.mapper.SsoProviderConfigMapper;
 import com.sw.ck.system.mapper.SsoUserBindingMapper;
+import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.service.SysUserService;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -47,6 +48,22 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SsoAuthService {
 
     private static final Logger log = LoggerFactory.getLogger(SsoAuthService.class);
+
+    // ==================== 用户可见安全结论（P61 §3.6） ====================
+    // 未认证的授权发起与回调一律使用同一结论，不区分 Provider 配置、回调白名单、
+    // 授权状态原文、租户标识或第三方响应；精确原因进结构化日志与 SSO 审计。
+
+    /** 第三方登录未完成：可重新发起或改用账号密码登录。 */
+    private static final String SSO_LOGIN_FAILED_MSG =
+            "第三方登录未能完成，请返回登录页重新发起，或改用账号密码登录";
+
+    /** 登录前发起缺少企业标识：请求参数问题，可自行修正。 */
+    private static final String SSO_TENANT_REQUIRED_MSG =
+            "请先选择要登录的企业，再重新发起第三方登录";
+
+    /** 登录态缺失：需要重新登录。 */
+    private static final String SESSION_REQUIRED_MSG =
+            "登录状态已失效，请重新登录";
 
     /** 合法 Provider 集合 */
     public static final Set<String> PROVIDERS = Set.of("WECOM", "FEISHU", "DINGTALK");
@@ -232,13 +249,13 @@ public class SsoAuthService {
         requireProvider(provider);
         SsoProviderConfig config = loadEnabledConfig(provider);
         if (config == null || config.getEnabled() != 1) {
-            throw new IllegalStateException("该 Provider 未启用: " + provider);
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         LoginUser current = LoginUserHolder.get();
         Long tenantId = current != null ? current.getTenantId() : null;
         if (tenantId == null) {
             // 登录前发起必须带租户上下文（租户级配置决定 Provider 凭据与绑定域）
-            throw new IllegalStateException("租户上下文缺失，不能发起 SSO 授权");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         tenantValidityService.requireValid(tenantId);
         String state = randomToken(32);
@@ -272,7 +289,7 @@ public class SsoAuthService {
     public AuthorizeStart startAuthorizeLogin(String provider, Long tenantId, String redirectPath) {
         requireProvider(provider);
         if (tenantId == null) {
-            throw new IllegalStateException("登录前发起必须显式指定租户");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_TENANT_REQUIRED, SSO_TENANT_REQUIRED_MSG);
         }
         // 免认证路径无登录态：租户语义全部由显式谓词承担（state.tenantId、配置行
         // tenant_id、绑定行 tenant_id），挂起拦截器避免 fail-closed 误伤
@@ -281,7 +298,7 @@ public class SsoAuthService {
             tenantValidityService.requireValid(tenantId);
             SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
             if (config == null || config.getEnabled() != 1) {
-                throw new IllegalStateException("该 Provider 未启用: " + provider);
+                throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
             }
             String state = randomToken(32);
             SsoAuthState stateRow = new SsoAuthState();
@@ -322,25 +339,25 @@ public class SsoAuthService {
     private CallbackResult doHandleCallback(String provider, String code, String state) {
         if (code == null || code.isBlank() || state == null || state.isBlank()) {
             auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "missing code/state");
-            throw new IllegalStateException("回调参数缺失");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         String stateDigest = sha256(state);
         SsoAuthState stateRow = stateMapper.selectGlobalByState(stateDigest);
         if (stateRow == null) {
             auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state not found");
-            throw new IllegalStateException("授权状态无效");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         if (stateRow.getConsumed() != null && stateRow.getConsumed() == 1) {
             auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state replayed", stateRow.getTenantId());
-            throw new IllegalStateException("授权状态已消费");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         if (stateRow.getExpireAt().isBefore(LocalDateTime.now())) {
             auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "state expired", stateRow.getTenantId());
-            throw new IllegalStateException("授权状态已过期");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         if (!provider.equals(stateRow.getProvider())) {
             auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider mismatch", stateRow.getTenantId());
-            throw new IllegalStateException("Provider 与授权状态不匹配");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         // 回调可能发生在 state 签发后租户被停用/过期的窗口内；在消费 state
         // 与外呼前再次校验，确保失效租户既不能继续登录，也不产生 Provider 出站。
@@ -355,13 +372,13 @@ public class SsoAuthService {
                         .set(SsoAuthState::getConsumed, 1)));
         if (consumed == null || consumed != 1) {
             auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state concurrent replay", stateRow.getTenantId());
-            throw new IllegalStateException("授权状态已消费");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
 
         SsoProviderConfig config = loadEnabledConfigGlobal(provider, stateRow.getTenantId());
         if (config == null || config.getEnabled() != 1) {
             auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider disabled", stateRow.getTenantId());
-            throw new IllegalStateException("该 Provider 未启用");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         String externalId;
         try {
@@ -396,7 +413,7 @@ public class SsoAuthService {
         requireProvider(provider);
         LoginUser current = LoginUserHolder.get();
         if (current == null || current.getTenantId() == null) {
-            throw new IllegalStateException("租户上下文缺失，不能绑定");
+            throw new SsoRejectionException(SystemErrorKeys.SESSION_REQUIRED, SESSION_REQUIRED_MSG);
         }
         Long tenantId = current.getTenantId();
         tenantValidityService.requireValid(tenantId);
@@ -406,13 +423,15 @@ public class SsoAuthService {
         if (existingExternal != null) {
             auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), existingExternal.getUserId(),
                     externalDigest, "external id already bound");
-            throw new IllegalStateException("该外部身份已绑定其他本地账号");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
+                    "该第三方账号已绑定到其他账号，请先在该账号解绑，或改用其他第三方账号");
         }
         SsoUserBinding existingUser = bindingMapper.selectActiveByUser(provider, tenantId, userId);
         if (existingUser != null) {
             auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
                     externalDigest, "user already bound to another external id");
-            throw new IllegalStateException("该本地账号已绑定其他外部身份");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
+                    "当前账号已绑定其他第三方账号，请先解绑后再绑定新的");
         }
         // 跨租户稳定主体冲突（I5 复验 G6a/V87）：同一 (provider, 摘要) 全局仅允许一个租户绑定
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
@@ -426,7 +445,8 @@ public class SsoAuthService {
             if (crossTenant != null && crossTenant > 0) {
                 auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
                         externalDigest, "external subject already bound in another tenant");
-                throw new IllegalStateException("该外部身份已在其他租户绑定，不能跨租户重复绑定");
+                throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
+                        "该第三方账号当前无法绑定，请联系管理员处理");
             }
         }
         SsoUserBinding binding = new SsoUserBinding();
@@ -443,7 +463,8 @@ public class SsoAuthService {
             // 避免控制器把唯一键竞争暴露成 500，也不创建角色/会话副作用。
             auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
                     externalDigest, "binding unique constraint rejected");
-            throw new IllegalStateException("该外部身份已在其他租户绑定，不能跨租户重复绑定", e);
+            throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
+                    "该第三方账号当前无法绑定，请联系管理员处理", e);
         }
         audit(provider, "BIND", "SUCCESS", current.getUserId(), userId, externalDigest, null);
     }
@@ -465,12 +486,12 @@ public class SsoAuthService {
         requireProvider(provider);
         LoginUser current = LoginUserHolder.get();
         if (current == null || current.getTenantId() == null) {
-            throw new IllegalStateException("租户上下文缺失，不能解绑");
+            throw new SsoRejectionException(SystemErrorKeys.SESSION_REQUIRED, SESSION_REQUIRED_MSG);
         }
         tenantValidityService.requireValid(current.getTenantId());
         SsoUserBinding binding = bindingMapper.selectActiveByUser(provider, current.getTenantId(), userId);
         if (binding == null) {
-            throw new IllegalStateException("未找到有效绑定");
+            throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_NOT_FOUND, "当前账号没有该第三方账号的绑定");
         }
         binding.setBindStatus("UNBOUND");
         bindingMapper.updateById(binding);
@@ -652,7 +673,9 @@ public class SsoAuthService {
 
     private void requireProvider(String provider) {
         if (provider == null || !PROVIDERS.contains(provider)) {
-            throw new IllegalArgumentException("未知 Provider: " + provider);
+            // 不回显请求中的 provider 原文，避免把未校验输入带进响应
+            throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_INVALID,
+                    "不支持的第三方登录方式，请刷新页面后重试");
         }
     }
 

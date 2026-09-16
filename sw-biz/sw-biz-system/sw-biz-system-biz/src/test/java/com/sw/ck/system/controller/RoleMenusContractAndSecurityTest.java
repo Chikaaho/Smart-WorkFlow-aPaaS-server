@@ -640,7 +640,7 @@ class RoleMenusContractAndSecurityTest {
         // 方法级鉴权拒绝由生产 GlobalExceptionHandler 的 AuthorizationDeniedException 分支兜底为 403（真实链路）。
         @Bean
         public GlobalExceptionHandler globalExceptionHandler() {
-            return new GlobalExceptionHandler();
+            return new GlobalExceptionHandler(null);
         }
 
         // 生产 401/403 响应处理器：HTTP 401/403 + R{code:401/403} body

@@ -119,7 +119,7 @@ public class ScriptEngineService {
         exec.setStatus(result.getStatus());
         exec.setInputJson(input == null ? null : JSON.toJSONString(input));
         exec.setOutputJson(truncate(result.getOutputJson(), 2000));
-        exec.setError(truncate(result.getError(), 1000));
+        exec.setError(sanitizeDiagnostic(result.getError(), 1000));
         exec.setDurationMs(result.getDurationMs());
         exec.setSideEffect(sideEffect ? 1 : 0);
         exec.setIdempotentKey(idempotentKey);
@@ -133,6 +133,24 @@ public class ScriptEngineService {
             return null;
         }
         return text.length() <= max ? text : text.substring(0, max);
+    }
+
+    /**
+     * 脱敏后的诊断摘要（P61 §3.2）。
+     * <p>
+     * 脚本引擎（GraalVM / javac / 子进程）的失败文本会经执行记录对外可见，且带出
+     * 编译临时文件的绝对路径等环境细节。此处先剥掉绝对路径再截断：保留脚本作者
+     * 定位所需的语义，同时不暴露服务端文件系统布局。完整原文仍在服务端结构化日志中可查。
+     * </p>
+     */
+    private String sanitizeDiagnostic(String text, int max) {
+        if (text == null) {
+            return null;
+        }
+        String sanitized = text
+                .replaceAll("[A-Za-z]:\\\\[^\\s:]*", "<path>")
+                .replaceAll("(/[\\w.\\-]+){2,}", "<path>");
+        return truncate(sanitized, max);
     }
 
     /**

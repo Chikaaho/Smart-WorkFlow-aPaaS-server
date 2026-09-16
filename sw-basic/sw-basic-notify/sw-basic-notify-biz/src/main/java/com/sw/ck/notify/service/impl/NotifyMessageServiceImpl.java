@@ -2,9 +2,13 @@ package com.sw.ck.notify.service.impl;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.i18n.LocalizedMessages;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.common.service.BaseServiceImpl;
+import com.sw.ck.notify.dto.NotifyBatchFailureCategory;
+import com.sw.ck.notify.dto.NotifyBatchItemFailure;
 import com.sw.ck.notify.dto.NotifyBatchSendReq;
+import com.sw.ck.notify.dto.NotifyBatchSendResp;
 import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.entity.NotifyTemplate;
 import com.sw.ck.notify.mapper.NotifyMessageMapper;
@@ -98,6 +102,12 @@ public class NotifyMessageServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public int batchSend(NotifyBatchSendReq req) {
+        return batchSendWithOutcome(req).getSuccessCount();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public NotifyBatchSendResp batchSendWithOutcome(NotifyBatchSendReq req) {
         // 1. 内容模式互斥校验
         boolean hasDirectContent = StringUtils.hasText(req.getTitle()) && StringUtils.hasText(req.getContent());
         boolean hasTemplate = StringUtils.hasText(req.getTemplateCode());
@@ -109,6 +119,7 @@ public class NotifyMessageServiceImpl
         // 2. 先验证对象本身，再解析并去重接收人，避免无效对象被有效对象掩盖
         validateRecipientObjects(req);
         Set<Long> recipientIds = resolveRecipientIds(req);
+        List<NotifyBatchItemFailure> failures = invalidUserFailures(req);
 
         // 3. 零接收人拒绝
         if (recipientIds.isEmpty()) {
@@ -168,7 +179,49 @@ public class NotifyMessageServiceImpl
 
         // 7. 事务原子落库
         persistBatchMessages(messages);
-        return messages.size();
+        // IN_APP 批量是同步原子契约：本事务内全部落库即逐项成功，处理中恒为 0；
+        // 请求中被判无效的接收对象逐条进入失败明细，不用整体成功冒充逐项成功。
+        return NotifyBatchSendResp.sendResult(messages.size(), 0, failures);
+    }
+
+    @Override
+    public List<NotifyBatchItemFailure> invalidRecipientFailures(NotifyBatchSendReq req) {
+        return invalidUserFailures(req);
+    }
+
+    /**
+     * 请求中直接指定、但在本租户内不存在 / 跨租户 / 已停用 / 已删除的用户 ID。
+     *
+     * <p>结论只说明「该对象不可投递」，不回显其在库中的状态差异，避免借批量入口
+     * 枚举账号状态。</p>
+     */
+    private List<NotifyBatchItemFailure> invalidUserFailures(NotifyBatchSendReq req) {
+        if (req.getRecipientUserIds() == null || req.getRecipientUserIds().isEmpty()) {
+            return List.of();
+        }
+        Set<Long> requested = new LinkedHashSet<>();
+        for (Long id : req.getRecipientUserIds()) {
+            if (id != null) {
+                requested.add(id);
+            }
+        }
+        requested.removeAll(findValidUserIds(req.getRecipientUserIds()));
+        if (requested.isEmpty()) {
+            return List.of();
+        }
+        List<NotifyBatchItemFailure> failures = new ArrayList<>(requested.size());
+        for (Long id : requested) {
+            failures.add(batchFailure(String.valueOf(id),
+                    NotifyBatchFailureCategory.RECIPIENT_NOT_DELIVERABLE));
+        }
+        return failures;
+    }
+
+    /** 构造一条按请求语言本地化的安全失败明细。 */
+    static NotifyBatchItemFailure batchFailure(String recipientRef, String category) {
+        String errorKey = NotifyBatchFailureCategory.errorKeyOf(category);
+        return new NotifyBatchItemFailure(recipientRef, category, errorKey,
+                LocalizedMessages.text(errorKey, NotifyBatchFailureCategory.defaultMessageOf(category)));
     }
 
     @Override

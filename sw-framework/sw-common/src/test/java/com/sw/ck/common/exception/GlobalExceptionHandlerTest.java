@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class GlobalExceptionHandlerTest {
 
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    private final GlobalExceptionHandler handler = new GlobalExceptionHandler(null);
 
     @Test
     @DisplayName("AuthorizationDeniedException → R{code=403}（HTTP 403 由 @ResponseStatus 承载）")

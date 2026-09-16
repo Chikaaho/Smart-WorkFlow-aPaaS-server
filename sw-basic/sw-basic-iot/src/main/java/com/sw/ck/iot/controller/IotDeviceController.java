@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -36,6 +37,7 @@ public class IotDeviceController {
      * 注册设备（productId + deviceName 组合唯一）。
      */
     @PostMapping
+    @PreAuthorize("@ss.hasPermi('iot:device:manage')")
     public R<IotDevice> register(@RequestBody RegisterDeviceRequest request) {
         IotDevice device = new IotDevice();
         device.setProductId(request.getProductId());
@@ -50,6 +52,7 @@ public class IotDeviceController {
      * 设备列表（当前租户）。
      */
     @GetMapping
+    @PreAuthorize("@ss.hasPermi('iot:view')")
     public R<List<IotDevice>> list() {
         return R.ok(iotDeviceService.lambdaQuery().list());
     }
@@ -58,6 +61,7 @@ public class IotDeviceController {
      * 设备详情（按 productId + deviceName 查询）。
      */
     @GetMapping("/{productId}/{deviceName}")
+    @PreAuthorize("@ss.hasPermi('iot:view')")
     public R<IotDevice> detail(@PathVariable String productId,
                                @PathVariable String deviceName) {
         IotDevice device = iotDeviceService.getByProductAndDeviceName(productId, deviceName);
@@ -71,6 +75,7 @@ public class IotDeviceController {
      * 下发控制命令（延迟生效语义：命令入队，设备离线时等待上线补发）。
      */
     @PostMapping("/{productId}/{deviceName}/commands")
+    @PreAuthorize("@ss.hasPermi('iot:device:manage')")
     public R<IotDeviceCommand> dispatch(@PathVariable String productId,
                                         @PathVariable String deviceName,
                                         @RequestBody DispatchCommandRequest request) {
@@ -85,6 +90,7 @@ public class IotDeviceController {
      * 设备命令列表（含执行结果）。
      */
     @GetMapping("/{productId}/{deviceName}/commands")
+    @PreAuthorize("@ss.hasPermi('iot:view')")
     public R<List<IotDeviceCommand>> commands(@PathVariable String productId,
                                               @PathVariable String deviceName) {
         return R.ok(iotDeviceService.listCommands(productId, deviceName));
@@ -94,6 +100,7 @@ public class IotDeviceController {
      * 设备回写命令执行结果（真实设备回调链路）。
      */
     @PostMapping("/commands/{commandId}/result")
+    @PreAuthorize("@ss.hasPermi('iot:device:manage')")
     public R<IotDeviceCommand> reportResult(@PathVariable Long commandId,
                                             @RequestBody CommandResultRequest request) {
         return R.ok(iotDeviceService.reportResult(commandId, request.getStatus(), request.getResult()));

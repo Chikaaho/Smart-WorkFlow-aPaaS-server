@@ -13,3 +13,8 @@ dump.rdb
 
 # 本机开发配置（可能包含本地服务地址与凭据）
 sw-bootstrap/src/main/resources/application-local.yml
+
+# P61 取证临时目录与运行时产物
+.p61-tmp/
+server.pid
+bootstrap.jar

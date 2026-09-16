@@ -142,7 +142,8 @@ public class IotScriptService {
         IotScript script = require(id);
         ScriptRunResult check = validate(id);
         if (!"SUCCESS".equals(check.getStatus())) {
-            throw new IllegalStateException("发布前校验失败: " + check.getError());
+            log.warn("脚本发布前校验失败: scriptId={}, error={}", id, check.getError());
+            throw new IllegalStateException("脚本校验未通过，请先修正脚本内容后再发布");
         }
         IotScript patch = new IotScript();
         patch.setId(id);

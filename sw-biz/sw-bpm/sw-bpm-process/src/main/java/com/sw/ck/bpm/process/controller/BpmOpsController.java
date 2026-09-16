@@ -52,9 +52,11 @@ public class BpmOpsController {
     @PostMapping("/tasks/batch-action")
     public R<Map<String, Object>> batchAction(@RequestBody BatchActionRequest request) {
         List<Map<String, Object>> results = batchService.batchAction(request.getItems());
-        long success = results.stream().filter(row -> Boolean.TRUE.equals(row.get("success"))).count();
+        int success = (int) results.stream().filter(row -> Boolean.TRUE.equals(row.get("success"))).count();
+        // 计数用 int：全局 Jackson 把 Long 序列化为字符串（防雪花 ID 精度丢失），计数需保持数值类型
+        // 同步契约：处理中恒为 0，由服务端显式给出，前端不得臆算（P61 R2c-A）
         return R.ok(Map.of("results", results, "success", success,
-                "failed", results.size() - success, "total", results.size()));
+                "failed", results.size() - success, "total", results.size(), "processing", 0));
     }
 
     @PreAuthorize("@ss.hasPermi('workflow:handover:manage')")

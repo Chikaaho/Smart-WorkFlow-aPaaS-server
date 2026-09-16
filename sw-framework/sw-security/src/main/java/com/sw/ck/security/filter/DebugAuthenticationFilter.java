@@ -159,7 +159,9 @@ public class DebugAuthenticationFilter extends OncePerRequestFilter {
         response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write(objectMapper.writeValueAsString(
-                R.fail(503, "登录上下文装载失败（认证基础设施未就绪）")));
+                R.fail(503, com.sw.ck.common.exception.CommonErrorCode.SYSTEM_ERROR.getErrorKey(),
+                        com.sw.ck.common.exception.CommonErrorCode.SYSTEM_ERROR.getMessage(),
+                        com.sw.ck.common.trace.EventRef.current())));
         response.getWriter().flush();
     }
 }

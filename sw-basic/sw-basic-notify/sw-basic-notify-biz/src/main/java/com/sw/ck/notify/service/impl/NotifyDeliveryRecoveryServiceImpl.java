@@ -101,7 +101,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
                 log.warn("投递恢复异常，按失败回写: id={}, exceptionClass={}", msg.getId(),
                         e.getClass().getSimpleName());
                 result = NotifySendResult.builder().channel(NotifyChannel.valueOf(msg.getChannel()))
-                        .status("FAILED").failureReason("恢复投递异常: " + e.getClass().getSimpleName()).build();
+                        .status("FAILED").failureReason("恢复投递失败，请稍后重试：" + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200)).build();
             } finally {
                 LoginUserHolder.clear();
             }

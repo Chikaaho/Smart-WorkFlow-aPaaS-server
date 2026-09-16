@@ -12,6 +12,8 @@ import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.notify.dto.NotifyBatchFailureCategory;
+import com.sw.ck.notify.dto.NotifyBatchItemFailure;
 import com.sw.ck.notify.dto.NotifyBatchSendReq;
 import com.sw.ck.notify.dto.NotifyBatchSendResp;
 import com.sw.ck.notify.entity.NotifyMessage;
@@ -278,6 +280,84 @@ class NotifyBatchSendIntegrationTest {
         // userA(直接+部门) + userB(角色) + userC(部门+角色) = 3 去重
         assertThat(resp.getRecipientCount()).isEqualTo(3);
         assertThat(after - before).isEqualTo(0);
+    }
+
+    // ═══════════ R2c-N：逐项结果与四项计数勾稽 ═══════════
+
+    /**
+     * 混合批次：一个有效接收人 + 已删除 / 跨租户 / 已停用各一个。
+     * 固定对象身份 —— user 5 已逻辑删除、user 10 属租户 200、user 4 已停用。
+     */
+    @Test @DisplayName("N1: 混合批次逐项结果 —— total=4 / success=1 / failure=3 / processing=0，计数勾稽")
+    void mixedBatchOutcome() {
+        long before = countMessages();
+        NotifyBatchSendReq req = new NotifyBatchSendReq();
+        req.setRecipientUserIds(List.of(USER_A, 5L, 10L, 4L));
+        req.setTitle("混合批次"); req.setContent("内容");
+        NotifyBatchSendResp resp = notifyController.batchSend(req).getData();
+        long after = countMessages();
+
+        assertThat(resp.getPhase()).isEqualTo(NotifyBatchSendResp.PHASE_SEND_RESULT);
+        assertThat(resp.getTotalCount()).isEqualTo(4);
+        assertThat(resp.getSuccessCount()).isEqualTo(1);
+        assertThat(resp.getFailureCount()).isEqualTo(3);
+        assertThat(resp.getProcessingCount()).isZero();
+        // 四项计数勾稽：服务端一次判定，客户端不推算
+        assertThat(resp.getTotalCount())
+                .isEqualTo(resp.getSuccessCount() + resp.getFailureCount() + resp.getProcessingCount());
+        // 兼容字段语义不变
+        assertThat(resp.getRecipientCount()).isEqualTo(resp.getSuccessCount());
+        // 实际落库数与成功数一致，失败的三个对象没有产生消息
+        assertThat(after - before).isEqualTo(1);
+    }
+
+    @Test @DisplayName("N2: 失败明细只带稳定分类与安全结论，不回显内部状态差异或原始异常")
+    void failureDetailIsSafe() {
+        NotifyBatchSendReq req = new NotifyBatchSendReq();
+        req.setRecipientUserIds(List.of(USER_A, 5L, 10L, 4L));
+        req.setTitle("失败明细"); req.setContent("内容");
+        NotifyBatchSendResp resp = notifyController.batchSend(req).getData();
+
+        assertThat(resp.getFailures()).hasSize(3);
+        assertThat(resp.getFailures()).extracting("recipientRef")
+                .containsExactlyInAnyOrder("5", "10", "4");
+        assertThat(resp.getFailures()).extracting("category")
+                .containsOnly(NotifyBatchFailureCategory.RECIPIENT_NOT_DELIVERABLE);
+        assertThat(resp.getFailures()).extracting("errorKey")
+                .containsOnly("notify.batch.recipient_not_deliverable");
+        for (NotifyBatchItemFailure failure : resp.getFailures()) {
+            assertThat(failure.getMessage()).isNotBlank();
+            // 不回显 deleted / 租户差异 / 状态差异，也不直出异常特征
+            for (String leak : new String[]{"Exception", "java.", "com.sw", "deleted", "tenant", "停用", "已删除"}) {
+                assertThat(failure.getMessage()).doesNotContain(leak);
+            }
+        }
+    }
+
+    @Test @DisplayName("N3: 全有效批次 failure=0，与整体成功一致")
+    void allValidBatchHasNoFailure() {
+        NotifyBatchSendReq req = new NotifyBatchSendReq();
+        req.setRecipientUserIds(List.of(USER_A, USER_B));
+        req.setTitle("全有效"); req.setContent("内容");
+        NotifyBatchSendResp resp = notifyController.batchSend(req).getData();
+
+        assertThat(resp.getTotalCount()).isEqualTo(2);
+        assertThat(resp.getSuccessCount()).isEqualTo(2);
+        assertThat(resp.getFailureCount()).isZero();
+        assertThat(resp.getFailures()).isEmpty();
+    }
+
+    @Test @DisplayName("N4: resolve-count 是发送前投影，不谎报成功数")
+    void resolveCountPhaseIsProjection() {
+        NotifyBatchSendReq req = new NotifyBatchSendReq();
+        req.setRecipientUserIds(List.of(USER_A, 5L, 10L, 4L));
+        NotifyBatchSendResp resp = notifyController.resolveCount(req).getData();
+
+        assertThat(resp.getPhase()).isEqualTo(NotifyBatchSendResp.PHASE_RESOLVE);
+        assertThat(resp.getRecipientCount()).isEqualTo(1);
+        assertThat(resp.getTotalCount()).isEqualTo(1);
+        assertThat(resp.getSuccessCount()).isZero();
+        assertThat(resp.getFailures()).isEmpty();
     }
 
     // ─── 辅助 ───

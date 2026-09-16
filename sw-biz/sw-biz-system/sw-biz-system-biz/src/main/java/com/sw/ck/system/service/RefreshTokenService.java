@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.entity.SysRefreshToken;
 import com.sw.ck.system.mapper.SysRefreshTokenMapper;
+import com.sw.ck.system.security.SystemErrorKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -98,7 +99,7 @@ public class RefreshTokenService {
         // 2. 不存在 → 无效
         if (existing == null) {
             log.warn("Refresh token not found in DB");
-            throw new BaseException(401, "refresh token 无效");
+            throw new BaseException(401, SystemErrorKeys.REFRESH_TOKEN_INVALID, "登录状态已失效，请重新登录");
         }
         // 3. 已撤销 → 重放攻击，撤销该用户全部 refresh token
         if (existing.getRevoked() != null && existing.getRevoked() == 1) {
@@ -108,7 +109,8 @@ public class RefreshTokenService {
             new TransactionTemplate(transactionManager) {{
                 setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
             }}.executeWithoutResult(status -> revokeAllForUser(existing.getUserId()));
-            throw new BaseException(401, "refresh token 已被使用过，全部会话已失效，请重新登录");
+            throw new BaseException(401, SystemErrorKeys.SESSION_REVOKED,
+                    "检测到该登录凭据已被使用，为保护账号安全已结束全部会话，请重新登录");
         }
         // 4. 已过期 → 拒绝
         if (existing.getExpiresAt() != null && existing.getExpiresAt().isBefore(LocalDateTime.now())) {
@@ -117,7 +119,7 @@ public class RefreshTokenService {
             new TransactionTemplate(transactionManager) {{
                 setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
             }}.executeWithoutResult(status -> revokeTokenById(existing.getId()));
-            throw new BaseException(401, "refresh token 已过期，请重新登录");
+            throw new BaseException(401, SystemErrorKeys.REFRESH_TOKEN_EXPIRED, "登录状态已过期，请重新登录");
         }
         // 5. 撤销旧 token
         revokeTokenById(existing.getId());
