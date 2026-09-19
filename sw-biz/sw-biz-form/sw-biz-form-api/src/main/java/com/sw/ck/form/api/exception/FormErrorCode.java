@@ -28,13 +28,13 @@ public enum FormErrorCode implements ErrorCode {
     // ==================== 发布校验（1200-1299） ====================
     INVALID_COLUMN_NAME(1200, "form.invalid_column_name", "字段名不合法"),
     DUPLICATE_COLUMN(1201, "form.duplicate_column", "字段名重复"),
-    TABLE_ALREADY_EXISTS(1202, "form.table_already_exists", "动态宽表已存在"),
+    TABLE_ALREADY_EXISTS(1202, "form.table_already_exists", "该表单的数据表已存在，请刷新后重试"),
     PUBLISH_FAILED(1203, "form.publish_failed", "表单发布失败"),
-    FIELD_TYPE_UNKNOWN(1204, "form.field_type_unknown", "字段类型未知"),
-    FIELD_TYPE_DISABLED(1205, "form.field_type_disabled", "字段类型暂不允许发布"),
-    FIELD_ATTR_MISSING(1206, "form.field_attr_missing", "字段缺少必要属性"),
+    FIELD_TYPE_UNKNOWN(1204, "form.field_type_unknown", "包含无法识别的字段类型，请调整后重试"),
+    FIELD_TYPE_DISABLED(1205, "form.field_type_disabled", "该字段类型暂未开放，请更换类型后重试"),
+    FIELD_ATTR_MISSING(1206, "form.field_attr_missing", "字段缺少必要属性，请在设计器中补全后重新发布"),
     FIELD_NESTED_TABLE(1207, "form.field_nested_table", "表格字段不能嵌套"),
-    DEFINITION_INVALID(1208, "form.definition_invalid", "表单定义配置异常"),
+    DEFINITION_INVALID(1208, "form.definition_invalid", "表单定义配置异常，请检查后重试"),
     FORMULA_INVALID(1209, "form.formula_invalid", "公式表达式非法"),
     FORMULA_CYCLE(1210, "form.formula_cycle", "公式存在循环依赖"),
     FORMULA_UNKNOWN_FIELD(1211, "form.formula_unknown_field", "公式引用了未定义字段"),
@@ -52,19 +52,19 @@ public enum FormErrorCode implements ErrorCode {
     SNAPSHOT_NOT_FOUND(1301, "form.snapshot_not_found", "表单版本快照不存在"),
 
     // ==================== 提交校验（1400-1499） ====================
-    SUBMIT_FIELD_UNKNOWN(1400, "form.submit_field_unknown", "提交了未定义的字段"),
+    SUBMIT_FIELD_UNKNOWN(1400, "form.submit_field_unknown", "提交包含表单未定义的字段，请刷新页面后重试"),
     SUBMIT_FIELD_REQUIRED(1401, "form.submit_field_required", "必填字段缺失"),
     SUBMIT_FIELD_TYPE_MISMATCH(1402, "form.submit_field_type_mismatch", "字段类型不匹配"),
     SUBMIT_DICT_INVALID(1403, "form.submit_dict_invalid", "字典值不在允许范围内"),
     SUBMIT_FAILED(1499, "form.submit_failed", "表单提交失败"),
-    SUBMIT_DEFINITION_INVALID(1404, "form.submit_definition_invalid", "表单定义配置异常"),
+    SUBMIT_DEFINITION_INVALID(1404, "form.submit_definition_invalid", "表单定义配置异常，请检查后重试"),
 
     // ==================== 数据查询（1500-1599） ====================
     QUERY_FORM_NOT_EXIST(1500, "form.query_form_not_exist", "表单不存在或未发布"),
     QUERY_FILTER_FIELD_UNKNOWN(1501, "form.query_filter_field_unknown", "过滤字段不在表单定义中"),
     QUERY_FILTER_FIELD_NOT_FILTERABLE(1502, "form.query_filter_field_not_filterable", "该字段类型不支持筛选"),
-    QUERY_FILTER_OP_TYPE_MISMATCH(1503, "form.query_filter_op_type_mismatch", "过滤操作符与字段类型不匹配"),
-    QUERY_FILTER_OP_NOT_SUPPORTED(1504, "form.query_filter_op_not_supported", "该过滤操作符 v1 暂不支持"),
+    QUERY_FILTER_OP_TYPE_MISMATCH(1503, "form.query_filter_op_type_mismatch", "筛选条件与字段类型不匹配"),
+    QUERY_FILTER_OP_NOT_SUPPORTED(1504, "form.query_filter_op_not_supported", "暂不支持该筛选方式，请调整筛选条件后重试"),
 
     // ==================== 数据删除（1505-1509） ====================
     DELETE_RESTRICT_REFERENCED(1505, "form.delete_restrict_referenced", "记录被其他表单引用，不能删除"),

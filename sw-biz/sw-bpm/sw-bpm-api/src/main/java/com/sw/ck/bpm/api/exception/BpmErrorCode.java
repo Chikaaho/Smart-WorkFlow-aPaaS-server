@@ -17,14 +17,14 @@ import lombok.Getter;
 public enum BpmErrorCode implements ErrorCode {
 
     // ==================== 图校验（2000-2009） ====================
-    GRAPH_MISSING_START(2000, "bpm.graph_missing_start", "图缺少开始节点"),
-    GRAPH_MULTIPLE_START(2001, "bpm.graph_multiple_start", "图存在多个开始节点"),
-    GRAPH_MISSING_END(2002, "bpm.graph_missing_end", "图缺少结束节点"),
-    GRAPH_MULTIPLE_END(2003, "bpm.graph_multiple_end", "图存在多个结束节点"),
+    GRAPH_MISSING_START(2000, "bpm.graph_missing_start", "流程图缺少开始节点，请检查流程设计"),
+    GRAPH_MULTIPLE_START(2001, "bpm.graph_multiple_start", "流程图存在多个开始节点，请只保留一个开始节点"),
+    GRAPH_MISSING_END(2002, "bpm.graph_missing_end", "流程图缺少结束节点，请检查流程设计"),
+    GRAPH_MULTIPLE_END(2003, "bpm.graph_multiple_end", "流程图存在多个结束节点，请只保留一个结束节点"),
     GRAPH_NODE_EDGE_CARDINALITY(2004, "bpm.graph_node_edge_cardinality", "节点连线数量不符合规则，请检查该节点的入口与出口"),
-    GRAPH_ORPHAN_NODE(2005, "bpm.graph_orphan_node", "存在孤儿/不可达节点"),
-    GRAPH_EDGE_TARGET_NOT_FOUND(2006, "bpm.graph_edge_target_not_found", "边指向不存在的节点"),
-    GRAPH_ILLEGAL_EDGE(2007, "bpm.graph_illegal_edge", "非法边（自环或重复边）"),
+    GRAPH_ORPHAN_NODE(2005, "bpm.graph_orphan_node", "存在未与流程连接的节点，请连接或删除该节点"),
+    GRAPH_EDGE_TARGET_NOT_FOUND(2006, "bpm.graph_edge_target_not_found", "存在指向已不存在节点的连线，请调整连线后重试"),
+    GRAPH_ILLEGAL_EDGE(2007, "bpm.graph_illegal_edge", "连线不合法：不能连接节点自身，也不能重复连线"),
     GRAPH_UNKNOWN_NODE_TYPE(2008, "bpm.graph_unknown_node_type", "流程中存在无法识别的节点类型，请删除后重新添加"),
     GRAPH_FORM_NOT_FOUND(2009, "bpm.graph_form_not_found", "绑定表单不存在"),
 
@@ -43,7 +43,7 @@ public enum BpmErrorCode implements ErrorCode {
     NODE_REGISTRATION_INVALID(2108, "bpm.node_registration_invalid", "节点配置不完整，请在流程设计中补全后重试"),
 
     // ==================== 审批人解析（22xx） ====================
-    APPROVER_RESOLVE_EMPTY(2200, "bpm.approver_resolve_empty", "审批人解析结果为空"),
+    APPROVER_RESOLVE_EMPTY(2200, "bpm.approver_resolve_empty", "未能确定审批人，请检查该节点的审批人配置"),
     APPROVER_TYPE_NOT_IMPLEMENTED(2201, "bpm.approver_type_not_implemented", "该审批人类型暂不可用，请更换审批人来源后重试"),
     APPROVER_CONFIG_MISSING(2202, "bpm.approver_config_missing", "审批人配置缺失"),
     APPROVER_TENANT_ID_MISSING(2203, "bpm.approver_tenant_id_missing", "流程发起信息不完整，无法确定审批人，请重新发起或联系管理员"),
@@ -51,7 +51,7 @@ public enum BpmErrorCode implements ErrorCode {
     // ==================== P58 共享参与人与审批（23xx） ====================
     PARTICIPANT_CONFIG_INVALID(2300, "bpm.participant_config_invalid", "参与人配置不合法"),
     PARTICIPANT_TYPE_NOT_IMPLEMENTED(2301, "bpm.participant_type_not_implemented", "该参与人类型暂不可用，请更换参与人来源后重试"),
-    PARTICIPANT_RESOLVE_EMPTY(2302, "bpm.participant_resolve_empty", "参与人解析结果为空"),
+    PARTICIPANT_RESOLVE_EMPTY(2302, "bpm.participant_resolve_empty", "未能确定参与人，请检查该节点的参与人配置"),
     PARTICIPANT_ADAPTER_NOT_FOUND(2303, "bpm.participant_adapter_not_found", "参与人来源不可用，请重新选择参与人"),
     APPROVAL_ACTION_INVALID(2304, "bpm.approval_action_invalid", "审批动作不合法"),
     APPROVAL_ALREADY_HANDLED(2305, "bpm.approval_already_handled", "节点已被处理"),
@@ -63,12 +63,12 @@ public enum BpmErrorCode implements ErrorCode {
     BRANCH_EVALUATION_FAILED(2311, "bpm.branch_evaluation_failed", "分支条件求值失败"),
     NODE_DELIVERY_FAILED(2312, "bpm.node_delivery_failed", "节点投递失败"),
     INSTANCE_FAILED(2313, "bpm.instance_failed", "流程实例已失败，不可继续审批"),
-    INSTANCE_INITIATOR_INVALID(2314, "bpm.instance_initiator_invalid", "流程发起人无效、已停用或不属于当前租户"),
+    INSTANCE_INITIATOR_INVALID(2314, "bpm.instance_initiator_invalid", "流程发起人已不可用或不属于当前企业，请重新发起或联系管理员"),
 
     // ==================== I3 动作/会签/时限/函数（24xx；2415 为枚举内重复值，已登记弃用） ====================
     ACTION_NOT_ALLOWED(2400, "bpm.action_not_allowed", "当前状态不允许该动作"),
     ACTION_SELF_INVALID(2401, "bpm.action_self_invalid", "不能转办/委托/授权给本人"),
-    AUTHORIZATION_INVALID(2402, "bpm.authorization_invalid", "代理授权不合法（冲突、循环、失效或越租户）"),
+    AUTHORIZATION_INVALID(2402, "bpm.authorization_invalid", "代理授权设置存在冲突、循环、已过期或超出范围，请调整后重新设置"),
     WITHDRAW_NOT_PERMITTED(2403, "bpm.withdraw_not_permitted", "当前状态不可撤回"),
     INVALIDATE_NOT_PERMITTED(2404, "bpm.invalidate_not_permitted", "当前主体无权废弃该实例"),
     ADD_SIGN_INVALID(2405, "bpm.add_sign_invalid", "加签/补签请求不合法"),
@@ -87,8 +87,8 @@ public enum BpmErrorCode implements ErrorCode {
     OPINION_FORM_COMPONENT_UNAVAILABLE(2417, "bpm.opinion_form_component_unavailable", "审批意见表单组件不可用"),
 
     // ==================== I4 动态并行编排（242x） ====================
-    DYNAMIC_BRANCH_EMPTY(2418, "bpm.dynamic_branch_empty", "动态并行来源集合为空且未配置受控放行策略"),
-    DYNAMIC_BRANCH_LEADER_MISSING(2419, "bpm.dynamic_branch_leader_missing", "动态并行存在失效部门或负责人缺失，且未配置受控跳过策略"),
+    DYNAMIC_BRANCH_EMPTY(2418, "bpm.dynamic_branch_empty", "动态并行分支没有可用来源，且未配置兜底策略，请检查并行节点的来源配置"),
+    DYNAMIC_BRANCH_LEADER_MISSING(2419, "bpm.dynamic_branch_leader_missing", "动态并行分支的来源存在已停用部门或缺少负责人，且未配置跳过策略，请检查部门与负责人配置"),
     DYNAMIC_BRANCH_LIMIT_EXCEEDED(2420, "bpm.dynamic_branch_limit_exceeded", "动态并行分支数超过安全上限"),
     ;
 

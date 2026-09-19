@@ -226,4 +226,89 @@ class BilingualMessageContractTest {
                 .as("目录键数 = 127 枚举键 + 出口专用键（upload_too_large 等）")
                 .isGreaterThanOrEqualTo(127);
     }
+
+    /**
+     * P61 范围纠偏（2026-09-20）：本轮人性化修订键的双语契约。
+     *
+     * <p>修订只改文案值，不改 errorKey/数值码/业务分支。本测试钉死：</p>
+     * <ol>
+     *   <li>每个修订键在 zh/en 下都能经真实目录解析出自然文案（非键名、非空、成对）；</li>
+     *   <li>旧实现术语（孤儿/自环/非法边/宽表/v1/越租户/解析结果为空/受控放行/受控跳过）不再出现在修订文案中；</li>
+     *   <li>代表性修订键经统一异常出口解析后 code 与 errorKey 保持不变（机器契约兼容）。</li>
+     * </ol>
+     */
+    @Test
+    @DisplayName("范围纠偏修订键：zh/en 自然成对、无实现术语残留，code/errorKey 不变")
+    void humanizedKeys_shouldResolveNaturalPairedTextWithStableContract() {
+        ResourceBundleMessageSource source = source();
+        String[] changedKeys = {
+                "error.form.table_already_exists",
+                "error.form.field_type_unknown",
+                "error.form.field_type_disabled",
+                "error.form.field_attr_missing",
+                "error.form.definition_invalid",
+                "error.form.submit_field_unknown",
+                "error.form.submit_definition_invalid",
+                "error.form.query_filter_op_type_mismatch",
+                "error.form.query_filter_op_not_supported",
+                "error.bpm.graph_missing_start",
+                "error.bpm.graph_multiple_start",
+                "error.bpm.graph_missing_end",
+                "error.bpm.graph_multiple_end",
+                "error.bpm.graph_orphan_node",
+                "error.bpm.graph_edge_target_not_found",
+                "error.bpm.graph_illegal_edge",
+                "error.bpm.approver_resolve_empty",
+                "error.bpm.participant_resolve_empty",
+                "error.bpm.instance_initiator_invalid",
+                "error.bpm.authorization_invalid",
+                "error.bpm.dynamic_branch_empty",
+                "error.bpm.dynamic_branch_leader_missing",
+        };
+        String[] retiredJargon = {"孤儿", "自环", "非法边", "宽表", "v1", "越租户",
+                "解析结果为空", "受控放行", "受控跳过", "操作符"};
+
+        for (String key : changedKeys) {
+            String zh = source.getMessage(key, null, Locale.SIMPLIFIED_CHINESE);
+            String en = source.getMessage(key, null, Locale.US);
+            assertThat(zh).as("%s 的 zh-CN 文案不得为空", key).isNotBlank();
+            assertThat(en).as("%s 的 en-US 文案不得为空", key).isNotBlank();
+            assertThat(zh).as("%s 不得是键名占位", key).doesNotContain("error.");
+            assertThat(en).as("%s 不得是键名占位", key).doesNotContain("error.");
+            for (String jargon : retiredJargon) {
+                assertThat(zh).as("%s 的 zh-CN 文案不得残留实现术语「%s」", key, jargon).doesNotContain(jargon);
+            }
+            assertThat(zh)
+                    .as("%s 的 zh-CN 文案不得携带诊断细节", key)
+                    .doesNotContain("SQL").doesNotContain("JDBC")
+                    .doesNotContain("at org.").doesNotContain("com.sw")
+                    .doesNotContain("Exception").doesNotContain("tenantId");
+        }
+
+        // 代表性修订键经真实统一异常出口：机器契约不变，仅文案更新
+        bindAcceptLanguage("zh-CN");
+        R<Void> orphan = handler().handleBaseException(
+                new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.GRAPH_ORPHAN_NODE));
+        assertThat(orphan.getCode()).as("数值码不随文案修订变化").isEqualTo(2005);
+        assertThat(orphan.getErrorKey()).as("语义键不随文案修订变化").isEqualTo("bpm.graph_orphan_node");
+        assertThat(orphan.getMsg()).isEqualTo("存在未与流程连接的节点，请连接或删除该节点");
+
+        R<Void> filterOp = handler().handleBaseException(
+                new BaseException(com.sw.ck.form.api.exception.FormErrorCode.QUERY_FILTER_OP_NOT_SUPPORTED));
+        assertThat(filterOp.getCode()).isEqualTo(1504);
+        assertThat(filterOp.getErrorKey()).isEqualTo("form.query_filter_op_not_supported");
+        assertThat(filterOp.getMsg()).isEqualTo("暂不支持该筛选方式，请调整筛选条件后重试");
+
+        bindAcceptLanguage("en-US");
+        R<Void> tableExists = handler().handleBaseException(
+                new BaseException(com.sw.ck.form.api.exception.FormErrorCode.TABLE_ALREADY_EXISTS));
+        assertThat(tableExists.getCode()).isEqualTo(1202);
+        assertThat(tableExists.getErrorKey()).isEqualTo("form.table_already_exists");
+        assertThat(tableExists.getMsg())
+                .isEqualTo("The data table for this form already exists. Please refresh and try again.");
+
+        R<Void> orphanEn = handler().handleBaseException(
+                new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.GRAPH_ORPHAN_NODE));
+        assertThat(orphanEn.getMsg()).isEqualTo("A node is not connected to the rest of the flow.");
+    }
 }
