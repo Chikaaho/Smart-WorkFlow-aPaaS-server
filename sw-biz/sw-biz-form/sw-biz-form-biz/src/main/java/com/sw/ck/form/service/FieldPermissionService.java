@@ -107,12 +107,24 @@ public class FieldPermissionService {
      */
     public void assertEditablePayload(LoginUser user, Map<String, Map<Action, Set<String>>> perms,
                                       Map<String, Object> payload) {
+        assertEditablePayload(user, perms, payload, java.util.Map.of());
+    }
+
+    /**
+     * 同上，但用字段显示名生成用户可读提示（P61 阶段 C：不向用户暴露字段键）。
+     *
+     * @param fieldLabels 字段键 → 显示名；未收录的字段键回退为键本身
+     */
+    public void assertEditablePayload(LoginUser user, Map<String, Map<Action, Set<String>>> perms,
+                                      Map<String, Object> payload, Map<String, String> fieldLabels) {
         for (String fieldName : payload.keySet()) {
             Map<Action, Set<String>> byAction = perms.get(fieldName);
             if (byAction != null && byAction.containsKey(Action.EDIT)
                     && !check(user, fieldName, Action.EDIT, perms)) {
+                String display = fieldLabels == null ? fieldName
+                        : fieldLabels.getOrDefault(fieldName, fieldName);
                 throw new BaseException(FormErrorCode.FIELD_EDIT_DENIED,
-                        "当前身份无字段 '" + fieldName + "' 的编辑权限");
+                        "您没有编辑字段「" + display + "」的权限");
             }
         }
     }

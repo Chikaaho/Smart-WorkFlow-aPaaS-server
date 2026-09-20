@@ -61,6 +61,27 @@ public interface NotifyMessageService extends BaseService<NotifyMessage> {
     int batchSend(NotifyBatchSendReq req);
 
     /**
+     * 批量发送站内通知并返回逐项结果（P61 §3.5）。
+     *
+     * <p>与 {@link #batchSend(NotifyBatchSendReq)} 是同一个事务原子入口：成功数为
+     * 实际落库的接收人数，请求中被判为无效或不可投递的接收对象逐条进入失败明细，
+     * 四项计数由服务端一次判定得出，客户端不推算。</p>
+     *
+     * @param req 批量发送请求
+     * @return {@code phase=SEND_RESULT} 的结果，四项计数满足
+     *         {@code totalCount == successCount + failureCount + processingCount}
+     */
+    com.sw.ck.notify.dto.NotifyBatchSendResp batchSendWithOutcome(NotifyBatchSendReq req);
+
+    /**
+     * 请求中直接指定、但在本租户内不可投递的接收对象明细（不存在 / 跨租户 / 已停用 / 已删除）。
+     *
+     * <p>渠道批量与站内信批量共用同一判定，保证两条路径的「总量 = 成功 + 失败 + 处理中」
+     * 都对照同一个请求集合，不因路由不同而少报被丢弃的对象。</p>
+     */
+    java.util.List<com.sw.ck.notify.dto.NotifyBatchItemFailure> invalidRecipientFailures(NotifyBatchSendReq req);
+
+    /**
      * 解析批量发送接收人数（去重后，不含实际发送）。
      *
      * @param req 批量发送请求

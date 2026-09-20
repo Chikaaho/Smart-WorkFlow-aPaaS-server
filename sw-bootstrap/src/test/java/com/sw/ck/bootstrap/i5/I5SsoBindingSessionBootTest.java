@@ -161,7 +161,7 @@ class I5SsoBindingSessionBootTest {
         String ticket2 = issueTicket(USER_ID, TENANT_ID);
         HttpResponse<String> r2 = post("/auth/sso/ticket", "{\"ticket\":\"" + ticket2 + "\"}");
         System.out.println("[G6b1] 停用租户ticket2 -> " + r2.statusCode() + " :: " + snippet(r2.body()));
-        assertThat(r2.body()).contains("租户无效或已停用/过期");
+        assertThat(r2.body()).contains("system.sso_tenant_invalid");
 
         // 4) 既有会话在下一次权威装载收敛：清缓存后 me 401
         delSessionRow();
@@ -238,7 +238,7 @@ class I5SsoBindingSessionBootTest {
         jdbc.update("UPDATE sys_tenant SET expire_time = TIMESTAMP '2020-01-01 00:00:00' WHERE id=?", TENANT_ID);
         HttpResponse<String> r2 = postCapture("/auth/sso/ticket", "{\"ticket\":\"" + issueTicket(userId, TENANT_ID) + "\"}");
         System.out.println("[G6b1b] 过期租户ticket2 -> " + r2.statusCode() + " :: " + snippet(r2.body()));
-        assertThat(r2.body()).contains("租户无效或已停用/过期");
+        assertThat(r2.body()).contains("system.sso_tenant_invalid");
         HttpResponse<String> rf = postCapture("/auth/refresh", "");
         // refresh 需携带 cookie：单独请求
         HttpRequest rfReq = HttpRequest.newBuilder(URI.create(base + "/auth/refresh"))

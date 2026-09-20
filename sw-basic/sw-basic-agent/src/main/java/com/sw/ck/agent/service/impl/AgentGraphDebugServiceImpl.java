@@ -643,15 +643,9 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     }
 
     private String summarizeError(Throwable t) {
-        Throwable cur = t;
-        String best = null;
-        while (cur != null) {
-            if (cur.getMessage() != null && !cur.getMessage().isBlank()) {
-                best = cur.getMessage();
-            }
-            cur = cur.getCause();
-        }
-        return best != null ? best : t.getClass().getSimpleName();
+        // P61：按异常类型分层——平台业务异常与编排自身状态失败保留可定位文案，
+        // 传输/服务商类异常替换为安全结论并写日志（见 AgentFailureSummarizer）。
+        return com.sw.ck.agent.orchestration.AgentFailureSummarizer.summarize(t);
     }
 
     @SuppressWarnings("unused")

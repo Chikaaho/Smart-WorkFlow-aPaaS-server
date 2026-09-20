@@ -134,7 +134,11 @@ public class OpenApiCallbackDeliveryService {
                 record(app, event, attempt, "SUCCESS", summarize(response));
                 return;
             } catch (RuntimeException e) {
-                record(app, event, attempt, "FAILED", summarize(e.getMessage()));
+                // P61：HTTP 客户端异常原文（DNS 主机、TLS 细节、内网地址）只进日志；
+                // 回调记录对外可见，落结构化、可分类的摘要。
+                log.warn("回调投递失败: app={}, bizRef={}, attempt={}, detail={}",
+                        app.getAppId(), event.getBizId(), attempt, e.getMessage(), e);
+                record(app, event, attempt, "FAILED", callbackFailureSummary(e));
                 if (attempt < MAX_ATTEMPTS) {
                     try {
                         Thread.sleep(500L * attempt); // 线性退避
@@ -178,5 +182,21 @@ public class OpenApiCallbackDeliveryService {
 
     private static String summarize(String text) {
         return text == null ? "" : text.replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * 回调失败的对外摘要（P61 §3.2）。
+     * <p>开放 API 开发者可得到失败类别与可执行建议，但不得得到 HTTP 客户端原文
+     * 或服务端栈。</p>
+     */
+    private static String callbackFailureSummary(RuntimeException e) {
+        String type = e.getClass().getSimpleName();
+        boolean connectionLevel = type.contains("Timeout") || type.contains("UnknownHost")
+                || type.contains("Connect");
+        String category = (connectionLevel
+                ? com.sw.ck.common.exception.FailureCategory.RETRYABLE_INFRASTRUCTURE
+                : com.sw.ck.common.exception.FailureCategory.SYSTEM_FAULT).name();
+        return "category=" + category
+                + "; 回调地址不可达或返回非 2xx，请检查回调地址与对端可用性";
     }
 }

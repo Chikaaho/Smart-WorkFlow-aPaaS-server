@@ -136,7 +136,10 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
             throw new BaseException(400, "结果状态只能是 SUCCESS / FAILED");
         }
         command.setStatus(status);
-        command.setResult(result);
+        // R8c：result 是设备可控文本（可能携带堆栈帧、绝对路径、超长噪声），
+        // 与 MQTT ingest / 连接失败等设备侧输入同口径：DiagnosticText 清洗限长后落库，
+        // 授权运维仍可按分类摘要定位，但原始噪声不进存储与页面。
+        command.setResult(com.sw.ck.common.trace.DiagnosticText.sanitize(result, 2000));
         commandMapper.updateById(command);
         log.info("设备命令结果已回写: id={}, status={}", commandId, status);
         return command;

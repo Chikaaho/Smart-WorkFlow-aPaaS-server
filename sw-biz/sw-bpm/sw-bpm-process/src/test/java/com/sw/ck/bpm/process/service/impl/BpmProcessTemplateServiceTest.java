@@ -64,7 +64,7 @@ class BpmProcessTemplateServiceTest {
         when(mapper.selectById(5L)).thenReturn(template);
         assertThatThrownBy(() -> service.get(5L))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("无权限");
+                .hasFieldOrPropertyWithValue("errorKey", "common.forbidden");
         assertThatThrownBy(() -> service.copyToDefinition(5L, "x"))
                 .isInstanceOf(BaseException.class);
         verify(defService, never()).createDef(any(), any());

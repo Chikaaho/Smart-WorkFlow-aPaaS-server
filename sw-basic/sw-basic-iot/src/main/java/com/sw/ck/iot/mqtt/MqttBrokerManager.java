@@ -71,9 +71,17 @@ public class MqttBrokerManager {
                 }
             }
         } catch (MqttException e) {
-            return new String[]{classify(e), "连接失败: " + e.getMessage()};
+            // P61：对外只给分类与安全结论；broker/TLS 原文进日志。
+            log.warn("MQTT 连接测试失败: category={}, detail={}", classify(e), e.getMessage(), e);
+            return new String[]{classify(e), "连接失败：" + safeDetail(e)};
         } catch (IllegalArgumentException e) {
-            return new String[]{TEST_PROTOCOL, "连接参数非法: " + e.getMessage()};
+            return new String[]{TEST_PROTOCOL, "连接参数非法，请检查主机、端口与凭据配置"};
+            // 参数非法已定位到配置层，不再回显解析原文
+        } catch (RuntimeException e) {
+            // P61 R4a：JDK 模块反射等运行时异常同样不得击穿「分类结论」契约——
+            // 原文进授权日志，对外仍为安全分类，不让测试请求落 500
+            log.warn("MQTT 连接测试运行时异常: detail={}", e.toString(), e);
+            return new String[]{TEST_PROTOCOL, "连接测试未能完成，请检查连接配置后重试"};
         }
     }
 
@@ -120,7 +128,7 @@ public class MqttBrokerManager {
             return client;
         } catch (MqttException e) {
             clients.remove(conn.getId());
-            throw new IllegalStateException("MQTT 连接失败: " + e.getMessage(), e);
+            throw new IllegalStateException("MQTT 连接失败：" + safeDetail(e), e);
         }
     }
 
@@ -193,6 +201,32 @@ public class MqttBrokerManager {
     }
 
     // ---------------- 内部 ----------------
+
+    /**
+     * 认证类失败判定：沿 cause 链查 Paho 的结构化 reason code。
+     * <p>认证失败是机器语义，必须由协议字段判定；异常描述文本可被本地化或改写，
+     * 不能作为判据。</p>
+     */
+    public boolean isAuthenticationFailure(Throwable t) {
+        Throwable cur = t;
+        while (cur != null) {
+            if (cur instanceof MqttException me) {
+                int code = me.getReasonCode();
+                if (code == MqttException.REASON_CODE_FAILED_AUTHENTICATION
+                        || code == MqttException.REASON_CODE_NOT_AUTHORIZED) {
+                    return true;
+                }
+            }
+            cur = cur.getCause();
+        }
+        return false;
+    }
+
+    /** 对外安全结论：分类由 reason code 决定，原文只进日志。 */
+    private static String safeDetail(Throwable e) {
+        String sanitized = com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200);
+        return sanitized == null ? "请检查连接配置与网络可达性" : sanitized;
+    }
 
     private String classify(MqttException e) {
         int code = e.getReasonCode();

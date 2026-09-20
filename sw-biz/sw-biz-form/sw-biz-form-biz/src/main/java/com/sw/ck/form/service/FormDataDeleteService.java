@@ -94,7 +94,8 @@ public class FormDataDeleteService {
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 无物理表");
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST,
+                    "该表单尚未完成数据表初始化，请联系管理员处理");
         }
         validateTableName(tableName);
 
@@ -116,7 +117,7 @@ public class FormDataDeleteService {
             affected = jdbcTemplate.update(deleteSql, deleteParams.toArray());
         } catch (Exception e) {
             log.error("Soft-delete failed: table={}, recordId={}", tableName, recordId, e);
-            throw new BaseException(FormErrorCode.DELETE_RECORD_NOT_EXIST, "删除失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.DELETE_RECORD_NOT_EXIST, "删除记录时系统未能完成，请稍后重试");
         }
 
         if (affected == 0) {
@@ -216,11 +217,37 @@ public class FormDataDeleteService {
                 }
 
                 if (!result.isEmpty()) {
+                    // P61：对用户只给业务可识别信息（引用方表单名称 + 关联字段名）；
+                    // 物理表名与物理列名只进日志，不把库表结构暴露给业务用户。
+                    String refFormName = resolveFormNameByPhysicalTable(refTableName);
+                    log.warn("RESTRICT 命中: targetFormKey={}, refTable={}, refColumn={}, refFormName={}",
+                            formKey, refTableName, colName, refFormName);
                     throw new BaseException(FormErrorCode.DELETE_RESTRICT_REFERENCED,
-                            "记录被表单 '" + refTableName + "' 引用（字段 " + colName + "），不能删除");
+                            "该记录已被表单「" + refFormName + "」的关联字段「" + logicalName
+                                    + "」引用，不能删除");
                 }
             }
         }
+    }
+
+    /**
+     * 由物理表名解析引用方表单的展示名称。
+     * <p>查不到时退化为中性表述，绝不把物理表名回显给用户。</p>
+     */
+    private String resolveFormNameByPhysicalTable(String physicalTableName) {
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            FormDefEntity entity = formDefMapper.selectOne(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<FormDefEntity>lambdaQuery()
+                            .eq(FormDefEntity::getPhysicalTableName, physicalTableName)
+                            .last("LIMIT 1"));
+            if (entity != null && entity.getName() != null && !entity.getName().isBlank()) {
+                return entity.getName();
+            }
+        } catch (Exception e) {
+            log.warn("解析引用方表单名称失败: physicalTable={}, error={}", physicalTableName, e.getMessage());
+        }
+        return "其他表单";
     }
 
     /**
@@ -366,7 +393,7 @@ public class FormDataDeleteService {
     private void validateTableName(String tableName) {
         if (!tableName.matches(TABLE_NAME_PATTERN)) {
             log.error("Table name '{}' does not match expected pattern '{}'", tableName, TABLE_NAME_PATTERN);
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表名格式异常");
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "该表单的数据表配置异常，请联系管理员处理");
         }
     }
 }

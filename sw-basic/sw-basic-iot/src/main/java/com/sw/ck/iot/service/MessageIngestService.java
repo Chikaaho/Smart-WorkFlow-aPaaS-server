@@ -146,7 +146,7 @@ public class MessageIngestService {
             }
         } catch (Exception e) {
             msgLog.setParseStatus("FAILED");
-            msgLog.setParseError(trim(e.getMessage(), 500));
+            msgLog.setParseError(com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 500));
             log.warn("消息解析失败: topic={}, error={}", topic, e.getMessage());
         }
         messageLogMapper.insert(msgLog);

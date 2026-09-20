@@ -4,7 +4,9 @@ import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.bpm.process.service.BpmBatchService;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.i18n.LocalizedMessages;
 import com.sw.ck.common.response.R;
+import com.sw.ck.common.trace.EventRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -73,12 +75,15 @@ public class BpmBatchServiceImpl implements BpmBatchService {
             } catch (BaseException e) {
                 row.put("success", false);
                 row.put("errorCode", e.getCode());
-                row.put("message", e.getMessage());
+                // 与单任务路径同一文案权威：目录+参数解析，en 请求也能得到目录文案
+                row.put("message", LocalizedMessages.textArgs(e.getErrorKey(), e.getMessage(), e.getMessageArgs()));
                 failed++;
             } catch (RuntimeException e) {
+                // 未预期异常只进授权诊断日志；逐项明细对用户只给安全分类文案，不透原始异常
+                log.warn("批量审批单项未预期异常: taskId={} eventRef={}", item.taskId(), EventRef.current(), e);
                 row.put("success", false);
                 row.put("errorCode", -1);
-                row.put("message", e.getMessage());
+                row.put("message", LocalizedMessages.text("common.system_error", "系统繁忙，请稍后重试或联系管理员"));
                 failed++;
             }
             results.add(row);

@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
@@ -110,6 +111,7 @@ public class DraftSubmitService {
         if (draft.getProcessDefKey() != null && !draft.getProcessDefKey().isBlank()
                 && !draft.getProcessDefKey().equals(processDefKey)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    BpmErrorCode.DRAFT_BINDING_CHANGED,
                     "表单关联的审批流程已由管理员更新，请在填报页确认更新后提交");
         }
         draft.setProcessDefKey(processDefKey);
@@ -233,11 +235,13 @@ public class DraftSubmitService {
         var bindings = bindingService.findActiveByFormKey(formKey);
         if (bindings.isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    BpmErrorCode.DRAFT_NO_ACTIVE_BINDING,
                     "表单尚未关联唯一已发布流程，暂不能发起审批");
         }
         if (bindings.size() != 1 || bindings.get(0).getProcessDefKey() == null
                 || bindings.get(0).getProcessDefKey().isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    BpmErrorCode.DRAFT_BINDING_AMBIGUOUS,
                     "表单关联流程无效或存在多个有效绑定，请联系管理员修复");
         }
         return bindings.get(0).getProcessDefKey();
@@ -247,6 +251,7 @@ public class DraftSubmitService {
         if (!DraftStatusEnum.EDITING.getCode().equals(draft.getStatus())
                 && !DraftStatusEnum.FAILED.getCode().equals(draft.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    BpmErrorCode.DRAFT_NOT_EDITABLE,
                     "草稿当前状态 " + draft.getStatus() + " 不可编辑");
         }
     }

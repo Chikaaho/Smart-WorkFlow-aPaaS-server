@@ -7,6 +7,7 @@ import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.service.IotDeviceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -25,6 +26,7 @@ import java.util.UUID;
  * </ul>
  */
 @Component
+@ConditionalOnProperty(prefix = "sw.iot", name = "enabled", havingValue = "true")
 public class OnlineConfirmControlUtil {
 
     private static final Logger log = LoggerFactory.getLogger(OnlineConfirmControlUtil.class);

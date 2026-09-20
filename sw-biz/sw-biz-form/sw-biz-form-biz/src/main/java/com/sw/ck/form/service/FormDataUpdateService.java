@@ -136,7 +136,8 @@ public class FormDataUpdateService {
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {
-            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "表单 '" + formKey + "' 无物理表，无法更新");
+            throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+                    "该表单尚未完成数据表初始化，请联系管理员处理");
         }
         validateTableName(tableName);
 
@@ -217,7 +218,7 @@ public class FormDataUpdateService {
             rows = jdbcTemplate.queryForList(sql.toString(), params.toArray());
         } catch (Exception e) {
             log.error("Record existence check failed: table={}, recordId={}", tableName, recordId, e);
-            throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询记录失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "读取记录时系统未能完成，请稍后重试");
         }
 
         if (rows == null || rows.isEmpty()) {
@@ -522,7 +523,7 @@ public class FormDataUpdateService {
     private void validateTableName(String tableName) {
         if (!tableName.matches(TABLE_NAME_PATTERN)) {
             log.error("Table name '{}' does not match expected pattern '{}'", tableName, TABLE_NAME_PATTERN);
-            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表名格式异常");
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "该表单的数据表配置异常，请联系管理员处理");
         }
     }
 

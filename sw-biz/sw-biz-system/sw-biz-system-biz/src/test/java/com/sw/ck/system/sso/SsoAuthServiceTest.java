@@ -8,6 +8,7 @@ import com.sw.ck.system.mapper.SsoAuditRecordMapper;
 import com.sw.ck.system.mapper.SsoAuthStateMapper;
 import com.sw.ck.system.mapper.SsoProviderConfigMapper;
 import com.sw.ck.system.mapper.SsoUserBindingMapper;
+import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.service.SysUserService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -112,8 +113,8 @@ class SsoAuthServiceTest {
         Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(null);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("授权状态无效");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
         Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "REPLAY_REJECTED".equals(a.getEventType())));
     }
@@ -130,8 +131,8 @@ class SsoAuthServiceTest {
         Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(consumed);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("已消费");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
         Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "REPLAY_REJECTED".equals(a.getEventType()) && "state replayed".equals(a.getDetail())));
     }
@@ -147,8 +148,8 @@ class SsoAuthServiceTest {
         Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(expired);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("已过期");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
     }
 
     @Test
@@ -162,8 +163,8 @@ class SsoAuthServiceTest {
         Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(state);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("不匹配");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
     }
 
     @Test
@@ -174,8 +175,8 @@ class SsoAuthServiceTest {
         existing.setUserId(99L);
         Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"), org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(SsoAuthService.digest("ext-1")))).thenReturn(existing);
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "ext-1"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("已绑定其他本地账号");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
         Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "CONFLICT_REJECTED".equals(a.getEventType())));
     }
@@ -188,8 +189,8 @@ class SsoAuthServiceTest {
         existing.setUserId(2L);
         Mockito.when(bindingMapper.selectActiveByUser("WECOM", 1L, 2L)).thenReturn(existing);
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "ext-1"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("已绑定其他外部身份");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
     }
 
     @Test
@@ -210,7 +211,8 @@ class SsoAuthServiceTest {
     @DisplayName("未知 Provider → 参数拒绝")
     void unknownProvider_shouldReject() {
         assertThatThrownBy(() -> service.getConfig("WECHAT_MP"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(SsoRejectionException.class)
+            .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_INVALID);
     }
 
     @Test
@@ -254,8 +256,8 @@ class SsoAuthServiceTest {
     @DisplayName("登录前发起：未指定租户 → fail closed")
     void startAuthorizeLogin_withoutTenant_shouldReject() {
         assertThatThrownBy(() -> service.startAuthorizeLogin("WECOM", null, null))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("显式指定租户");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_REQUIRED);
     }
 
     @Test
@@ -336,8 +338,8 @@ class SsoAuthServiceTest {
         Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
                 org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "ext-cross"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("其他租户");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
     }
 
     @Test
@@ -353,8 +355,8 @@ class SsoAuthServiceTest {
                 .thenThrow(new org.springframework.dao.DuplicateKeyException("global binding unique"));
 
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "subject-race"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("其他租户");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
         Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "CONFLICT_REJECTED".equals(a.getEventType()) && "DENIED".equals(a.getResult())));
     }
@@ -390,8 +392,8 @@ class SsoAuthServiceTest {
         consumed.setExpireAt(LocalDateTime.now().plusSeconds(60));
         Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(consumed);
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-y", "state-ok"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("已消费");
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
     }
 
     @Test

@@ -104,12 +104,18 @@ public class FormFieldValidator {
                             Object subDefault = sub.has("defaultValue") && !sub.get("defaultValue").isNull()
                                     ? objectMapper.convertValue(sub.get("defaultValue"), Object.class)
                                     : null;
-                            subFields.add(new FieldDef(subName, subType, subRequired, subDictType, null, subDefault));
+                            String subLabel = sub.has("label") && !sub.get("label").asText().isBlank()
+                                    ? sub.get("label").asText() : null;
+                            subFields.add(new FieldDef(subName, subType, subRequired, subDictType, null,
+                                    subDefault, subLabel));
                         }
                     }
                 }
 
-                fieldDefs.put(name, new FieldDef(name, type, required, dictType, subFields, defaultValue));
+                String label = fieldNode.has("label") && !fieldNode.get("label").asText().isBlank()
+                        ? fieldNode.get("label").asText() : null;
+                fieldDefs.put(name, new FieldDef(name, type, required, dictType, subFields,
+                        defaultValue, label));
             }
 
             // 检查未知字段
@@ -167,7 +173,7 @@ public class FormFieldValidator {
                 }
                 if (isEmpty) {
                     throw new BaseException(FormErrorCode.SUBMIT_FIELD_REQUIRED,
-                            "必填字段 '" + def.name + "' 缺失");
+                            "必填字段「" + def.displayName() + "」缺失");
                 }
             }
 
@@ -177,7 +183,7 @@ public class FormFieldValidator {
                     Object rowObj = rows.get(rowIdx);
                     if (!(rowObj instanceof Map<?, ?> rowMap)) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 第 " + (rowIdx + 1) + " 行必须是对象");
+                                "字段「" + def.displayName() + "」第 " + (rowIdx + 1) + " 行格式不正确");
                     }
                     for (FieldDef subDef : def.subFields) {
                         if (subDef == null) continue;
@@ -186,15 +192,16 @@ public class FormFieldValidator {
                                 || (subValue instanceof String sv && sv.isBlank());
                         if (subDef.required() && subEmpty) {
                             throw new BaseException(FormErrorCode.SUBMIT_FIELD_REQUIRED,
-                                    "字段 '" + def.name + "' 第 " + (rowIdx + 1)
-                                            + " 行必填子字段 '" + subDef.name + "' 缺失");
+                                    "字段「" + def.displayName() + "」第 " + (rowIdx + 1)
+                                            + " 行的「" + subDef.displayName() + "」为必填");
                         }
                         if (subEmpty) continue;
                         try {
                             validateSingleValue(subDef, subValue, dictFacade);
                         } catch (BaseException e) {
                             throw new BaseException(e.getCode(),
-                                    "字段 '" + def.name + "' 第 " + (rowIdx + 1) + " 行: " + e.getMessage());
+                                    "字段「" + def.displayName() + "」第 " + (rowIdx + 1) + " 行："
+                                            + e.getMessage());
                         }
                     }
                 }
@@ -226,11 +233,11 @@ public class FormFieldValidator {
                                 new java.math.BigDecimal(s);
                             } catch (NumberFormatException e) {
                                 throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                        "字段 '" + def.name + "' 需要数字类型，实际值: '" + s + "'");
+                                        "字段「" + def.displayName() + "」需要数字，当前填写的内容不是数字");
                             }
                         } else {
                             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                    "字段 '" + def.name + "' 需要数字类型");
+                                    "字段「" + def.displayName() + "」需要数字");
                         }
                     }
                 }
@@ -239,14 +246,14 @@ public class FormFieldValidator {
                             && !(value instanceof java.time.temporal.Temporal)
                             && !(value instanceof java.util.Date)) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 需要日期类型");
+                                "字段「" + def.displayName() + "」需要日期");
                     }
                 }
                 case "BOOL" -> {
                     Object converted = convertBoolValue(value);
                     if (converted == null) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 需要布尔类型");
+                                "字段「" + def.displayName() + "」需要选择是/否");
                     }
                 }
                 case "DICT" -> {
@@ -258,7 +265,7 @@ public class FormFieldValidator {
                         boolean valid = dictFacade.isValidCode(dictType, code);
                         if (!valid) {
                             throw new BaseException(FormErrorCode.SUBMIT_DICT_INVALID,
-                                    "字典字段 '" + def.name + "' 的值 '" + code + "' 不在字典类型 '" + dictType + "' 的值域内");
+                                    "字段「" + def.displayName() + "」的选项不在允许范围内，请重新选择");
                         }
                     }
                 }
@@ -266,26 +273,26 @@ public class FormFieldValidator {
                     if (!(value instanceof List<?> list)
                             || list.stream().anyMatch(v -> !(v instanceof String))) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 需要字符串列表（多选）");
+                                "字段「" + def.displayName() + "」需要多选列表");
                     }
                 }
                 case "ATTACHMENT", "IMAGE" -> {
                     if (!(value instanceof List<?> list)) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 需要文件列表");
+                                "字段「" + def.displayName() + "」需要上传文件");
                     }
                 }
                 case "TIME" -> {
                     if (!(value instanceof String time) || !time.matches("^([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d)?$")) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 需要 HH:mm 或 HH:mm:ss 时间格式");
+                                "字段「" + def.displayName() + "」需要 HH:mm 或 HH:mm:ss 时间格式");
                     }
                 }
                 case "USER", "DEPT" -> {
                     // 数字型对象 ID；存在性/启用/租户校验由 FormFieldEnrichmentService 经 Facade 执行
                     if (!(value instanceof Number) && !(value instanceof String id && id.matches("\\d+"))) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 需要数字型对象 ID");
+                                "字段「" + def.displayName() + "」需要选择具体的人员或部门");
                     }
                 }
                 case "DATASOURCE" -> {
@@ -298,7 +305,7 @@ public class FormFieldValidator {
                             && summary.get("version") != null;
                     if (!stableId && !serverSummary) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                                "字段 '" + def.name + "' 需要稳定对象标识");
+                                "字段「" + def.displayName() + "」需要选择一条有效记录");
                     }
                 }
                 // TEXT / RICH_TEXT / REFERENCE / LABEL 无额外校验
@@ -371,6 +378,15 @@ public class FormFieldValidator {
             boolean required,
             String dictType,
             List<FieldDef> subFields,
-            Object defaultValue
-    ) {}
+            Object defaultValue,
+            String label
+    ) {
+        /**
+         * 用户可见的字段名：优先设计者填写的显示名，缺省回退字段键（不产生空名称）。
+         * P61 阶段 C7：校验提示对用户展示显示名，不再暴露字段键。
+         */
+        public String displayName() {
+            return label == null || label.isBlank() ? name : label;
+        }
+    }
 }

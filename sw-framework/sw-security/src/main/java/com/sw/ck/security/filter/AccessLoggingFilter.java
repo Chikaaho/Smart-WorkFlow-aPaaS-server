@@ -30,18 +30,21 @@ public class AccessLoggingFilter extends OncePerRequestFilter {
         try {
             filterChain.doFilter(request, response);
         } finally {
-            String requestId = request.getHeader("X-Request-Id");
-            if (requestId == null || requestId.isBlank()) {
-                requestId = request.getRequestId();
+            // P61 R5：事件引用由服务端权威生成（客户端头仅作对照），两者同时落日志，
+            // 使「用户报出的引用 ↔ 访问日志 ↔ 诊断日志」三方可关联且不可由客户端伪造。
+            String eventRef = com.sw.ck.common.trace.EventRef.current();
+            String clientRequestId = request.getHeader("X-Request-Id");
+            if (clientRequestId == null || clientRequestId.isBlank()) {
+                clientRequestId = request.getRequestId();
             }
             Long userId = null;
             LoginUser loginUser = LoginUserHolder.get();
             if (loginUser != null) {
                 userId = loginUser.getUserId();
             }
-            log.info("ACCESS method={} path={} status={} costMs={} requestId={} userId={}",
+            log.info("ACCESS method={} path={} status={} costMs={} eventRef={} clientRequestId={} userId={}",
                     request.getMethod(), request.getRequestURI(), response.getStatus(),
-                    System.currentTimeMillis() - start, requestId, userId);
+                    System.currentTimeMillis() - start, eventRef, clientRequestId, userId);
         }
     }
 }

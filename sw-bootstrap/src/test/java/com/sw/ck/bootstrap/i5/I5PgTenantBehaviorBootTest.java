@@ -220,8 +220,12 @@ class I5PgTenantBehaviorBootTest {
                 (r0.get().startsWith("OK") && r100.get().startsWith("DENIED")) ||
                         (r100.get().startsWith("OK") && r0.get().startsWith("DENIED"));
         assertThat(oneSucceeded).as("恰好一方成功，另一方业务拒绝").isTrue();
-        assertThat(r0.get() + r100.get()).as("失败侧必须是业务冲突（IllegalStateException），不是 500/原始 DuplicateKey")
-                .contains("IllegalStateException");
+        assertThat(r0.get() + r100.get())
+                .as("失败侧必须是受控业务拒绝（SsoRejectionException），不是 500/原始 DuplicateKey")
+                .contains("DENIED(SsoRejectionException)");
+        assertThat(r0.get() + r100.get())
+                .as("不得暴露原始数据库异常")
+                .doesNotContain("DuplicateKeyException");
 
         Integer bindingAfter = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sys_sso_user_binding WHERE deleted=0 AND external_digest=?", Integer.class, digest);
@@ -261,8 +265,8 @@ class I5PgTenantBehaviorBootTest {
             barrier.await();
             app.getBean(SsoAuthService.class).bind(provider, actor.getUserId(), externalId);
             return "OK:" + actor.getTenantId();
-        } catch (IllegalStateException e) {
-            return "DENIED(IllegalStateException):" + e.getMessage();
+        } catch (com.sw.ck.system.sso.SsoRejectionException e) {
+            return "DENIED(SsoRejectionException):" + e.getErrorKey();
         } catch (Exception e) {
             return "UNEXPECTED(" + e.getClass().getSimpleName() + "):" + e.getMessage();
         } finally {

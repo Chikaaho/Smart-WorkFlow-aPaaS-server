@@ -110,7 +110,7 @@ public class AgentGraphDefServiceImpl
     @Override
     public PageResult<AgentGraphDefDTO> pageDefs(PageParam pageParam) {
         LambdaQueryWrapper<AgentGraphDef> wrapper = Wrappers.<AgentGraphDef>lambdaQuery()
-                .orderByDesc(AgentGraphDef::getUpdateTime);
+                .orderByDesc(AgentGraphDef::getUpdateTime, AgentGraphDef::getId);
         Page<AgentGraphDef> page = page(new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), wrapper);
         // DTO 不含 graph_json 大字段（编译期防线），列表剥离大字段（对齐 sw-bpm listDefs 先例）
         return PageResult.of(page.convert(this::toDTO));

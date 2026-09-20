@@ -1,6 +1,8 @@
 package com.sw.ck.security.filter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.cache.LoginUserLoader;
@@ -97,9 +99,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             loginUser = loginUserLoader.loadByUserId(userId);
         } catch (Exception e) {
-            // 基础设施/装配故障（如 Redis 未就绪）→ 503 直出根因；异常若放行到容器，会经 /error
-            // 重入安全链并被 AuthenticationEntryPoint 改写为 401，误导为账号/权限问题。
-            log.error("登录上下文装载失败（认证基础设施异常）: {}", e.getMessage());
+            // 基础设施/装配故障（如 Redis 未就绪）→ 503 直出结论 + 事件引用；异常若放行到容器，
+            // 会经 /error 重入安全链并被 AuthenticationEntryPoint 改写为 401，误导为账号/权限问题。
+            // 真实原因与栈只进日志，由同一 eventRef 关联定位（P61 §3.2）。
+            log.error("登录上下文装载失败（认证基础设施异常）: eventRef={}",
+                    EventRef.current(), e);
             writeInfrastructureError(response, e);
             return false;
         }
@@ -116,8 +120,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private void writeInfrastructureError(HttpServletResponse response, Exception cause) throws IOException {
         response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
         response.setContentType("application/json;charset=UTF-8");
-        R<Void> body = R.fail(503, "登录上下文装载失败（认证基础设施未就绪，非账号或权限问题）: "
-                + cause.getMessage());
+        // P61：响应只给出安全结论与事件引用；真实原因（依赖异常、装配缺陷）只进日志，
+        // 由 eventRef 关联定位，避免基础设施细节与类名进入未认证可见的响应体。
+        R<Void> body = R.fail(HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                CommonErrorCode.SYSTEM_ERROR.getErrorKey(),
+                CommonErrorCode.SYSTEM_ERROR.getMessage(),
+                EventRef.current());
         response.getWriter().write(objectMapper.writeValueAsString(body));
         response.getWriter().flush();
     }

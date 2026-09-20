@@ -23,6 +23,7 @@ import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.service.FieldPermissionService;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormFieldEnrichmentService;
 import com.sw.ck.form.service.FormExtDataService;
 import com.sw.ck.form.service.FormVisibilityRules;
 import com.sw.ck.form.service.FormulaEngine;
@@ -223,7 +224,7 @@ public class FormDefServiceImpl implements FormDefService {
         Set<String> fieldNames = fields.stream()
                 .map(FieldSpec::getFieldName)
                 .collect(java.util.stream.Collectors.toSet());
-        visibilityRules.parseAndValidate(definitionJson, fieldNames);
+        visibilityRules.parseAndValidate(definitionJson, collectFieldDisplay(definitionJson));
 
         // —— Step 2c（I2）: 公式依赖 + 字段权限配置 + 外部数据源绑定校验 ——
         validateFormulaDependencies(definitionJson, fieldNames);
@@ -243,10 +244,10 @@ public class FormDefServiceImpl implements FormDefService {
                 ColumnValidation.validateColumnName(physicalName);
             } catch (IllegalArgumentException e) {
                 throw new BaseException(FormErrorCode.INVALID_COLUMN_NAME,
-                        "字段名不合法: '" + physicalName + "' — " + e.getMessage());
+                        "存在不合法的字段标识，请按提示修改后重试");
             }
             if (!columnNames.add(physicalName)) {
-                throw new BaseException(FormErrorCode.DUPLICATE_COLUMN, "字段名重复: '" + physicalName + "'");
+                throw new BaseException(FormErrorCode.DUPLICATE_COLUMN, "字段标识重复，请修改后重试");
             }
         }
 
@@ -258,7 +259,7 @@ public class FormDefServiceImpl implements FormDefService {
             physicalTableName = dynamicTableManager.createFormTable(tableSpec, subTableNameSink);
         } catch (Exception e) {
             log.error("Failed to create physical table for form: {}", formId, e);
-            throw new BaseException(FormErrorCode.PUBLISH_FAILED, "创建动态宽表失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.PUBLISH_FAILED, "发布失败：数据表创建未成功，请稍后重试或联系管理员");
         }
         log.info("Physical table created: {} for form: {}", physicalTableName, formId);
 
@@ -343,7 +344,7 @@ public class FormDefServiceImpl implements FormDefService {
         Set<String> fieldNames = fields.stream()
                 .map(FieldSpec::getFieldName)
                 .collect(java.util.stream.Collectors.toSet());
-        visibilityRules.parseAndValidate(definition, fieldNames);
+        visibilityRules.parseAndValidate(definition, collectFieldDisplay(definition));
         validateFormulaDependencies(definition, fieldNames);
         fieldPermissionService.parse(definition);
         validateDatasourceBindings(definition);
@@ -854,6 +855,24 @@ public class FormDefServiceImpl implements FormDefService {
      * @return 校验通过的字段规格列表
      * @throws BaseException 校验失败
      */
+
+    /**
+     * 字段键 → 设计者可读显示名（R3b）：显隐规则校验失败时向设计者展示 label 而非内部键。
+     * 解析失败按空映射处理——此时字段校验本身会先行报错。
+     */
+    Map<String, String> collectFieldDisplay(String definitionJson) {
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson == null ? "{}" : definitionJson);
+            JsonNode fields = root == null ? null : root.get("fields");
+            if (fields == null && root != null && root.isArray()) {
+                fields = root;
+            }
+            return FormFieldEnrichmentService.collectFieldLabels(fields);
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
     List<FieldSpec> parseAndValidateFieldsFromDefinition(String definitionJson) {
         if (definitionJson == null || definitionJson.isBlank() || "{}".equals(definitionJson.trim())) {
             throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单 definition 为空，不能发布");
@@ -915,13 +934,13 @@ public class FormDefServiceImpl implements FormDefService {
             fieldType = FieldType.valueOf(typeStr);
         } catch (IllegalArgumentException e) {
             throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
-                    "字段 '" + name + "' 的类型 '" + typeStr + "' 不在 FieldType 枚举中");
+                    "字段「" + name + "」使用了当前不支持的字段类型，请更换类型后重试");
         }
 
         // —— 3. enabled 检查 ——
         if (!fieldType.isEnabled()) {
             throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
-                    "字段 '" + name + "' 的类型 '" + typeStr + "' (disabled)，v1 不支持发布");
+                    "字段「" + name + "」使用了暂未开放的字段类型，请更换类型后重试");
         }
 
         // —— 4. 列名 + 白名单校验 (跳过 TABLE / LABEL：均不产生物理列) ——
@@ -931,7 +950,7 @@ public class FormDefServiceImpl implements FormDefService {
                 ColumnValidation.validateColumnName(physicalName);
             } catch (IllegalArgumentException e) {
                 throw new BaseException(FormErrorCode.INVALID_COLUMN_NAME,
-                        "字段名 '" + physicalName + "' 不合法: " + e.getMessage());
+                        "存在不合法的字段标识，请按提示修改后重试");
             }
         }
 
@@ -1008,7 +1027,7 @@ public class FormDefServiceImpl implements FormDefService {
             // disabled 占位成员 — 已在 enabled 检查中拦截，不会到达此处
             case EMAIL, PHONE, URL, RATE, SLIDER ->
                     throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
-                            "FieldType " + fieldType + " is not enabled (disabled placeholder)");
+                            "该字段类型暂未开放，请更换类型后重试");
         };
     }
 

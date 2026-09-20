@@ -174,14 +174,18 @@ public class IotConnectionService {
             connectionMapper.updateById(healthPatch);
             return Map.of("connected", true, "subscriptions", subscriptions.size());
         } catch (Exception e) {
-            String category = e.getMessage() != null && e.getMessage().contains("AUTH") ? "AUTH_FAILED" : "PROTOCOL_FAILED";
+            // 按 Paho 结构化 reason code 分类认证失败。
+            String category = mqttBrokerManager.isAuthenticationFailure(e)
+                    ? "AUTH_FAILED" : "PROTOCOL_FAILED";
             IotConnection healthPatch = new IotConnection();
             healthPatch.setId(id);
             healthPatch.setHealthStatus("UNHEALTHY");
             healthPatch.setLastCheckTime(LocalDateTime.now());
-            healthPatch.setLastCheckResult("CONNECT: " + e.getMessage());
+            healthPatch.setLastCheckResult("CONNECT: " + category + " "
+                    + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 300));
             connectionMapper.updateById(healthPatch);
-            throw new IllegalStateException("连接失败(" + category + "): " + e.getMessage(), e);
+            throw new IllegalStateException("连接失败（" + category + "）："
+                    + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200), e);
         }
     }
 

@@ -7,6 +7,7 @@ import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
@@ -27,6 +28,7 @@ import java.util.UUID;
  * </ul>
  */
 @Component
+@ConditionalOnProperty(prefix = "sw.iot", name = "enabled", havingValue = "true")
 public class DeferredControlUtil {
 
     private static final Logger log = LoggerFactory.getLogger(DeferredControlUtil.class);

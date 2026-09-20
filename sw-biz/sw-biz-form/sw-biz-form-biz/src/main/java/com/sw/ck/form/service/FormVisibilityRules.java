@@ -63,45 +63,64 @@ public class FormVisibilityRules {
     /**
      * 解析并校验 definition 的显隐规则（发布门调用）。
      *
+     * @param fieldDisplay 字段键 → 设计者可读显示名（definition 的 label，缺省回退键）
      * @throws BaseException DEFINITION_INVALID：形状/字段/op/logic/环依赖不合法
      */
-    public List<VisibilityRule> parseAndValidate(String definitionJson, Set<String> fieldNames) {
+    public List<VisibilityRule> parseAndValidate(String definitionJson, Map<String, String> fieldDisplay) {
         List<VisibilityRule> rules = parse(definitionJson);
         if (rules.isEmpty()) {
             return rules;
         }
+        Set<String> fieldNames = fieldDisplay.keySet();
         Set<String> targets = new HashSet<>();
         for (VisibilityRule rule : rules) {
             if (rule.target() == null || rule.target().isBlank()) {
                 throw invalid("显隐规则缺少 target");
             }
             if (!fieldNames.contains(rule.target())) {
-                throw invalid("显隐规则 target '" + rule.target() + "' 不是已定义字段");
+                // 目标字段未定义：只有设计者自己输入的键可回显，不泄露其他字段存在性
+                throw invalid("显隐规则目标字段 '" + rule.target() + "' 不是已定义字段");
             }
             if (!targets.add(rule.target())) {
-                throw invalid("字段 '" + rule.target() + "' 存在多条显隐规则（每字段至多一条）");
+                throw invalid("字段「" + display(fieldDisplay, rule.target()) + "」存在多条显隐规则（每字段至多一条）");
             }
             if (rule.logic() == null || !LOGICS.contains(rule.logic())) {
-                throw invalid("显隐规则 logic 必须为 ALL/ANY: " + rule.target());
+                throw invalid("显隐规则 logic 必须为 ALL/ANY: " + display(fieldDisplay, rule.target()));
             }
             if (rule.conditions() == null || rule.conditions().isEmpty()) {
-                throw invalid("显隐规则 '" + rule.target() + "' 缺少条件");
+                throw invalid("显隐规则字段「" + display(fieldDisplay, rule.target()) + "」缺少条件");
             }
             for (Condition condition : rule.conditions()) {
                 if (condition.field() == null || !fieldNames.contains(condition.field())) {
                     throw invalid("显隐规则条件字段 '" + condition.field() + "' 不是已定义字段");
                 }
                 if (condition.op() == null || !OPS.contains(condition.op())) {
-                    throw invalid("显隐规则 op 必须为 EQ/NE/EMPTY/NOT_EMPTY: " + condition.field());
+                    throw invalid("字段「" + display(fieldDisplay, condition.field())
+                            + "」的显隐规则 op 必须为 EQ/NE/EMPTY/NOT_EMPTY");
                 }
                 if (("EQ".equals(condition.op()) || "NE".equals(condition.op()))
                         && condition.value() == null) {
-                    throw invalid("显隐规则 op=" + condition.op() + " 必须携带 value: " + condition.field());
+                    throw invalid("字段「" + display(fieldDisplay, condition.field())
+                            + "」的显隐规则 op=" + condition.op() + " 必须携带 value");
                 }
             }
         }
-        assertAcyclic(rules);
+        assertAcyclic(rules, fieldDisplay);
         return rules;
+    }
+
+    /** 兼容旧签名：无显示名映射时回退为「键即显示名」。 */
+    public List<VisibilityRule> parseAndValidate(String definitionJson, Set<String> fieldNames) {
+        Map<String, String> fieldDisplay = new java.util.LinkedHashMap<>();
+        for (String name : fieldNames) {
+            fieldDisplay.put(name, name);
+        }
+        return parseAndValidate(definitionJson, fieldDisplay);
+    }
+
+    private static String display(Map<String, String> fieldDisplay, String key) {
+        String name = fieldDisplay.get(key);
+        return (name == null || name.isBlank()) ? key : name;
     }
 
     /** 解析规则（不校验），空/缺省返回空列表。 */
@@ -228,22 +247,23 @@ public class FormVisibilityRules {
      * 环依赖检查：target → 条件字段（若条件字段本身也是某规则 target 则构成依赖边），
      * 依赖图必须无环（DFS 三色标记）。
      */
-    private void assertAcyclic(List<VisibilityRule> rules) {
+    private void assertAcyclic(List<VisibilityRule> rules, Map<String, String> fieldDisplay) {
         Map<String, VisibilityRule> byTarget = new LinkedHashMap<>();
         for (VisibilityRule rule : rules) {
             byTarget.put(rule.target(), rule);
         }
         Map<String, Integer> state = new HashMap<>();
         for (String target : byTarget.keySet()) {
-            dfs(target, byTarget, state);
+            dfs(target, byTarget, state, fieldDisplay);
         }
     }
 
-    private void dfs(String target, Map<String, VisibilityRule> byTarget, Map<String, Integer> state) {
+    private void dfs(String target, Map<String, VisibilityRule> byTarget, Map<String, Integer> state,
+            Map<String, String> fieldDisplay) {
         Integer current = state.putIfAbsent(target, 1);
         if (current != null) {
             if (current == 1) {
-                throw invalid("显隐规则存在循环依赖: " + target);
+                throw invalid("显隐规则存在循环依赖: " + display(fieldDisplay, target));
             }
             return;
         }
@@ -251,7 +271,7 @@ public class FormVisibilityRules {
         if (rule != null) {
             for (Condition condition : rule.conditions()) {
                 if (byTarget.containsKey(condition.field())) {
-                    dfs(condition.field(), byTarget, state);
+                    dfs(condition.field(), byTarget, state, fieldDisplay);
                 }
             }
         }
@@ -262,7 +282,11 @@ public class FormVisibilityRules {
         return node == null || node.isNull() ? null : node.asText();
     }
 
+    /**
+     * 显隐规则校验失败：把已带字段显示名的原因作为目录参数 {0} 传出，
+     * 避免无参的 definition_invalid 目录条目覆盖掉「是哪个字段出的问题」。
+     */
     private BaseException invalid(String message) {
-        return new BaseException(FormErrorCode.DEFINITION_INVALID, message);
+        return new BaseException(FormErrorCode.DEFINITION_INVALID, new Object[]{message}, message);
     }
 }

@@ -1,3 +1,4 @@
 com.sw.ck.common.config.mybatis.MybatisPlusConfig
 com.sw.ck.common.config.redis.RedisConfig
 com.sw.ck.common.config.jackson.JacksonLongToStringConfig
+com.sw.ck.common.i18n.P61MessageSourceAutoConfiguration

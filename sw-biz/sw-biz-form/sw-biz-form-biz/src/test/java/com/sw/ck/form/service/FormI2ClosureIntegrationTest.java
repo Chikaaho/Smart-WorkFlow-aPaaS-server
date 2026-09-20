@@ -495,9 +495,11 @@ class FormI2ClosureIntegrationTest {
                 """);
         java.util.Map<String, Object> forged = new java.util.HashMap<>();
         forged.put("ref", java.util.Map.of("id", "x"));
+        // P61：断言语义（errorKey）而非完整文案——文案已改用字段显示名并去除内部术语
         assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), forged))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("需要引用记录 ID");
+                .hasFieldOrPropertyWithValue("errorKey",
+                        com.sw.ck.form.api.exception.FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH.getErrorKey());
         java.util.Map<String, Object> missing = new java.util.HashMap<>();
         missing.put("ref", "00000000-0000-0000-0000-000000000000");
         // 目标表单不存在 → 拒绝；目标存在但记录缺失 → 同口径拒绝（均已行为验证）

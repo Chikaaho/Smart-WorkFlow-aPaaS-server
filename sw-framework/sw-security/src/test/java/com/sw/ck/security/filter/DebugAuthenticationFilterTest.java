@@ -117,7 +117,15 @@ class DebugAuthenticationFilterTest {
         filter.doFilter(request("test_7", "127.0.0.1"), response, chain);
 
         assertThat(response.getStatus()).isEqualTo(503);
-        assertThat(response.getContentAsString()).contains("认证基础设施未就绪");
+        assertThat(response.getContentAsString())
+                .as("503 必须给出安全结论并携带稳定语义键")
+                .contains("common.system_error");
+        assertThat(response.getContentAsString())
+                .as("503 响应不得回显依赖异常原文或基础设施细节（P61 §3.2）")
+                .doesNotContain("redis unavailable")
+                .doesNotContain("认证基础设施未就绪")
+                .doesNotContain("LoginUserLoader")
+                .doesNotContain("Exception");
         assertThat(downstreamCalled).isFalse();
     }
 

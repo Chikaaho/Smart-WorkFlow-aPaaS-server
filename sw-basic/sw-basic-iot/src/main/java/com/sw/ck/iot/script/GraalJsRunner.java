@@ -43,6 +43,8 @@ public class GraalJsRunner {
     public ScriptRunResult run(ScriptExecutionSpec spec, ScriptHostFunctions host) {
         long begin = System.currentTimeMillis();
         AtomicBoolean finished = new AtomicBoolean(false);
+        // 语句上限由本类设置，触发信号也由本类持有（onLimit），与异常描述文本无关。
+        AtomicBoolean statementLimitTripped = new AtomicBoolean(false);
         Context context = null;
         try {
             Context.Builder builder = Context.newBuilder("js")
@@ -57,6 +59,7 @@ public class GraalJsRunner {
                     .allowEnvironmentAccess(org.graalvm.polyglot.EnvironmentAccess.NONE)
                     .resourceLimits(ResourceLimits.newBuilder()
                             .statementLimit(MAX_STATEMENTS, null)
+                            .onLimit(event -> statementLimitTripped.set(true))
                             .build());
             context = builder.build();
             final Context ctx = context;
@@ -97,8 +100,7 @@ public class GraalJsRunner {
             finished.set(true);
             CURRENT_CONTEXT.remove();
             long duration = System.currentTimeMillis() - begin;
-            if (e.isCancelled() || e.isResourceExhausted()
-                    || (e.getMessage() != null && e.getMessage().contains("Statement count limit"))) {
+            if (e.isCancelled() || e.isResourceExhausted() || statementLimitTripped.get()) {
                 return ScriptRunResult.timeout("脚本被终止（超时或资源超限）: " + e.getMessage(),
                         duration, host.getLogs());
             }

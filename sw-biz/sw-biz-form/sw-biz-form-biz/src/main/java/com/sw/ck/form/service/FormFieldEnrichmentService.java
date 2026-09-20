@@ -102,25 +102,62 @@ public class FormFieldEnrichmentService {
         }
 
         // 1. 字段编辑权限闸门（先于任何外部解析，避免无权探测外部对象存在性）
+        Map<String, String> labels = collectFieldLabels(fields);
         fieldPermissionService.assertEditablePayload(user,
-                fieldPermissionService.parse(definitionJson), effectiveData);
+                fieldPermissionService.parse(definitionJson), effectiveData, labels);
 
         // 2. 逐类型增补
         for (JsonNode field : fields) {
             String type = field.path("type").asText();
             String name = field.path("name").asText();
+            String display = displayOf(field, name);
             switch (type) {
-                case "USER" -> enrichUser(effectiveData, name);
-                case "DEPT" -> enrichDept(effectiveData, name);
-                case "DATASOURCE" -> enrichDatasource(field, effectiveData, name);
-                case "TABLE" -> enrichTableRows(field, effectiveData, name);
-                case "REFERENCE" -> enrichReference(field, effectiveData, name);
-                case "ATTACHMENT", "IMAGE" -> enrichFiles(effectiveData, name);
+                case "USER" -> enrichUser(effectiveData, name, display);
+                case "DEPT" -> enrichDept(effectiveData, name, display);
+                case "DATASOURCE" -> enrichDatasource(field, effectiveData, name, display);
+                case "TABLE" -> enrichTableRows(field, effectiveData, name, display);
+                case "REFERENCE" -> enrichReference(field, effectiveData, name, display);
+                case "ATTACHMENT", "IMAGE" -> enrichFiles(effectiveData, name, display);
                 default -> { }
             }
         }
         // 3. 公式重算（剥离客户端值后服务端权威计算）
         recomputeFormulas(fields, effectiveData);
+    }
+
+    /**
+     * 字段键 → 显示名映射（P61 阶段 C）。
+     * <p>设计者在 definition 里填写的 {@code label} 是用户可读名称；未填写时回退字段键，
+     * 保证提示永远有名称可用。</p>
+     */
+    public static Map<String, String> collectFieldLabels(JsonNode fields) {
+        Map<String, String> labels = new java.util.LinkedHashMap<>();
+        if (fields == null || !fields.isArray()) {
+            return labels;
+        }
+        for (JsonNode field : fields) {
+            String key = field.path("name").asText();
+            if (key.isBlank()) {
+                continue;
+            }
+            labels.put(key, displayOf(field, key));
+            JsonNode subs = field.get("subFields");
+            if (subs != null && subs.isArray()) {
+                for (JsonNode sub : subs) {
+                    String subKey = sub.path("name").asText();
+                    if (!subKey.isBlank()) {
+                        labels.put(subKey, displayOf(sub, subKey));
+                    }
+                }
+            }
+        }
+        return labels;
+    }
+
+    /** 读取字段显示名：优先 {@code label}，缺省回退字段键。 */
+    private static String displayOf(JsonNode field, String fallbackKey) {
+        String label = field.path("label").asText("");
+        return label.isBlank() ? fallbackKey : label;
     }
 
     /** 当前身份是否具备表单 definition 顶层动作权限。 */
@@ -130,12 +167,12 @@ public class FormFieldEnrichmentService {
 
     // ==================== 各类型增补 ====================
 
-    private void enrichUser(Map<String, Object> data, String name) {
+    private void enrichUser(Map<String, Object> data, String name, String fieldDisplay) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
         }
-        Long userId = parseId(name, value);
+        Long userId = parseId(name, fieldDisplay, value);
         UserQueryFacade facade = userQueryFacade.getIfAvailable();
         if (facade == null) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "用户服务未装配");
@@ -143,17 +180,17 @@ public class FormFieldEnrichmentService {
         List<Long> active = facade.findActiveUserIds(List.of(userId));
         if (active.isEmpty()) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                    "字段 '" + name + "' 引用的用户不存在、已停用或越权");
+                    "字段「" + fieldDisplay + "」引用的人员不存在、已停用或无权访问");
         }
         data.put(name, String.valueOf(userId));
     }
 
-    private void enrichDept(Map<String, Object> data, String name) {
+    private void enrichDept(Map<String, Object> data, String name, String fieldDisplay) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
         }
-        Long deptId = parseId(name, value);
+        Long deptId = parseId(name, fieldDisplay, value);
         DeptQueryFacade facade = deptQueryFacade.getIfAvailable();
         if (facade == null) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "部门服务未装配");
@@ -161,12 +198,12 @@ public class FormFieldEnrichmentService {
         List<Long> active = facade.findActiveDeptIds(List.of(deptId));
         if (active.isEmpty()) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                    "字段 '" + name + "' 引用的部门不存在、已停用或越权");
+                    "字段「" + fieldDisplay + "」引用的部门不存在、已停用或无权访问");
         }
         data.put(name, String.valueOf(deptId));
     }
 
-    private void enrichDatasource(JsonNode field, Map<String, Object> data, String name) {
+    private void enrichDatasource(JsonNode field, Map<String, Object> data, String name, String fieldDisplay) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
@@ -176,14 +213,14 @@ public class FormFieldEnrichmentService {
             Object rawValue = summary.get("value");
             if (!(rawValue instanceof String) && !(rawValue instanceof Number)) {
                 throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                        "字段 '" + name + "' 的服务端摘要缺少稳定对象标识");
+                        "字段「" + fieldDisplay + "」的选择结果无效，请重新选择");
             }
             stableValue = String.valueOf(rawValue);
         } else if (value instanceof String || value instanceof Number) {
             stableValue = String.valueOf(value);
         } else {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                    "字段 '" + name + "' 需要稳定对象标识");
+                    "字段「" + fieldDisplay + "」需要选择一条有效记录");
         }
         FormExtDataService service = extDataService.getIfAvailable();
         if (service == null) {
@@ -204,7 +241,7 @@ public class FormFieldEnrichmentService {
         data.put(name, summary);
     }
 
-    private void enrichTableRows(JsonNode tableField, Map<String, Object> data, String name) {
+    private void enrichTableRows(JsonNode tableField, Map<String, Object> data, String name, String fieldDisplay) {
         Object raw = data.get(name);
         if (!(raw instanceof List<?> rows)) {
             return;
@@ -219,10 +256,11 @@ public class FormFieldEnrichmentService {
             for (JsonNode sub : subFields) {
                 String subType = sub.path("type").asText();
                 String subName = sub.path("name").asText();
+                String subDisplay = displayOf(sub, subName);
                 switch (subType) {
-                    case "USER" -> enrichUser(rowMap, subName);
-                    case "DEPT" -> enrichDept(rowMap, subName);
-                    case "DATASOURCE" -> enrichDatasource(sub, rowMap, subName);
+                    case "USER" -> enrichUser(rowMap, subName, subDisplay);
+                    case "DEPT" -> enrichDept(rowMap, subName, subDisplay);
+                    case "DATASOURCE" -> enrichDatasource(sub, rowMap, subName, subDisplay);
                     default -> { }
                 }
             }
@@ -233,19 +271,19 @@ public class FormFieldEnrichmentService {
      * REFERENCE 对象校验：值必须是引用目标表单内当前租户可见的真实记录 ID。
      * 失效（不存在/已软删）、伪造（非 ID 结构）、跨租户对象一律拒绝（I2 方向 §4.1）。
      */
-    private void enrichReference(JsonNode field, Map<String, Object> data, String name) {
+    private void enrichReference(JsonNode field, Map<String, Object> data, String name, String fieldDisplay) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
         }
         if (!(value instanceof String refId) || refId.isBlank()) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                    "字段 '" + name + "' 需要引用记录 ID");
+                    "字段「" + fieldDisplay + "」需要选择一条有效记录");
         }
         String targetFormKey = field.path("targetFormId").asText("");
         if (targetFormKey.isBlank()) {
             throw new BaseException(FormErrorCode.SUBMIT_DEFINITION_INVALID,
-                    "字段 '" + name + "' 缺少 targetFormId");
+                    "配置错误：字段「" + fieldDisplay + "」未指定引用目标，请联系管理员");
         }
         FormDefEntity target = formDefMapper.selectOne(Wrappers.<FormDefEntity>lambdaQuery()
                 .eq(FormDefEntity::getFormKey, targetFormKey)
@@ -253,13 +291,13 @@ public class FormFieldEnrichmentService {
                 .last("LIMIT 1"));
         if (target == null || target.getPhysicalTableName() == null || target.getPhysicalTableName().isBlank()) {
             throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
-                    "字段 '" + name + "' 的引用目标表单不存在或未发布");
+                    "字段「" + fieldDisplay + "」的引用目标表单不存在或未发布，请联系管理员");
         }
         LoginUser user = LoginUserHolder.get();
         if (user == null || user.getTenantId() == null) {
             // 无租户上下文 fail closed：引用记录按租户隔离，缺失即拒绝（不回落租户 0）
             throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
-                    "字段 '" + name + "' 引用的记录不存在或不可见");
+                    "字段「" + fieldDisplay + "」引用的记录不存在或不可见，请重新选择");
         }
         long tenantId = user.getTenantId();
         Integer count = jdbcTemplate.queryForObject(
@@ -268,21 +306,21 @@ public class FormFieldEnrichmentService {
                 Integer.class, refId, tenantId);
         if (count == null || count == 0) {
             throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
-                    "字段 '" + name + "' 引用的记录不存在或不可见");
+                    "字段「" + fieldDisplay + "」引用的记录不存在或不可见，请重新选择");
         }
     }
 
     /**
      * ATTACHMENT/IMAGE 文件校验：每个 storageKey 必须真实存在且未删除。
      */
-    private void enrichFiles(Map<String, Object> data, String name) {
+    private void enrichFiles(Map<String, Object> data, String name, String fieldDisplay) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
         }
         if (!(value instanceof List<?> list)) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                    "字段 '" + name + "' 需要文件列表");
+                    "字段「" + fieldDisplay + "」需要上传文件");
         }
         StorageFacade storage = storageFacade.getIfAvailable();
         if (storage == null) {
@@ -291,7 +329,7 @@ public class FormFieldEnrichmentService {
         for (Object key : list) {
             if (!(key instanceof String storageKey) || storageKey.isBlank() || !storage.exists(storageKey)) {
                 throw new BaseException(FormErrorCode.ATTACHMENT_FILE_NOT_FOUND,
-                        "字段 '" + name + "' 引用的文件不存在或不可见");
+                        "字段「" + fieldDisplay + "」引用的文件不存在或不可见，请重新上传");
             }
         }
     }
@@ -320,12 +358,12 @@ public class FormFieldEnrichmentService {
         return value == null || (value instanceof String s && s.isBlank());
     }
 
-    private Long parseId(String fieldName, Object value) {
+    private Long parseId(String fieldName, String fieldDisplay, Object value) {
         try {
             return Long.parseLong(String.valueOf(value).trim());
         } catch (NumberFormatException e) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
-                    "字段 '" + fieldName + "' 需要数字型对象 ID");
+                    "字段「" + fieldDisplay + "」需要选择具体的人员或部门");
         }
     }
 

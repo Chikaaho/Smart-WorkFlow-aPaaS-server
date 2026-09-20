@@ -268,7 +268,8 @@ class NotifyTemplateSecurityIntegrationTest {
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
         assertThat(body.get("code").asInt()).isEqualTo(401);
         String msg = body.get("msg").asText();
-        assertThat(msg).isEqualTo("未认证");
+        assertThat(body.get("errorKey").asText()).isEqualTo("common.unauthenticated");
+        assertThat(msg).as("安全结论非空且不回显内部细节").isNotBlank().doesNotContain("Exception");
 
         int after = countTemplates();
         assertThat(after).as("拒绝发生在任何写入之前").isEqualTo(before);
@@ -289,7 +290,7 @@ class NotifyTemplateSecurityIntegrationTest {
                 .andReturn();
         JsonNode toggleBody = objectMapper.readTree(toggleRes.getResponse().getContentAsString());
         assertThat(toggleBody.get("code").asInt()).isEqualTo(401);
-        assertThat(toggleBody.get("msg").asText()).isEqualTo("未认证");
+        assertThat(toggleBody.get("errorKey").asText()).isEqualTo("common.unauthenticated");
 
         MvcResult deleteRes = mockMvc.perform(delete("/notify/templates/{id}", 99902L))
                 .andExpect(status().isUnauthorized())
@@ -341,7 +342,8 @@ class NotifyTemplateSecurityIntegrationTest {
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
         assertThat(body.get("code").asInt()).isEqualTo(403);
         String msg = body.get("msg").asText();
-        assertThat(msg).isEqualTo("无权限");
+        assertThat(body.get("errorKey").asText()).isEqualTo("common.forbidden");
+        assertThat(msg).as("安全结论非空且不回显内部细节").isNotBlank().doesNotContain("Exception");
 
         int after = countTemplates();
         assertThat(after).as("缺 manage 权限不得产生任何数据行").isEqualTo(before);
@@ -372,7 +374,7 @@ class NotifyTemplateSecurityIntegrationTest {
                 .andReturn();
         JsonNode toggleBody = objectMapper.readTree(toggleRes.getResponse().getContentAsString());
         assertThat(toggleBody.get("code").asInt()).isEqualTo(403);
-        assertThat(toggleBody.get("msg").asText()).isEqualTo("无权限");
+        assertThat(toggleBody.get("errorKey").asText()).isEqualTo("common.forbidden");
 
         MvcResult deleteRes = mockMvc.perform(delete("/notify/templates/{id}", targetId)
                         .header("Authorization", bearerToken(USER_NOTIFY_VIEW_ONLY)))
@@ -548,7 +550,7 @@ class NotifyTemplateSecurityIntegrationTest {
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
         assertThat(body.get("code").asInt()).isEqualTo(403);
-        assertThat(body.get("msg").asText()).isEqualTo("无权限");
+        assertThat(body.get("errorKey").asText()).isEqualTo("common.forbidden");
         System.out.println("[G2-d1] notify:view-only GET 列表: HTTP 403 msg=无权限");
     }
 

@@ -330,7 +330,8 @@ public class FormSubmitService {
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {
-            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "表单 '" + formKey + "' 无物理表，无法提交");
+            throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+                    "该表单尚未完成数据表初始化，请联系管理员处理");
         }
 
         // ==========================================================
@@ -614,7 +615,7 @@ public class FormSubmitService {
                 try {
                     return objectMapper.writeValueAsString(value);
                 } catch (JsonProcessingException e) {
-                    throw new BaseException(FormErrorCode.SUBMIT_FAILED, "字段值序列化失败: " + e.getMessage());
+                    throw new BaseException(FormErrorCode.SUBMIT_FAILED, "提交数据时系统未能完成，请稍后重试");
                 }
             }
         }
@@ -623,7 +624,7 @@ public class FormSubmitService {
             try {
                 return objectMapper.writeValueAsString(value);
             } catch (JsonProcessingException e) {
-                throw new BaseException(FormErrorCode.SUBMIT_FAILED, "数据源摘要序列化失败: " + e.getMessage());
+                throw new BaseException(FormErrorCode.SUBMIT_FAILED, "提交数据时系统未能完成，请稍后重试");
             }
         }
         return value;

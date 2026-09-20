@@ -324,7 +324,7 @@ public class FormImportExportService {
 
         } catch (IOException e) {
             log.error("Failed to generate template for formKey={}", formKey, e);
-            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "生成模板失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "生成导入模板失败，请稍后重试");
         }
     }
 
@@ -388,7 +388,7 @@ public class FormImportExportService {
                     rowErrors.add(new RowError(parsedRow.rowNum(), e.getMessage()));
                 } catch (Exception e) {
                     log.error("Failed to import row {} for formKey={}", parsedRow.rowNum(), formKey, e);
-                    rowErrors.add(new RowError(parsedRow.rowNum(), "导入失败: " + e.getMessage()));
+                    rowErrors.add(new RowError(parsedRow.rowNum(), "该行数据未能导入，请核对后重试"));
                 }
             }
 
@@ -397,10 +397,10 @@ public class FormImportExportService {
                 status.setRollbackOnly();
                 log.info("Import rolled back for formKey={}: {} row(s) invalid, 0 persisted",
                         formKey, rowErrors.size());
-                return new ImportResult(rows.size(), 0, rowErrors.size(), List.of(), rowErrors);
+                return new ImportResult(rows.size(), 0, rowErrors.size(), List.of(), rowErrors, 0);
             }
 
-            return new ImportResult(rows.size(), ids.size(), 0, ids, List.of());
+            return new ImportResult(rows.size(), ids.size(), 0, ids, List.of(), 0);
         });
     }
 
@@ -558,7 +558,7 @@ public class FormImportExportService {
         } catch (BaseException e) {
             throw e;
         } catch (Exception e) {
-            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "解析 Excel 文件失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "无法解析该 Excel 文件，请确认文件完整且为本系统模板");
         }
     }
 
@@ -676,7 +676,7 @@ public class FormImportExportService {
 
         } catch (IOException e) {
             log.error("Failed to export data for formKey={}", formKey, e);
-            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "导出数据失败: " + e.getMessage());
+            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "导出数据时系统未能完成，请稍后重试");
         }
     }
 
@@ -1035,7 +1035,9 @@ public class FormImportExportService {
             int successCount,
             int errorCount,
             List<String> successIds,
-            List<RowError> errors
+            List<RowError> errors,
+            // 同步契约：导入是同步逐行校验+原子落库，处理中恒为 0；由服务端显式给出，前端不得臆算
+            int processing
     ) {}
 
     /**
