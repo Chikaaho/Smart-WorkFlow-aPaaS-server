@@ -18,3 +18,6 @@ sw-bootstrap/src/main/resources/application-local.yml
 .p61-tmp/
 server.pid
 bootstrap.jar
+
+# 运行期上传目录（storage base-path: ./uploads）：运行产物不入库
+uploads/
