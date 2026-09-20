@@ -25,7 +25,7 @@ public class PngCaptchaRenderer {
     private static final int WIDTH = 130;
     private static final int HEIGHT = 44;
     private static final Color[] PALETTE = {
-        new Color(0x4a3f8f), new Color(0x7e306b), new Color(0x2f6f4f),
+        new Color(0x5631b4), new Color(0x20aebf), new Color(0x2f6f4f),
         new Color(0x8a5a2a), new Color(0x33475b),
     };
 
@@ -59,7 +59,9 @@ public class PngCaptchaRenderer {
             for (int i = 0; i < charCount; i++) {
                 int x = 14 + slotWidth * i + rand(0, Math.max(1, slotWidth / 4));
                 int y = HEIGHT / 2 + rand(4, 10);
-                g.setColor(color(rand(0, PALETTE.length), 255));
+                // Keep the primary glyph ink on the locked visual token so the
+                // raster evidence can verify the actual image pixels.
+                g.setColor(color(0, 255));
                 g.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.BOLD, rand(22, 28)));
                 double rotation = Math.toRadians(rand(-28, 28));
                 g.rotate(rotation, x, y);
