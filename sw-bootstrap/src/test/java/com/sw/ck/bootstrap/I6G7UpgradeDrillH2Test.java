@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * G7 真实旧库升级演练（H2）：从受支持的旧基线（V58 = v0.0.2 OA 通知语义）保留既有数据，
- * 升级到 I6 终点 V90；升级前后按同一 ID 回读，语义可解释。
+ * 升级到当前链尾 V94；升级前后按同一 ID 回读，语义可解释。
  * 不通过重建/删数据/替换对象证明。
  */
 class I6G7UpgradeDrillH2Test {
@@ -31,7 +31,7 @@ class I6G7UpgradeDrillH2Test {
             + "deleted SMALLINT NOT NULL DEFAULT 0, tenant_id BIGINT NOT NULL DEFAULT 0, version BIGINT NOT NULL DEFAULT 0";
 
     @Test
-    @DisplayName("G7 从 V58 基线的既有消息/模板/尝试升级到 V93：同一 ID 回读一致")
+    @DisplayName("G7 从 V58 基线的既有消息/模板/尝试升级到 V94：同一 ID 回读一致")
     void upgradeFromV58PreservesLegacyObjects() throws Exception {
         Files.deleteIfExists(new java.io.File("./target/i6-g7-upgrade-db.mv.db").toPath());
 
@@ -56,16 +56,16 @@ class I6G7UpgradeDrillH2Test {
                     + "VALUES (1, 1, 1, 'IN_APP', 'SUCCESS', 0, 100, 0)");
         }
 
-        // ---------- 3. 继续升级到 V93（I6 终点） ----------
+        // ---------- 3. 继续升级到 V94（当前链尾） ----------
         Flyway chain = Flyway.configure().dataSource(DB, USER, PASSWORD)
                 .locations(allLocations)
                 .baselineOnMigrate(true)
                 .target(org.flywaydb.core.api.MigrationVersion.LATEST)
                 .load();
         var r90 = chain.migrate();
-        assertTrue(r90.success, "基线 → V93 升级应成功");
-        assertEquals("93", chain.info().current().getVersion().getVersion(),
-                "升级终点须为 V93");
+        assertTrue(r90.success, "基线 → V94 升级应成功");
+        assertEquals("94", chain.info().current().getVersion().getVersion(),
+                "升级终点须为 V94");
 
         // ---------- 4. 同一 ID 回读：行数与语义一致，增量列可解释 ----------
         try (Connection conn = DriverManager.getConnection(DB, USER, PASSWORD)) {
