@@ -64,3 +64,7 @@ UPDATE sys_menu SET parent_id = 5, sort = 90, update_time = current_timestamp WH
 -- 8) 开放接口、文件管理并入「系统管理」（不再单列顶层分区）
 UPDATE sys_menu SET parent_id = 1, sort = 60, update_time = current_timestamp WHERE id = 9 AND parent_id = 0;
 UPDATE sys_menu SET parent_id = 1, sort = 70, update_time = current_timestamp WHERE id = 16 AND parent_id = 0;
+
+-- 9) 表单设计是设计器内部页签（表单列表 → 编辑进入），不在侧栏单列入口；
+--    hidden 只约束侧栏，静态路由 /form/designer/:id 深链照常可用。
+UPDATE sys_menu SET hidden = true, update_time = current_timestamp WHERE id = 4 AND hidden = false;
