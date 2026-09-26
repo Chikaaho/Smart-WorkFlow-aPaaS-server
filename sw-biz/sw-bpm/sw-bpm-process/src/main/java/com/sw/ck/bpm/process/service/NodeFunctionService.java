@@ -128,14 +128,14 @@ public class NodeFunctionService {
         return errors;
     }
 
-    /** 解析参与人函数输出；未配置返回 null（走默认参与人策略）。 */
-    public List<String> resolveParticipants(Long tenantId, String processInstanceId,
-                                            String nodeKey, String taskId,
-                                            Map<String, Object> functionsConfig,
-                                            Map<String, Object> variables) {
+    /** 解析参与人函数输出；未配置函数返回 empty（走默认参与人策略）。 */
+    public java.util.Optional<List<String>> resolveParticipants(Long tenantId, String processInstanceId,
+                                                                String nodeKey, String taskId,
+                                                                Map<String, Object> functionsConfig,
+                                                                Map<String, Object> variables) {
         BpmNodeFunction row = locate(functionsConfig, TYPE_RESOLVE, tenantId);
         if (row == null) {
-            return null;
+            return java.util.Optional.empty();
         }
         ParticipantFunction impl = bean(row.getImplBean(), ParticipantFunction.class);
         if (impl == null) {
@@ -152,9 +152,11 @@ public class NodeFunctionService {
                 .build();
         long startMs = System.currentTimeMillis();
         try {
+            // 契约恒 present：解析失败必抛明确异常，不得以上空表达失败
             List<String> participants = runWithTimeout(row,
-                    () -> impl.resolveParticipants(context));
-            if (participants == null || participants.isEmpty()) {
+                    () -> impl.resolveParticipants(context).orElseThrow(() -> new BaseException(
+                            BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT)));
+            if (participants.isEmpty()) {
                 throw new BaseException(BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT);
             }
             if (participants.size() > 1000) {
@@ -168,8 +170,10 @@ public class NodeFunctionService {
             com.sw.ck.system.api.user.UserQueryFacade users = userQueryFacade.getIfAvailable();
             if (users != null) {
                 List<Long> requested = participants.stream().map(Long::valueOf).toList();
-                List<Long> valid = users.findActiveUserIds(requested, tenantId);
-                java.util.Set<Long> validSet = new java.util.HashSet<>(valid == null ? List.of() : valid);
+                java.util.Optional<List<Long>> valid = users.findActiveUserIds(requested, tenantId);
+                // empty = 查询上下文缺失（无登录租户等）：无命中用户，按原有“无效参与人”裁决
+                java.util.Set<Long> validSet = valid.isEmpty()
+                        ? java.util.Set.of() : new java.util.HashSet<>(valid.get());
                 for (Long id : requested) {
                     if (!validSet.contains(id)) {
                         throw new BaseException(BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT,
@@ -181,7 +185,7 @@ public class NodeFunctionService {
                     row.getFuncKey(), row.getFuncVersion(), nodeKey, participants.size());
             writeAudit(row, context, "SUCCEEDED", null,
                     "participants=" + participants.size(), startMs);
-            return participants;
+            return java.util.Optional.of(participants);
         } catch (BaseException e) {
             writeAudit(row, context, "FAILED", e.getCode(), e.getMessage(), startMs);
             throw e;
@@ -190,19 +194,19 @@ public class NodeFunctionService {
             writeAudit(row, context, "FAILED", BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
                     String.valueOf(e.getMessage()), startMs);
             if ("FALLBACK".equals(row.getFailureStrategy())) {
-                return null;
+                return java.util.Optional.empty();
             }
             throw new BaseException(BpmErrorCode.NODE_FUNCTION_FAILED);
         }
     }
 
-    /** 结果处理函数：输出审计摘要与白名单变量，不改变流程走向。 */
-    public NodeFunctionResult handleResult(NodeFunctionContext context,
-                                           Map<String, Object> functionsConfig,
-                                           Map<String, Object> nodeResult) {
+    /** 结果处理函数：输出审计摘要与白名单变量，不改变流程走向；未配置函数返回 empty。 */
+    public java.util.Optional<NodeFunctionResult> handleResult(NodeFunctionContext context,
+                                                               Map<String, Object> functionsConfig,
+                                                               Map<String, Object> nodeResult) {
         BpmNodeFunction row = locate(functionsConfig, TYPE_HANDLE, context.getTenantId());
         if (row == null) {
-            return null;
+            return java.util.Optional.empty();
         }
         ResultFunction impl = bean(row.getImplBean(), ResultFunction.class);
         if (impl == null) {
@@ -210,22 +214,23 @@ public class NodeFunctionService {
         }
         long startMs = System.currentTimeMillis();
         try {
-            NodeFunctionResult result = runWithTimeout(row, () -> impl.handleResult(context, nodeResult));
-            if (result != null && result.getResultVariables() != null
+            NodeFunctionResult result = runWithTimeout(row,
+                    () -> impl.handleResult(context, nodeResult).orElseThrow(() -> new BaseException(
+                            BpmErrorCode.NODE_FUNCTION_FAILED)));
+            if (result.getResultVariables() != null
                     && result.getResultVariables().size() > 50) {
                 throw new BaseException(BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT);
             }
-            writeAudit(row, context, "SUCCEEDED", null,
-                    result == null ? null : result.getSummary(), startMs);
-            return result;
+            writeAudit(row, context, "SUCCEEDED", null, result.getSummary(), startMs);
+            return java.util.Optional.of(result);
         } catch (RuntimeException e) {
             log.warn("结果函数失败: funcKey={}, error={}", row.getFuncKey(), e.getMessage());
             writeAudit(row, context, "FAILED", BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
                     String.valueOf(e.getMessage()), startMs);
             if ("FALLBACK".equals(row.getFailureStrategy())) {
-                return NodeFunctionResult.builder()
+                return java.util.Optional.of(NodeFunctionResult.builder()
                         .summary("function-fallback:" + row.getFuncKey())
-                        .build();
+                        .build());
             }
             throw new BaseException(BpmErrorCode.NODE_FUNCTION_FAILED);
         }

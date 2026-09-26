@@ -9,6 +9,8 @@ import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.service.NotifyMessageService;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -19,12 +21,12 @@ class NotifyFacadeAdapterIdempotencyTest {
     void replaySameIdempotencyKeyCallsAdapterOnceAndPersistsOnce() {
         NotifyMessageService messageService = mock(NotifyMessageService.class);
         NotifyChannelAdapter adapter = mock(NotifyChannelAdapter.class);
-        when(adapter.channel()).thenReturn(NotifyChannel.SMS);
-        when(adapter.send(any())).thenReturn(NotifySendResult.builder()
+        when(adapter.channel()).thenReturn(Optional.of(NotifyChannel.SMS));
+        when(adapter.send(any())).thenReturn(Optional.of(NotifySendResult.builder()
                 .channel(NotifyChannel.SMS)
                 .status("SUCCESS")
                 .externalMessageId("p58_ext_z7")
-                .build());
+                .build()));
 
         NotifyMessage existing = new NotifyMessage();
         existing.setDeliveryStatus("SUCCESS");
@@ -45,8 +47,8 @@ class NotifyFacadeAdapterIdempotencyTest {
                 .idempotencyKey("P58_Z7_REPLAY_20260904")
                 .build();
 
-        NotifySendResult first = facade.send(request);
-        NotifySendResult replay = facade.send(request);
+        NotifySendResult first = facade.send(request).orElseThrow();
+        NotifySendResult replay = facade.send(request).orElseThrow();
 
         assertThat(first.getStatus()).isEqualTo("SUCCESS");
         assertThat(replay.getStatus()).isEqualTo("SUCCESS");

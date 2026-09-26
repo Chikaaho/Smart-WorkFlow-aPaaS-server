@@ -17,6 +17,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 动态并行分支集合解析（I4 §3.1）。
@@ -79,8 +80,10 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
 
         List<DynamicBranchPort.BranchCandidate> candidates = new ArrayList<>();
         List<Long> invalid = new ArrayList<>();
-        List<Long> active = deptQueryFacade.findActiveDeptIds(deptIds);
-        var activeDeptIds = new java.util.HashSet<>(active == null ? List.<Long>of() : active);
+        // deptIds 已在入口保证非空：findActiveDeptIds 的 empty 只在查询对象缺失时产生，属契约违约
+        List<Long> active = deptQueryFacade.findActiveDeptIds(deptIds).orElseThrow(
+                () -> new IllegalStateException("部门查询上下文缺失，无法解析动态并行来源: " + deptIds));
+        var activeDeptIds = new java.util.HashSet<>(active);
         for (Long deptId : deptIds) {
             if (!activeDeptIds.contains(deptId)) {
                 invalid.add(deptId);
@@ -88,9 +91,12 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                         String.valueOf(deptId), null, "DEPT_INVALID"));
                 continue;
             }
-            List<Long> leaders = userQueryFacade.findActiveUserIdsByDeptLeaders(
+            // 单部门非空 + 显式 tenantId（入口已校验）⇒ 查询上下文完整；
+            // empty 按负责人缺失的确定结果处置，与迁移前的空列表口径一致
+            Optional<List<Long>> leaderIds = userQueryFacade.findActiveUserIdsByDeptLeaders(
                     List.of(deptId), tenantId);
-            if (leaders == null || leaders.isEmpty()) {
+            List<Long> leaders = leaderIds.isEmpty() ? List.of() : leaderIds.orElseThrow();
+            if (leaders.isEmpty()) {
                 invalid.add(deptId);
                 candidates.add(new DynamicBranchPort.BranchCandidate(
                         String.valueOf(deptId), null, "LEADER_MISSING"));
@@ -124,10 +130,12 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
         }
         Map<String, Object> source = config.get("source") instanceof Map<?, ?> raw
                 ? (Map<String, Object>) raw : Map.of();
+        // 冻结成功但候选全部无效时为空列表（合法零结果），契约恒 present
         return port.freeze(String.valueOf(tenantId), execution.getProcessInstanceId(),
                 execution.getCurrentActivityId(),
                 asString(source.get("type")), asString(source.get("value")),
-                asString(config.getOrDefault("mode", "ALL")), candidates);
+                asString(config.getOrDefault("mode", "ALL")), candidates).orElseThrow(
+                        () -> new IllegalStateException("动态分支冻结未返回结果"));
     }
 
     /** 来源解析：FIXED=配置值；VARIABLE/FORM_FIELD=流程变量（表单记录则按键取字段）。 */

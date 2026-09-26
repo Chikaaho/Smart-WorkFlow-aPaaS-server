@@ -149,35 +149,25 @@ class BpmCatalogServiceTest {
         public FormDefinitionService formDefinitionService() {
             return new FormDefinitionService() {
                 @Override
-                public String getFormDefinition(String formKey) {
-                    return null;
+                public java.util.Optional<String> getFormDefinition(String formKey) {
+                    return java.util.Optional.empty();
                 }
 
                 @Override
-                public String getFormDefinitionById(String formId) {
-                    return null;
+                public java.util.Optional<Boolean> formExists(String formKey) {
+                    return java.util.Optional.of(true);
                 }
 
                 @Override
-                public boolean formExists(String formKey) {
-                    return true;
-                }
-
-                @Override
-                public FormDefDTO getFormDef(String formKey) {
+                public java.util.Optional<FormDefDTO> getFormDef(String formKey) {
                     FormDefDTO dto = new FormDefDTO();
                     dto.setStatus("PUBLISHED");
-                    return dto;
+                    return java.util.Optional.of(dto);
                 }
 
                 @Override
-                public FormDefDTO getFormDefById(String formId) {
-                    return null;
-                }
-
-                @Override
-                public boolean canCurrentUserInitiate(String formKey) {
-                    return true;
+                public java.util.Optional<Boolean> canCurrentUserInitiate(String formKey) {
+                    return java.util.Optional.of(true);
                 }
             };
         }

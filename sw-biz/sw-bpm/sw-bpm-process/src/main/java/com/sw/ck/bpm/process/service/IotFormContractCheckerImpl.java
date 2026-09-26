@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -32,41 +33,50 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
     }
 
     @Override
-    public List<String> checkMapping(String processTemplateKey, String formMappingJson) {
+    public Optional<List<String>> checkMapping(String processTemplateKey, String formMappingJson) {
         List<String> errors = new ArrayList<>();
+        // empty = 无法裁决（流程模板 key 空白）：适用条件不存在，由调用方 fail closed
+        if (processTemplateKey == null || processTemplateKey.isBlank()) {
+            return Optional.empty();
+        }
         BpmProcessDef def = processDefService.findByProcessKey(processTemplateKey);
         if (def == null || !"PUBLISHED".equals(def.getStatus())) {
             errors.add("流程模板未发布: " + processTemplateKey);
-            return errors;
+            return Optional.of(errors);
         }
         if (!Boolean.TRUE.equals(def.getIotAccessEnabled())) {
             errors.add("流程模板未开启 IoT 接入: " + processTemplateKey);
-            return errors;
+            return Optional.of(errors);
         }
         FormDefinitionService formService = formDefinitionServiceProvider.getIfAvailable();
         if (formService == null) {
-            errors.add("表单服务未装配");
-            return errors;
+            // 基础设施缺失属真实错误，继续抛出而不是伪装成一条校验错误
+            throw new IllegalStateException("表单服务未装配，无法执行表单契约校验: " + processTemplateKey);
         }
-        FormDefDTO form = formService.getFormDef(def.getFormKey());
-        if (form == null || !"PUBLISHED".equals(String.valueOf(form.getStatus()))) {
+        // empty = 该 formKey 无表单定义（原 null 返回路径）：与未发布同判
+        Optional<FormDefDTO> formLookup = formService.getFormDef(def.getFormKey());
+        if (formLookup.isEmpty()
+                || !"PUBLISHED".equals(String.valueOf(formLookup.orElseThrow().getStatus()))) {
             errors.add("绑定表单未发布: " + def.getFormKey());
-            return errors;
+            return Optional.of(errors);
         }
         // 字段类型/枚举/引用契约（G3a）：name → {type, options}
+        // empty = 该 formKey 无表单定义：无字段契约可提取（上方存在性校验已兜住）
         java.util.Map<String, com.alibaba.fastjson2.JSONObject> fieldTypes =
-                extractFieldContracts(formService.getFormDefinition(def.getFormKey()));
+                formService.getFormDefinition(def.getFormKey())
+                        .map(this::extractFieldContracts)
+                        .orElseGet(java.util.LinkedHashMap::new);
         Set<String> formFields = fieldTypes.keySet();
         JSONArray mappings;
         try {
             mappings = JSON.parseArray(formMappingJson);
         } catch (Exception e) {
             errors.add("表单映射 JSON 非法");
-            return errors;
+            return Optional.of(errors);
         }
         if (mappings == null || mappings.isEmpty()) {
             errors.add("表单映射为空");
-            return errors;
+            return Optional.of(errors);
         }
         for (int i = 0; i < mappings.size(); i++) {
             JSONObject mapping = mappings.getJSONObject(i);
@@ -109,15 +119,21 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
                     String recordId = fixed == null ? null : String.valueOf(fixed).trim();
                     if (targetFormKey == null || targetFormKey.isBlank()) {
                         errors.add("字段 '" + field + "' 为 REFERENCE，缺少 targetFormId");
-                    } else if (recordId == null || recordId.isBlank()
-                            || !formService.canCurrentUserAccessRecord(targetFormKey, recordId)) {
-                        errors.add("字段 '" + field + "' 引用对象不存在或当前用户无权访问: "
-                                + targetFormKey + "/" + recordId);
+                    } else {
+                        // empty = formKey/recordId 空白无法裁决：fail closed，按不可访问处理；
+                        // present 判定为 false 同样是拒绝（原 false 判定语义）
+                        Optional<Boolean> accessDecision =
+                                formService.canCurrentUserAccessRecord(targetFormKey, recordId);
+                        boolean accessible = accessDecision.isPresent() && accessDecision.get();
+                        if (recordId == null || recordId.isBlank() || !accessible) {
+                            errors.add("字段 '" + field + "' 引用对象不存在或当前用户无权访问: "
+                                    + targetFormKey + "/" + recordId);
+                        }
                     }
                 }
             }
         }
-        return errors;
+        return Optional.of(errors);
     }
 
     private boolean isNumericString(String text) {

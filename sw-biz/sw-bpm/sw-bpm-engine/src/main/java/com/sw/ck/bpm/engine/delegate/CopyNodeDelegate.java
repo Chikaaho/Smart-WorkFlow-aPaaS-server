@@ -17,6 +17,8 @@ import org.flowable.engine.delegate.JavaDelegate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /** 抄送节点委托：全量解析收件人、经 NotifyFacade 发送、逐人落审计。 */
 @Component("copyNodeDelegate")
 public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegate {
@@ -51,13 +53,15 @@ public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegat
                 Long recipientId = parseLong(recipient);
                 if (recipientId == null) throw new IllegalArgumentException("收件人标识非法");
                 String eventType = "COPY_CREATED";
-                var channels = notifyRoutingService.channelsFor(eventType, recipientId);
+                // 事件类型为固定非空常量：渠道路由契约恒 present，上下文缺失属契约违约
+                List<NotifyChannel> channels = notifyRoutingService.channelsFor(eventType, recipientId)
+                        .orElseThrow(() -> new IllegalStateException("抄送渠道路由上下文缺失: " + eventType));
                 for (NotifyChannel channel : channels) {
+                    // 无已发布模板快照：empty 与旧的 null 返回同义，拒绝用未版本化文案冒充模板
                     NotifyTemplateSelection template = notifyRoutingService.templateFor(
-                            eventType, channel, context.getTenantId());
-                    if (template == null) {
-                        throw new IllegalStateException("抄送模板未发布: " + eventType + "/" + channel);
-                    }
+                            eventType, channel, context.getTenantId())
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "抄送模板未发布: " + eventType + "/" + channel));
                     NotifySendResult result = notifyFacade.send(NotifySendRequest.builder()
                             .recipientId(recipientId).title(template.getTitle()).content(template.getContent())
                             .bizType(NotifyBizType.WF_TODO).bizId(execution.getProcessInstanceId())
@@ -66,7 +70,8 @@ public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegat
                                     + execution.getCurrentActivityId() + ":" + recipient + ":" + channel.name())
                             .eventType(eventType).occurrenceNo(1L)
                             .templateId(template.getTemplateId()).templateVersion(template.getTemplateVersion())
-                            .linkType("WF_PROCESS").linkId(execution.getProcessInstanceId()).build());
+                            .linkType("WF_PROCESS").linkId(execution.getProcessInstanceId()).build())
+                            .orElseThrow(() -> new IllegalStateException("抄送投递结果缺失"));
                     if (!"SUCCESS".equals(result.getStatus())) {
                         status = result.getStatus() == null ? "FAILED" : result.getStatus();
                         reason = result.getFailureReason();

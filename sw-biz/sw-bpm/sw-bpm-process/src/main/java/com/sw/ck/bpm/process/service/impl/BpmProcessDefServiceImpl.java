@@ -79,7 +79,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     @Transactional
     public BpmProcessDef createDef(String name, String formKey) {
         // 校验表单存在（2009）
-        if (!formDefinitionService.formExists(formKey)) {
+        if (!formExists(formKey)) {
             throw new BaseException(BpmErrorCode.GRAPH_FORM_NOT_FOUND);
         }
 
@@ -115,7 +115,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
             changed = true;
         }
         if (formKey != null && !formKey.isBlank() && !formKey.equals(entity.getFormKey())) {
-            if (!formDefinitionService.formExists(formKey)) {
+            if (!formExists(formKey)) {
                 throw new BaseException(BpmErrorCode.GRAPH_FORM_NOT_FOUND);
             }
             entity.setFormKey(formKey);
@@ -251,7 +251,21 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         if (!STATUS_PUBLISHED.equals(def.getStatus()) || def.getProcessDefinitionId() == null) {
             throw new BaseException(BpmErrorCode.PROCESS_NOT_PUBLISHED);
         }
-        return bpmDeployFacade.getBpmnXml(def.getProcessDefinitionId());
+        // empty = 该 Flowable 流程定义不存在（原 IllegalStateException 缺失路径）：
+        // 保持原有的“定义缺失即失败”对外行为，不静默返回空。
+        return bpmDeployFacade.getBpmnXml(def.getProcessDefinitionId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "流程定义资源不存在: processDefinitionId=" + def.getProcessDefinitionId()));
+    }
+
+    /**
+     * 表单存在性判定（契约恒 present：formKey 空白亦给出明确 false 判定）；
+     * empty 属契约破坏，显式失败而不伪装成“表单不存在”。
+     */
+    private boolean formExists(String formKey) {
+        return formDefinitionService.formExists(formKey)
+                .orElseThrow(() -> new IllegalStateException(
+                        "表单存在性判定未返回结果: formKey=" + formKey));
     }
 
     @Override
@@ -277,11 +291,12 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         // 2b. formKey 对应表单已发布（2100）
         String formKey = graph.getFormKey();
         if (formKey != null && !formKey.isBlank()) {
-            FormDefDTO formDef = formDefinitionService.getFormDef(formKey);
-            if (formDef == null) {
+            // empty = 该 formKey 无表单定义（原 null 返回路径）：按“绑定表单不存在”拒绝发布
+            java.util.Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+            if (formDefLookup.isEmpty()) {
                 throw new BaseException(BpmErrorCode.GRAPH_FORM_NOT_FOUND);
             }
-            if (!FORM_STATUS_PUBLISHED.equals(formDef.getStatus())) {
+            if (!FORM_STATUS_PUBLISHED.equals(formDefLookup.get().getStatus())) {
                 throw new BaseException(BpmErrorCode.FORM_NOT_PUBLISHED);
             }
         }
@@ -308,11 +323,17 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         }
 
         // ========== ③ 翻译 ==========
-        byte[] bpmnXml = bpmDeployFacade.translateToBpmn(graph);
+        // translateToBpmn 当前契约恒 present：图非法继续抛异常
+        byte[] bpmnXml = bpmDeployFacade.translateToBpmn(graph)
+                .orElseThrow(() -> new IllegalStateException(
+                        "流程翻译未返回 BPMN XML: processKey=" + newProcessKey));
 
         // ========== ④ 部署 ==========
         String deploymentName = graph.getName() != null ? graph.getName() : newProcessKey;
-        BpmDeployResult deployResult = bpmDeployFacade.deployModel(bpmnXml, deploymentName);
+        // deployModel 当前契约恒 present：部署失败继续抛异常
+        BpmDeployResult deployResult = bpmDeployFacade.deployModel(bpmnXml, deploymentName)
+                .orElseThrow(() -> new IllegalStateException(
+                        "流程部署未返回部署结果: deploymentName=" + deploymentName));
 
         // ========== ⑤ 回填 + ⑥ 状态 ==========
         def.setDeploymentId(deployResult.getDeploymentId());
@@ -397,9 +418,13 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
             return null;
         }
         try {
-            FormDefDTO formDef = formDefinitionService.getFormDef(formKey);
-            return formDef == null ? null
-                    : formDef.getFormVersion() == null ? null : String.valueOf(formDef.getFormVersion());
+            // empty = 该 formKey 无表单定义（原 null 返回路径）：无版本可回填
+            java.util.Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+            if (formDefLookup.isEmpty()) {
+                return null;
+            }
+            Integer formVersion = formDefLookup.get().getFormVersion();
+            return formVersion == null ? null : String.valueOf(formVersion);
         } catch (Exception e) {
             log.warn("读取表单版本失败: formKey={}", formKey);
             return null;
@@ -451,7 +476,10 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     @Transactional
     public void suspendVersion(Long defId, Integer graphVersion) {
         BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
-        bpmDeployFacade.suspendProcessDefinition(version.getProcessDefinitionId());
+        // present = APPLIED（本次挂起）/ ALREADY_APPLIED（已挂起）；定义不存在继续由引擎抛异常
+        bpmDeployFacade.suspendProcessDefinition(version.getProcessDefinitionId())
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmDeployFacade#suspendProcessDefinition 契约恒 present，empty 属契约违约"));
         patchVersionStatus(version.getId(), "SUSPENDED");
         log.info("发布版本已挂起: defId={}, version={}", defId, graphVersion);
     }
@@ -460,7 +488,10 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     @Transactional
     public void activateVersion(Long defId, Integer graphVersion) {
         BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
-        bpmDeployFacade.activateProcessDefinition(version.getProcessDefinitionId());
+        // present = APPLIED（本次激活）/ ALREADY_APPLIED（已激活）；定义不存在继续由引擎抛异常
+        bpmDeployFacade.activateProcessDefinition(version.getProcessDefinitionId())
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmDeployFacade#activateProcessDefinition 契约恒 present，empty 属契约违约"));
         patchVersionStatus(version.getId(), "PUBLISHED");
         log.info("发布版本已激活: defId={}, version={}", defId, graphVersion);
     }
@@ -470,7 +501,10 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     public void disableVersion(Long defId, Integer graphVersion) {
         BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
         // DISABLED = 业务下线标记：同样挂起 Flowable 定义，历史回看不删除
-        bpmDeployFacade.suspendProcessDefinition(version.getProcessDefinitionId());
+        // present = APPLIED（本次挂起）/ ALREADY_APPLIED（已挂起）；定义不存在继续由引擎抛异常
+        bpmDeployFacade.suspendProcessDefinition(version.getProcessDefinitionId())
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmDeployFacade#suspendProcessDefinition 契约恒 present，empty 属契约违约"));
         patchVersionStatus(version.getId(), "DISABLED");
         log.info("发布版本已下线: defId={}, version={}", defId, graphVersion);
     }

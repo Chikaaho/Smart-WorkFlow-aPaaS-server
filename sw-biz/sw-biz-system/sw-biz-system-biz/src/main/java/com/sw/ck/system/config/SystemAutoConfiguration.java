@@ -48,11 +48,15 @@ public class SystemAutoConfiguration {
 
     /**
      * 租户有效性契约实现（I5 复验 G2a）：供 openapi 等跨模块非浏览器入口校验。
+     * <p>
+     * 契约返回 {@code Optional<Boolean>} 且恒 present（fail-closed）：{@code tenantId} 为 null、
+     * 租户不存在/停用/过期一律判定为 present false，不得以 empty 表达"无法判定"。
+     * </p>
      */
     @Bean
     public com.sw.ck.system.api.tenant.TenantValidityFacade tenantValidityFacade(
             com.sw.ck.system.service.TenantValidityService tenantValidityService) {
-        return tenantValidityService::isValid;
+        return tenantId -> java.util.Optional.of(tenantValidityService.isValid(tenantId));
     }
 
     /**

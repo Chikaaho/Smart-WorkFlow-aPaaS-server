@@ -91,10 +91,10 @@ class P57IsolatedVerificationFlowableTest {
         BpmNodeRegistry firstRegistry = discoverRegistry();
         BpmNodeRegistry restartedRegistry = discoverRegistry();
 
-        List<String> firstTypes = firstRegistry.definitions().stream()
-                .map(BpmNodeDefinition::type).toList();
-        List<String> restartedTypes = restartedRegistry.definitions().stream()
-                .map(BpmNodeDefinition::type).toList();
+        List<String> firstTypes = firstRegistry.definitions().orElseThrow().stream()
+                .map(definition -> definition.type().orElseThrow()).toList();
+        List<String> restartedTypes = restartedRegistry.definitions().orElseThrow().stream()
+                .map(definition -> definition.type().orElseThrow()).toList();
         assertThat(firstTypes).contains("P57_VERIFY");
         assertThat(restartedTypes).isEqualTo(firstTypes);
 
@@ -142,18 +142,18 @@ class P57IsolatedVerificationFlowableTest {
     void shouldRejectNullTranslationResultInsteadOfWritingPartialModel() {
         NodeTypeTranslator nullTranslator = new NodeTypeTranslator() {
             @Override
-            public String type() {
-                return "NULL_TRANSLATION";
+            public java.util.Optional<String> type() {
+                return java.util.Optional.of("NULL_TRANSLATION");
             }
 
             @Override
-            public BpmNodeMetadata metadata() {
-                return new BpmNodeMetadata(
+            public java.util.Optional<BpmNodeMetadata> metadata() {
+                return java.util.Optional.of(new BpmNodeMetadata(
                         "空翻译", "测试空翻译", "OTHER",
                         new BpmNodeTopology(0, 1, 0, 1),
                         List.of(), "test-v1",
                         java.util.EnumSet.allOf(BpmNodeCapability.class),
-                        false, false, false, true);
+                        false, false, false, true));
             }
 
             @Override

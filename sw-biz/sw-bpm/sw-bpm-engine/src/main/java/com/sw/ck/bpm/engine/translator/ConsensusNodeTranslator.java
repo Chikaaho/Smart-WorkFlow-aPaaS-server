@@ -22,6 +22,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Collection;
+import java.util.Optional;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 
@@ -33,11 +34,11 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
 
     public ConsensusNodeTranslator(ObjectMapper objectMapper) { this.objectMapper = objectMapper; }
 
-    @Override public String type() { return "CONSENSUS"; }
+    @Override public Optional<String> type() { return Optional.of("CONSENSUS"); }
 
     @Override
-    public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata("会签", "多人并行审批节点", "TASK",
+    public Optional<BpmNodeMetadata> metadata() {
+        return Optional.of(new BpmNodeMetadata("会签", "多人并行审批节点", "TASK",
                 new BpmNodeTopology(1, 1, 1, 1),
                 List.of(new BpmNodeConfigField("participant", "参与人", "object", true, Map.of()),
                         new BpmNodeConfigField("mode", "结算方式", "string", true,
@@ -46,28 +47,28 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                                 Map.of("min", 1, "max", 100))),
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
                         BpmNodeCapability.RUNTIME, BpmNodeCapability.CONFIG_VALIDATE),
-                false, false, false, true);
+                false, false, false, true));
     }
 
     @Override
-    public List<GraphValidationError> validateConfig(GraphElement node) {
+    public Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
         Map<String, Object> config = node.getConfig();
         if (config == null || !(config.get("participant") instanceof Map<?, ?>)) {
-            return List.of(error(node, "会签缺少参与人配置"));
+            return Optional.of(List.of(error(node, "会签缺少参与人配置")));
         }
         Map<?, ?> participant = (Map<?, ?>) config.get("participant");
         String strategy = participant.get("strategy") == null ? null : String.valueOf(participant.get("strategy"));
         if (strategy == null || !ParticipantStrategy.ALL.contains(strategy.toUpperCase())) {
-            return List.of(error(node, "会签参与人策略不合法"));
+            return Optional.of(List.of(error(node, "会签参与人策略不合法")));
         }
         Object participantValue = participant.get("value");
         if (!ParticipantStrategy.ADAPTER.equalsIgnoreCase(strategy)
                 && (participantValue == null || String.valueOf(participantValue).isBlank())) {
-            return List.of(error(node, "会签参与人值不能为空"));
+            return Optional.of(List.of(error(node, "会签参与人值不能为空")));
         }
         if (ParticipantStrategy.ADAPTER.equalsIgnoreCase(strategy)
                 && (participant.get("adapterId") == null || String.valueOf(participant.get("adapterId")).isBlank())) {
-            return List.of(error(node, "会签适配器标识不能为空"));
+            return Optional.of(List.of(error(node, "会签适配器标识不能为空")));
         }
         if (ParticipantStrategy.FIXED_USER.equalsIgnoreCase(strategy)) {
             Collection<?> values = participantValue instanceof Collection<?> collection
@@ -75,40 +76,44 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
             if (values.stream().anyMatch(item -> {
                 try { return Long.parseLong(String.valueOf(item)) <= 0; }
                 catch (Exception e) { return true; }
-            })) return List.of(error(node, "会签 FIXED_USER 只能配置正整数用户 ID"));
+            })) return Optional.of(List.of(error(node, "会签 FIXED_USER 只能配置正整数用户 ID")));
         } else if (ParticipantStrategy.DEPT_LEADER.equalsIgnoreCase(strategy)) {
             Collection<?> values = participantValue instanceof Collection<?> collection
                     ? collection : List.of(participantValue);
             if (values.stream().anyMatch(item -> {
                 try { return Long.parseLong(String.valueOf(item)) <= 0; }
                 catch (Exception e) { return true; }
-            })) return List.of(error(node, "会签 DEPT_LEADER 只能配置正整数部门 ID"));
+            })) return Optional.of(List.of(error(node, "会签 DEPT_LEADER 只能配置正整数部门 ID")));
         } else if (ParticipantStrategy.POST.equalsIgnoreCase(strategy)) {
             Collection<?> values = participantValue instanceof Collection<?> collection
                     ? collection : List.of(participantValue);
             if (values.stream().anyMatch(item -> item == null || String.valueOf(item).isBlank())) {
-                return List.of(error(node, "会签 POST 必须配置非空岗位编码"));
+                return Optional.of(List.of(error(node, "会签 POST 必须配置非空岗位编码")));
             }
         } else if (ParticipantStrategy.DEPT_POST.equalsIgnoreCase(strategy)) {
             if (!(participantValue instanceof java.util.Map<?, ?> mapping)
                     || mapping.get("deptId") == null
                     || mapping.get("postCode") == null
                     || String.valueOf(mapping.get("postCode")).isBlank()) {
-                return List.of(error(node, "会签 DEPT_POST 必须配置 {deptId, postCode}"));
+                return Optional.of(List.of(error(node, "会签 DEPT_POST 必须配置 {deptId, postCode}")));
             }
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(strategy)) {
             try { RestrictedExpressionEvaluator.value(String.valueOf(participantValue), Map.of()); }
-            catch (RuntimeException e) { return List.of(error(node, "会签 EXPRESSION 语法不合法")); }
+            catch (RuntimeException e) { return Optional.of(List.of(error(node, "会签 EXPRESSION 语法不合法"))); }
         }
         String mode = config.get("mode") == null ? null : String.valueOf(config.get("mode"));
-        if (!List.of("ALL", "ANY", "RATIO", "VETO").contains(mode)) return List.of(error(node, "会签方式不合法"));
+        if (!List.of("ALL", "ANY", "RATIO", "VETO").contains(mode)) {
+            return Optional.of(List.of(error(node, "会签方式不合法")));
+        }
         if ("RATIO".equals(mode)) {
             try {
                 int ratio = Integer.parseInt(String.valueOf(config.get("ratio")));
-                if (ratio < 1 || ratio > 100) return List.of(error(node, "会签比例必须为 1-100"));
-            } catch (Exception e) { return List.of(error(node, "会签比例必须为整数")); }
+                if (ratio < 1 || ratio > 100) {
+                    return Optional.of(List.of(error(node, "会签比例必须为 1-100")));
+                }
+            } catch (Exception e) { return Optional.of(List.of(error(node, "会签比例必须为整数"))); }
         }
-        return List.of();
+        return Optional.of(List.of());
     }
 
     @Override

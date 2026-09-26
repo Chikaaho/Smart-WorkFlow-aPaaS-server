@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /** 部门负责人策略：只解析正常状态部门的负责人，且负责人用户启用、同租户。 */
 @Component
@@ -20,18 +21,24 @@ public class DeptLeaderParticipantResolver implements NodeParticipantResolver {
     }
 
     @Override
-    public String strategy() {
-        return ParticipantStrategy.DEPT_LEADER;
+    public Optional<String> strategy() {
+        return Optional.of(ParticipantStrategy.DEPT_LEADER);
     }
 
     @Override
-    public List<String> resolve(NodeParticipantContext context) {
+    public Optional<List<String>> resolve(NodeParticipantContext context) {
         List<Long> deptIds = toLongs(context.getStrategyValue());
         if (deptIds.isEmpty()) {
-            return List.of();
+            return Optional.of(List.of());
         }
-        return userQueryFacade.findActiveUserIdsByDeptLeaders(deptIds, context.getTenantId()).stream()
-                .map(String::valueOf).distinct().toList();
+        Optional<List<Long>> leaderIds = userQueryFacade.findActiveUserIdsByDeptLeaders(
+                deptIds, context.getTenantId());
+        if (leaderIds.isEmpty()) {
+            // 部门/租户上下文缺失：无法解析负责人，交由注册失败策略处置
+            return Optional.of(List.of());
+        }
+        return Optional.of(leaderIds.orElseThrow().stream()
+                .map(String::valueOf).distinct().toList());
     }
 
     private List<Long> toLongs(Object value) {

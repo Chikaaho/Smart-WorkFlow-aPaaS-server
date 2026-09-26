@@ -4,8 +4,11 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.common.exception.BaseException;
 import org.flowable.engine.RuntimeService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.flowable.task.service.delegate.DelegateTask;
 import org.flowable.task.service.delegate.TaskListener;
 import org.springframework.beans.factory.ObjectProvider;
@@ -21,6 +24,7 @@ import java.util.concurrent.ConcurrentMap;
  */
 @Component("dynamicBranchTaskListener")
 public class DynamicBranchTaskListener implements TaskListener {
+    private static final Logger log = LoggerFactory.getLogger(DynamicBranchTaskListener.class);
     private static final ConcurrentMap<String, Object> LOCKS = new ConcurrentHashMap<>();
     private final RuntimeService runtimeService;
     private final ParticipantSnapshotRecorder snapshotRecorder;
@@ -47,7 +51,9 @@ public class DynamicBranchTaskListener implements TaskListener {
             if (snapshotRecorder != null && leaderId != null) {
                 snapshotRecorder.record(task.getProcessInstanceId(), task.getTaskDefinitionKey(),
                         task.getId(), java.util.List.of(leaderId),
-                        java.util.Collections.emptyMap(), tenantOf(task));
+                        java.util.Collections.emptyMap(), tenantOf(task))
+                .orElseThrow(() -> new IllegalStateException(
+                        "ParticipantSnapshotRecorder#record 契约恒 present，empty 属契约违约"));
             }
             recordBranchAction(task, leaderId, "START", null);
             return;
@@ -63,14 +69,22 @@ public class DynamicBranchTaskListener implements TaskListener {
                 String actionKey = "consensusAction:" + task.getId();
                 if (runtimeService.getVariable(task.getProcessInstanceId(), actionKey) != null) return;
                 boolean counted = false;
+                boolean votePortUnavailable = false;
                 ConsensusVotePort votePort = votePortProvider == null ? null : votePortProvider.getIfAvailable();
                 if (votePort != null) {
-                    counted = votePort.record(String.valueOf(task.getVariable("tenantId")),
+                    // empty = 投票服务不可用：不得据此认为重复，按旧变量计数兜底
+                    java.util.Optional<Boolean> recorded = votePort.record(
+                            String.valueOf(task.getVariable("tenantId")),
                             task.getProcessInstanceId(), task.getTaskDefinitionKey(), task.getId(),
                             task.getAssignee() == null ? leaderId : task.getAssignee(), outcome);
+                    if (recorded.isPresent()) {
+                        counted = recorded.orElseThrow();
+                    } else {
+                        votePortUnavailable = true;
+                    }
                 }
                 runtimeService.setVariable(task.getProcessInstanceId(), actionKey, outcome);
-                if (counted || votePort == null) {
+                if (counted || votePortUnavailable || votePort == null) {
                     String counter = "APPROVE".equals(outcome)
                             ? "consensusApprovedCount" : "consensusRejectedCount";
                     Object current = runtimeService.getVariable(task.getProcessInstanceId(), counter);
@@ -89,8 +103,20 @@ public class DynamicBranchTaskListener implements TaskListener {
             throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_LEADER_MISSING.getCode(),
                     "动态分支记录端口不可用");
         }
-        port.recordAction(String.valueOf(task.getVariable("tenantId")), task.getProcessInstanceId(),
+        java.util.Optional<MutationOutcome> recorded = port.recordAction(
+                String.valueOf(task.getVariable("tenantId")), task.getProcessInstanceId(),
                 task.getTaskDefinitionKey(), leaderId, task.getId(), action, reason);
+        if (recorded.isEmpty()) {
+            // 契约 empty = 该分支快照尚未冻结（防御路径）：动作未落账，必须显式报告，不得静默当作成功
+            log.warn("动态分支动作未落账：分支快照尚未冻结 processInstanceId={}, nodeKey={}, leaderId={}, action={}",
+                    task.getProcessInstanceId(), task.getTaskDefinitionKey(), leaderId, action);
+        } else {
+            MutationOutcome outcome = recorded.orElseThrow();
+            if (outcome == MutationOutcome.ALREADY_APPLIED) {
+                log.debug("动态分支动作已存在，未产生第二次效果 processInstanceId={}, nodeKey={}, leaderId={}, action={}",
+                        task.getProcessInstanceId(), task.getTaskDefinitionKey(), leaderId, action);
+            }
+        }
     }
 
     private Long tenantOf(DelegateTask task) {

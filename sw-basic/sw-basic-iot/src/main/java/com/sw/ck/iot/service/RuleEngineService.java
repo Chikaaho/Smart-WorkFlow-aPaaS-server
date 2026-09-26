@@ -45,6 +45,9 @@ public class RuleEngineService {
     private final DomainEventPublisher eventPublisher;
     private IotAuditService auditService;
 
+    /** 幂等插入的保存点包装所需（可选装配：单元测试可缺省）。 */
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
     public RuleEngineService(IotEventRuleMapper ruleMapper,
                              IotProcessTriggerMapper triggerMapper,
                              DomainEventPublisher eventPublisher) {
@@ -56,6 +59,11 @@ public class RuleEngineService {
     @Autowired
     public void setAuditService(IotAuditService auditService) {
         this.auditService = auditService;
+    }
+
+    @Autowired(required = false)
+    public void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
     }
 
     /**
@@ -220,8 +228,17 @@ public class RuleEngineService {
         trigger.setStatus("PENDING");
         trigger.setFormSnapshot(JSON.toJSONString(formData));
         trigger.setTriggerTime(now);
+        // Phase 4：触发行必须携带恢复身份（发起目标/来源/发起人），否则提交后进程退出时
+        // 恢复调度无法续跑该触发（findDue 要求 process_template_key 非空），事件静默消失。
+        trigger.setProcessTemplateKey(rule.getProcessTemplateKey());
+        trigger.setTriggerSource("RULE");
+        trigger.setConfiguredBy(rule.getCreateBy());
+        trigger.setRetryCount(0);
         try {
-            triggerMapper.insert(trigger);
+            // PostgreSQL 上唯一键冲突会中止整个事务，故在保存点内插入，
+            // 命中幂等键后仍能执行下面的降级写回（否则 ingest 事务整体失败）。
+            com.sw.ck.common.persistence.IdempotentInsert.execute(transactionManager,
+                    () -> triggerMapper.insert(trigger));
         } catch (org.springframework.dao.DuplicateKeyException e) {
             // 同一 tenant+device+event+ruleVersion 已触发过：重复消息/重投不重复发起
             log.info("幂等键命中，跳过重复流程触发: key={}", idempotentKey);

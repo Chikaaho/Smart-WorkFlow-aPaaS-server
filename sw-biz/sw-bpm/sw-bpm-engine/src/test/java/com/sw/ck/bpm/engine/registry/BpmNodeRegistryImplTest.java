@@ -26,9 +26,10 @@ class BpmNodeRegistryImplTest {
         BpmNodeRegistryImpl registry = new BpmNodeRegistryImpl(List.of(
                 definition("END"), definition("APPROVAL"), definition("START")));
 
-        assertThat(registry.definitions()).extracting(BpmNodeDefinition::type)
+        assertThat(registry.definitions().orElseThrow())
+                .extracting(definition -> definition.type().orElseThrow())
                 .containsExactly("APPROVAL", "END", "START");
-        assertThat(registry.capabilities()).extracting(capability -> capability.type())
+        assertThat(registry.capabilities().orElseThrow()).extracting(capability -> capability.type())
                 .containsExactly("APPROVAL", "END", "START");
     }
 
@@ -54,7 +55,7 @@ class BpmNodeRegistryImplTest {
                 new ApprovalUserTaskTranslator(new ObjectMapper()),
                 new StartEventTranslator()));
 
-        var json = new ObjectMapper().valueToTree(registry.capabilities());
+        var json = new ObjectMapper().valueToTree(registry.capabilities().orElseThrow());
 
         assertThat(json.isArray()).isTrue();
         assertThat(json.get(0).get("type").asText()).isEqualTo("APPROVAL");
@@ -69,13 +70,13 @@ class BpmNodeRegistryImplTest {
     private static BpmNodeDefinition definition(String type) {
         return new NodeTypeTranslator() {
             @Override
-            public String type() {
-                return type;
+            public java.util.Optional<String> type() {
+                return java.util.Optional.of(type);
             }
 
             @Override
-            public BpmNodeMetadata metadata() {
-                return new BpmNodeMetadata(
+            public java.util.Optional<BpmNodeMetadata> metadata() {
+                return java.util.Optional.of(new BpmNodeMetadata(
                         type,
                         "测试节点",
                         "OTHER",
@@ -86,7 +87,7 @@ class BpmNodeRegistryImplTest {
                         false,
                         false,
                         false,
-                        true);
+                        true));
             }
 
             @Override

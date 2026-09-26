@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dynamic.ColumnValidation;
+import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormDefMapper;
@@ -35,10 +35,15 @@ import java.util.*;
  *
  * <h3>红线</h3>
  * <ul>
- *   <li>列名/表名过白名单（{@link ColumnValidation#physicalColumnName(String, FieldType)}）</li>
+ *   <li>列名/表名过白名单（{@link DynamicTableSql#requireColumn(String, FieldType)}）</li>
  *   <li>值一律 PreparedStatement ? 参数化绑定</li>
- *   <li>裸 SQL 手写 WHERE deleted = 0 AND tenant_id = ?（不吃拦截器）</li>
+ *   <li>裸 SQL 手写 WHERE deleted = 0 AND tenant_id = ?（不吃拦截器），并由
+ *       {@link DynamicTableSql} 受控入口机械校验</li>
  *   <li>①②③ 同一 {@code @Transactional}，RESTRICT 命中回滚不留半删</li>
+ *   <li><b>fail closed</b>：元数据扫描、引用检查、级联删除任一失败即中止并回滚，
+ *       绝不“记录告警后继续删除”</li>
+ *   <li><b>REFERENCE 串行化</b>：删除前对本行加锁（与引用写入侧同一锁身份），
+ *       消除“检查后、删除前新增引用”的并发窗口</li>
  * </ul>
  *
  * <h3>幂等</h3>
@@ -49,8 +54,8 @@ public class FormDataDeleteService {
 
     private static final Logger log = LoggerFactory.getLogger(FormDataDeleteService.class);
 
-    /** 表名校验正则（对齐 DynamicTableManager.generateTableName 的 assert 模式） */
-    private static final String TABLE_NAME_PATTERN = "^sw_form(_table)?_[a-z][a-z0-9]{9}$";
+    /** 固定元数据表（由 Flyway 建，非动态宽表）：RESTRICT 反查需跨租户可见 */
+    static final String FORM_CONFIG_TABLE = "sw_form_config";
 
     private final FormDefService formDefService;
     private final FormDefMapper formDefMapper;
@@ -99,22 +104,34 @@ public class FormDataDeleteService {
         }
         validateTableName(tableName);
 
-        // —— Step 3: RESTRICT 反查（删之前先拦） ——
+        // —— Step 3: 锁定目标父行（REFERENCE 串行化锚点） ——
+        // 与引用写入侧（FormFieldEnrichmentService / FormImportExportService）共用同一锁身份
+        // （租户 + 物理表 + 记录 id），使“检查引用 → 软删”与“校验目标 → 写入引用”互斥：
+        //   引用先提交 → 本处的 RESTRICT 反查必然可见该引用；
+        //   删除先提交 → 写侧加锁查询已看不到存活父行，引用写入被拒绝。
+        boolean liveRow = DynamicTableSql.tryLockLiveRow(jdbcTemplate, tableName, recordId, tenantId);
+        if (!liveRow) {
+            log.debug("目标记录不存在或已软删，按幂等继续（无锁可持）: table={}, recordId={}", tableName, recordId);
+        }
+
+        // —— Step 4: RESTRICT 反查（删之前先拦；失败即 fail closed） ——
         checkRestrictReferences(formKey, tableName, recordId, tenantId);
 
-        // —— Step 4: CASCADE 软删子表 ——
+        // —— Step 5: CASCADE 软删子表（失败即 fail closed） ——
         cascadeDeleteSubTableRecords(formDef.getId(), tableName, recordId, tenantId);
 
-        // —— Step 5: 软删主记录（I2：WHERE 叠加记录数据范围，服务端权威强制） ——
+        // —— Step 6: 软删主记录（I2：WHERE 叠加记录数据范围，服务端权威强制） ——
         StringBuilder deleteWhere = new StringBuilder(
                 "\"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
         List<Object> deleteParams = new ArrayList<>(List.of(recordId, tenantId));
         FormDataScopeSupport.appendWhere(deleteWhere, deleteParams,
                 FormDataScopeSupport.resolve(loginUser, null, null));
-        String deleteSql = "UPDATE \"" + tableName + "\" SET \"deleted\" = 1 WHERE " + deleteWhere;
+        String deleteSql = "UPDATE " + DynamicTableSql.quote(tableName) + " SET \"deleted\" = 1 WHERE " + deleteWhere;
         int affected;
         try {
-            affected = jdbcTemplate.update(deleteSql, deleteParams.toArray());
+            affected = DynamicTableSql.update(jdbcTemplate, tableName, deleteSql, deleteParams.toArray());
+        } catch (BaseException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Soft-delete failed: table={}, recordId={}", tableName, recordId, e);
             throw new BaseException(FormErrorCode.DELETE_RECORD_NOT_EXIST, "删除记录时系统未能完成，请稍后重试");
@@ -150,22 +167,25 @@ public class FormDataDeleteService {
             // 注：sw_form_config 为固定元数据表（由 Flyway 建，非动态宽表），
             // 列名在各数据库中的实际大小写取决于建表 DDL（H2 无引号=大写，PG 无引号=小写）。
             // 此处不加引号交由驱动按数据库默认折叠，以保证跨 H2/PG 兼容。
-            configRows = jdbcTemplate.queryForList(
+            configRows = DynamicTableSql.query(jdbcTemplate, FORM_CONFIG_TABLE,
                     "SELECT table_name, definition FROM sw_form_config"
                             + " WHERE deleted = 0 AND table_name IS NOT NULL");
         } catch (Exception e) {
-            log.warn("Failed to scan sw_form_config for RESTRICT check, skip: {}", e.getMessage());
-            return; // 元数据表不可用时放行（不阻塞删除）
+            // fail closed：元数据不可用时无法判定引用，必须中止而不是放行删除
+            log.error("Failed to scan sw_form_config for RESTRICT check: {}", e.getMessage(), e);
+            throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                    "引用检查所需的表单元数据当前不可用，已中止删除，请稍后重试");
         }
 
         for (Map<String, Object> row : configRows) {
             String refTableName = (String) row.get("table_name");
             if (refTableName == null || refTableName.isBlank()) continue;
 
-            // 防御性表名校验
-            if (!refTableName.matches(TABLE_NAME_PATTERN)) {
-                log.warn("Skipping config row with invalid table_name pattern: {}", refTableName);
-                continue;
+            // 防御性表名校验：非法元数据不得进入 SQL 构造
+            if (!DynamicTableSql.isValidTableName(refTableName)) {
+                log.error("Refusing to run RESTRICT check against invalid table_name: {}", refTableName);
+                throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                        "表单元数据存在非法的数据表标识，已中止删除，请联系管理员处理");
             }
 
             Object defObj = row.get("definition");
@@ -181,20 +201,20 @@ public class FormDataDeleteService {
 
             // 对每个 REFERENCE 列查是否存在有效引用
             for (String logicalName : refColumnNames) {
-                // 逻辑名 → 物理列名（ref_{name}_id）
+                // 逻辑名 → 物理列名（ref_{name}_id）：映射 + 白名单校验
                 String colName;
                 try {
-                    colName = ColumnValidation.physicalColumnName(logicalName, FieldType.REFERENCE);
-                    ColumnValidation.validateColumnName(colName);
-                } catch (IllegalArgumentException e) {
-                    log.warn("Invalid REFERENCE column name '{}' in table '{}', skip", logicalName, refTableName);
-                    continue;
+                    colName = DynamicTableSql.requireColumn(logicalName, FieldType.REFERENCE);
+                } catch (BaseException e) {
+                    log.error("Invalid REFERENCE column name '{}' in table '{}'", logicalName, refTableName);
+                    throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                            "表单元数据存在非法的关联字段标识，已中止删除，请联系管理员处理");
                 }
 
                 // 构建查询：同表自引用时排除被删记录自身
                 StringBuilder checkSql = new StringBuilder();
-                checkSql.append("SELECT 1 FROM \"").append(refTableName).append("\"")
-                        .append(" WHERE \"").append(colName).append("\" = ?")
+                checkSql.append("SELECT 1 FROM ").append(DynamicTableSql.quote(refTableName))
+                        .append(" WHERE ").append(DynamicTableSql.quote(colName)).append(" = ?")
                         .append(" AND \"deleted\" = 0 AND \"tenant_id\" = ?");
                 List<Object> params = new ArrayList<>();
                 params.add(recordId);
@@ -209,11 +229,15 @@ public class FormDataDeleteService {
 
                 List<Map<String, Object>> result;
                 try {
-                    result = jdbcTemplate.queryForList(checkSql.toString(), params.toArray());
+                    result = DynamicTableSql.query(jdbcTemplate, refTableName, checkSql.toString(), params.toArray());
+                } catch (BaseException e) {
+                    throw e;
                 } catch (Exception e) {
-                    log.warn("RESTRICT check query failed for table={}, col={}: {}",
-                            refTableName, colName, e.getMessage());
-                    continue; // 查询失败放行，不阻塞删除
+                    // fail closed：引用检查失败不得放行删除
+                    log.error("RESTRICT check query failed for table={}, col={}: {}",
+                            refTableName, colName, e.getMessage(), e);
+                    throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                            "引用检查未能完成，已中止删除，请稍后重试");
                 }
 
                 if (!result.isEmpty()) {
@@ -341,23 +365,28 @@ public class FormDataDeleteService {
             String subTableName = entry.getValue();
             if (subTableName == null || subTableName.isBlank()) continue;
 
-            // 表名防御性校验
+            // 表名防御性校验：非法元数据不得进入 SQL 构造
             try {
                 validateTableName(subTableName);
             } catch (BaseException e) {
-                log.warn("Invalid sub-table name '{}' in subTableMapping, skip", subTableName);
-                continue;
+                log.error("Invalid sub-table name '{}' in subTableMapping", subTableName);
+                throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                        "该表单的子表配置异常，已中止删除，请联系管理员处理");
             }
 
-            String sql = "UPDATE \"" + subTableName
-                    + "\" SET \"deleted\" = 1 WHERE \"parent_record_id\" = ?"
+            String sql = "UPDATE " + DynamicTableSql.quote(subTableName)
+                    + " SET \"deleted\" = 1 WHERE \"parent_record_id\" = ?"
                     + " AND \"deleted\" = 0 AND \"tenant_id\" = ?";
             int affected;
             try {
-                affected = jdbcTemplate.update(sql, recordId, tenantId);
+                affected = DynamicTableSql.update(jdbcTemplate, subTableName, sql, recordId, tenantId);
+            } catch (BaseException e) {
+                throw e;
             } catch (Exception e) {
-                log.warn("CASCADE soft-delete failed for sub-table '{}': {}", subTableName, e.getMessage());
-                continue;
+                // fail closed：级联软删失败不得静默跳过，否则主记录删除会留下存活子行
+                log.error("CASCADE soft-delete failed for sub-table '{}': {}", subTableName, e.getMessage(), e);
+                throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                        "级联删除子表数据时系统未能完成，请稍后重试");
             }
             if (affected > 0) {
                 log.info("CASCADE soft-deleted {} rows in sub-table '{}' for parent record {}",
@@ -380,8 +409,10 @@ public class FormDataDeleteService {
             return objectMapper.readValue(subTableMappingJson,
                     new TypeReference<Map<String, String>>() {});
         } catch (JsonProcessingException e) {
-            log.warn("Failed to parse sub-table mapping JSON: {}", e.getMessage());
-            return Map.of();
+            // fail closed：子表映射不可解析时级联范围不可知，必须中止而不是“无子表”继续删
+            log.error("Failed to parse sub-table mapping JSON: {}", e.getMessage(), e);
+            throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                    "该表单的子表配置异常，已中止删除，请联系管理员处理");
         }
     }
 
@@ -389,10 +420,12 @@ public class FormDataDeleteService {
 
     /**
      * 防御性表名校验（表名来自注册表，发布期已校验，此处为纵深防御）。
+     * <p>与 {@link DynamicTableSql} 共用同一正则常量；受控入口在执行前会再校验一次。</p>
      */
     private void validateTableName(String tableName) {
-        if (!tableName.matches(TABLE_NAME_PATTERN)) {
-            log.error("Table name '{}' does not match expected pattern '{}'", tableName, TABLE_NAME_PATTERN);
+        if (!DynamicTableSql.isValidTableName(tableName)) {
+            log.error("Table name '{}' does not match expected pattern '{}'",
+                    tableName, DynamicTableSql.TABLE_NAME_PATTERN);
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "该表单的数据表配置异常，请联系管理员处理");
         }
     }

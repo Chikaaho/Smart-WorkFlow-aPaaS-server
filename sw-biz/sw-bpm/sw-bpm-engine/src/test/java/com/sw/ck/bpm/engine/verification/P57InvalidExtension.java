@@ -16,11 +16,11 @@ import java.util.List;
 @Profile("p57-invalid-illegal")
 @Component
 public class P57InvalidExtension implements NodeTypeTranslator {
-    @Override public String type() { return "P57_INVALID"; }
-    @Override public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata("非法", "非法节点", "NOT_A_CATEGORY",
+    @Override public java.util.Optional<String> type() { return java.util.Optional.of("P57_INVALID"); }
+    @Override public java.util.Optional<BpmNodeMetadata> metadata() {
+        return java.util.Optional.of(new BpmNodeMetadata("非法", "非法节点", "NOT_A_CATEGORY",
                 new BpmNodeTopology(0, 1, 0, 1), List.of(), "invalid",
-                EnumSet.allOf(BpmNodeCapability.class), false, false, true, false);
+                EnumSet.allOf(BpmNodeCapability.class), false, false, true, false));
     }
     @Override public FlowElement translate(GraphElement node) { return null; }
 }

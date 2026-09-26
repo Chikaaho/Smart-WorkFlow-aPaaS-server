@@ -95,13 +95,19 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
 
         if (instance != null) {
             // 只读表单快照（历史变量中的 formData，与审批意见初始化同源；实例已结束仍可读）
-            Map<String, Object> variables = bpmTaskFacade.getHistoricVariables(instance.getProcessInstanceId());
-            Object formData = variables == null ? null : variables.get("formData");
+            // getHistoricVariables 当前契约恒 present（无历史为空 Map）
+            Map<String, Object> variables = bpmTaskFacade
+                    .getHistoricVariables(instance.getProcessInstanceId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "历史变量查询未返回结果: processInstanceId=" + instance.getProcessInstanceId()));
+            Object formData = variables.get("formData");
             detail.put("formData", formData);
 
             // 审批进度（活动任务）与流转记录（含审批意见），只读
-            List<BpmTaskDTO> activeTasks =
-                    bpmTaskFacade.queryByProcessInstance(instance.getProcessInstanceId());
+            // empty = 实例标识缺失：无活动任务（对外响应字段保持原列表形状，不漂移为 Optional）
+            List<BpmTaskDTO> activeTasks = bpmTaskFacade
+                    .queryByProcessInstance(instance.getProcessInstanceId())
+                    .orElse(List.of());
             detail.put("progress", activeTasks);
             detail.put("history",
                     approvalActionService.findByProcessInstanceId(instance.getProcessInstanceId()));

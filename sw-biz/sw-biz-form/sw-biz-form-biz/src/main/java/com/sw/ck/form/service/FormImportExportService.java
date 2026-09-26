@@ -11,7 +11,7 @@ import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dynamic.ColumnValidation;
+import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
@@ -210,14 +210,14 @@ public class FormImportExportService {
                             }
                             if (!subType.isEnabled() || subType == FieldType.TABLE) continue;
                             subFields.add(new FieldMeta(subName, subLabel, subType,
-                                    ColumnValidation.physicalColumnName(subName, subType)));
+                                    DynamicTableSql.requireColumn(subName, subType)));
                         }
                     }
                     tableFieldsOut.add(new FieldMeta(name, label, fieldType, name, null, subFields));
                     continue;
                 }
 
-                String mappingKey = ColumnValidation.physicalColumnName(name, fieldType);
+                String mappingKey = DynamicTableSql.requireColumn(name, fieldType);
                 String targetFormId = fieldNode.has("targetFormId") ? fieldNode.get("targetFormId").asText() : null;
                 mainFieldsOut.add(new FieldMeta(name, label, fieldType, mappingKey, targetFormId, null));
             }
@@ -407,6 +407,9 @@ public class FormImportExportService {
     /**
      * REFERENCE 导入值校验：必须为目标表单当前租户下存在且未删除的记录 id。
      * 不存在或跨租户 id 一律拒绝（抛 BaseException，由行级错误收集）。
+     *
+     * <p>同时对目标父行加锁（与单条提交、删除路径同一锁身份）：导入在本事务持锁期间，
+     * 并发删除无法把该父行软删，从而不会写入指向已删除父记录的引用。</p>
      */
     private void validateReferenceValue(FieldMeta field, Object value) {
         if (value == null || (value instanceof String s && s.isBlank())) {
@@ -423,12 +426,24 @@ public class FormImportExportService {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,
                     "关联字段 '" + field.name() + "' 的目标表单 '" + field.targetFormId() + "' 不存在");
         }
+        String targetTable = targetDef.getPhysicalTableName();
+        if (!DynamicTableSql.isValidTableName(targetTable)) {
+            log.error("Reference target form '{}' has invalid physical table name", field.targetFormId());
+            throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+                    "关联字段 '" + field.name() + "' 的目标表单数据表配置异常，无法导入");
+        }
         Long tenantId = requireLogin().getTenantId();
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM \"" + targetDef.getPhysicalTableName()
-                        + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?",
-                Integer.class, id, tenantId);
-        if (count == null || count == 0) {
+        boolean live;
+        try {
+            live = DynamicTableSql.tryLockLiveRow(jdbcTemplate, targetTable, id, tenantId);
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Reference target lock failed: field={}, id={}", field.name(), id, e);
+            throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                    "关联字段 '" + field.name() + "' 的引用校验未能完成，请稍后重试");
+        }
+        if (!live) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,
                     "关联字段 '" + field.name() + "' 引用的记录不存在或不具备引用权限: '" + id + "'");
         }
@@ -737,14 +752,19 @@ public class FormImportExportService {
         for (FieldMeta sub : subFields) {
             cols.add(sub.mappingKey());
         }
-        String columns = cols.stream().map(c -> "\"" + c + "\"").reduce((a, b) -> a + ", " + b).orElse("\"id\"");
-        String sql = "SELECT " + columns + " FROM \"" + subTableName
-                + "\" WHERE \"parent_record_id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+        String columns = cols.stream().map(DynamicTableSql::quote)
+                .reduce((a, b) -> a + ", " + b).orElse("\"id\"");
+        String sql = "SELECT " + columns + " FROM " + DynamicTableSql.quote(subTableName)
+                + " WHERE \"parent_record_id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
         try {
-            return jdbcTemplate.queryForList(sql, recordId, tenantId);
+            return DynamicTableSql.query(jdbcTemplate, subTableName, sql, recordId, tenantId);
+        } catch (BaseException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("Sub-table query failed for '{}': {}", subTableName, e.getMessage());
-            return List.of();
+            // fail closed：导出中子表读取失败不得伪装成“无子行”
+            log.error("Sub-table query failed for '{}': {}", subTableName, e.getMessage(), e);
+            throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                    "导出子表数据时系统未能完成，请稍后重试");
         }
     }
 
@@ -780,31 +800,25 @@ public class FormImportExportService {
             }
             if (targetDef == null || targetDef.getPhysicalTableName() == null) continue;
 
-            // 目标表单的显示列：第一个 TEXT 字段的物理列
-            String displayCol = null;
+            // 目标表单的显示列：第一个 TEXT 字段的物理列（映射 + 白名单校验；
+            // 历史/越权元数据给出的非法列名一律拒绝，绝不进入 SQL）
+            String displayCol;
             try {
-                JsonNode root = objectMapper.readTree(loadDefinitionJson(targetDef.getId()));
-                JsonNode fieldsArray = root.get("fields");
-                if (fieldsArray != null && fieldsArray.isArray()) {
-                    for (JsonNode f : fieldsArray) {
-                        String t = f.has("type") ? f.get("type").asText() : "TEXT";
-                        if ("TEXT".equals(t) && f.has("name")) {
-                            displayCol = f.get("name").asText();
-                            break;
-                        }
-                    }
-                }
-            } catch (JsonProcessingException e) {
-                log.warn("Failed to parse target definition for '{}'", field.targetFormId());
+                displayCol = resolveDisplayColumn(targetDef.getId());
+            } catch (BaseException e) {
+                log.warn("Reference display column rejected for '{}': {}", field.targetFormId(), e.getMessage());
+                continue;
             }
             if (displayCol == null) continue;
 
             Map<String, String> idToDisplay = new LinkedHashMap<>();
-            String sql = "SELECT \"id\", \"" + displayCol + "\" FROM \"" + targetDef.getPhysicalTableName()
-                    + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+            String sql = "SELECT \"id\", " + DynamicTableSql.quote(displayCol)
+                    + " FROM " + DynamicTableSql.quote(targetDef.getPhysicalTableName())
+                    + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
             for (String id : ids) {
                 try {
-                    List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, id, tenantId);
+                    List<Map<String, Object>> rows = DynamicTableSql.query(jdbcTemplate,
+                            targetDef.getPhysicalTableName(), sql, id, tenantId);
                     if (!rows.isEmpty()) {
                         String display = asText(rows.get(0).get(displayCol));
                         if (display != null) {
@@ -812,12 +826,38 @@ public class FormImportExportService {
                         }
                     }
                 } catch (Exception e) {
+                    // 展示降级（已登记例外）：仅影响引用显示值，导出数据本身仍受租户与数据范围约束
                     log.warn("Reference display lookup failed: id={}, {}", id, e.getMessage());
                 }
             }
             result.put(field.name(), idToDisplay);
         }
         return result;
+    }
+
+    /** 解析目标表单用于展示的首个 TEXT 字段物理列（非法列名抛业务异常，不进入 SQL）。 */
+    private String resolveDisplayColumn(String targetFormId) {
+        String rawName = null;
+        try {
+            JsonNode root = objectMapper.readTree(loadDefinitionJson(targetFormId));
+            JsonNode fieldsArray = root.get("fields");
+            if (fieldsArray != null && fieldsArray.isArray()) {
+                for (JsonNode f : fieldsArray) {
+                    String t = f.has("type") ? f.get("type").asText() : "TEXT";
+                    if ("TEXT".equals(t) && f.has("name")) {
+                        rawName = f.get("name").asText();
+                        break;
+                    }
+                }
+            }
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to parse target definition for '{}'", targetFormId);
+            return null;
+        }
+        if (rawName == null) {
+            return null;
+        }
+        return DynamicTableSql.requireColumn(rawName, FieldType.TEXT);
     }
 
     // ==================== 单元格读取（公式安全） ====================

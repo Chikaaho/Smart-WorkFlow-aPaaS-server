@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /** 固定用户策略：保存稳定 user id，运行时重新执行租户/启用状态校验。 */
 @Component
@@ -20,15 +21,24 @@ public class FixedUserParticipantResolver implements NodeParticipantResolver {
     }
 
     @Override
-    public String strategy() {
-        return ParticipantStrategy.FIXED_USER;
+    public Optional<String> strategy() {
+        return Optional.of(ParticipantStrategy.FIXED_USER);
     }
 
     @Override
-    public List<String> resolve(NodeParticipantContext context) {
+    public Optional<List<String>> resolve(NodeParticipantContext context) {
         List<Long> configured = toLongs(context.getStrategyValue());
-        List<Long> valid = userQueryFacade.findActiveUserIds(configured, context.getTenantId());
-        return configured.stream().filter(valid::contains).map(String::valueOf).distinct().toList();
+        if (configured.isEmpty()) {
+            return Optional.of(List.of());
+        }
+        Optional<List<Long>> validUsers = userQueryFacade.findActiveUserIds(configured, context.getTenantId());
+        if (validUsers.isEmpty()) {
+            // 租户/查询上下文缺失：无法确认有效用户，交由注册失败策略处置
+            return Optional.of(List.of());
+        }
+        List<Long> valid = validUsers.orElseThrow();
+        return Optional.of(configured.stream().filter(valid::contains)
+                .map(String::valueOf).distinct().toList());
     }
 
     private List<Long> toLongs(Object value) {

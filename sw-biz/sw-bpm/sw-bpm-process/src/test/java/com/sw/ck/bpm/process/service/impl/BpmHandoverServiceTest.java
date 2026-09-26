@@ -71,11 +71,13 @@ class BpmHandoverServiceTest {
 
     @Test
     void shouldMigrateScopedTasksAndRecordPerItemList() {
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(List.of(20L));
-        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(List.of(
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of(20L)));
+        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(java.util.Optional.of(List.of(
                 task("t1", "leave_def", "10"),
                 task("t2", "expense_def", "10"),
-                task("t3", "leave_def", "30"))); // 办理人已变化 → FAILED 不改写
+                task("t3", "leave_def", "30")))); // 办理人已变化 → FAILED 不改写
+        when(taskFacade.setAssignee(anyString(), anyString()))
+                .thenReturn(java.util.Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED));
 
         BpmHandover handover = service.handover(10L, 20L, List.of("leave_def"), false);
 
@@ -95,9 +97,9 @@ class BpmHandoverServiceTest {
 
     @Test
     void shouldSkipAlreadyMigratedTaskOnRetry() {
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(List.of(20L));
-        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(List.of(
-                task("t1", "leave_def", "20"))); // 上轮已迁给目标用户
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of(20L)));
+        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(java.util.Optional.of(List.of(
+                task("t1", "leave_def", "20")))); // 上轮已迁给目标用户
         BpmHandover handover = service.handover(10L, 20L, List.of(), false);
         assertThat(handover.getMigratedItems()).isZero();
         verify(taskFacade, never()).setAssignee(anyString(), anyString());
@@ -108,15 +110,15 @@ class BpmHandoverServiceTest {
     void shouldRejectSameUserAndInactiveTarget() {
         assertThatThrownBy(() -> service.handover(10L, 10L, List.of(), false))
                 .isInstanceOf(BaseException.class);
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(List.of());
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of()));
         assertThatThrownBy(() -> service.handover(10L, 99L, List.of(), false))
                 .isInstanceOf(BaseException.class).hasMessageContaining("目标用户无效");
     }
 
     @Test
     void shouldMigrateProxyRulesOnlyWhenExplicit() {
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(List.of(20L));
-        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(List.of());
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of(20L)));
+        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(java.util.Optional.of(List.of()));
         BpmAuthorizeRule rule = new BpmAuthorizeRule();
         rule.setId(7L);
         rule.setPrincipalId(10L);

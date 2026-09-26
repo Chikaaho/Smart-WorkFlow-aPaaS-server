@@ -153,6 +153,13 @@ public class OpenApiCallbackDeliveryService {
                 app.getAppId(), event.getBizId());
     }
 
+    /**
+     * 该 (应用, 事件, 业务对象) 是否已成功投递（Phase 4：恢复调度据此关闭任务，不重复投递）。
+     */
+    public boolean isDelivered(String appId, BpmNotifyTrigger trigger, String bizRef) {
+        return countSuccess(appId, trigger, bizRef) > 0;
+    }
+
     private long countSuccess(String appId, BpmNotifyTrigger trigger, String bizRef) {
         return logMapper.selectCount(new LambdaQueryWrapper<OpenApiCallbackLog>()
                 .eq(OpenApiCallbackLog::getAppId, appId)

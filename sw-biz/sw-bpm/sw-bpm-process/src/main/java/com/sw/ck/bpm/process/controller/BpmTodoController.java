@@ -105,8 +105,12 @@ public class BpmTodoController {
         long offset = (pageParam.getPageNum() - 1) * pageParam.getPageSize();
         int limit = (int) pageParam.getPageSize();
 
-        List<BpmTaskDTO> tasks = bpmTaskFacade.queryTodoPage(tenantId, assignee, (int) offset, limit);
-        long total = bpmTaskFacade.countTodo(tenantId, assignee);
+        // empty = 租户/处理人上下文缺失，无法确定查询范围：
+        // 对外保持原响应形状（空页 + 0），不把“无法查询”暴露为 500 或改变字段类型
+        List<BpmTaskDTO> tasks = bpmTaskFacade.queryTodoPage(tenantId, assignee, (int) offset, limit)
+                .orElse(List.of());
+        long total = bpmTaskFacade.countTodo(tenantId, assignee)
+                .orElse(0L);
 
         List<TodoTaskRespDTO> dtos = tasks.stream()
                 .map(this::toTodoTaskDTO)
@@ -179,10 +183,12 @@ public class BpmTodoController {
      */
     @GetMapping("/{taskId}")
     public R<TaskDetailRespDTO> detail(@PathVariable String taskId) {
-        BpmTaskDTO task = bpmTaskFacade.getTask(taskId);
-        if (task == null) {
+        // empty = 该任务不存在（原 null 返回路径）：对外仍为 404 语义，不改变错误码
+        java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(taskId);
+        if (taskLookup.isEmpty()) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
         }
+        BpmTaskDTO task = taskLookup.get();
         // 对象权限（I4 §3.7：消息摘要与深链再次执行对象权限）：仅任务办理人、
         // 超级管理员或持有监控查看权限的运营身份可读，其余身份服务端拒绝
         var loginUser = LoginUserHolder.get();
@@ -213,8 +219,8 @@ public class BpmTodoController {
         }
 
         // formKey 从流程变量获取
-        String formKey = bpmTaskFacade.getVariable(task.getProcessInstanceId(), "formKey");
-        dto.setFormKey(formKey);
+        // empty = 运行期与历史均无 formKey 变量：不设置（响应中仍为 null，原变量缺省语义）
+        bpmTaskFacade.getVariable(task.getProcessInstanceId(), "formKey").ifPresent(dto::setFormKey);
 
         dto.setBusinessKey(task.getBusinessKey());
         dto.setAssignee(task.getAssignee());
@@ -237,8 +243,8 @@ public class BpmTodoController {
         }
 
         // 流程变量
-        Map<String, Object> variables = bpmTaskFacade.getVariables(task.getProcessInstanceId());
-        dto.setProcessVariables(variables);
+        // empty = 实例标识缺失或该实例不存在：不设置（响应中仍为 null，原变量缺省语义）
+        bpmTaskFacade.getVariables(task.getProcessInstanceId()).ifPresent(dto::setProcessVariables);
         dto.setOpinionForm(taskActionService.resolveOpinionForm(task));
 
         if (task.getAssignee() != null && task.getAssignee().matches("\\d+")) {
@@ -250,7 +256,10 @@ public class BpmTodoController {
         log.debug("任务详情查询: taskId={}, processInstanceId={}", taskId, task.getProcessInstanceId());
 
         // 审批历史
-        List<BpmTaskDTO> historyTasks = bpmTaskFacade.queryHistoryByProcessInstance(task.getProcessInstanceId());
+        // empty = 实例标识缺失：无历史（响应字段保持原列表形状，不漂移为 Optional）
+        List<BpmTaskDTO> historyTasks = bpmTaskFacade
+                .queryHistoryByProcessInstance(task.getProcessInstanceId())
+                .orElse(List.of());
         List<ApprovalHistoryItemDTO> history = new java.util.ArrayList<>();
         for (BpmTaskDTO h : historyTasks) {
             ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
@@ -324,8 +333,12 @@ public class BpmTodoController {
         long offset = (pageParam.getPageNum() - 1) * pageParam.getPageSize();
         int limit = (int) pageParam.getPageSize();
 
-        List<BpmTaskDTO> tasks = bpmTaskFacade.queryProcessedPage(tenantId, assignee, (int) offset, limit);
-        long total = bpmTaskFacade.countProcessed(tenantId, assignee);
+        // empty = 租户/处理人上下文缺失，无法确定查询范围：
+        // 对外保持原响应形状（空页 + 0），不把“无法查询”暴露为 500 或改变字段类型
+        List<BpmTaskDTO> tasks = bpmTaskFacade.queryProcessedPage(tenantId, assignee, (int) offset, limit)
+                .orElse(List.of());
+        long total = bpmTaskFacade.countProcessed(tenantId, assignee)
+                .orElse(0L);
 
         List<ProcessedTaskRespDTO> dtos = tasks.stream()
                 .map(this::toProcessedTaskDTO)
@@ -355,9 +368,8 @@ public class BpmTodoController {
 
         dto.setBusinessKey(task.getBusinessKey());
 
-        String formKey = bpmTaskFacade.getVariable(
-                task.getProcessInstanceId(), "formKey");
-        dto.setFormKey(formKey);
+        // empty = 运行期与历史均无 formKey 变量：不设置（响应中仍为 null，原变量缺省语义）
+        bpmTaskFacade.getVariable(task.getProcessInstanceId(), "formKey").ifPresent(dto::setFormKey);
 
         if (task.getProcessDefinitionKey() != null) {
             BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(task.getProcessDefinitionKey());
@@ -384,10 +396,10 @@ public class BpmTodoController {
                     task.getEndTime().toInstant(), ZoneId.systemDefault()));
         }
 
-        String formKey = bpmTaskFacade.getVariable(
-                task.getProcessInstanceId(), "formKey");
-        dto.setFormKey(formKey);
-        dto.setBusinessKey(bpmTaskFacade.getBusinessKey(task.getProcessInstanceId()));
+        // empty = 运行期与历史均无 formKey 变量：不设置（响应中仍为 null，原变量缺省语义）
+        bpmTaskFacade.getVariable(task.getProcessInstanceId(), "formKey").ifPresent(dto::setFormKey);
+        // empty = 运行期与历史均无该实例或无业务键：不设置（响应中仍为 null，原缺省语义）
+        bpmTaskFacade.getBusinessKey(task.getProcessInstanceId()).ifPresent(dto::setBusinessKey);
 
         if (task.getProcessDefinitionKey() != null) {
             BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(task.getProcessDefinitionKey());

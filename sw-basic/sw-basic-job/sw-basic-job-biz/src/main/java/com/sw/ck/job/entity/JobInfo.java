@@ -34,7 +34,15 @@ public class JobInfo extends BaseEntity {
     /** 任务状态（NORMAL=启用 / PAUSED=停用） */
     private String status;
 
-    /** 是否允许并发执行（true=允许 / false=不允许） */
+    /**
+     * 是否允许并发执行（true=允许 / false=不允许）。
+     * <p>
+     * 列类型为 {@code SMALLINT}：PostgreSQL 不接受 boolean→smallint 隐式转换，
+     * 故显式绑定类型处理器（H2 曾掩盖该差异）。
+     * </p>
+     */
+    @com.baomidou.mybatisplus.annotation.TableField(value = "concurrent",
+            typeHandler = com.sw.ck.job.typehandler.BooleanSmallintTypeHandler.class)
     private Boolean concurrent;
 
     /** Misfire 策略（0=忽略 / 1=立即触发一次 / 2=放弃） */

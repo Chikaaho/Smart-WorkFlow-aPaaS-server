@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /** 角色策略：只解析当前租户、启用角色和启用成员。 */
 @Component
@@ -20,16 +21,24 @@ public class RoleParticipantResolver implements NodeParticipantResolver {
     }
 
     @Override
-    public String strategy() {
-        return ParticipantStrategy.ROLE;
+    public Optional<String> strategy() {
+        return Optional.of(ParticipantStrategy.ROLE);
     }
 
     @Override
-    public List<String> resolve(NodeParticipantContext context) {
+    public Optional<List<String>> resolve(NodeParticipantContext context) {
         Collection<?> values = context.getStrategyValue() instanceof Collection<?> collection
                 ? collection : List.of(context.getStrategyValue());
         List<String> codes = values.stream().map(String::valueOf).filter(item -> !item.isBlank()).distinct().toList();
-        return userQueryFacade.findActiveUserIdsByRoleCodes(codes, context.getTenantId()).stream()
-                .map(String::valueOf).distinct().toList();
+        if (codes.isEmpty()) {
+            return Optional.of(List.of());
+        }
+        Optional<List<Long>> memberIds = userQueryFacade.findActiveUserIdsByRoleCodes(codes, context.getTenantId());
+        if (memberIds.isEmpty()) {
+            // 角色集合/租户上下文缺失：无法解析成员，交由注册失败策略处置
+            return Optional.of(List.of());
+        }
+        return Optional.of(memberIds.orElseThrow().stream()
+                .map(String::valueOf).distinct().toList());
     }
 }

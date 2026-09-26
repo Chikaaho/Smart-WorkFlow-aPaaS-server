@@ -213,11 +213,11 @@ class I6NotifyClosureIntegrationTest {
     @DisplayName("R4 规则按事件裁决渠道顺序（IN_APP 保底 + 渠道裁剪）")
     void r4_ruleRouting() {
         jdbc.execute("INSERT INTO sw_notify_rule (id, rule_code, name, event_type, channel_priority, recipient_rule, required_flag, failure_policy, enabled, tenant_id) VALUES (1,'i6_rule','I6 规则','TODO_CREATED','IN_APP','ASSIGNEE',1,'RETRY',TRUE,100)");
-        List<NotifyChannel> channels = notifyRoutingService.channelsFor("TODO_CREATED", USER_7);
+        List<NotifyChannel> channels = notifyRoutingService.channelsFor("TODO_CREATED", USER_7).orElseThrow();
         assertThat(channels).contains(NotifyChannel.IN_APP);
-        assertThat(notifyRoutingService.required("TODO_CREATED")).isTrue();
+        assertThat(notifyRoutingService.required("TODO_CREATED")).contains(true);
         // 无规则事件保底 IN_APP
-        assertThat(notifyRoutingService.channelsFor("UNKNOWN_EVENT", USER_7))
+        assertThat(notifyRoutingService.channelsFor("UNKNOWN_EVENT", USER_7).orElseThrow())
                 .containsExactly(NotifyChannel.IN_APP);
     }
 
@@ -347,7 +347,7 @@ class I6NotifyClosureIntegrationTest {
         notifyRuleService.createRule(rule("g2d_rule_todo", "TODO_CREATED", true));
         Long rowId = jdbc.queryForLong("SELECT id FROM sw_notify_rule WHERE rule_code='g2d_rule_todo'");
         notifyRuleService.toggleRule(rowId, false);
-        org.assertj.core.api.Assertions.assertThat(notifyRoutingService.channelsFor("TODO_CREATED", 7L))
+        org.assertj.core.api.Assertions.assertThat(notifyRoutingService.channelsFor("TODO_CREATED", 7L).orElseThrow())
                 .containsExactly(NotifyChannel.IN_APP);
         notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
                 .channel(NotifyChannel.IN_APP)
@@ -397,10 +397,14 @@ class I6NotifyClosureIntegrationTest {
     void g3b_targetResolutionFailClosed() {
         com.sw.ck.notify.api.NotifyTargetResolver resolver = new com.sw.ck.notify.api.NotifyTargetResolver() {
             @Override
-            public String resolveEmail(Long userId) { return null; }
+            public java.util.Optional<String> resolveEmail(Long userId) {
+                return java.util.Optional.empty();
+            }
 
             @Override
-            public String resolvePhone(Long userId) { return null; }
+            public java.util.Optional<String> resolvePhone(Long userId) {
+                return java.util.Optional.empty();
+            }
         };
         var adapter = new com.sw.ck.notify.adapters.EmailNotifyChannelAdapter((org.springframework.mail.javamail.JavaMailSender) null, resolver,
                 new com.sw.ck.notify.config.NotifyChannelProperties());
@@ -410,7 +414,7 @@ class I6NotifyClosureIntegrationTest {
                 .title("标题")
                 .content("正文")
                 .tenantId(100L)
-                .build());
+                .build()).orElseThrow();
         org.assertj.core.api.Assertions.assertThat(result.getStatus()).isEqualTo("FAILED");
         org.assertj.core.api.Assertions.assertThat(result.getFailureReason()).contains("无法解析收件邮箱");
     }
@@ -609,7 +613,7 @@ class I6NotifyClosureIntegrationTest {
                 .eventType("TODO_CREATED")
                 .bizId("t-g3d")
                 .occurrenceNo(1L)
-                .build());
+                .build()).orElseThrow();
         org.assertj.core.api.Assertions.assertThat(res.getStatus()).isEqualTo("FAILED");
         org.assertj.core.api.Assertions.assertThat(res.getFailureReason()).contains("请求租户与认证租户不一致");
         // 且该伪造业务对象在租户 200 中同样零写入

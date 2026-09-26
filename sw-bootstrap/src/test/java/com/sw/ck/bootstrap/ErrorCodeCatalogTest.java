@@ -94,7 +94,7 @@ class ErrorCodeCatalogTest {
 
         assertTrue(malformed.isEmpty(), "errorKey 缺失或形式非法: " + malformed);
         assertTrue(duplicates.isEmpty(), "errorKey 必须全局唯一，发现重复: " + duplicates);
-        assertEquals(127, allConstants().size(),
+        assertEquals(130, allConstants().size(),
                 "ErrorCode 常量总数变化时必须同步 docs/governance/error-code-catalog.md §2");
     }
 
@@ -117,7 +117,7 @@ class ErrorCodeCatalogTest {
         assertEquals(new TreeSet<>(REGISTERED_DUPLICATE_CODES), actualDuplicates,
                 "数值码重复集合与 catalog §3 登记不一致：新错误不得复用冲突值，"
                         + "若确需重复必须同时更新目录与本测试的 REGISTERED_DUPLICATE_CODES");
-        assertEquals(122, byCode.size(),
+        assertEquals(125, byCode.size(),
                 "唯一数值码数量变化时必须同步 docs/governance/error-code-catalog.md §2");
     }
 

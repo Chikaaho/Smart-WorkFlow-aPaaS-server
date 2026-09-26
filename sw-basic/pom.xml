@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
     </parent>
 
     <artifactId>sw-basic</artifactId>
@@ -22,6 +22,7 @@
         <module>sw-basic-notify</module>
         <module>sw-basic-job/sw-basic-job-api</module>
         <module>sw-basic-job/sw-basic-job-biz</module>
+        <module>sw-basic-iot-api</module>
         <module>sw-basic-iot</module>
         <module>sw-basic-knowledge</module>
         <module>sw-basic-agent</module>

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 部门+岗位组合策略：value 形如 {@code {deptId: 123, postCode: "manager"}}，
@@ -23,25 +24,31 @@ public class DeptPostParticipantResolver implements NodeParticipantResolver {
     }
 
     @Override
-    public String strategy() {
-        return ParticipantStrategy.DEPT_POST;
+    public Optional<String> strategy() {
+        return Optional.of(ParticipantStrategy.DEPT_POST);
     }
 
     @Override
-    public List<String> resolve(NodeParticipantContext context) {
+    public Optional<List<String>> resolve(NodeParticipantContext context) {
         Object value = context.getStrategyValue();
         if (!(value instanceof Map<?, ?> mapping)) {
-            return List.of();
+            return Optional.of(List.of());
         }
         Long deptId = toLong(mapping.get("deptId"));
         Object postCode = mapping.get("postCode");
         String code = postCode == null || String.valueOf(postCode).isBlank()
                 ? null : String.valueOf(postCode);
         if (deptId == null || code == null) {
-            return List.of();
+            return Optional.of(List.of());
         }
-        return userQueryFacade.findActiveUserIdsByDeptAndPost(deptId, code, context.getTenantId()).stream()
-                .map(String::valueOf).distinct().toList();
+        Optional<List<Long>> memberIds = userQueryFacade.findActiveUserIdsByDeptAndPost(
+                deptId, code, context.getTenantId());
+        if (memberIds.isEmpty()) {
+            // 部门/岗位/租户上下文缺失：无法解析任职用户，交由注册失败策略处置
+            return Optional.of(List.of());
+        }
+        return Optional.of(memberIds.orElseThrow().stream()
+                .map(String::valueOf).distinct().toList());
     }
 
     private Long toLong(Object value) {

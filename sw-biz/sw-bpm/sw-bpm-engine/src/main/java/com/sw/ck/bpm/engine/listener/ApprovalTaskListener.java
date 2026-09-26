@@ -199,7 +199,9 @@ public class ApprovalTaskListener implements TaskListener {
                     .formKey((String) delegateTask.getVariable("formKey"))
                     .approverValue(value)
                     .initiatorUserId(parseLong(delegateTask.getVariable("submitter"))).build();
-            userIds = resolver.resolve(ctx);
+            // 解析器契约恒 present；empty 属契约违约，按解析不到审批人拒绝
+            userIds = resolver.resolve(ctx).orElseThrow(
+                    () -> new BaseException(BpmErrorCode.APPROVER_RESOLVE_EMPTY));
         }
         if (userIds == null || userIds.isEmpty()) {
             log.error("Approver resolution returned empty: nodeKey={}, type={}", nodeKey, type);
@@ -220,23 +222,26 @@ public class ApprovalTaskListener implements TaskListener {
             List<String> effectiveUsers = userIds;
             if (entryPort != null) {
                 try {
-                    List<String> functionResolved = entryPort.resolveParticipantsByFunction(
+                    // empty = 未配置函数或函数服务不可用：走默认策略解析结果
+                    java.util.Optional<List<String>> functionResolved = entryPort.resolveParticipantsByFunction(
                             tenantId, processInstanceId, nodeKey, delegateTask.getId(),
                             new java.util.LinkedHashMap<>(delegateTask.getVariables()),
                             nodeConfigJson);
-                    if (functionResolved != null && !functionResolved.isEmpty()) {
-                        effectiveUsers = functionResolved;
+                    if (functionResolved.isPresent() && !functionResolved.orElseThrow().isEmpty()) {
+                        effectiveUsers = functionResolved.orElseThrow();
                     }
                 } catch (Exception e) {
                     log.warn("节点函数参与人解析失败: taskId={}, error={}",
                             delegateTask.getId(), e.getMessage());
                 }
                 try {
-                    String proxied = entryPort.onTaskCreate(tenantId, processInstanceId,
-                            nodeKey, delegateTask.getId(), effectiveUsers, nodeConfigJson);
-                    if (proxied != null && !proxied.isBlank()) {
+                    // empty = 本次不改写 assignee（走默认派发）
+                    java.util.Optional<String> proxied = entryPort.onTaskCreate(tenantId, processInstanceId,
+                            nodeKey, delegateTask.getId(), effectiveUsers, nodeConfigJson)
+                            .filter(assignee -> !assignee.isBlank());
+                    if (proxied.isPresent()) {
                         delegateTask.setOwner(effectiveUsers.get(0));
-                        effectiveUsers = List.of(proxied);
+                        effectiveUsers = List.of(proxied.orElseThrow());
                     }
                 } catch (Exception e) {
                     log.warn("任务进入生命周期处理失败（不阻断任务创建）: taskId={}, error={}",
@@ -259,15 +264,18 @@ public class ApprovalTaskListener implements TaskListener {
                     List<Long> ids = userIds.stream()
                             .filter(id -> id != null && id.matches("\\d+"))
                             .map(Long::valueOf).distinct().toList();
-                    userQueryFacade.getUserDisplayNames(ids).forEach((id, name) ->
-                            frozen.put(String.valueOf(id), name));
+                    // empty = 查询对象缺失：无展示名可冻结，快照仅记录 ID
+                    userQueryFacade.getUserDisplayNames(ids).ifPresent(names ->
+                            names.forEach((id, name) -> frozen.put(String.valueOf(id), name)));
                 } catch (Exception e) {
                     log.warn("参与人展示名冻结失败，快照仅记录 ID: {}", e.getMessage());
                 }
             }
             java.util.Map<String, String> displayNames = java.util.Collections.unmodifiableMap(frozen);
             participantSnapshotRecorder.record(processInstanceId, nodeKey, delegateTask.getId(),
-                    userIds, displayNames, tenantId);
+                    userIds, displayNames, tenantId)
+            .orElseThrow(() -> new IllegalStateException(
+                    "ParticipantSnapshotRecorder#record 契约恒 present，empty 属契约违约"));
         }
 
         log.info("Task assignee set: taskId={}, nodeKey={}, assignee={}",

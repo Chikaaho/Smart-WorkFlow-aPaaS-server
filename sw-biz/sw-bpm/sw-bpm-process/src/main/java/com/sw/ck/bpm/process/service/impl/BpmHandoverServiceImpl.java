@@ -72,7 +72,9 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "来源与目标用户不能相同");
         }
         // 目标必须为同租户有效用户
-        if (!userQueryFacade.findActiveUserIds(List.of(toUserId), tenantId).contains(toUserId)) {
+        // empty = 查询对象/租户上下文缺失：无法确认有效性，按原有“无效目标用户”拒绝
+        if (!userQueryFacade.findActiveUserIds(List.of(toUserId), tenantId)
+                .orElse(List.of()).contains(toUserId)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     "目标用户无效、已停用或不属于当前租户");
         }
@@ -95,7 +97,9 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
         String tenant = String.valueOf(tenantId);
 
         // 1) 未完成可办理任务迁移（稳定任务标识 + 前后责任人 + 结果/原因逐项落库）
-        for (BpmTaskDTO task : bpmTaskFacade.queryTodo(tenant, String.valueOf(fromUserId))) {
+        // empty = 租户/处理人上下文缺失：无待迁移任务（原空列表口径）
+        for (BpmTaskDTO task : bpmTaskFacade.queryTodo(tenant, String.valueOf(fromUserId))
+                .orElse(List.of())) {
             if (!scope.isEmpty() && !scope.contains(task.getProcessDefinitionKey())) {
                 continue;
             }
@@ -114,7 +118,10 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
                     item.setFailReason("任务当前办理人已变化: " + task.getAssignee());
                     failed++;
                 } else {
-                    bpmTaskFacade.setAssignee(task.getTaskId(), String.valueOf(toUserId));
+                    // present = APPLIED；任务不存在/已被处理继续抛原异常（由下方逐项失败兜住）
+                    bpmTaskFacade.setAssignee(task.getTaskId(), String.valueOf(toUserId))
+                    .orElseThrow(() -> new IllegalStateException(
+                            "BpmTaskFacade#setAssignee 契约恒 present，empty 属契约违约"));
                     item.setResult("MIGRATED");
                     migrated++;
                 }

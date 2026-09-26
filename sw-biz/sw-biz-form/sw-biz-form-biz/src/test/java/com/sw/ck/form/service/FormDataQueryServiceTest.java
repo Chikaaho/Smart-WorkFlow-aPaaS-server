@@ -1029,21 +1029,22 @@ class FormDataQueryServiceTest {
                 private final Set<String> validSexCodes = Set.of("0", "1", "2");
 
                 @Override
-                public boolean isValidCode(String dictType, String code) {
-                    if ("sys_user_sex".equals(dictType)) {
-                        return validSexCodes.contains(code);
+                public Optional<Boolean> isValidCode(String dictType, String code) {
+                    if (dictType == null || dictType.isBlank() || code == null || code.isBlank()) {
+                        return Optional.empty();
                     }
-                    return false;
+                    if ("sys_user_sex".equals(dictType)) {
+                        return Optional.of(validSexCodes.contains(code));
+                    }
+                    return Optional.of(false);
                 }
 
                 @Override
-                public List<com.sw.ck.system.api.dict.DictItemDTO> listByType(String dictType) {
-                    return List.of();
-                }
-
-                @Override
-                public String resolveLabel(String dictType, String code) {
-                    return null;
+                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
+                    if (dictType == null || dictType.isBlank()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(List.of());
                 }
             };
         }

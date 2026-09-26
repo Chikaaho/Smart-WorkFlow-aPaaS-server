@@ -190,7 +190,8 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
 
         NotifySendResult result;
         try {
-            result = notifyFacade.attemptDelivery(request);
+            result = notifyFacade.attemptDelivery(request)
+                    .orElseThrow(() -> new IllegalStateException("重发投递未返回结果"));
         } catch (Exception e) {
             log.warn("通知重发投递异常，按失败回写: id={}, attemptNo={}", id, attemptNo, e);
             result = NotifySendResult.builder()

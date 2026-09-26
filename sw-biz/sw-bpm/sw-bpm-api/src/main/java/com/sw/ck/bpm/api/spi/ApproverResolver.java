@@ -2,6 +2,8 @@ package com.sw.ck.bpm.api.spi;
 
 import com.sw.ck.bpm.api.dto.ApproverContext;
 
+import java.util.Optional;
+
 /**
  * 审批人解析 SPI。
  * <p>
@@ -25,8 +27,8 @@ public interface ApproverResolver {
      * 根据发起上下文解析审批人。
      *
      * @param context 流程发起上下文（至少含 formKey、submittedData、submitter、tenantId）
-     * @return 审批人用户 ID（字符串形式，对应 Flowable assignee 变量 ${approver}），
-     *         不可返回 null
+     * @return present = 审批人用户 ID（字符串形式，对应 Flowable assignee 变量 ${approver}）；
+     *         当前契约恒 present，解析失败抛明确异常，不得返回空值
      */
-    String resolve(ApproverContext context);
+    Optional<String> resolve(ApproverContext context);
 }

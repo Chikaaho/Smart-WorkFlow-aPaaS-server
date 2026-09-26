@@ -128,8 +128,12 @@ public class BpmInstanceController {
                         CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在"));
         assertInstanceReadable(instance, processInstanceId);
 
-        List<String> activeNodeIds = bpmRuntimeFacade.getActiveActivityIds(processInstanceId);
-        List<BpmActivityDTO> flowTrace = bpmRuntimeFacade.queryHistoricActivities(processInstanceId);
+        // empty = 实例标识缺失或无运行期记录：无活跃节点（响应字段保持原列表形状）
+        List<String> activeNodeIds = bpmRuntimeFacade.getActiveActivityIds(processInstanceId)
+                .orElse(List.of());
+        // empty = 实例标识缺失或无历史记录：无流转记录（响应字段保持原列表形状）
+        List<BpmActivityDTO> flowTrace = bpmRuntimeFacade.queryHistoricActivities(processInstanceId)
+                .orElse(List.of());
 
         // 候选模式任务在 Flowable 历史中无 assignee（引擎层 approver 兜底会误填为发起人），
         // 权威参与人以节点进入时冻结的快照为准：快照命中即覆盖（I1 G5b）。
@@ -162,8 +166,12 @@ public class BpmInstanceController {
             }
         });
 
+        // empty = 实例标识缺失或该实例在运行期与历史均不存在：按“无流程变量”处理，
+        // formData 保持 null（对外响应字段形状不漂移为 Optional）
+        Map<String, Object> instanceVariables = bpmRuntimeFacade.getProcessVariables(processInstanceId)
+                .orElse(Map.of());
         InstanceDetailDTO dto = toDetailDTO(instance, activeNodeIds, flowTrace,
-                bpmRuntimeFacade.getProcessVariables(processInstanceId).get("formData"));
+                instanceVariables.get("formData"));
 
         log.debug("实例详情查询: processInstanceId={}, activeNodes={}, flowTraceSize={}",
                 processInstanceId, activeNodeIds.size(), flowTrace.size());
@@ -196,7 +204,10 @@ public class BpmInstanceController {
             return;
         }
         try {
-            boolean participant = bpmRuntimeFacade.queryHistoricActivities(processInstanceId).stream()
+            // empty = 实例标识缺失或查询异常（原容错不抛口径）：无历史可判定参与，
+            // fail closed 继续走抄送人判定与最终拒绝
+            boolean participant = bpmRuntimeFacade.queryHistoricActivities(processInstanceId)
+                    .orElse(List.of()).stream()
                     .anyMatch(a -> "userTask".equals(a.getActivityType())
                             && loginUser.getUserId() != null
                             && loginUser.getUserId().toString().equals(a.getAssignee()));
@@ -235,7 +246,13 @@ public class BpmInstanceController {
             return Map.of();
         }
         try {
-            return userQueryFacade.getUserDisplayNames(ids);
+            // empty = 查询上下文缺失（ids 为 null，此处已判非空，契约上不产生）
+            java.util.Optional<Map<Long, String>> names = userQueryFacade.getUserDisplayNames(ids);
+            if (names.isEmpty()) {
+                log.warn("用户展示名批量查询未返回结果（查询上下文缺失），回退为空映射");
+                return Map.of();
+            }
+            return names.get();
         } catch (Exception e) {
             log.warn("用户展示名批量查询失败，回退为 null: {}", e.getMessage());
             return Map.of();

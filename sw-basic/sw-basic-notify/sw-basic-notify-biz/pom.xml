@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
         <relativePath>../../../pom.xml</relativePath>
     </parent>
 
@@ -72,4 +72,39 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <profiles>
+        <profile>
+            <id>dev</id>
+            <build>
+                <plugins>
+                    <!--
+                        Phase 6B · dev-only 验证适配器物理隔离：本模块的 P58 调试适配器源码位于
+                        src/dev/java，只在 dev/local 构建（-Pdev）下作为额外源码根参与编译。
+                        默认（生产）构建的编译输入天然看不到它们，因此正式 Boot Jar 内不存在这些类；
+                        精确 profile 排除（根 POM prod profile）仅作为辅助门禁。
+                    -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.1</version>
+                        <executions>
+                            <execution>
+                                <id>add-dev-source-root</id>
+                                <phase>generate-sources</phase>
+                                <goals>
+                                    <goal>add-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>src/dev/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

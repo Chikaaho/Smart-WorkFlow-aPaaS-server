@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 流程配置的最小受控表达式解释器。
@@ -15,53 +16,82 @@ public final class RestrictedExpressionEvaluator {
     private RestrictedExpressionEvaluator() {
     }
 
-    public static Object value(String expression, Map<String, Object> variables) {
+    /**
+     * 求值受控表达式。
+     *
+     * @param expression 表达式
+     * @param variables  变量来源（只读）
+     * @return present = 求值结果（false / 0 / 空集合等合法业务值一律以 present 保留）；
+     *         empty = 表达式引用的路径或变量不存在（原 null 返回路径）
+     * @throws IllegalArgumentException 表达式为空或语法不完整/不匹配时
+     */
+    public static Optional<Object> value(String expression, Map<String, Object> variables) {
+        return Optional.ofNullable(evaluate(expression, variables));
+    }
+
+    /**
+     * 表达式是否判定为真。
+     *
+     * @return present = 判定结果（false 是合法答案，与"无法判定"不同）；当前契约恒 present
+     * @throws IllegalArgumentException 表达式为空或语法不完整/不匹配时
+     */
+    public static Optional<Boolean> matches(String expression, Map<String, Object> variables) {
+        return Optional.of(truthy(evaluate(expression, variables)));
+    }
+
+    /**
+     * 求值并归一为字符串值列表。
+     *
+     * @return present = 值列表（求值结果为空或空白时为空列表，属合法零匹配）；
+     *         当前契约恒 present
+     * @throws IllegalArgumentException 表达式为空或语法不完整/不匹配时
+     */
+    public static Optional<List<String>> values(String expression, Map<String, Object> variables) {
+        Object result = evaluate(expression, variables);
+        if (result == null) return Optional.of(List.of());
+        if (result instanceof Collection<?> collection) {
+            return Optional.of(collection.stream().filter(item -> item != null)
+                    .map(String::valueOf).filter(item -> !item.isBlank()).distinct().toList());
+        }
+        String text = String.valueOf(result).trim();
+        return Optional.of(text.isBlank() ? List.of() : List.of(text));
+    }
+
+    /**
+     * 内部求值：以 {@code null} 表达"路径/变量不存在"，由公共入口转换为 empty。
+     */
+    private static Object evaluate(String expression, Map<String, Object> variables) {
         if (expression == null || expression.isBlank()) {
             throw new IllegalArgumentException("表达式不能为空");
         }
         String text = expression.trim();
         validateBalancedSyntax(text);
         if (isWrapped(text)) {
-            return value(text.substring(1, text.length() - 1), variables);
+            return evaluate(text.substring(1, text.length() - 1), variables);
         }
         List<String> orParts = splitTopLevel(text, "||");
         if (orParts.size() > 1) {
-            return orParts.stream().anyMatch(part -> truthy(value(part, variables)));
+            return orParts.stream().anyMatch(part -> truthy(evaluate(part, variables)));
         }
         List<String> andParts = splitTopLevel(text, "&&");
         if (andParts.size() > 1) {
-            return andParts.stream().allMatch(part -> truthy(value(part, variables)));
+            return andParts.stream().allMatch(part -> truthy(evaluate(part, variables)));
         }
         if (text.startsWith("exists(") && text.endsWith(")")) {
             return resolve(text.substring(7, text.length() - 1).trim(), variables) != null;
         }
         if (text.startsWith("not(") && text.endsWith(")")) {
-            return !truthy(value(text.substring(4, text.length() - 1), variables));
+            return !truthy(evaluate(text.substring(4, text.length() - 1), variables));
         }
         for (String operator : List.of("!=", ">=", "<=", "==", ">", "<")) {
             int index = findTopLevel(text, operator);
             if (index >= 0) {
-                Object left = value(text.substring(0, index), variables);
-                Object right = value(text.substring(index + operator.length()), variables);
+                Object left = evaluate(text.substring(0, index), variables);
+                Object right = evaluate(text.substring(index + operator.length()), variables);
                 return compare(left, right, operator);
             }
         }
         return resolve(text, variables);
-    }
-
-    public static boolean matches(String expression, Map<String, Object> variables) {
-        return truthy(value(expression, variables));
-    }
-
-    public static List<String> values(String expression, Map<String, Object> variables) {
-        Object result = value(expression, variables);
-        if (result == null) return List.of();
-        if (result instanceof Collection<?> collection) {
-            return collection.stream().filter(item -> item != null)
-                    .map(String::valueOf).filter(item -> !item.isBlank()).distinct().toList();
-        }
-        String text = String.valueOf(result).trim();
-        return text.isBlank() ? List.of() : List.of(text);
     }
 
     private static Object resolve(String raw, Map<String, Object> variables) {

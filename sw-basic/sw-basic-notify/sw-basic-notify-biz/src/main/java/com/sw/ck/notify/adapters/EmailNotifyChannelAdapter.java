@@ -17,6 +17,7 @@ import org.springframework.util.StringUtils;
 
 
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
 /**
  * 邮件生产渠道适配器（I6）。
@@ -29,6 +30,8 @@ import java.nio.charset.StandardCharsets;
 public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(EmailNotifyChannelAdapter.class);
+
+    private static final NotifyChannel CHANNEL = NotifyChannel.EMAIL;
 
     private final JavaMailSender mailSender;
     private final NotifyTargetResolver targetResolver;
@@ -47,34 +50,36 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
     }
 
     @Override
-    public NotifyChannel channel() {
-        return NotifyChannel.EMAIL;
+    public Optional<NotifyChannel> channel() {
+        return Optional.of(CHANNEL);
     }
 
     @Override
-    public NotifySendResult send(NotifySendRequest request) {
-        String to = targetResolver == null ? null : targetResolver.resolveEmail(request.getRecipientId());
-        if (to == null || to.isBlank()) {
-            return NotifySendResult.builder().channel(channel()).status("FAILED")
-                    .failureReason("无法解析收件邮箱（用户无效或未登记邮箱），拒绝发送").build();
+    public Optional<NotifySendResult> send(NotifySendRequest request) {
+        Optional<String> to = targetResolver == null
+                ? Optional.empty()
+                : targetResolver.resolveEmail(request.getRecipientId()).filter(value -> !value.isBlank());
+        if (to.isEmpty()) {
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                    .failureReason("无法解析收件邮箱（用户无效或未登记邮箱），拒绝发送").build());
         }
         try {
             jakarta.mail.internet.MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
             helper.setFrom(from);
-            helper.setTo(to);
+            helper.setTo(to.orElseThrow());
             helper.setSubject(org.springframework.web.util.HtmlUtils.htmlEscape(request.getTitle() == null ? "" : request.getTitle()));
             helper.setText("<html><body>" + NotifyHtmlSanitizer.clean(request.getContent()) + "</body></html>", true);
             mailSender.send(message);
             log.info("邮件投递成功: recipient={}, external=smtp-{}", request.getRecipientId(), System.nanoTime());
-            return NotifySendResult.builder().channel(channel()).status("SUCCESS")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
                     .externalMessageId("smtp-" + Math.abs(System.nanoTime()))
-                    .build();
+                    .build());
         } catch (Exception e) {
             log.warn("邮件投递失败: recipient={}, exceptionClass={}", request.getRecipientId(),
                     e.getClass().getSimpleName());
-            return NotifySendResult.builder().channel(channel()).status("FAILED")
-                    .failureReason("邮件投递失败: " + e.getClass().getSimpleName()).build();
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                    .failureReason("邮件投递失败: " + e.getClass().getSimpleName()).build());
         }
     }
 }

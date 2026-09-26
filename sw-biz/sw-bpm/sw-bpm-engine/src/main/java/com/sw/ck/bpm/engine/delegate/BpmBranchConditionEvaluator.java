@@ -46,7 +46,9 @@ public class BpmBranchConditionEvaluator implements ExecutionListener {
             throw new IllegalStateException("分支条件编码非法", e);
         }
         try {
-            return RestrictedExpressionEvaluator.matches(expression, execution.getVariables());
+            // matches(...) 契约恒 present：false 是合法判定，empty 不产生；语法非法继续抛 IAE
+            return RestrictedExpressionEvaluator.matches(expression, execution.getVariables())
+                    .orElseThrow(() -> new IllegalStateException("分支条件求值未返回判定结果"));
         } catch (IllegalArgumentException e) {
             throw new BaseException(BpmErrorCode.BRANCH_EVALUATION_FAILED.getCode(),
                     BpmErrorCode.BRANCH_EVALUATION_FAILED.getMessage() + ": " + e.getMessage());
@@ -79,7 +81,9 @@ public class BpmBranchConditionEvaluator implements ExecutionListener {
         if (expression == null || expression.isBlank()) expression = "DEFAULT";
         auditPort.recordBranch(execution.getProcessInstanceId(), flow.getSourceRef(),
                 branchId, "1", inputSummary(execution, expression, priority),
-                parseLong(execution.getVariable("tenantId")));
+                parseLong(execution.getVariable("tenantId")))
+        .orElseThrow(() -> new IllegalStateException(
+                "NodeActionAuditPort#recordBranch 契约恒 present，empty 属契约违约"));
     }
 
     /** 保留旧模型调用兼容性；新模型通过 SequenceFlow take listener 记录默认边。 */
@@ -88,7 +92,9 @@ public class BpmBranchConditionEvaluator implements ExecutionListener {
         if (auditPort != null) {
             auditPort.recordBranch(execution.getProcessInstanceId(), execution.getCurrentActivityId(),
                     branchId, "1", inputSummary(execution, "DEFAULT", priority),
-                    parseLong(execution.getVariable("tenantId")));
+                    parseLong(execution.getVariable("tenantId")))
+            .orElseThrow(() -> new IllegalStateException(
+                    "NodeActionAuditPort#recordBranch 契约恒 present，empty 属契约违约"));
         }
         return true;
     }

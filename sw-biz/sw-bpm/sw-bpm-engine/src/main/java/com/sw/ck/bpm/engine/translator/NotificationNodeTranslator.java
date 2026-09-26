@@ -10,32 +10,34 @@ import org.springframework.stereotype.Component;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /** 通知节点：统一参与人/模板/渠道配置，经 NotifyFacade 发送。 */
 @Component
 public class NotificationNodeTranslator extends ServiceTaskNodeTranslator {
     public NotificationNodeTranslator(ObjectMapper objectMapper) { super(objectMapper); }
-    @Override public String type() { return "NOTIFICATION"; }
+    @Override public Optional<String> type() { return Optional.of("NOTIFICATION"); }
     @Override protected String delegateBean() { return "notificationNodeDelegate"; }
     @Override protected String nodeName() { return "通知"; }
 
     @Override
-    public List<GraphValidationError> validateConfig(GraphElement node) {
-        List<GraphValidationError> errors = super.validateConfig(node);
-        if (!errors.isEmpty()) return errors;
+    public Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
+        List<GraphValidationError> errors = super.validateConfig(node).orElseThrow(
+                () -> new IllegalStateException("服务节点配置校验未返回结果"));
+        if (!errors.isEmpty()) return Optional.of(errors);
         Map<String, Object> config = node.getConfig();
         String channel = text(config.get("channel"), "IN_APP");
         if (Arrays.stream(NotifyChannel.values()).noneMatch(item -> item.name().equals(channel))) {
-            return List.of(error(node, "通知渠道不合法: " + channel));
+            return Optional.of(List.of(error(node, "通知渠道不合法: " + channel)));
         }
         if (blank(config.get("title")) || blank(config.get("content"))) {
-            return List.of(error(node, "通知标题和正文不能为空"));
+            return Optional.of(List.of(error(node, "通知标题和正文不能为空")));
         }
         String strategy = failureStrategy(config);
         if (!List.of("BLOCK", "CONTINUE").contains(strategy)) {
-            return List.of(error(node, "失败策略不合法: " + strategy));
+            return Optional.of(List.of(error(node, "失败策略不合法: " + strategy)));
         }
-        return List.of();
+        return Optional.of(List.of());
     }
 
     private String text(Object value, String fallback) {

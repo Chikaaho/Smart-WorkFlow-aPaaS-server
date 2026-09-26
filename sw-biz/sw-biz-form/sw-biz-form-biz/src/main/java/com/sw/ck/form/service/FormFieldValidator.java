@@ -262,7 +262,10 @@ public class FormFieldValidator {
                         log.warn("DICT field '{}' has no dictType, skip dict validation", def.name);
                     } else {
                         String code = String.valueOf(value);
-                        boolean valid = dictFacade.isValidCode(dictType, code);
+                        // dictType 与 code 均非空白 ⇒ 契约保证 present（empty 只表达缺少判定目标）
+                        boolean valid = dictFacade.isValidCode(dictType, code).orElseThrow(() ->
+                                new IllegalStateException(
+                                        "字典值域判定缺少查询目标: dictType=" + dictType));
                         if (!valid) {
                             throw new BaseException(FormErrorCode.SUBMIT_DICT_INVALID,
                                     "字段「" + def.displayName() + "」的选项不在允许范围内，请重新选择");

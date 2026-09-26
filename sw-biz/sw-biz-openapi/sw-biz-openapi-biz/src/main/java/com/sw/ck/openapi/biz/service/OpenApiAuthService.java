@@ -84,7 +84,10 @@ public class OpenApiAuthService {
         }
         // 租户有效性必须早于 nonce 写入：停用/过期租户的签名请求不得留下任何
         // 认证副作用，也不得建立代理上下文。
-        if (tenantValidityFacade != null && !tenantValidityFacade.isValid(app.getTenantId())) {
+        // 判定为 fail-closed：present-false 与 empty（无法判定）一律视为无效租户。
+        if (tenantValidityFacade != null
+                && tenantValidityFacade.isValid(app.getTenantId())
+                        .filter(Boolean::booleanValue).isEmpty()) {
             throw new BaseException(OpenApiErrorCode.TENANT_INVALID);
         }
         try {

@@ -65,7 +65,7 @@ class ParticipantNameSnapshotTest {
         frozen.setParticipantName("冻结名");
         frozen.setParticipantStatus("HANDLED");
         when(snapshotMapper.selectList(any())).thenReturn(List.of(frozen));
-        when(userQueryFacade.getUserDisplayNames(java.util.Set.of(102L))).thenReturn(Map.of(102L, "实时名"));
+        when(userQueryFacade.getUserDisplayNames(java.util.Set.of(102L))).thenReturn(java.util.Optional.of(Map.of(102L, "实时名")));
 
         ParticipantNameService service = new ParticipantNameService(snapshotMapper, userQueryFacade);
         Map<Long, String> names = service.resolveDisplayNames("pi-1", List.of(101L, 102L));
@@ -77,7 +77,7 @@ class ParticipantNameSnapshotTest {
     @DisplayName("快照查询异常时整批回落实时查询，不阻断调用方")
     void participantNameService_shouldDegradeOnSnapshotFailure() {
         when(snapshotMapper.selectList(any())).thenThrow(new RuntimeException("db down"));
-        when(userQueryFacade.getUserDisplayNames(java.util.Set.of(101L))).thenReturn(Map.of(101L, "实时名"));
+        when(userQueryFacade.getUserDisplayNames(java.util.Set.of(101L))).thenReturn(java.util.Optional.of(Map.of(101L, "实时名")));
 
         ParticipantNameService service = new ParticipantNameService(snapshotMapper, userQueryFacade);
         Map<Long, String> names = service.resolveDisplayNames("pi-1", List.of(101L));

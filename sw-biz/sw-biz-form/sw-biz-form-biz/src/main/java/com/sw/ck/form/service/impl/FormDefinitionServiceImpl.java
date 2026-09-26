@@ -7,10 +7,17 @@ import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormFieldEnrichmentService;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 /**
  * {@link FormDefinitionService} 实现。
  * <p>
  * 定义于 -api 模块，由 -biz 实现，工作流模块通过此接口获取表单定义。
+ * </p>
+ * <p>
+ * 结果语义：empty 只表达“判定目标缺失”（formKey/recordId 为空白）；
+ * 表单不存在、未发布、未登录、无权等情况与合法判定结果一律以 present 的
+ * true/false 或定义值表达。
  * </p>
  */
 @Service
@@ -29,50 +36,49 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
     }
 
     @Override
-    public String getFormDefinition(String formKey) {
-        return formDefService.getDefinition(formKey);
+    public Optional<String> getFormDefinition(String formKey) {
+        return Optional.ofNullable(formDefService.getDefinition(formKey));
     }
 
     @Override
-    public String getFormDefinitionById(String formId) {
-        return formDefService.getDefinitionById(formId);
+    public Optional<Boolean> formExists(String formKey) {
+        return Optional.of(formDefService.getFormDefByKey(formKey) != null);
     }
 
     @Override
-    public boolean formExists(String formKey) {
-        return formDefService.getFormDefByKey(formKey) != null;
+    public Optional<FormDefDTO> getFormDef(String formKey) {
+        return Optional.ofNullable(formDefService.getFormDefByKey(formKey));
     }
 
     @Override
-    public FormDefDTO getFormDef(String formKey) {
-        return formDefService.getFormDefByKey(formKey);
+    public Optional<Boolean> canCurrentUserInitiate(String formKey) {
+        if (formKey == null || formKey.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(formDefService.isCurrentUserVisible(formKey));
     }
 
     @Override
-    public FormDefDTO getFormDefById(String formId) {
-        return formDefService.getFormDef(formId);
-    }
-
-    @Override
-    public boolean canCurrentUserInitiate(String formKey) {
-        return formDefService.isCurrentUserVisible(formKey);
-    }
-
-    @Override
-    public boolean canCurrentUserPerformAction(String formKey, String action) {
+    public Optional<Boolean> canCurrentUserPerformAction(String formKey, String action) {
+        if (formKey == null || formKey.isBlank()) {
+            return Optional.empty();
+        }
         FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null || !formDefService.isCurrentUserVisible(formKey)) {
-            return false;
+            return Optional.of(false);
         }
         if (!"view".equals(action) && !"PUBLISHED".equals(formDef.getStatus())) {
-            return false;
+            return Optional.of(false);
         }
-        return formFieldEnrichmentService == null
-                || formFieldEnrichmentService.canCurrentUserPerformAction(formDef.getId(), action);
+        return Optional.of(formFieldEnrichmentService == null
+                || formFieldEnrichmentService.canCurrentUserPerformAction(formDef.getId(), action));
     }
 
     @Override
-    public boolean canCurrentUserAccessRecord(String formKey, String recordId) {
-        return formDataQueryService.canCurrentUserAccessRecord(formKey, recordId);
+    public Optional<Boolean> canCurrentUserAccessRecord(String formKey, String recordId) {
+        if (formKey == null || formKey.isBlank() || recordId == null || recordId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(formDataQueryService.canCurrentUserAccessRecord(formKey, recordId));
     }
 }

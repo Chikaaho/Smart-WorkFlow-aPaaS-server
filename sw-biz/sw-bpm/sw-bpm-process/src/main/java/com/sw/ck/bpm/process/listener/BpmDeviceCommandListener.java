@@ -2,8 +2,6 @@ package com.sw.ck.bpm.process.listener;
 
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.iot.api.IotDeviceFacade;
-import com.sw.ck.iot.entity.IotDeviceCommand;
-import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
@@ -14,17 +12,26 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.util.Optional;
+
 /**
  * 审批通过后下发设备命令（审批结果驱动设备）。
  * <p>
- * 监听 {@link BpmDeviceCommandEvent}（AFTER_COMMIT + 异步），经
- * {@link IotDeviceFacade} 下发命令，approvalBizId = 流程实例 ID，
- * 命令执行结果可在 {@code /iot/devices/{productId}/{deviceName}/commands} 回查。
+ * 监听 {@link BpmDeviceCommandEvent}（AFTER_COMMIT + 异步），经 {@link IotDeviceFacade}
+ * 走统一命令路径，approvalBizId = 流程实例 ID，命令执行结果可在
+ * {@code /iot/devices/{productId}/{deviceName}/commands} 回查。
  * </p>
  *
+ * <h3>职责边界（Phase 5 边界抽取后）</h3>
+ * <p>本监听器<b>只</b>通过 IoT 契约门面交互，不再触碰 {@code sw_iot_device_command} 的
+ * entity/mapper——那属于 IoT 实现模块的内部状态。意图已在审批事务内由
+ * {@link BpmDeviceCommandIntentRecorder} 以稳定幂等键持久化，因此本监听器的调用
+ * 通常命中幂等键并复用既有命令；命令的发送、失败记录、有限重试、租约回收与可审计终态
+ * 全部由 IoT 实现模块内的既有发送路径与补偿调度负责，审批侧不重复承担。</p>
+ *
  * <h3>容错</h3>
- * IoT 模块未装配时（ObjectProvider 为空）跳过；设备下发失败时保存命令失败状态
- * （status=FAILED, last_error=脱敏错误信息），审批事务不受影响。
+ * <p>IoT 实现未装配（ObjectProvider 为空）或设备不适用（{@code empty}）时记录告警后返回；
+ * 这是审批已提交之后的补偿路径，其失败不影响已完成审批，也不得回滚审批。</p>
  */
 @Component
 public class BpmDeviceCommandListener {
@@ -32,12 +39,9 @@ public class BpmDeviceCommandListener {
     private static final Logger log = LoggerFactory.getLogger(BpmDeviceCommandListener.class);
 
     private final ObjectProvider<IotDeviceFacade> iotDeviceFacadeProvider;
-    private final ObjectProvider<IotDeviceCommandMapper> commandMapperProvider;
 
-    public BpmDeviceCommandListener(ObjectProvider<IotDeviceFacade> iotDeviceFacadeProvider,
-                                    ObjectProvider<IotDeviceCommandMapper> commandMapperProvider) {
+    public BpmDeviceCommandListener(ObjectProvider<IotDeviceFacade> iotDeviceFacadeProvider) {
         this.iotDeviceFacadeProvider = iotDeviceFacadeProvider;
-        this.commandMapperProvider = commandMapperProvider;
     }
 
     @Async
@@ -54,71 +58,33 @@ public class BpmDeviceCommandListener {
         loginUser.setTenantId(event.getTenantId());
         LoginUserHolder.set(loginUser);
         try {
-            Long commandId = facade.dispatchCommand(
-                    event.getProductId(), event.getDeviceName(),
-                    event.getCommandKey(), event.getCommandType(),
-                    null, event.getProcessInstanceId());
-            log.info("审批联动设备命令已下发: commandId={}, processInstanceId={}, productId={}, deviceName={}, commandKey={}",
-                    commandId, event.getProcessInstanceId(), event.getProductId(), event.getDeviceName(), event.getCommandKey());
+            Optional<Long> commandId = facade.dispatchCommandIdempotent(
+                    event.getProductId(),
+                    event.getDeviceName(),
+                    event.getCommandKey(),
+                    event.getCommandType(),
+                    null,
+                    event.getProcessInstanceId(),
+                    BpmDeviceCommandIntentRecorder.idempotentKey(event));
+            if (commandId.isEmpty()) {
+                // 不适用：审批已完成，此处只记录事实；设备命令状态由 IoT 侧自身终态表达。
+                log.warn("审批联动设备命令未受理（设备不适用或无可用下行路径）: processInstanceId={},"
+                                + " productId={}, deviceName={}, commandKey={}",
+                        event.getProcessInstanceId(), event.getProductId(), event.getDeviceName(),
+                        event.getCommandKey());
+                return;
+            }
+            log.info("审批联动设备命令已受理: commandId={}, processInstanceId={}, productId={}, deviceName={}, commandKey={}",
+                    commandId.orElseThrow(), event.getProcessInstanceId(), event.getProductId(),
+                    event.getDeviceName(), event.getCommandKey());
         } catch (Exception e) {
-            log.error("审批联动设备命令下发失败: processInstanceId={}, productId={}, deviceName={}, commandKey={}",
-                    event.getProcessInstanceId(), event.getProductId(), event.getDeviceName(), event.getCommandKey(), e);
-            // 保存命令失败状态，确保审批完成但命令失败可查询
-            saveCommandFailure(event, e);
+            // 审批事务已提交不可回滚；此处不得再写 IoT 侧表，发送失败/重试由 IoT 补偿调度承担。
+            log.error("审批联动设备命令下发失败（不影响已完成审批）: processInstanceId={}, productId={},"
+                            + " deviceName={}, commandKey={}",
+                    event.getProcessInstanceId(), event.getProductId(), event.getDeviceName(),
+                    event.getCommandKey(), e);
         } finally {
             LoginUserHolder.clear();
         }
-    }
-
-    /**
-     * 设备命令下发失败时，保存失败状态到命令记录。
-     * <p>
-     * 审批事务已提交不可回滚；此处将命令标记为 FAILED 并保存脱敏错误信息，
-     * 确保审批成功 + 命令失败可同时查询。
-     * </p>
-     */
-    private void saveCommandFailure(BpmDeviceCommandEvent event, Exception e) {
-        try {
-            IotDeviceCommandMapper commandMapper = commandMapperProvider.getIfAvailable();
-            if (commandMapper == null) {
-                return;
-            }
-            // 创建失败命令记录，关联审批 ID
-            IotDeviceCommand command = new IotDeviceCommand();
-            command.setProductId(event.getProductId());
-            command.setDeviceName(event.getDeviceName());
-            command.setCommandType(event.getCommandType() != null ? event.getCommandType() : "PROPERTY");
-            command.setCommandKey(event.getCommandKey());
-            command.setSemanticMode("DEFERRED");
-            command.setStatus("FAILED");
-            command.setApprovalBizId(event.getProcessInstanceId());
-            command.setLastError(desensitizeError(e));
-            commandMapper.insert(command);
-            log.info("设备命令失败状态已保存: productId={}, deviceName={}, approvalBizId={}",
-                    event.getProductId(), event.getDeviceName(), event.getProcessInstanceId());
-        } catch (Exception saveEx) {
-            log.error("保存设备命令失败状态异常", saveEx);
-        }
-    }
-
-    /**
-     * 脱敏错误信息：移除凭证、内部栈帧等敏感内容，保留错误类型和关键描述。
-     */
-    private String desensitizeError(Exception e) {
-        String message = e.getMessage();
-        if (message == null) {
-            return e.getClass().getSimpleName();
-        }
-        // 移除可能包含的凭证信息（SecretId, SecretKey, password, token, AKID 等）
-        String sanitized = message
-                .replaceAll("(?i)SecretId\\s*=\\s*\\S+", "SecretId=***")
-                .replaceAll("(?i)SecretKey\\s*=\\s*\\S+", "SecretKey=***")
-                .replaceAll("(?i)password\\s*=\\s*\\S+", "password=***")
-                .replaceAll("(?i)token\\s*=\\s*\\S+", "token=***")
-                .replaceAll("(?i)AKID[A-Za-z0-9]+", "AKID***")
-                .replaceAll("(?i)credential[^,;]*", "credential=***");
-        // 截断到最大长度
-        int maxLen = Math.min(sanitized.length(), 200);
-        return sanitized.substring(0, maxLen);
     }
 }

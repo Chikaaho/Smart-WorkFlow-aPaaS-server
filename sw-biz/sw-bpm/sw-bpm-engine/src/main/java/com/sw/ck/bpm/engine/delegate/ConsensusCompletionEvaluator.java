@@ -84,14 +84,16 @@ public class ConsensusCompletionEvaluator {
         return positive;
     }
 
-    /** 分母权威 = 进入节点时冻结的快照人数（端口）；变量口径仅作端口不可用回退。 */
+    /** 分母权威 = 进入节点时冻结的快照人数（端口）；变量口径仅作端口/快照不可用回退。 */
     private int resolveTotal(DelegateExecution execution) {
         ConsensusVotePort port = votePort == null ? null : votePort.getIfAvailable();
         if (port != null) {
-            long frozen = port.total(String.valueOf(execution.getVariable("tenantId")),
+            // empty = 无冻结快照（端口不可用或快照缺失）：回退变量口径（原 -1 哨兵路径）
+            java.util.Optional<Long> frozen = port.total(
+                    String.valueOf(execution.getVariable("tenantId")),
                     execution.getProcessInstanceId(), currentActivityId(execution));
-            if (frozen >= 0) {
-                return (int) frozen;
+            if (frozen.isPresent()) {
+                return frozen.orElseThrow().intValue();
             }
         }
         return number(execution.getVariable("consensusTotal"),
@@ -106,10 +108,12 @@ public class ConsensusCompletionEvaluator {
     private int count(DelegateExecution execution, String outcome, String variableFallback) {
         ConsensusVotePort port = votePort == null ? null : votePort.getIfAvailable();
         if (port != null) {
-            long counted = port.count(String.valueOf(execution.getVariable("tenantId")),
+            // empty = 端口不可用：按既有回退口径读取变量计数（原 -1 哨兵路径）
+            java.util.Optional<Long> counted = port.count(
+                    String.valueOf(execution.getVariable("tenantId")),
                     execution.getProcessInstanceId(), currentActivityId(execution), outcome);
-            if (counted >= 0) {
-                return (int) counted;
+            if (counted.isPresent()) {
+                return counted.orElseThrow().intValue();
             }
         }
         return number(execution.getVariable(variableFallback), 0);

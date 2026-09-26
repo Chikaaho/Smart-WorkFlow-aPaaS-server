@@ -65,7 +65,7 @@ class DraftSubmitCommandHandlerTest {
     void handle_shouldSubmitAndMarkDraftSubmitted() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.EDITING.getCode());
         when(draftService.getById(5L)).thenReturn(d);
-        when(facade.submit(anyString(), anyMap(), anyString(), nullable(String.class))).thenReturn("rec-009");
+        when(facade.submit(anyString(), anyMap(), anyString(), nullable(String.class))).thenReturn(java.util.Optional.of("rec-009"));
         CommandEnvelope envelope = envelope("5", 1);
         envelope.setPayload(objectMapper.writeValueAsString(Map.of(
                 "formKey", "leave_form",
@@ -128,7 +128,7 @@ class DraftSubmitCommandHandlerTest {
     void handle_shouldPropagateP0ChannelToFormFacade() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.EDITING.getCode());
         when(draftService.getById(5L)).thenReturn(d);
-        when(facade.submit(anyString(), anyMap(), anyString(), anyString())).thenReturn("rec-p0");
+        when(facade.submit(anyString(), anyMap(), anyString(), anyString())).thenReturn(java.util.Optional.of("rec-p0"));
         CommandEnvelope envelope = envelope("5", 1);
         envelope.setChannel(CommandChannelEnum.P0);
         envelope.setPayload(objectMapper.writeValueAsString(Map.of(

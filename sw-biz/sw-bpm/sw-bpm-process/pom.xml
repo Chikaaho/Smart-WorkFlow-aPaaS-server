@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
         <relativePath>../../../pom.xml</relativePath>
     </parent>
 
@@ -67,11 +67,32 @@
             <artifactId>sw-basic-storage-api</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- IoT 设备门面接口（审批结果驱动设备） -->
+        <!-- Phase 4 可靠业务事件：定时任务流程启动受理端口（ScheduledFlowStartPort） -->
         <dependency>
             <groupId>com.sw.ck</groupId>
-            <artifactId>sw-basic-iot</artifactId>
+            <artifactId>sw-basic-job-api</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <!--
+            IoT 跨模块契约（Phase 5 边界抽取）：本模块只依赖 sw-basic-iot-api，不依赖完整实现模块，
+            因此不再传递获得 MQTT/Paho、GraalJS、Tencent IoT SDK 等实现依赖。
+            实现模块由 sw-bootstrap 在最终装配时引入。
+        -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-iot-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--
+            fastjson2 为 Phase 5 显式化的直接依赖：本模块有 4 个生产文件直接使用
+            com.alibaba.fastjson2（流程设备动作配置解析、流程模板动作 JSON、表单契约字段提取）。
+            抽取 IoT 契约前它只是经 sw-basic-iot 传递获得的未声明依赖，移除传递来源会立即编译失败。
+            版本已随 Phase 6A 集中进 sw-dependencies（2.0.53，与集中化前实际解析值一致），
+            此处只声明坐标；不得在本模块重新写 version。
+        -->
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

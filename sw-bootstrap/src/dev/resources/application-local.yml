@@ -1,0 +1,91 @@
+# ===================================================================
+# Smart-WorkFlow 本地开发环境配置（.gitignore 文件，仅本机有效，不入库）
+# 数据源：远程 PostgreSQL 8.166.112.85:3897/sw_apaas_local
+# 凭据经 PG_USERNAME / PG_PASSWORD 环境变量注入，不落盘。
+# ===================================================================
+ch:
+  dev:
+    test-mock: true
+
+server:
+  port: 8080
+
+spring:
+  autoconfigure:
+    exclude:
+      # 远程库未装 pgvector 扩展，排除该自动配置（与 dev 同口径）
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+
+  datasource:
+    dynamic:
+      druid:
+        initial-size: 2
+        min-idle: 1
+        max-active: 5
+      datasource:
+        master:
+          driver-class-name: org.postgresql.Driver
+          url: ${PG_URL:jdbc:postgresql://8.166.112.85:3897/sw_apaas_test}
+          username: ${PG_USERNAME:}
+          password: ${PG_PASSWORD:}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD:}
+
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:sk-your-openai-api-key}
+    ollama:
+      base-url: http://localhost:11434
+
+  flowable:
+    database-schema-update: false
+
+  mqtt:
+    broker:
+      username: ${MQTT_USERNAME:dev}
+      password: ${MQTT_PASSWORD:dev}
+
+logging:
+  level:
+    root: info
+    com.sw.ck: info
+    org.springframework.jdbc: info
+    com.baomidou.mybatisplus: info
+    org.mybatis: info
+
+# ======================== 外部数据源（本地开发密钥，与 dev 同构） ========================
+sw:
+  storage:
+    active-provider: local
+    providers:
+      local:
+        base-path: ./uploads
+        url-prefix: /files
+      minio:
+        access-key: ${MINIO_ACCESS_KEY:minioadmin}
+        secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  job:
+    enabled: true
+  bpm:
+    enabled: true
+  form:
+    enabled: true
+  external-datasource:
+    cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+  security:
+    sso:
+      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+      callback-base-url: ${SW_SSO_CALLBACK_BASE_URL:}
+      callback-allowlist: ${SW_SSO_CALLBACK_ALLOWLIST:}
+  iot:
+    enabled: true
+    cipher:
+      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+    tencent:
+      enabled: false
+      provider-mode: mock

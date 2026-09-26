@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
 
 import static com.sw.ck.bpm.api.node.BpmNodeCapability.CONFIG_VALIDATE;
 import static com.sw.ck.bpm.api.node.BpmNodeCapability.DESIGN;
@@ -28,13 +29,13 @@ import static com.sw.ck.bpm.api.node.BpmNodeCapability.TRANSLATE;
 public class StartEventTranslator implements NodeTypeTranslator {
 
     @Override
-    public String type() {
-        return "START";
+    public Optional<String> type() {
+        return Optional.of("START");
     }
 
     @Override
-    public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata(
+    public Optional<BpmNodeMetadata> metadata() {
+        return Optional.of(new BpmNodeMetadata(
                 "开始",
                 "流程入口节点",
                 "EVENT",
@@ -45,7 +46,7 @@ public class StartEventTranslator implements NodeTypeTranslator {
                 true,
                 false,
                 true,
-                false);
+                false));
     }
 
     @Override

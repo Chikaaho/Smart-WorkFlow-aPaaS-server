@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.sw.ck</groupId>
+        <artifactId>sw-basic</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>sw-basic-iot-api</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Smart-WorkFlow :: Basic :: IoT :: API</name>
+    <description>
+        IoT 跨模块契约层：设备门面、流程触发回写门面、设备查询门面、表单契约 SPI 与流程触发事件。
+        仅承载跨模块调用与实现契约，编译依赖限定为 JDK 类型，不依赖 sw-common 或任何基础设施/实现模块。
+    </description>
+
+    <!--
+        Phase 5 · 边界抽取：本模块刻意不声明任何依赖。
+        契约类型只使用 JDK 类型（String/Long/Boolean/List/Map/Serializable/Optional），
+        因此不需要 sw-common、Web、Redis、MyBatis、数据源、MQTT、GraalJS 或 Tencent SDK。
+        新增依赖会破坏“bpm-process 只依赖契约”的边界收益，须先回到方向评审。
+    -->
+</project>

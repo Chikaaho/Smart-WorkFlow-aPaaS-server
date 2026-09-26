@@ -5,8 +5,10 @@ import com.sw.ck.openapi.biz.entity.OpenApiIdempotency;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.mapper.OpenApiIdempotencyMapper;
 import com.sw.ck.openapi.biz.mapper.OpenApiNonceMapper;
+import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.result.BpmProcessStatus;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -117,7 +120,7 @@ class OpenApiServiceTest {
 
         when(idemMapper.selectOne(any())).thenReturn(null);
         when(submitFacade.submit(anyString(), any(), contains("BK:record-1")))
-                .thenReturn("record-1");
+                .thenReturn(Optional.of("record-1"));
 
         Map<String, Object> first = service.start(context, "leave_form", Map.of("days", 1),
                 "record-1", null);
@@ -133,7 +136,7 @@ class OpenApiServiceTest {
     @Test
     void shouldRejectInvalidTenantBeforeWritingNonce() {
         TenantValidityFacade validity = mock(TenantValidityFacade.class);
-        when(validity.isValid(1L)).thenReturn(false);
+        when(validity.isValid(1L)).thenReturn(Optional.of(false));
         OpenApiAuthService guardedAuth = new OpenApiAuthService(appMapper, nonceMapper, validity);
         OpenApiApp app = app();
         when(appMapper.selectOne(any())).thenReturn(app);
@@ -158,12 +161,70 @@ class OpenApiServiceTest {
                 mock(FormDataSubmitFacade.class), taskFacade, runtimeFacade, idemMapper);
         OpenApiAuthService.OpenApiAuthContext context = new OpenApiAuthService.OpenApiAuthContext(
                 "ext-app", 1L, 8L, List.of("PROCESS_QUERY"));
-        when(taskFacade.getBusinessKey("pi-x")).thenReturn("record-9");
-        when(runtimeFacade.getProcessVariables("pi-x")).thenReturn(Map.of("tenantId", 2L));
+        when(taskFacade.getBusinessKey("pi-x")).thenReturn(Optional.of("record-9"));
+        when(runtimeFacade.getProcessVariables("pi-x"))
+                .thenReturn(Optional.of(Map.of("tenantId", 2L)));
 
         assertThatThrownBy(() -> service.status(context, "pi-x"))
                 .isInstanceOfSatisfying(BaseException.class, e ->
                         assertThat(e.getCode()).isEqualTo(OpenApiErrorCode.PROCESS_NOT_VISIBLE.getCode()));
+    }
+
+    @Test
+    void shouldKeepExternalNotFoundStringWhenInstanceMissing() {
+        BpmTaskFacade taskFacade = mock(BpmTaskFacade.class);
+        BpmRuntimeFacade runtimeFacade = mock(BpmRuntimeFacade.class);
+        OpenApiProcessService service = new OpenApiProcessService(
+                mock(FormDataSubmitFacade.class), taskFacade, runtimeFacade, idemMapper);
+        OpenApiAuthService.OpenApiAuthContext context = new OpenApiAuthService.OpenApiAuthContext(
+                "ext-app", 1L, 8L, List.of("PROCESS_QUERY"));
+        when(taskFacade.getBusinessKey("pi-miss")).thenReturn(Optional.of("record-1"));
+        when(runtimeFacade.getProcessVariables("pi-miss")).thenReturn(Optional.empty());
+        when(runtimeFacade.getProcessInstanceStatus("pi-miss")).thenReturn(Optional.empty());
+
+        Map<String, Object> result = service.status(context, "pi-miss");
+
+        // 契约内部以 empty 表达“实例不存在”，对外 HTTP 字符串必须保持原字面量
+        assertThat(result).containsEntry("status", "NOT_FOUND")
+                .containsEntry("businessKey", "record-1");
+    }
+
+    @Test
+    void shouldExposeStatusEnumNameForFoundInstance() {
+        BpmTaskFacade taskFacade = mock(BpmTaskFacade.class);
+        BpmRuntimeFacade runtimeFacade = mock(BpmRuntimeFacade.class);
+        OpenApiProcessService service = new OpenApiProcessService(
+                mock(FormDataSubmitFacade.class), taskFacade, runtimeFacade, idemMapper);
+        OpenApiAuthService.OpenApiAuthContext context = new OpenApiAuthService.OpenApiAuthContext(
+                "ext-app", 1L, 8L, List.of("PROCESS_QUERY"));
+        when(taskFacade.getBusinessKey("pi-run")).thenReturn(Optional.of("record-2"));
+        when(runtimeFacade.getProcessVariables("pi-run"))
+                .thenReturn(Optional.of(Map.of("tenantId", 1L)));
+        when(runtimeFacade.getProcessInstanceStatus("pi-run"))
+                .thenReturn(Optional.of(BpmProcessStatus.RUNNING));
+
+        Map<String, Object> result = service.status(context, "pi-run");
+
+        assertThat(result).containsEntry("status", "RUNNING");
+    }
+
+    @Test
+    void shouldDenyTaskWithoutCandidateVerdict() {
+        BpmTaskFacade taskFacade = mock(BpmTaskFacade.class);
+        OpenApiProcessService service = new OpenApiProcessService(
+                mock(FormDataSubmitFacade.class), taskFacade, mock(BpmRuntimeFacade.class), idemMapper);
+        OpenApiAuthService.OpenApiAuthContext context = new OpenApiAuthService.OpenApiAuthContext(
+                "ext-app", 1L, 8L, List.of("TASK_HANDLE"));
+        BpmTaskDTO task = new BpmTaskDTO();
+        task.setTaskId("t-1");
+        task.setAssignee("7");
+        when(taskFacade.getTask("t-1")).thenReturn(Optional.of(task));
+        // 候选判定缺失（empty）与判定为 false 一律拒绝，不得放行
+        when(taskFacade.canHandle("t-1", "8")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.completeTask(context, "t-1", Map.of()))
+                .isInstanceOfSatisfying(BaseException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(OpenApiErrorCode.SCOPE_DENIED.getCode()));
     }
 
     private static OpenApiIdempotency idemRow(String ref) {

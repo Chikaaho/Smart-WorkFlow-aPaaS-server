@@ -35,7 +35,7 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
     public List<NotifyChannelStatusDTO> listChannelStatus() {
         Set<String> live = new HashSet<>();
         for (NotifyChannelAdapter a : adapters) {
-            live.add(a.channel().name());
+            live.add(channelOf(a).name());
         }
         Set<String> tenantRows = new HashSet<>();
         List<NotifyChannelStatusDTO> list = new ArrayList<>();
@@ -99,10 +99,16 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
             return true;
         }
         for (NotifyChannelAdapter a : adapters) {
-            if (a.channel().name().equalsIgnoreCase(value)) {
+            if (channelOf(a).name().equalsIgnoreCase(value)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** 适配器身份是注册期契约：缺失渠道标识属装配错误，明确失败而不静默跳过。 */
+    private static NotifyChannel channelOf(NotifyChannelAdapter adapter) {
+        return adapter.channel().orElseThrow(
+                () -> new IllegalStateException("通知渠道适配器缺少渠道标识"));
     }
 }

@@ -89,6 +89,38 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
     public IotDeviceCommand dispatchCommand(String productId, String deviceName,
                                             String commandKey, String commandType,
                                             String payload, String approvalBizId) {
+        // 无调用方幂等身份时保留随机键（历史语义），审批驱动路径必须使用幂等键重载
+        return enqueueCommand(productId, deviceName, commandKey, commandType, payload,
+                approvalBizId, UUID.randomUUID().toString());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public IotDeviceCommand dispatchCommandIdempotent(String productId, String deviceName,
+                                                      String commandKey, String commandType,
+                                                      String payload, String approvalBizId,
+                                                      String idempotentKey) {
+        if (idempotentKey == null || idempotentKey.isBlank()) {
+            throw new BaseException(400, "idempotentKey 不能为空");
+        }
+        IotDeviceCommand existing = commandMapper.selectByIdempotentKey(idempotentKey);
+        if (existing != null) {
+            log.info("设备命令幂等命中，复用既有命令: id={}, idempotentKey={}",
+                    existing.getId(), idempotentKey);
+            return existing;
+        }
+        return enqueueCommand(productId, deviceName, commandKey, commandType, payload,
+                approvalBizId, idempotentKey);
+    }
+
+    /**
+     * 入队实现：只落库，不做外部 I/O（设备在线补发由既有发送路径负责）。
+     * <p>唯一键冲突（并发同键）时回读既有命令，保证同一业务动作只有一条命令记录。</p>
+     */
+    private IotDeviceCommand enqueueCommand(String productId, String deviceName,
+                                            String commandKey, String commandType,
+                                            String payload, String approvalBizId,
+                                            String idempotentKey) {
         IotDevice device = getByProductAndDeviceName(productId, deviceName);
         if (device == null) {
             throw new BaseException(404, "设备不存在: productId=" + productId
@@ -100,9 +132,6 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         if (commandType == null || commandType.isBlank()) {
             commandType = "PROPERTY";
         }
-
-        // 生成幂等键
-        String idempotentKey = UUID.randomUUID().toString();
 
         IotDeviceCommand command = new IotDeviceCommand();
         command.setProductId(productId);
@@ -117,7 +146,17 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         command.setExpiryTime(LocalDateTime.now().plusHours(24));
         command.setRetryCount(0);
         command.setApprovalBizId(approvalBizId);
-        commandMapper.insert(command);
+        try {
+            commandMapper.insert(command);
+        } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+            IotDeviceCommand winner = commandMapper.selectByIdempotentKey(idempotentKey);
+            if (winner != null) {
+                log.info("设备命令并发同键，复用既有命令: id={}, idempotentKey={}",
+                        winner.getId(), idempotentKey);
+                return winner;
+            }
+            throw duplicate;
+        }
 
         log.info("设备命令已入队: id={}, productId={}, deviceName={}, commandKey={}, idempotentKey={}",
                 command.getId(), productId, deviceName, commandKey, idempotentKey);

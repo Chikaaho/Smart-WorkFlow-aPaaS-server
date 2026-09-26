@@ -9,7 +9,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.api.dto.SubTableRowAction;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dynamic.ColumnValidation;
+import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
@@ -42,9 +42,10 @@ import java.util.stream.Collectors;
  *
  * <h3>红线</h3>
  * <ul>
- *   <li>列名/表名过白名单（{@link ColumnValidation#physicalColumnName(String, FieldType)}）</li>
+ *   <li>列名/表名过白名单（{@link DynamicTableSql#requireColumn(String, FieldType)}）</li>
  *   <li>值一律 PreparedStatement ? 参数化绑定</li>
- *   <li>裸 SQL 手写 WHERE deleted = 0 AND tenant_id = ?（不吃拦截器）</li>
+ *   <li>裸 SQL 手写 WHERE deleted = 0 AND tenant_id = ?（不吃拦截器），并由
+ *       {@link DynamicTableSql} 受控入口机械校验</li>
  *   <li>子表改/删必须带 parent_record_id 防越权动他人子行</li>
  *   <li>乐观锁命中 0 行区分：记录不存在（1507） vs 版本冲突（1508）</li>
  * </ul>
@@ -53,9 +54,6 @@ import java.util.stream.Collectors;
 public class FormDataUpdateService {
 
     private static final Logger log = LoggerFactory.getLogger(FormDataUpdateService.class);
-
-    /** 表名校验正则（对齐 DynamicTableManager.generateTableName 的 assert 模式） */
-    private static final String TABLE_NAME_PATTERN = "^sw_form(_table)?_[a-z][a-z0-9]{9}$";
 
     /** UUID v4 形态正则（防伪造 id 注入） */
     private static final String UUID_PATTERN =
@@ -209,13 +207,13 @@ public class FormDataUpdateService {
      */
     private Long checkRecordExistsAndGetVersion(String tableName, String recordId, Long tenantId,
                                                 com.sw.ck.common.datascope.DataScopeFilter recordScope) {
-        StringBuilder sql = new StringBuilder("SELECT \"version\" FROM \"" + tableName
-                + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
+        StringBuilder sql = new StringBuilder("SELECT \"version\" FROM " + DynamicTableSql.quote(tableName)
+                + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
         List<Object> params = new ArrayList<>(List.of(recordId, tenantId));
         FormDataScopeSupport.appendWhere(sql, params, recordScope);
         List<Map<String, Object>> rows;
         try {
-            rows = jdbcTemplate.queryForList(sql.toString(), params.toArray());
+            rows = DynamicTableSql.query(jdbcTemplate, tableName, sql.toString(), params.toArray());
         } catch (Exception e) {
             log.error("Record existence check failed: table={}, recordId={}", tableName, recordId, e);
             throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "读取记录时系统未能完成，请稍后重试");
@@ -260,7 +258,7 @@ public class FormDataUpdateService {
             if ("TABLE".equals(def.type())) continue; // TABLE 不在主表加列
             if ("LABEL".equals(def.type())) continue; // v0.0.2：说明文字非输入字段，无列
 
-            String colName = ColumnValidation.physicalColumnName(def.name(), FieldType.valueOf(def.type()));
+            String colName = DynamicTableSql.requireColumn(def.name(), FieldType.valueOf(def.type()));
             Object value = submittedData.get(def.name());
 
             if ("BOOL".equals(def.type())) {
@@ -294,11 +292,11 @@ public class FormDataUpdateService {
         StringBuilder where = new StringBuilder("\"id\" = ? AND \"version\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
         FormDataScopeSupport.appendWhere(where, params, recordScope);
 
-        String sql = "UPDATE \"" + tableName + "\" SET " + String.join(", ", setParts)
+        String sql = "UPDATE " + DynamicTableSql.quote(tableName) + " SET " + String.join(", ", setParts)
                 + " WHERE " + where;
 
         log.debug("Update SQL: {}", sql);
-        return jdbcTemplate.update(sql, params.toArray());
+        return DynamicTableSql.update(jdbcTemplate, tableName, sql, params.toArray());
     }
 
     // ==================== Step 8: 子表行分流 ====================
@@ -336,12 +334,13 @@ public class FormDataUpdateService {
                 continue;
             }
 
-            // 防御性表名校验
+            // 表名防御性校验：非法元数据不得进入 SQL 构造（fail closed，不静默跳过整块子表写入）
             try {
                 validateTableName(subTableName);
             } catch (BaseException e) {
-                log.warn("Invalid sub-table name '{}' in subTableMapping, skip", subTableName);
-                continue;
+                log.error("Invalid sub-table name '{}' in subTableMapping", subTableName);
+                throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                        "该表单的子表配置异常，已中止本次更新，请联系管理员处理");
             }
 
             // 获取子表字段定义
@@ -407,7 +406,7 @@ public class FormDataUpdateService {
 
         for (FormFieldValidator.FieldDef subDef : subFieldDefs) {
             if ("LABEL".equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
-            String colName = ColumnValidation.physicalColumnName(subDef.name(), FieldType.valueOf(subDef.type()));
+            String colName = DynamicTableSql.requireColumn(subDef.name(), FieldType.valueOf(subDef.type()));
             Object val = rowData.get(subDef.name());
             if ("BOOL".equals(subDef.type())) {
                 val = FormFieldValidator.convertBoolValue(val);
@@ -416,11 +415,12 @@ public class FormDataUpdateService {
             values.add(val);
         }
 
-        String quotedCols = columns.stream().map(c -> "\"" + c + "\"").collect(Collectors.joining(", "));
+        String quotedCols = columns.stream().map(DynamicTableSql::quote).collect(Collectors.joining(", "));
         String placeholders = columns.stream().map(c -> "?").collect(Collectors.joining(", "));
-        String sql = "INSERT INTO \"" + subTableName + "\" (" + quotedCols + ") VALUES (" + placeholders + ")";
+        String sql = "INSERT INTO " + DynamicTableSql.quote(subTableName)
+                + " (" + quotedCols + ") VALUES (" + placeholders + ")";
 
-        jdbcTemplate.update(sql, values.toArray());
+        DynamicTableSql.update(jdbcTemplate, subTableName, sql, values.toArray());
         log.debug("Added sub-table row: table={}, rowId={}, parentRecordId={}", subTableName, subRecordId, recordId);
     }
 
@@ -450,12 +450,12 @@ public class FormDataUpdateService {
 
         for (FormFieldValidator.FieldDef subDef : subFieldDefs) {
             if ("LABEL".equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
-            String colName = ColumnValidation.physicalColumnName(subDef.name(), FieldType.valueOf(subDef.type()));
+            String colName = DynamicTableSql.requireColumn(subDef.name(), FieldType.valueOf(subDef.type()));
             Object val = rowData.get(subDef.name());
             if ("BOOL".equals(subDef.type())) {
                 val = FormFieldValidator.convertBoolValue(val);
             }
-            setParts.add("\"" + colName + "\" = ?");
+            setParts.add(DynamicTableSql.quote(colName) + " = ?");
             params.add(val);
         }
 
@@ -469,11 +469,11 @@ public class FormDataUpdateService {
         params.add(recordId);
         params.add(tenantId);
 
-        String sql = "UPDATE \"" + subTableName + "\" SET " + String.join(", ", setParts)
+        String sql = "UPDATE " + DynamicTableSql.quote(subTableName) + " SET " + String.join(", ", setParts)
                 + " WHERE \"id\" = ? AND \"parent_record_id\" = ?"
                 + " AND \"deleted\" = 0 AND \"tenant_id\" = ?";
 
-        int affected = jdbcTemplate.update(sql, params.toArray());
+        int affected = DynamicTableSql.update(jdbcTemplate, subTableName, sql, params.toArray());
         if (affected == 0) {
             log.warn("Sub-table UPDATE affected 0 rows: table={}, rowId={}, parentRecordId={}",
                     subTableName, rowId, recordId);
@@ -493,11 +493,11 @@ public class FormDataUpdateService {
         }
         validateUuidFormat(rowId);
 
-        String sql = "UPDATE \"" + subTableName
-                + "\" SET \"deleted\" = 1 WHERE \"id\" = ? AND \"parent_record_id\" = ?"
+        String sql = "UPDATE " + DynamicTableSql.quote(subTableName)
+                + " SET \"deleted\" = 1 WHERE \"id\" = ? AND \"parent_record_id\" = ?"
                 + " AND \"deleted\" = 0 AND \"tenant_id\" = ?";
 
-        int affected = jdbcTemplate.update(sql, rowId, recordId, tenantId);
+        int affected = DynamicTableSql.update(jdbcTemplate, subTableName, sql, rowId, recordId, tenantId);
         if (affected == 0) {
             log.debug("Sub-table DELETE affected 0 rows (already deleted or not found): table={}, rowId={}",
                     subTableName, rowId);
@@ -519,10 +519,12 @@ public class FormDataUpdateService {
 
     /**
      * 防御性表名校验。
+     * <p>与 {@link DynamicTableSql} 共用同一正则常量；受控入口在执行前会再校验一次。</p>
      */
     private void validateTableName(String tableName) {
-        if (!tableName.matches(TABLE_NAME_PATTERN)) {
-            log.error("Table name '{}' does not match expected pattern '{}'", tableName, TABLE_NAME_PATTERN);
+        if (!DynamicTableSql.isValidTableName(tableName)) {
+            log.error("Table name '{}' does not match expected pattern '{}'",
+                    tableName, DynamicTableSql.TABLE_NAME_PATTERN);
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "该表单的数据表配置异常，请联系管理员处理");
         }
     }

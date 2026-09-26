@@ -5,6 +5,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.storage.api.StorageFacade;
+import com.sw.ck.storage.api.StorageMutationOutcome;
 import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.entity.StorageFile;
 import com.sw.ck.storage.service.StorageFileService;
@@ -21,6 +22,7 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -103,7 +105,7 @@ class StorageControllerTest {
         StorageUploadResult expectedResult = createResult(storageKey);
 
         when(storageFacade.upload(any(InputStream.class), eq("test.pdf"), eq("application/pdf")))
-                .thenReturn(expectedResult);
+                .thenReturn(Optional.of(expectedResult));
 
         R<StorageUploadResult> result = controller.upload(multipartFile);
 
@@ -217,12 +219,24 @@ class StorageControllerTest {
     @Test
     @DisplayName("删除文件成功 → 返回 R.ok()")
     void delete_shouldReturnOk() {
-        doNothing().when(storageFacade).delete("key-001");
+        when(storageFacade.delete("key-001")).thenReturn(Optional.of(StorageMutationOutcome.APPLIED));
 
         R<Void> result = controller.delete("key-001");
 
         assertThat(result.getCode()).isZero();
         verify(storageFacade).delete("key-001");
+    }
+
+    @Test
+    @DisplayName("删除不存在的文件（合法幂等）→ 仍返回 R.ok()")
+    void delete_alreadyApplied_shouldReturnOk() {
+        when(storageFacade.delete("key-404"))
+                .thenReturn(Optional.of(StorageMutationOutcome.ALREADY_APPLIED));
+
+        R<Void> result = controller.delete("key-404");
+
+        assertThat(result.getCode()).isZero();
+        verify(storageFacade).delete("key-404");
     }
 
     // ==================== GET /storage/files/{storageKey}/download ====================
@@ -233,7 +247,7 @@ class StorageControllerTest {
         StorageFile file = createFile("key-001");
         InputStream inputStream = new ByteArrayInputStream("file content".getBytes(StandardCharsets.UTF_8));
         when(storageFileService.findByStorageKey("key-001")).thenReturn(file);
-        when(storageFacade.download("key-001")).thenReturn(inputStream);
+        when(storageFacade.download("key-001")).thenReturn(Optional.of(inputStream));
 
         ResponseEntity<InputStreamResource> result = controller.download("key-001");
 
@@ -261,13 +275,26 @@ class StorageControllerTest {
     }
 
     @Test
+    @DisplayName("记录已逻辑删除（facade 返回 empty）→ 抛 BaseException(NOT_FOUND)")
+    void download_emptyFromFacade_shouldThrowNotFound() {
+        StorageFile file = createFile("key-001");
+        when(storageFileService.findByStorageKey("key-001")).thenReturn(file);
+        when(storageFacade.download("key-001")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.download("key-001"))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("不存在");
+        verify(storageFacade).download("key-001");
+    }
+
+    @Test
     @DisplayName("下载文件 content-type 为 null → 降级为 application/octet-stream")
     void download_nullContentType_shouldDefaultToOctetStream() {
         StorageFile file = createFile("key-001");
         file.setContentType(null);
         InputStream inputStream = new ByteArrayInputStream("data".getBytes(StandardCharsets.UTF_8));
         when(storageFileService.findByStorageKey("key-001")).thenReturn(file);
-        when(storageFacade.download("key-001")).thenReturn(inputStream);
+        when(storageFacade.download("key-001")).thenReturn(Optional.of(inputStream));
 
         ResponseEntity<InputStreamResource> result = controller.download("key-001");
 
@@ -283,7 +310,7 @@ class StorageControllerTest {
         file.setOriginalName(null);
         InputStream inputStream = new ByteArrayInputStream("data".getBytes(StandardCharsets.UTF_8));
         when(storageFileService.findByStorageKey("key-001")).thenReturn(file);
-        when(storageFacade.download("key-001")).thenReturn(inputStream);
+        when(storageFacade.download("key-001")).thenReturn(Optional.of(inputStream));
 
         ResponseEntity<InputStreamResource> result = controller.download("key-001");
 

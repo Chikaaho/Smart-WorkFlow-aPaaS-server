@@ -16,11 +16,11 @@ import java.util.List;
 @Profile("p57-invalid-duplicate")
 @Component
 public class P57DuplicateExtension implements NodeTypeTranslator {
-    @Override public String type() { return "START"; }
-    @Override public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata("重复", "重复节点", "EVENT",
+    @Override public java.util.Optional<String> type() { return java.util.Optional.of("START"); }
+    @Override public java.util.Optional<BpmNodeMetadata> metadata() {
+        return java.util.Optional.of(new BpmNodeMetadata("重复", "重复节点", "EVENT",
                 new BpmNodeTopology(0, 0, 1, 1), List.of(), "invalid",
-                EnumSet.allOf(BpmNodeCapability.class), true, false, true, false);
+                EnumSet.allOf(BpmNodeCapability.class), true, false, true, false));
     }
     @Override public FlowElement translate(GraphElement node) { return null; }
 }

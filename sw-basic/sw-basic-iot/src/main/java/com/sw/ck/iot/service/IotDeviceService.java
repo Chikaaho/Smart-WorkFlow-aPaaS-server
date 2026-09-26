@@ -57,6 +57,15 @@ public interface IotDeviceService extends BaseService<IotDevice> {
                                      String payload, String approvalBizId);
 
     /**
+     * 入队设备命令（调用方指定稳定幂等键）。
+     *
+     * <p>仅落库入队，不执行外部 I/O；同一幂等键重复调用返回既有命令，不新建记录。</p>
+     */
+    IotDeviceCommand dispatchCommandIdempotent(String productId, String deviceName,
+            String commandKey, String commandType, String payload, String approvalBizId,
+            String idempotentKey);
+
+    /**
      * 设备回写执行结果（真实设备回调链路）。
      *
      * @param commandId 命令 ID

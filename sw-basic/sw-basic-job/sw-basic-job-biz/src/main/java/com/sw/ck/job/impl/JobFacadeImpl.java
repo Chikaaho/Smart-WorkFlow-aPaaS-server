@@ -7,6 +7,8 @@ import com.sw.ck.job.service.JobInfoService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 /**
  * 定时任务门面实现。
  * <p>
@@ -20,26 +22,25 @@ public class JobFacadeImpl implements JobFacade {
     private final JobInfoService jobInfoService;
 
     @Override
-    public JobInfoDTO getById(Long jobId) {
-        JobInfo jobInfo = jobInfoService.getById(jobId);
-        return toDTO(jobInfo);
+    public Optional<JobInfoDTO> getById(Long jobId) {
+        return toDTO(jobInfoService.getById(jobId));
     }
 
     @Override
-    public JobInfoDTO getByJobName(String jobName) {
-        JobInfo jobInfo = jobInfoService.getByJobName(jobName);
-        return toDTO(jobInfo);
+    public Optional<JobInfoDTO> getByJobName(String jobName) {
+        return toDTO(jobInfoService.getByJobName(jobName));
     }
 
     /**
      * 将 Entity 转换为 DTO。
      * <p>
      * 只暴露对外有意义的字段，不暴露 deleted / tenant_id / version 等系统列。
+     * 契约语义：Entity 缺失（null，即查询目标不存在）→ empty。
      * </p>
      */
-    private JobInfoDTO toDTO(JobInfo entity) {
+    private Optional<JobInfoDTO> toDTO(JobInfo entity) {
         if (entity == null) {
-            return null;
+            return Optional.empty();
         }
         JobInfoDTO dto = new JobInfoDTO();
         dto.setId(entity.getId());
@@ -56,6 +57,6 @@ public class JobFacadeImpl implements JobFacade {
         dto.setLastFireTime(entity.getLastFireTime());
         dto.setNextFireTime(entity.getNextFireTime());
         dto.setCreateTime(entity.getCreateTime());
-        return dto;
+        return Optional.of(dto);
     }
 }

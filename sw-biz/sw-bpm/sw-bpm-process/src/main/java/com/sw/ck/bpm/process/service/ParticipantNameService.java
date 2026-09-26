@@ -65,7 +65,9 @@ public class ParticipantNameService {
         }
         if (!missing.isEmpty()) {
             try {
-                userQueryFacade.getUserDisplayNames(missing).forEach(result::putIfAbsent);
+                // empty = ids 为 null（此处 missing 非空，契约不产生）：无可合并展示名
+                userQueryFacade.getUserDisplayNames(missing)
+                        .ifPresent(names -> names.forEach(result::putIfAbsent));
             } catch (Exception e) {
                 log.warn("用户展示名实时查询失败，回退为空: {}", e.getMessage());
             }

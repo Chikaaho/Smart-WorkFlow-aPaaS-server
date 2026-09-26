@@ -45,6 +45,21 @@ public class IotProcessTrigger extends BaseEntity {
     private String formSnapshot;
 
     /** 失败原因 */
+    @TableField("process_template_key")
+    private String processTemplateKey;
+
+    @TableField("trigger_source")
+    private String triggerSource;
+
+    @TableField("configured_by")
+    private Long configuredBy;
+
+    @TableField("retry_count")
+    private Integer retryCount;
+
+    @TableField("next_retry_time")
+    private LocalDateTime nextRetryTime;
+
     @TableField("error")
     private String error;
 

@@ -111,11 +111,13 @@ public class TaskDeadlineScheduler {
         try {
             // 任务已消失 → 时限随机失效，不再触发（幂等）。
             // 仅 PENDING→DONE 原子推进：不覆盖竞争胜者已写的 AUTO_APPROVE 等结果标注。
-            BpmTaskDTO task = bpmTaskFacade.getTask(record.getTaskId());
-            if (task == null) {
+            // empty = 该任务不存在（原 null 返回路径）：与“任务已消失”同判
+            java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(record.getTaskId());
+            if (taskLookup.isEmpty()) {
                 markDoneWithResult(record.getId(), "TASK_GONE");
                 return;
             }
+            BpmTaskDTO task = taskLookup.get();
             if ("APPROVE".equalsIgnoreCase(record.getAutoAction())
                     || "DISAPPROVE".equalsIgnoreCase(record.getAutoAction())
                     || "TRANSFER".equalsIgnoreCase(record.getAutoAction())) {

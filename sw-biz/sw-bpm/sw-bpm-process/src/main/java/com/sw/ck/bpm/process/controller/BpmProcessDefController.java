@@ -321,7 +321,13 @@ public class BpmProcessDefController {
     @GetMapping("/approver-candidates")
     public R<List<UserOptionDTO>> approverCandidates(
             @RequestParam(required = false, defaultValue = "") String keyword) {
-        return R.ok(userQueryFacade.searchActiveUsers(keyword, 50));
+        java.util.Optional<List<UserOptionDTO>> candidates = userQueryFacade.searchActiveUsers(keyword, 50);
+        if (candidates.isEmpty()) {
+            // empty = 缺少可用租户范围等查询上下文：以空候选列表呈现，
+            // 对外响应结构保持不变（不把“无法查询”暴露为 500）
+            return R.ok(java.util.List.<UserOptionDTO>of());
+        }
+        return R.ok(candidates.get());
     }
 
     /**
@@ -333,7 +339,9 @@ public class BpmProcessDefController {
         if (nodeRegistry == null) {
             throw new IllegalStateException("BPM 节点注册结果未装配");
         }
-        return R.ok(nodeRegistry.capabilities());
+        // capabilities 当前契约恒 present（注册结果构造期已校验非空），为空属契约破坏即显式失败
+        return R.ok(nodeRegistry.capabilities().orElseThrow(
+                () -> new IllegalStateException("BPM 节点能力清单未返回结果")));
     }
 
     // ==================== 内部方法 ====================

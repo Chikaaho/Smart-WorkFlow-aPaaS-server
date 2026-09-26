@@ -38,6 +38,9 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
     private static final int MAX_RETRY_COUNT = 5;
     private static final int MAX_BATCH = 100;
 
+    /** 投递租约判据（分钟）：RESENDING 超过该时长视为投递者已崩溃，回收为可重试失败。 */
+    private static final int STALE_LEASE_MINUTES = 5;
+
     private final NotifyMessageMapper messageMapper;
     private final NotifySendAttemptMapper attemptMapper;
     private final NotifyFacade notifyFacade;
@@ -53,6 +56,8 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
     @Override
     @Scheduled(fixedDelayString = "${sw.notify.recovery.fixed-delay-ms:60000}")
     public int recoverDue() {
+        reclaimStaleLeases();
+        exhaustRetryBudget();
         List<NotifyMessage> due;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             due = messageMapper.selectList(Wrappers.<NotifyMessage>lambdaQuery()
@@ -76,6 +81,43 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         return recovered;
     }
 
+    /**
+     * 租约回收：投递者认领后崩溃会把意图永久留在 RESENDING
+     * （既不满足到期重试扫描的状态集合，也没有任何其他路径能推进它）。
+     * 超过租约时长即回收为可重试失败，由同一轮的到期扫描接管。
+     */
+    private void reclaimStaleLeases() {
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            int reclaimed = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
+                    .set(NotifyMessage::getDeliveryStatus, "FAILED")
+                    .set(NotifyMessage::getFailureClass, "RETRYABLE")
+                    .set(NotifyMessage::getNextRetryTime, LocalDateTime.now())
+                    .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
+                    .le(NotifyMessage::getUpdateTime, LocalDateTime.now().minusMinutes(STALE_LEASE_MINUTES)));
+            if (reclaimed > 0) {
+                log.warn("回收滞留投递租约（投递者可能已崩溃）: count={}", reclaimed);
+            }
+        }
+    }
+
+    /**
+     * 预算耗尽的显式收口：到期扫描只取 {@code retry_count < 上限}，因此靠投递路径
+     * 涨到上限的行会永远停留在 RETRYABLE 且不可见。此处把这类行改判为可审计终态。
+     */
+    private void exhaustRetryBudget() {
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            int exhausted = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
+                    .set(NotifyMessage::getFailureClass, "RETRY_EXHAUSTED")
+                    .set(NotifyMessage::getNextRetryTime, null)
+                    .eq(NotifyMessage::getFailureClass, "RETRYABLE")
+                    .in(NotifyMessage::getDeliveryStatus, "FAILED", "TIMEOUT", "PENDING")
+                    .ge(NotifyMessage::getRetryCount, MAX_RETRY_COUNT));
+            if (exhausted > 0) {
+                log.warn("投递重试预算耗尽，转可审计终态: count={}", exhausted);
+            }
+        }
+    }
+
     private boolean recoverOne(NotifyMessage msg) {
         int priorRetry = msg.getRetryCount() == null ? 0 : msg.getRetryCount();
         boolean claimed;
@@ -86,6 +128,8 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
             int claim = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
                     .set(NotifyMessage::getDeliveryStatus, "RESENDING")
                     .setSql("retry_count = retry_count + 1")
+                    // 领取即刷新租约时间：崩溃后 stale 回收据此判定（wrapper 更新不会自动填充）
+                    .set(NotifyMessage::getUpdateTime, LocalDateTime.now())
                     .eq(NotifyMessage::getId, msg.getId())
                     .eq(NotifyMessage::getDeliveryStatus, msg.getDeliveryStatus())
                     .eq(NotifyMessage::getRetryCount, priorRetry));
@@ -96,7 +140,8 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
             int attemptNo = priorRetry + 2;
             try {
                 LoginUserHolder.set(systemUser(msg));
-                result = notifyFacade.attemptDelivery(buildRequest(msg));
+                result = notifyFacade.attemptDelivery(buildRequest(msg))
+                        .orElseThrow(() -> new IllegalStateException("投递恢复未返回结果"));
             } catch (Exception e) {
                 log.warn("投递恢复异常，按失败回写: id={}, exceptionClass={}", msg.getId(),
                         e.getClass().getSimpleName());
@@ -113,7 +158,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
                 failureClass = "RETRY_EXHAUSTED";
             }
             finishAttempt(msg, attemptNo, result, failureClass);
-            writeTerminal(msg, result, failureClass);
+            writeTerminal(msg, result, failureClass, priorRetry + 1);
             log.info("投递恢复完成: id={}, attemptNo={}, status={}, failureClass={}",
                     msg.getId(), attemptNo, status, failureClass);
         }
@@ -140,16 +185,25 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         }
     }
 
-    private void writeTerminal(NotifyMessage msg, NotifySendResult result, String failureClass) {
+    /**
+     * 写回投递结论；写回绑定本次领取（状态 + 领取后的 retry_count），
+     * 使租约被回收后旧投递者的迟到结论无法覆盖新持有者（与命令队列同一等强度条件）。
+     */
+    private void writeTerminal(NotifyMessage msg, NotifySendResult result, String failureClass, int claimedRetry) {
         String status = result.getStatus() == null ? "FAILED" : result.getStatus();
         boolean done = "SUCCESS".equals(status) || !"RETRYABLE".equals(failureClass);
-        messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
+        int updated = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
                 .set(NotifyMessage::getDeliveryStatus, status)
                 .set(NotifyMessage::getExternalMessageId, result.getExternalMessageId())
                 .set(NotifyMessage::getFailureReason, result.getFailureReason())
                 .set(NotifyMessage::getFailureClass, failureClass)
-                .set(NotifyMessage::getNextRetryTime, done ? null : nextBackoff(msg.getRetryCount() == null ? 1 : msg.getRetryCount() + 1))
-                .eq(NotifyMessage::getId, msg.getId()));
+                .set(NotifyMessage::getNextRetryTime, done ? null : nextBackoff(claimedRetry))
+                .eq(NotifyMessage::getId, msg.getId())
+                .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
+                .eq(NotifyMessage::getRetryCount, claimedRetry));
+        if (updated == 0) {
+            log.warn("投递结论写回被跳过: id={} 已离开本次领取权（租约被回收或已被他人推进）", msg.getId());
+        }
     }
 
     private String classify(String failureReason) {

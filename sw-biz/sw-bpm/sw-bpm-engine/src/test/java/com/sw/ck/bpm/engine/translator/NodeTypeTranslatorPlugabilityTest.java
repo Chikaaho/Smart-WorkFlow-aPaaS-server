@@ -31,8 +31,8 @@ class NodeTypeTranslatorPlugabilityTest {
     /** 测试型节点翻译器：TEST_NODE → ServiceTask（可验证的 Flowable 元素）。 */
     private static final NodeTypeTranslator TEST_NODE_TRANSLATOR = new NodeTypeTranslator() {
         @Override
-        public String type() {
-            return "TEST_NODE";
+        public java.util.Optional<String> type() {
+            return java.util.Optional.of("TEST_NODE");
         }
 
         @Override

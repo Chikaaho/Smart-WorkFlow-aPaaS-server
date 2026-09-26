@@ -1,5 +1,9 @@
 package com.sw.ck.bpm.api.participant;
 
+import com.sw.ck.bpm.api.result.MutationOutcome;
+
+import java.util.Optional;
+
 /**
  * 会签负向结算端口（I3 §4.5）。
  * <p>
@@ -16,7 +20,10 @@ public interface ConsensusSettlementPort {
      * @param processInstanceId 实例
      * @param nodeKey           会签节点
      * @param reason            负向原因（mode + 票数摘要）
+     * @return present = {@link MutationOutcome#APPLIED} 本次完成终局结算 /
+     *         {@link MutationOutcome#ALREADY_APPLIED} 实例已终局，重复回调未产生第二次效果；
+     *         缺少租户上下文等非法调用抛明确异常
      */
-    void onNegativeSettlement(String tenantId, String processInstanceId,
-                              String nodeKey, String reason);
+    Optional<MutationOutcome> onNegativeSettlement(String tenantId, String processInstanceId,
+                                                   String nodeKey, String reason);
 }

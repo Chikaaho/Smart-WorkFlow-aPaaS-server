@@ -26,7 +26,8 @@ import java.util.*;
  *
  * <h3>红线</h3>
  * <ul>
- *   <li>❌ 用户输入的表名/字段名绝不直接拼入 DDL（均过 {@link #validateColumnName(String)}）</li>
+ *   <li>❌ 用户输入的表名/字段名绝不直接拼入 DDL（均过 {@link ColumnValidation#validateColumnName} 与
+ *       {@link DynamicTableSql#requireTableName}）</li>
  *   <li>❌ DDL 不走 Flyway</li>
  *   <li>❌ 不实现表单删除逻辑（后续步骤实现）</li>
  * </ul>
@@ -89,9 +90,8 @@ public class DynamicTableManager {
         String prefix = isSubTable ? "sw_form_table_" : "sw_form_";
         String nanoId = NanoIdGenerator.generate();
         String name = prefix + nanoId;
-        assert name.matches("^sw_form(_table)?_[a-z][a-z0-9]{9}$")
-                : "Generated table name failed pattern: " + name;
-        return name;
+        // 真实校验（非 assert）：生成结果必须符合受控入口同一正则，否则拒绝建表
+        return DynamicTableSql.requireTableName(name);
     }
 
     // ==================== 列名校验 ====================
@@ -189,7 +189,7 @@ public class DynamicTableManager {
         // —— 执行 DDL ——
         String sql = ddl.toString();
         log.info("Executing DDL: {}", sql);
-        jdbcTemplate.execute(sql);
+        DynamicTableSql.ddl(jdbcTemplate, tableName, sql);
         log.info("Created table: {}", tableName);
 
         // —— 处理 TABLE 字段：创建子表 ——
@@ -226,9 +226,12 @@ public class DynamicTableManager {
         if (field.getFieldType() == FieldType.TABLE) {
             throw new IllegalArgumentException("addColumn does not support TABLE type; use createFormTable instead");
         }
+        // 入参表名/列名一律在 SQL 构造边界校验（不再信任调用方）
+        DynamicTableSql.requireTableName(tableName);
+        String colName = field.getPhysicalColumnName();
+        DynamicTableSql.validatePhysicalColumn(colName);
 
         // —— 幂等检查 ——
-        String colName = field.getPhysicalColumnName();
         if (columnExists(tableName, colName)) {
             log.warn("Column already exists, skipping: {}.{}", tableName, colName);
             return;
@@ -238,7 +241,7 @@ public class DynamicTableManager {
         String sql = "ALTER TABLE " + dialect.wrapIdentifier(tableName)
                 + " ADD COLUMN " + buildColumnDef(field);
         log.info("Executing DDL: {}", sql);
-        jdbcTemplate.execute(sql);
+        DynamicTableSql.ddl(jdbcTemplate, tableName, sql);
         log.info("Added column {}.{}", tableName, colName);
     }
 

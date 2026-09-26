@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
@@ -22,9 +23,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * I2 写路径统一增补/闸门服务：提交与更新共用同一管线（方向 §4.1—§4.6 服务端权威）。
@@ -106,7 +109,12 @@ public class FormFieldEnrichmentService {
         fieldPermissionService.assertEditablePayload(user,
                 fieldPermissionService.parse(definitionJson), effectiveData, labels);
 
-        // 2. 逐类型增补
+        // 2. REFERENCE 目标加锁（按确定锁序批量加锁，先于取值校验）
+        //    与删除路径共用锁身份（租户 + 物理表 + 记录 id）：本事务持有父行锁期间，
+        //    任何删除都无法把该父行软删，因此“校验通过”在提交时依然成立。
+        Map<DynamicTableSql.LockTarget, Boolean> liveTargets = lockReferenceTargets(fields, effectiveData);
+
+        // 3. 逐类型增补
         for (JsonNode field : fields) {
             String type = field.path("type").asText();
             String name = field.path("name").asText();
@@ -115,14 +123,132 @@ public class FormFieldEnrichmentService {
                 case "USER" -> enrichUser(effectiveData, name, display);
                 case "DEPT" -> enrichDept(effectiveData, name, display);
                 case "DATASOURCE" -> enrichDatasource(field, effectiveData, name, display);
-                case "TABLE" -> enrichTableRows(field, effectiveData, name, display);
-                case "REFERENCE" -> enrichReference(field, effectiveData, name, display);
+                case "TABLE" -> enrichTableRows(field, effectiveData, name, display, liveTargets);
+                case "REFERENCE" -> enrichReference(field, effectiveData, name, display, liveTargets);
                 case "ATTACHMENT", "IMAGE" -> enrichFiles(effectiveData, name, display);
                 default -> { }
             }
         }
-        // 3. 公式重算（剥离客户端值后服务端权威计算）
+        // 4. 公式重算（剥离客户端值后服务端权威计算）
         recomputeFormulas(fields, effectiveData);
+    }
+
+    // ==================== REFERENCE 目标加锁 ====================
+
+    /**
+     * 收集本次载荷中的全部 REFERENCE 目标（主表字段 + TABLE 子行子字段），
+     * 按 (物理表, 记录 id) 升序**确定锁序**批量加锁。
+     *
+     * @return 目标 → 是否存活（未删除且属当前租户）
+     */
+    private Map<DynamicTableSql.LockTarget, Boolean> lockReferenceTargets(JsonNode fields,
+                                                                          Map<String, Object> data) {
+        List<DynamicTableSql.LockTarget> targets = new ArrayList<>();
+        collectMainReferenceTargets(fields, data, targets);
+        collectSubRowReferenceTargets(fields, data, targets);
+        if (targets.isEmpty()) {
+            return Map.of();
+        }
+        LoginUser user = requireTenantContext(null);
+        Map<DynamicTableSql.LockTarget, Boolean> live =
+                DynamicTableSql.tryLockLiveRows(jdbcTemplate, targets, user.getTenantId());
+        log.debug("REFERENCE 目标加锁完成: targets={}, live={}", targets.size(),
+                live.values().stream().filter(Boolean::booleanValue).count());
+        return live;
+    }
+
+    private void collectMainReferenceTargets(JsonNode fields, Map<String, Object> data,
+                                             List<DynamicTableSql.LockTarget> sink) {
+        for (JsonNode field : fields) {
+            if (!"REFERENCE".equals(field.path("type").asText())) {
+                continue;
+            }
+            String name = field.path("name").asText();
+            String refId = referenceIdOrNull(data.get(name));
+            if (refId == null) {
+                continue;
+            }
+            sink.add(new DynamicTableSql.LockTarget(
+                    resolveTargetTable(field, displayOf(field, name)), refId));
+        }
+    }
+
+    private void collectSubRowReferenceTargets(JsonNode fields, Map<String, Object> data,
+                                               List<DynamicTableSql.LockTarget> sink) {
+        for (JsonNode field : fields) {
+            if (!"TABLE".equals(field.path("type").asText())) {
+                continue;
+            }
+            Object raw = data.get(field.path("name").asText());
+            if (!(raw instanceof List<?> rows)) {
+                continue;
+            }
+            for (JsonNode sub : field.path("subFields")) {
+                if (!"REFERENCE".equals(sub.path("type").asText())) {
+                    continue;
+                }
+                String subName = sub.path("name").asText();
+                String subDisplay = displayOf(sub, subName);
+                for (Object item : rows) {
+                    if (!(item instanceof Map<?, ?> row)) {
+                        continue;
+                    }
+                    String refId = referenceIdOrNull(row.get(subName));
+                    if (refId == null) {
+                        continue;
+                    }
+                    sink.add(new DynamicTableSql.LockTarget(
+                            resolveTargetTable(sub, subDisplay), refId));
+                }
+            }
+        }
+    }
+
+    /** REFERENCE 值的 id 形态（非字符串/空白返回 null，由取值校验给出类型错误）。 */
+    private static String referenceIdOrNull(Object value) {
+        if (value instanceof String s && !s.isBlank()) {
+            return s;
+        }
+        return null;
+    }
+
+    /**
+     * 解析 REFERENCE 字段的物理目标表；配置缺失/目标未发布一律拒绝。
+     */
+    private String resolveTargetTable(JsonNode field, String fieldDisplay) {
+        String targetFormKey = field.path("targetFormId").asText("");
+        if (targetFormKey.isBlank()) {
+            throw new BaseException(FormErrorCode.SUBMIT_DEFINITION_INVALID,
+                    "配置错误：字段「" + fieldDisplay + "」未指定引用目标，请联系管理员");
+        }
+        FormDefEntity target = formDefMapper.selectOne(Wrappers.<FormDefEntity>lambdaQuery()
+                .eq(FormDefEntity::getFormKey, targetFormKey)
+                .eq(FormDefEntity::getDeleted, 0)
+                .last("LIMIT 1"));
+        if (target == null || target.getPhysicalTableName() == null || target.getPhysicalTableName().isBlank()) {
+            throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
+                    "字段「" + fieldDisplay + "」的引用目标表单不存在或未发布，请联系管理员");
+        }
+        if (!DynamicTableSql.isValidTableName(target.getPhysicalTableName())) {
+            log.error("Reference target form '{}' has invalid physical table name", targetFormKey);
+            throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
+                    "字段「" + fieldDisplay + "」的引用目标表单数据表配置异常，请联系管理员");
+        }
+        return target.getPhysicalTableName();
+    }
+
+    /** 取当前租户上下文；缺失即 fail closed（不回落租户 0）。 */
+    private static LoginUser requireTenantContext(String fieldDisplay) {
+        LoginUser user = LoginUserHolder.get();
+        if (user == null) {
+            throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
+                    "缺少租户上下文，已拒绝引用校验");
+        }
+        if (user.getTenantId() == null && fieldDisplay != null) {
+            throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
+                    "字段「" + fieldDisplay + "」引用的记录不存在或不可见，请重新选择");
+        }
+        return user;
     }
 
     /**
@@ -177,8 +303,8 @@ public class FormFieldEnrichmentService {
         if (facade == null) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "用户服务未装配");
         }
-        List<Long> active = facade.findActiveUserIds(List.of(userId));
-        if (active.isEmpty()) {
+        Optional<List<Long>> active = facade.findActiveUserIds(List.of(userId));
+        if (isUnusable(active)) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                     "字段「" + fieldDisplay + "」引用的人员不存在、已停用或无权访问");
         }
@@ -195,8 +321,8 @@ public class FormFieldEnrichmentService {
         if (facade == null) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "部门服务未装配");
         }
-        List<Long> active = facade.findActiveDeptIds(List.of(deptId));
-        if (active.isEmpty()) {
+        Optional<List<Long>> active = facade.findActiveDeptIds(List.of(deptId));
+        if (isUnusable(active)) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                     "字段「" + fieldDisplay + "」引用的部门不存在、已停用或无权访问");
         }
@@ -241,7 +367,9 @@ public class FormFieldEnrichmentService {
         data.put(name, summary);
     }
 
-    private void enrichTableRows(JsonNode tableField, Map<String, Object> data, String name, String fieldDisplay) {
+    private void enrichTableRows(JsonNode tableField, Map<String, Object> data, String name,
+                                 String fieldDisplay,
+                                 Map<DynamicTableSql.LockTarget, Boolean> liveTargets) {
         Object raw = data.get(name);
         if (!(raw instanceof List<?> rows)) {
             return;
@@ -261,6 +389,7 @@ public class FormFieldEnrichmentService {
                     case "USER" -> enrichUser(rowMap, subName, subDisplay);
                     case "DEPT" -> enrichDept(rowMap, subName, subDisplay);
                     case "DATASOURCE" -> enrichDatasource(sub, rowMap, subName, subDisplay);
+                    case "REFERENCE" -> enrichReference(sub, rowMap, subName, subDisplay, liveTargets);
                     default -> { }
                 }
             }
@@ -270,8 +399,12 @@ public class FormFieldEnrichmentService {
     /**
      * REFERENCE 对象校验：值必须是引用目标表单内当前租户可见的真实记录 ID。
      * 失效（不存在/已软删）、伪造（非 ID 结构）、跨租户对象一律拒绝（I2 方向 §4.1）。
+     *
+     * <p>存活判定来自本次事务持有的父行锁（{@link #lockReferenceTargets}）：
+     * 锁在本事务提交前一直有效，因此校验通过即意味着并发删除无法在本事务内抢先把父行软删。</p>
      */
-    private void enrichReference(JsonNode field, Map<String, Object> data, String name, String fieldDisplay) {
+    private void enrichReference(JsonNode field, Map<String, Object> data, String name, String fieldDisplay,
+                                 Map<DynamicTableSql.LockTarget, Boolean> liveTargets) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
@@ -280,31 +413,10 @@ public class FormFieldEnrichmentService {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                     "字段「" + fieldDisplay + "」需要选择一条有效记录");
         }
-        String targetFormKey = field.path("targetFormId").asText("");
-        if (targetFormKey.isBlank()) {
-            throw new BaseException(FormErrorCode.SUBMIT_DEFINITION_INVALID,
-                    "配置错误：字段「" + fieldDisplay + "」未指定引用目标，请联系管理员");
-        }
-        FormDefEntity target = formDefMapper.selectOne(Wrappers.<FormDefEntity>lambdaQuery()
-                .eq(FormDefEntity::getFormKey, targetFormKey)
-                .eq(FormDefEntity::getDeleted, 0)
-                .last("LIMIT 1"));
-        if (target == null || target.getPhysicalTableName() == null || target.getPhysicalTableName().isBlank()) {
-            throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
-                    "字段「" + fieldDisplay + "」的引用目标表单不存在或未发布，请联系管理员");
-        }
-        LoginUser user = LoginUserHolder.get();
-        if (user == null || user.getTenantId() == null) {
-            // 无租户上下文 fail closed：引用记录按租户隔离，缺失即拒绝（不回落租户 0）
-            throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
-                    "字段「" + fieldDisplay + "」引用的记录不存在或不可见，请重新选择");
-        }
-        long tenantId = user.getTenantId();
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM \"" + target.getPhysicalTableName()
-                        + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?",
-                Integer.class, refId, tenantId);
-        if (count == null || count == 0) {
+        String targetTable = resolveTargetTable(field, fieldDisplay);
+        requireTenantContext(fieldDisplay);
+        DynamicTableSql.LockTarget target = new DynamicTableSql.LockTarget(targetTable, refId);
+        if (!Boolean.TRUE.equals(liveTargets.get(target))) {
             throw new BaseException(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND,
                     "字段「" + fieldDisplay + "」引用的记录不存在或不可见，请重新选择");
         }
@@ -327,11 +439,32 @@ public class FormFieldEnrichmentService {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "文件存储服务未装配");
         }
         for (Object key : list) {
-            if (!(key instanceof String storageKey) || storageKey.isBlank() || !storage.exists(storageKey)) {
+            if (!(key instanceof String storageKey) || storageKey.isBlank()
+                    || !fileExists(storage, storageKey)) {
                 throw new BaseException(FormErrorCode.ATTACHMENT_FILE_NOT_FOUND,
                         "字段「" + fieldDisplay + "」引用的文件不存在或不可见，请重新上传");
             }
         }
+    }
+
+    /**
+     * 引用对象存在性判定（fail closed）：empty 表示缺少租户上下文、查询未执行，
+     * 与 present 空集合（已执行且零匹配）一并视为“目标不可用”，拒绝放行。
+     */
+    private static boolean isUnusable(Optional<List<Long>> matched) {
+        if (matched.isEmpty()) {
+            return true;
+        }
+        return matched.get().isEmpty();
+    }
+
+    /**
+     * 文件存在性判定：exists 契约恒 present（含 storageKey 为空 → false）；
+     * 返回 empty 属契约不可能态，按契约违约处理（不放行未经验证的引用）。
+     */
+    private static boolean fileExists(StorageFacade storage, String storageKey) {
+        return storage.exists(storageKey).orElseThrow(() ->
+                new IllegalStateException("文件存储服务未返回文件存在性判定: storageKey=" + storageKey));
     }
 
     /**

@@ -31,18 +31,52 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build with Maven
-        run: MAVEN_OPTS="-Xmx2g" mvn -B -ntp install
+      # Phase 6C · CI-friendly 版本身份：开发默认 effective version 必须经 Maven 求值
+      # （禁止 XML grep 得到字面 ${revision}），并断言为 0.2.0-SNAPSHOT；正式值 0.2.0
+      # 由该有效值剥掉 -SNAPSHOT 解析而来，随后以 -Drevision=0.2.0 驱动唯一生产构建入口
+      # （测试、打包与制品门禁同版本），Release 标题与上传制品名取自同一版本变量。
+      - name: Resolve CI-friendly version (Maven effective)
+        id: version
+        run: |
+          set -euo pipefail
+          DEV_VERSION=$(mvn -B -q org.apache.maven.plugins:maven-help-plugin:3.5.1:evaluate -Dexpression=project.version -DforceStdout | tail -n 1)
+          if [ -z "${DEV_VERSION}" ] || [ "${DEV_VERSION}" = '${revision}' ]; then
+            echo "::error::Maven effective version 为空或未解析: ${DEV_VERSION}"; exit 1
+          fi
+          if [ "${DEV_VERSION}" != '0.2.0-SNAPSHOT' ]; then
+            echo "::error::develop 默认版本必须为 0.2.0-SNAPSHOT，实际 ${DEV_VERSION}"; exit 1
+          fi
+          RELEASE_VERSION="${DEV_VERSION%-SNAPSHOT}"
+          if [ -z "${RELEASE_VERSION}" ] || [ "${RELEASE_VERSION}" = "${DEV_VERSION}" ] || [ "${RELEASE_VERSION}" = '${revision}' ]; then
+            echo "::error::正式版本解析失败: dev=${DEV_VERSION} release=${RELEASE_VERSION}"; exit 1
+          fi
+          echo "dev_version=${DEV_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "开发 effective version = ${DEV_VERSION}；正式发布版本 = ${RELEASE_VERSION}"
+
+      # Phase 6B/6C：发布必须走仓内唯一生产构建入口（先全量测试门禁 → prod profile 打包 →
+      # 制品门禁），-Drevision 同版本贯穿测试/打包/门禁；门禁不通过则整个 workflow 失败，
+      # 不会产出 Release。
+      - name: Production build (in-repo entry: tests + prod package + artifact gate)
+        run: REVISION="${{ steps.version.outputs.release_version }}" bash scripts/build-prod.sh
 
       - name: Locate executable JAR
         id: locate
         run: |
-          JAR=$(ls sw-bootstrap/target/*.jar | grep -v '\.original$' | head -1)
-          VERSION=$(grep -m1 -oE '<version>[^<]+</version>' pom.xml | sed 's/<[^>]*>//g')
+          JAR="sw-bootstrap/target/bootstrap.jar"
+          test -f "${JAR}" || { echo "::error::未找到正式生产制品 ${JAR}"; exit 1; }
+          # 版本唯一来源：生产制品身份标记中的 build.version（打包期由 Maven 过滤解析），
+          # 必须与本 workflow 已验证的正式发布版本一致，否则拒绝发布。
+          MARKER_VERSION=$(unzip -p "${JAR}" META-INF/production-build.properties | sed -n 's/^build\.version=//p' | head -n 1)
+          if [ -z "${MARKER_VERSION}" ] || [ "${MARKER_VERSION}" != '${{ steps.version.outputs.release_version }}' ]; then
+            echo "::error::制品版本标记 ${MARKER_VERSION:-<空>} 与发布版本 ${{ steps.version.outputs.release_version }} 不一致"; exit 1
+          fi
+          ASSET_NAME="bootstrap-${{ steps.version.outputs.release_version }}.jar"
           echo "jar=${JAR}" >> "$GITHUB_OUTPUT"
-          echo "jar_name=$(basename "${JAR}")" >> "$GITHUB_OUTPUT"
+          echo "jar_name=${ASSET_NAME}" >> "$GITHUB_OUTPUT"
           echo "sha_short=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${{ steps.version.outputs.release_version }}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "${JAR}" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         env:
@@ -62,6 +96,6 @@ jobs:
           gh release view "${TAG}" >/dev/null 2>&1 && gh release delete "${TAG}" --yes || true
           gh release create "${TAG}" \
             --target "${GITHUB_SHA}" \
-            --title "CH-aPaaS-Server ${{ steps.locate.outputs.version }} build ${GITHUB_SHA}" \
-            --notes "自动构建产物（提交 ${GITHUB_SHA}，分支 main）" \
+            --title "CH-aPaaS-Server ${{ steps.version.outputs.release_version }} build ${GITHUB_SHA}" \
+            --notes "自动构建产物（提交 ${GITHUB_SHA}，分支 main，版本 ${{ steps.version.outputs.release_version }}）" \
             "${{ steps.locate.outputs.jar }}#${{ steps.locate.outputs.jar_name }}"

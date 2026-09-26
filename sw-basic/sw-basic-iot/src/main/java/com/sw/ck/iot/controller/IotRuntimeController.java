@@ -38,6 +38,9 @@ import java.util.List;
 @RequestMapping("/iot/runtime")
 public class IotRuntimeController {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(IotRuntimeController.class);
+
     private final IotMessageLogMapper messageLogMapper;
     private final IotPropertyRecordMapper propertyRecordMapper;
     private final IotEventRecordMapper eventRecordMapper;
@@ -95,15 +98,21 @@ public class IotRuntimeController {
         retry.setQos(origin.getQos());
         retry.setCorrelationId(java.util.UUID.randomUUID().toString());
         commandMapper.insert(retry);
-        // 经统一命令路径真实重发
+        // 经统一命令路径真实重发；empty = 设备/连接/下行主题不合格（不适用），
+        // 重试命令保持 PENDING 并由补偿调度继续尝试，不伪造下发成功。
         var facade = deviceFacadeProvider.getIfAvailable();
         if (facade != null) {
             com.sw.ck.iot.entity.IotDevice device = deviceMapper.selectById(origin.getDeviceId());
             if (device != null) {
                 facade.dispatchByDeviceKey(device.getTenantId(), device.getDeviceKey(),
-                        origin.getCapabilityId() == null ? "retry" : origin.getCapabilityId(),
-                        origin.getParamsJson() == null ? "{}" : origin.getParamsJson(),
-                        origin.getFlowInstanceId());
+                                origin.getCapabilityId() == null ? "retry" : origin.getCapabilityId(),
+                                origin.getParamsJson() == null ? "{}" : origin.getParamsJson(),
+                                origin.getFlowInstanceId())
+                        .ifPresentOrElse(
+                                dispatchedCommandId -> log.debug("重试命令已下发: retryCommandId={}, dispatchedCommandId={}",
+                                        retry.getId(), dispatchedCommandId),
+                                () -> log.warn("重试命令未下发（设备/连接/下行主题不合格）: retryCommandId={}, deviceId={}",
+                                        retry.getId(), origin.getDeviceId()));
             }
         }
         auditService.recordAction(origin.getTenantId(), null, "system:iot-command-retry",

@@ -460,13 +460,12 @@ class FormI2ClosureIntegrationTest {
 
         @Bean
         public com.sw.ck.storage.api.StorageFacade storageFacade() {
-            // 测试桩：exists 恒 false，用于验证伪造 storageKey 被拒绝
+            // 测试桩：exists 恒 present false，用于验证伪造 storageKey 被拒绝
             return new com.sw.ck.storage.api.StorageFacade() {
-                @Override public com.sw.ck.storage.api.StorageUploadResult upload(java.io.InputStream in, String name, String ct) { throw new UnsupportedOperationException(); }
-                @Override public java.io.InputStream download(String storageKey) { throw new UnsupportedOperationException(); }
-                @Override public void delete(String storageKey) { throw new UnsupportedOperationException(); }
-                @Override public String getUrl(String storageKey) { throw new UnsupportedOperationException(); }
-                @Override public boolean exists(String storageKey) { return false; }
+                @Override public java.util.Optional<com.sw.ck.storage.api.StorageUploadResult> upload(java.io.InputStream in, String name, String ct) { throw new UnsupportedOperationException(); }
+                @Override public java.util.Optional<java.io.InputStream> download(String storageKey) { throw new UnsupportedOperationException(); }
+                @Override public java.util.Optional<com.sw.ck.storage.api.StorageMutationOutcome> delete(String storageKey) { throw new UnsupportedOperationException(); }
+                @Override public java.util.Optional<Boolean> exists(String storageKey) { return java.util.Optional.of(false); }
             };
         }
 

@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 动态并行编排节点（I4 §3.1）：并行多实例 UserTask，每分支 = 一个去重后的有效部门负责人。
@@ -41,13 +42,13 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
     }
 
     @Override
-    public String type() {
-        return "DYNAMIC_PARALLEL";
+    public Optional<String> type() {
+        return Optional.of("DYNAMIC_PARALLEL");
     }
 
     @Override
-    public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata("动态并行", "按受控集合动态生成并行审批分支", "TASK",
+    public Optional<BpmNodeMetadata> metadata() {
+        return Optional.of(new BpmNodeMetadata("动态并行", "按受控集合动态生成并行审批分支", "TASK",
                 new BpmNodeTopology(1, 1, 1, 1),
                 List.of(new BpmNodeConfigField("source", "分支来源", "object", true, Map.of()),
                         new BpmNodeConfigField("mode", "汇聚方式", "string", true,
@@ -62,22 +63,22 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
                                 Map.of("values", List.of("BLOCK", "SKIP")))),
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
                 BpmNodeCapability.RUNTIME, BpmNodeCapability.CONFIG_VALIDATE),
-                false, false, false, true);
+                false, false, false, true));
     }
 
     @Override
-    public List<GraphValidationError> validateConfig(GraphElement node) {
+    public Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
         Map<String, Object> config = node.getConfig();
         if (config == null || !(config.get("source") instanceof Map<?, ?> source)) {
-            return List.of(error(node, "动态并行缺少 source 配置"));
+            return Optional.of(List.of(error(node, "动态并行缺少 source 配置")));
         }
         String sourceType = source.get("type") == null ? null : String.valueOf(source.get("type"));
         if (sourceType == null || !SOURCE_TYPES.contains(sourceType.toUpperCase())) {
-            return List.of(error(node, "动态并行来源类型不合法: " + sourceType));
+            return Optional.of(List.of(error(node, "动态并行来源类型不合法: " + sourceType)));
         }
         Object sourceValue = source.get("value");
         if (sourceValue == null || String.valueOf(sourceValue).isBlank()) {
-            return List.of(error(node, "动态并行来源值不能为空"));
+            return Optional.of(List.of(error(node, "动态并行来源值不能为空")));
         }
         if ("FIXED".equalsIgnoreCase(sourceType)) {
             Collection<?> values = sourceValue instanceof Collection<?> collection
@@ -89,44 +90,44 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
                     return true;
                 }
             })) {
-                return List.of(error(node, "动态并行 FIXED 来源只能配置正整数部门 ID"));
+                return Optional.of(List.of(error(node, "动态并行 FIXED 来源只能配置正整数部门 ID")));
             }
         }
         String mode = config.get("mode") == null ? null : String.valueOf(config.get("mode"));
         if (mode == null || !MODES.contains(mode.toUpperCase())) {
-            return List.of(error(node, "动态并行汇聚方式不合法: " + mode));
+            return Optional.of(List.of(error(node, "动态并行汇聚方式不合法: " + mode)));
         }
         if ("RATIO".equalsIgnoreCase(mode)) {
             try {
                 int ratio = Integer.parseInt(String.valueOf(config.get("ratio")));
                 if (ratio < 1 || ratio > 100) {
-                    return List.of(error(node, "动态并行比例必须为 1-100"));
+                    return Optional.of(List.of(error(node, "动态并行比例必须为 1-100")));
                 }
             } catch (Exception e) {
-                return List.of(error(node, "动态并行比例必须为整数"));
+                return Optional.of(List.of(error(node, "动态并行比例必须为整数")));
             }
         }
         if (config.get("maxBranches") != null) {
             try {
                 int max = Integer.parseInt(String.valueOf(config.get("maxBranches")));
                 if (max < 1 || max > 200) {
-                    return List.of(error(node, "动态并行分支上限必须为 1-200"));
+                    return Optional.of(List.of(error(node, "动态并行分支上限必须为 1-200")));
                 }
             } catch (Exception e) {
-                return List.of(error(node, "动态并行分支上限必须为整数"));
+                return Optional.of(List.of(error(node, "动态并行分支上限必须为整数")));
             }
         }
         String emptyStrategy = config.get("emptyStrategy") == null
                 ? "BLOCK" : String.valueOf(config.get("emptyStrategy"));
         if (!List.of("BLOCK", "PROCEED").contains(emptyStrategy.toUpperCase())) {
-            return List.of(error(node, "动态并行空集合策略不合法: " + emptyStrategy));
+            return Optional.of(List.of(error(node, "动态并行空集合策略不合法: " + emptyStrategy)));
         }
         String invalidStrategy = config.get("invalidStrategy") == null
                 ? "BLOCK" : String.valueOf(config.get("invalidStrategy"));
         if (!List.of("BLOCK", "SKIP").contains(invalidStrategy.toUpperCase())) {
-            return List.of(error(node, "动态并行失效对象策略不合法: " + invalidStrategy));
+            return Optional.of(List.of(error(node, "动态并行失效对象策略不合法: " + invalidStrategy)));
         }
-        return List.of();
+        return Optional.of(List.of());
     }
 
     @Override

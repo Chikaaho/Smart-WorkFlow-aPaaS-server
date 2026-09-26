@@ -180,18 +180,19 @@ class NodeFunctionNegativeContractTest {
 
     @Test
     void a6_fallbackStrategyReturnsNullWithoutRollback() {
-        List<String> result = service.resolveParticipants(1L, "g13a-i6", "node_a",
+        // FALLBACK 策略下无可用参与人：以 empty 表达“无函数输出”，由调用方走默认策略
+        java.util.Optional<List<String>> result = service.resolveParticipants(1L, "g13a-i6", "node_a",
                 "task-g13a-i6", configOf("func_fb_v1"), Map.of("submitter", "8801"));
-        assertThat(result).isNull();
+        assertThat(result).isEmpty();
         assertThat(auditOf("g13a-i6", "func_fb_v1")).contains("outcome=FAILED");
     }
 
     @Test
     void a7_repeatInvocationRecordsBothCalls() {
         List<String> first = service.resolveParticipants(1L, "g13a-i7", "node_a",
-                "task-g13a-i7", configOf("func_ok_v1"), Map.of("submitter", "8801"));
+                "task-g13a-i7", configOf("func_ok_v1"), Map.of("submitter", "8801")).orElseThrow();
         List<String> second = service.resolveParticipants(1L, "g13a-i7", "node_a",
-                "task-g13a-i7", configOf("func_ok_v1"), Map.of("submitter", "8801"));
+                "task-g13a-i7", configOf("func_ok_v1"), Map.of("submitter", "8801")).orElseThrow();
         assertThat(first).isEqualTo(second);
         Integer calls = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM sw_bpm_node_function_audit "
@@ -291,12 +292,13 @@ class NodeFunctionNegativeContractTest {
             Mockito.when(facade.findActiveUserIds(Mockito.anyCollection(), Mockito.eq(1L)))
                     .thenAnswer(inv -> {
                         List<Long> requested = new ArrayList<>((java.util.Collection<Long>) inv.getArgument(0));
-                        return requested.stream().filter(id -> id == 8801L || id == 8802L).toList();
+                        return java.util.Optional.of(requested.stream()
+                                .filter(id -> id == 8801L || id == 8802L).toList());
                     });
             Mockito.when(facade.findActiveUserIds(Mockito.anyCollection(), Mockito.eq(777L)))
-                    .thenAnswer(inv -> List.of(999L));
+                    .thenAnswer(inv -> java.util.Optional.of(List.of(999L)));
             Mockito.when(facade.findActiveUserIds(Mockito.anyCollection(), Mockito.eq(0L)))
-                    .thenAnswer(inv -> List.of());
+                    .thenAnswer(inv -> java.util.Optional.of(List.of()));
             return facade;
         }
 
@@ -309,7 +311,7 @@ class NodeFunctionNegativeContractTest {
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException("interrupted");
                 }
-                return List.of("8801");
+                return java.util.Optional.of(List.of("8801"));
             };
         }
 
@@ -322,13 +324,13 @@ class NodeFunctionNegativeContractTest {
 
         @Bean
         ParticipantFunction g13aBadFmt() {
-            return context -> List.of("abc");
+            return context -> java.util.Optional.of(List.of("abc"));
         }
 
         @Bean
         ParticipantFunction g13aOver() {
-            return context -> java.util.stream.IntStream.rangeClosed(1, 1001)
-                    .mapToObj(String::valueOf).toList();
+            return context -> java.util.Optional.of(java.util.stream.IntStream.rangeClosed(1, 1001)
+                    .mapToObj(String::valueOf).toList());
         }
 
         @Bean
@@ -342,13 +344,13 @@ class NodeFunctionNegativeContractTest {
         ParticipantFunction g13aOk() {
             return context -> {
                 OK_CALLS.incrementAndGet();
-                return List.of("8801");
+                return java.util.Optional.of(List.of("8801"));
             };
         }
 
         @Bean
         ParticipantFunction g13aCross() {
-            return context -> List.of("999");
+            return context -> java.util.Optional.of(List.of("999"));
         }
 
         @Bean

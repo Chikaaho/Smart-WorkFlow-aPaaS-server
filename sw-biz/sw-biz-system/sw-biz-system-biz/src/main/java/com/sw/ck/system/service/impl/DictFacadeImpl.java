@@ -6,8 +6,8 @@ import com.sw.ck.system.entity.SysDictData;
 import com.sw.ck.system.service.SysDictDataService;
 import org.springframework.stereotype.Service;
 
-import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -15,6 +15,10 @@ import java.util.stream.Collectors;
  * <p>
  * 其它模块通过 {@link com.sw.ck.system.api.dict.DictFacade} 接口消费字典数据，
  * 禁止直接访问 sys_dict_data 表或 Mapper。
+ * </p>
+ * <p>
+ * 模块内部调用边界返回非空 {@link Optional}：查询目标缺失（空白 dictType / code）以 empty 表达，
+ * 类型存在但零匹配以 present 的空集合表达。
  * </p>
  */
 @Service
@@ -27,24 +31,24 @@ public class DictFacadeImpl implements DictFacade {
     }
 
     @Override
-    public List<DictItemDTO> listByType(String dictType) {
-        List<SysDictData> list = sysDictDataService.listByDictCode(dictType);
-        if (list.isEmpty()) {
-            return Collections.emptyList();
+    public Optional<List<DictItemDTO>> listByType(String dictType) {
+        if (dictType == null || dictType.isBlank()) {
+            // 缺少查询目标：查询未执行
+            return Optional.empty();
         }
-        return list.stream()
+        List<SysDictData> list = sysDictDataService.listByDictCode(dictType);
+        return Optional.of(list.stream()
                 .map(this::toDTO)
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public boolean isValidCode(String dictType, String code) {
-        return sysDictDataService.isValidCode(dictType, code);
-    }
-
-    @Override
-    public String resolveLabel(String dictType, String code) {
-        return sysDictDataService.resolveLabel(dictType, code);
+    public Optional<Boolean> isValidCode(String dictType, String code) {
+        if (dictType == null || dictType.isBlank() || code == null || code.isBlank()) {
+            // 缺少判定目标：无法给出值域判定
+            return Optional.empty();
+        }
+        return Optional.of(sysDictDataService.isValidCode(dictType, code));
     }
 
     private DictItemDTO toDTO(SysDictData data) {

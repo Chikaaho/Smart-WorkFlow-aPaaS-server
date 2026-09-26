@@ -1,12 +1,17 @@
 package com.sw.ck.storage.api;
 
 import java.io.InputStream;
+import java.util.Optional;
 
 /**
  * 文件存储 Facade 接口。
  * <p>
  * 供其他模块（form/bpm/notify/knowledge）通过 Facade 模式调用文件存储能力。
  * 定义于 {@code -api} 模块，实现于 {@code -biz} 模块。
+ * </p>
+ * <p>
+ * 模块内部调用边界统一以非空 {@link Optional} 表达结果：empty 只表达
+ * "查询目标/上下文不存在"，基础设施与提供商失败继续抛明确异常。
  * </p>
  */
 public interface StorageFacade {
@@ -17,9 +22,9 @@ public interface StorageFacade {
      * @param inputStream  文件输入流
      * @param originalName 原始文件名
      * @param contentType  文件 MIME 类型
-     * @return 上传结果
+     * @return present = 上传结果；当前契约恒 present（上传失败抛异常，不以上空表达失败）
      */
-    StorageUploadResult upload(InputStream inputStream, String originalName, String contentType);
+    Optional<StorageUploadResult> upload(InputStream inputStream, String originalName, String contentType);
 
     /**
      * 下载文件。
@@ -29,31 +34,28 @@ public interface StorageFacade {
      * </p>
      *
      * @param storageKey 存储唯一标识
-     * @return 文件输入流
+     * @return present = 文件输入流；empty = 该 storageKey 无存储记录或已逻辑删除；
+     *         提供商不可用等基础设施失败继续抛异常
      */
-    InputStream download(String storageKey);
+    Optional<InputStream> download(String storageKey);
 
     /**
      * 删除文件（软删除文件记录 + 提供商侧文件删除）。
      *
      * @param storageKey 存储唯一标识
+     * @return present = {@link StorageMutationOutcome#APPLIED} 已删除 /
+     *         {@link StorageMutationOutcome#ALREADY_APPLIED} 记录本就不存在或已删除（合法幂等）；
+     *         当前契约恒 present，目标缺失不再是异常
      */
-    void delete(String storageKey);
-
-    /**
-     * 获取文件访问 URL（由提供商重新生成，确保预签名 URL 在有效期内）。
-     *
-     * @param storageKey 存储唯一标识
-     * @return 文件访问 URL
-     */
-    String getUrl(String storageKey);
+    Optional<StorageMutationOutcome> delete(String storageKey);
 
     /**
      * 判断存储文件是否存在（未逻辑删除）。
      * <p>供表单等业务模块校验附件/图片引用的真实性（I2 §4.1 对象校验）。</p>
      *
      * @param storageKey 存储唯一标识
-     * @return true = 存在
+     * @return present = true 存在 / false 不存在（含 storageKey 为空的情况，判定明确有效）；
+     *         当前契约恒 present
      */
-    boolean exists(String storageKey);
+    Optional<Boolean> exists(String storageKey);
 }

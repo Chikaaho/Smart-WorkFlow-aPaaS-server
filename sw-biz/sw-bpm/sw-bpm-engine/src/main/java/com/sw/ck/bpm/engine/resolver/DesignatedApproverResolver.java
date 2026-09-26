@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 固定审批人解析器。
@@ -43,7 +44,7 @@ public class DesignatedApproverResolver implements NodeApproverResolver {
 
     @Override
     @SuppressWarnings("unchecked")
-    public List<String> resolve(NodeApproverContext context) {
+    public Optional<List<String>> resolve(NodeApproverContext context) {
         Object value = context.getApproverValue();
         if (value == null) {
             log.error("DESIGNATED approver value is null: nodeKey={}", context.getNodeKey());
@@ -76,7 +77,8 @@ public class DesignatedApproverResolver implements NodeApproverResolver {
 
         log.debug("DesignatedApproverResolver resolved {} approvers: nodeKey={}",
                 userIds.size(), context.getNodeKey());
-        return userIds;
+        // 解析成功：零参与人由调用方按发布/运行策略处置，契约恒 present
+        return Optional.of(userIds);
     }
 
     /** 经 UserQueryFacade 过滤非本租户/停用/已删除用户；Facade 缺失时保持原列表（兼容单测）。 */
@@ -92,7 +94,12 @@ public class DesignatedApproverResolver implements NodeApproverResolver {
         if (ids.isEmpty()) {
             return userIds;
         }
-        List<Long> active = userQueryFacade.findActiveUserIds(ids, tenantId);
+        Optional<List<Long>> activeIds = userQueryFacade.findActiveUserIds(ids, tenantId);
+        if (activeIds.isEmpty()) {
+            // 租户/查询上下文缺失：判定为无有效用户，交由调用方按 APPROVER_RESOLVE_EMPTY 拒绝
+            return List.of();
+        }
+        List<Long> active = activeIds.orElseThrow();
         return userIds.stream().filter(id -> {
             try {
                 return active.contains(Long.valueOf(id));

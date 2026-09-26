@@ -102,8 +102,11 @@ public class BpmDeployRunner implements CommandLineRunner {
 
     /** 部署 BPMN（经 BpmDeployFacade，不再直接调 RepositoryService） */
     private void deployProcess() {
-        bpmDeployFacade.deployClasspathBpmn(BPMN_RESOURCE, PROCESS_KEY);
-        log.info("BPMN 部署完成: processKey={}", PROCESS_KEY);
+        // deployClasspathBpmn 当前契约恒 present，部署失败抛异常
+        String deploymentId = bpmDeployFacade.deployClasspathBpmn(BPMN_RESOURCE, PROCESS_KEY)
+                .orElseThrow(() -> new IllegalStateException(
+                        "BPMN 部署未返回部署 ID: processKey=" + PROCESS_KEY));
+        log.info("BPMN 部署完成: processKey={}, deploymentId={}", PROCESS_KEY, deploymentId);
     }
 
     /** 插入 IT申请 → skeleton_approval 绑定（若已存在则跳过） */

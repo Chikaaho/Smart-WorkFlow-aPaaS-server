@@ -201,8 +201,8 @@ class BpmInstanceControllerTest {
             com.sw.ck.security.holder.LoginUserHolder.set(normalUser(100L));
             when(bpmInstanceService.findByProcessInstanceId("proc-001"))
                     .thenReturn(Optional.of(sampleInstance));
-            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(List.of());
-            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(List.of());
+            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(java.util.Optional.of(List.of()));
+            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(java.util.Optional.of(List.of()));
             when(bpmProcessDefService.findByProcessKey("leave")).thenReturn(sampleProcessDef);
             assertThat(controller.instanceDetail("proc-001").getCode()).isZero();
         }
@@ -217,8 +217,8 @@ class BpmInstanceControllerTest {
             taskRow.setActivityType("userTask");
             taskRow.setTaskId("task-1");
             taskRow.setAssignee("200");
-            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(List.of(taskRow));
-            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(List.of());
+            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(java.util.Optional.of(List.of(taskRow)));
+            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(java.util.Optional.of(List.of()));
             when(bpmProcessDefService.findByProcessKey("leave")).thenReturn(sampleProcessDef);
             assertThat(controller.instanceDetail("proc-001").getCode()).isZero();
         }
@@ -236,9 +236,9 @@ class BpmInstanceControllerTest {
             when(bpmInstanceService.findByProcessInstanceId("proc-001"))
                     .thenReturn(Optional.of(sampleInstance));
             when(bpmRuntimeFacade.getActiveActivityIds("proc-001"))
-                    .thenReturn(List.of("Activity_001"));
+                    .thenReturn(java.util.Optional.of(List.of("Activity_001")));
             when(bpmRuntimeFacade.queryHistoricActivities("proc-001"))
-                    .thenReturn(List.of());
+                    .thenReturn(java.util.Optional.of(List.of()));
             when(bpmProcessDefService.findByProcessKey("leave"))
                     .thenReturn(sampleProcessDef);
 
@@ -278,9 +278,9 @@ class BpmInstanceControllerTest {
             when(bpmInstanceService.findByProcessInstanceId("proc-002"))
                     .thenReturn(Optional.of(sampleInstance));
             when(bpmRuntimeFacade.getActiveActivityIds("proc-002"))
-                    .thenReturn(List.of());  // 已结束，无活跃节点
+                    .thenReturn(java.util.Optional.of(List.of()));  // 已结束，无活跃节点
             when(bpmRuntimeFacade.queryHistoricActivities("proc-002"))
-                    .thenReturn(List.of(new BpmActivityDTO()));  // 简化表示
+                    .thenReturn(java.util.Optional.of(List.of(new BpmActivityDTO())));  // 简化表示
             when(bpmProcessDefService.findByProcessKey("leave"))
                     .thenReturn(sampleProcessDef);
 

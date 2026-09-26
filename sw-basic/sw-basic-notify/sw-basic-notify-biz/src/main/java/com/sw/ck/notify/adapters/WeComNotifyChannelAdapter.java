@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -29,6 +30,7 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
     private static final String TOKEN_URL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken";
     private static final String SEND_URL = "https://qyapi.weixin.qq.com/cgi-bin/message/send";
     private static final long TOKEN_TTL_MS = 110L * 60L * 1000L;
+    private static final NotifyChannel CHANNEL = NotifyChannel.WECHAT_WORK;
 
     private final NotifyTargetResolver targetResolver;
     private final String corpId;
@@ -48,17 +50,20 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
     }
 
     @Override
-    public NotifyChannel channel() {
-        return NotifyChannel.WECHAT_WORK;
+    public Optional<NotifyChannel> channel() {
+        return Optional.of(CHANNEL);
     }
 
     @Override
-    public NotifySendResult send(NotifySendRequest request) {
-        String userid = targetResolver.resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "WECHAT_WORK");
-        if (userid == null || userid.isBlank()) {
-            return NotifySendResult.builder().channel(channel()).status("FAILED")
-                    .failureReason("无法解析接收人企业微信主体，拒绝发送").build();
+    public Optional<NotifySendResult> send(NotifySendRequest request) {
+        Optional<String> subject = targetResolver
+                .resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "WECHAT_WORK")
+                .filter(value -> !value.isBlank());
+        if (subject.isEmpty()) {
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                    .failureReason("无法解析接收人企业微信主体，拒绝发送").build());
         }
+        String userid = subject.orElseThrow();
         try {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("touser", userid);
@@ -77,17 +82,17 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
                 JsonNode root = mapper.readTree(resp.body());
                 int errCode = root.path("errcode").asInt(-1);
                 if (errCode == 0) {
-                    return NotifySendResult.builder().channel(channel()).status("SUCCESS")
+                    return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
                             .externalMessageId("wecom-" + System.nanoTime())
-                            .build();
+                            .build());
                 }
-                return NotifySendResult.builder().channel(channel()).status("FAILED")
+                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
                         .failureReason("企业微信发送失败: errcode=" + errCode)
-                        .build();
+                        .build());
             }
         } catch (Exception e) {
-            return NotifySendResult.builder().channel(channel()).status("FAILED")
-                    .failureReason("企业微信发送异常: " + e.getClass().getSimpleName()).build();
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                    .failureReason("企业微信发送异常: " + e.getClass().getSimpleName()).build());
         }
     }
 

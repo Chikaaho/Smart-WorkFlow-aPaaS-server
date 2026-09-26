@@ -10,6 +10,7 @@ import com.sw.ck.iot.mapper.IotCommandMapper;
 import com.sw.ck.iot.mapper.IotConnectionMapper;
 import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.mapper.IotEventRecordMapper;
+import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
 import com.sw.ck.iot.mapper.IotProductMapper;
 import com.sw.ck.iot.mapper.IotPropertyRecordMapper;
 import com.sw.ck.iot.mapper.IotScriptExecMapper;
@@ -39,6 +40,15 @@ public class ScriptEngineService {
     private final GraalJsRunner jsRunner;
     private final JavaSubprocessExecutor javaExecutor;
     private final ScriptBeanAccess beans;
+
+    /** 幂等插入的保存点包装所需（可选装配：单元测试可缺省）。 */
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setTransactionManager(
+            org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
 
     public ScriptEngineService(GraalJsRunner jsRunner,
                                JavaSubprocessExecutor javaExecutor,
@@ -125,6 +135,7 @@ public class ScriptEngineService {
         exec.setIdempotentKey(idempotentKey);
         exec.setCorrelationId(spec.getCorrelationId());
         beans.scriptExecMapper.insert(exec);
+        persistProcessStartIntents(host, sideEffect);
         return exec;
     }
 
@@ -154,6 +165,42 @@ public class ScriptEngineService {
     }
 
     /**
+     * 把脚本请求的流程启动意图写入持久触发记录（Phase 4 可靠业务事件 —— IoT 脚本路径）。
+     *
+     * <p>原实现只发布进程内事件：无事务或进程退出即静默丢失，消费端按幂等键回写时也找不到任何行。
+     * 现在意图与脚本执行同事务落 {@code sw_iot_process_trigger}（PENDING + 稳定幂等键 +
+     * 发起目标身份），由 bpm 侧监听器执行，失败由恢复调度重投。</p>
+     */
+    private void persistProcessStartIntents(ScriptHostFunctions host, boolean sideEffect) {
+        if (!sideEffect || host == null || host.getProcessStartRequests().isEmpty()) {
+            // 试运行不产生副作用，不登记意图
+            return;
+        }
+        for (ScriptHostFunctions.ProcessStartRequest request : host.getProcessStartRequests()) {
+            com.sw.ck.iot.entity.IotProcessTrigger trigger = new com.sw.ck.iot.entity.IotProcessTrigger();
+            trigger.setScriptId(request.scriptId());
+            trigger.setDeviceId(request.deviceId());
+            trigger.setTenantId(request.tenantId());
+            trigger.setIdempotentKey(request.idempotentKey());
+            trigger.setProcessTemplateKey(request.processTemplateKey());
+            trigger.setTriggerSource(request.triggerSource() == null ? "SCRIPT" : request.triggerSource());
+            trigger.setConfiguredBy(request.configuredBy());
+            trigger.setStatus("PENDING");
+            trigger.setRetryCount(0);
+            trigger.setTriggerTime(java.time.LocalDateTime.now());
+            trigger.setFormSnapshot(JSON.toJSONString(request.formData()));
+            try {
+                // 与规则路径同口径：唯一键冲突在保存点内发生，不污染调用方业务事务
+                com.sw.ck.common.persistence.IdempotentInsert.execute(transactionManager,
+                        () -> beans.processTriggerMapper.insert(trigger));
+            } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+                // 幂等：同幂等键已登记，不重复建行
+                continue;
+            }
+        }
+    }
+
+    /**
      * Mapper/Bean 聚合（避免 ScriptEngineService 直接依赖全部 Mapper 造成构造膨胀）。
      */
     @Service
@@ -171,6 +218,7 @@ public class ScriptEngineService {
         final IotScriptExecMapper scriptExecMapper;
         final IotScriptMapper scriptMapper;
         final IotScriptVersionMapper scriptVersionMapper;
+        final IotProcessTriggerMapper processTriggerMapper;
 
         public ScriptBeanAccess(IotDeviceMapper deviceMapper,
                                 IotConnectionMapper connectionMapper,
@@ -184,7 +232,8 @@ public class ScriptEngineService {
                                 DomainEventPublisher eventPublisher,
                                 IotScriptExecMapper scriptExecMapper,
                                 IotScriptMapper scriptMapper,
-                                IotScriptVersionMapper scriptVersionMapper) {
+                                IotScriptVersionMapper scriptVersionMapper,
+                                IotProcessTriggerMapper processTriggerMapper) {
             this.deviceMapper = deviceMapper;
             this.connectionMapper = connectionMapper;
             this.topicMapper = topicMapper;
@@ -198,6 +247,7 @@ public class ScriptEngineService {
             this.scriptExecMapper = scriptExecMapper;
             this.scriptMapper = scriptMapper;
             this.scriptVersionMapper = scriptVersionMapper;
+            this.processTriggerMapper = processTriggerMapper;
         }
     }
 

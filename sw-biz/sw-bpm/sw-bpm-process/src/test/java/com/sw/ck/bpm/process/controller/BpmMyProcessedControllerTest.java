@@ -110,8 +110,8 @@ class BpmMyProcessedControllerTest {
         task.setName("审批");
         task.setProcessInstanceId("pi-001");
         task.setEndTime(new Date());
-        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 10)).thenReturn(List.of(task));
-        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(1L);
+        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 10)).thenReturn(java.util.Optional.of(List.of(task)));
+        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(java.util.Optional.of(1L));
         when(bpmInstanceService.findByProcessInstanceId("pi-001")).thenReturn(Optional.of(instance()));
 
         R<com.sw.ck.common.page.PageResult<MyProcessedItemDTO>> resp =
@@ -155,8 +155,8 @@ class BpmMyProcessedControllerTest {
         duplicated.setProcessInstanceId("pi-001");
         duplicated.setEndTime(new Date());
         when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 10))
-                .thenReturn(List.of(legacy, duplicated));
-        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(2L);
+                .thenReturn(java.util.Optional.of(List.of(legacy, duplicated)));
+        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(java.util.Optional.of(2L));
         when(bpmInstanceService.findByProcessInstanceId("pi-001")).thenReturn(Optional.of(instance()));
 
         R<com.sw.ck.common.page.PageResult<MyProcessedItemDTO>> resp =
@@ -194,8 +194,8 @@ class BpmMyProcessedControllerTest {
         duplicated.setTaskId("t-both");
         duplicated.setProcessInstanceId("pi-001");
         duplicated.setEndTime(new Date());
-        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 1)).thenReturn(List.of(legacy, duplicated));
-        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(2L);
+        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 1)).thenReturn(java.util.Optional.of(List.of(legacy, duplicated)));
+        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(java.util.Optional.of(2L));
         when(bpmInstanceService.findByProcessInstanceId("pi-001")).thenReturn(Optional.of(instance()));
 
         java.util.Set<String> seen = new java.util.HashSet<>();

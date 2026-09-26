@@ -8,6 +8,7 @@ import com.sw.ck.bpm.api.participant.ConsensusSettlementPort;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.engine.delegate.ConsensusCompletionEvaluator;
 import com.sw.ck.bpm.engine.delegate.DynamicBranchCollectionResolver;
 import com.sw.ck.bpm.engine.listener.DynamicBranchTaskListener;
@@ -38,6 +39,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -81,7 +83,7 @@ class I4DynamicParallelFlowableTest {
         // 部门 99 = 失效/跨租户对象（findActiveDeptIds 永不返回）；部门 7 = 有效但负责人缺失
         when(deptQueryFacade.findActiveDeptIds(anyCollection())).thenAnswer(inv -> {
             List<Long> ids = toIds(inv.getArgument(0));
-            return ids.stream().filter(id -> id != 99L).toList();
+            return Optional.of(ids.stream().filter(id -> id != 99L).toList());
         });
         when(userQueryFacade.findActiveUserIdsByDeptLeaders(anyCollection(), eq(1L)))
                 .thenAnswer(inv -> {
@@ -95,14 +97,14 @@ class I4DynamicParallelFlowableTest {
                             default -> { }
                         }
                     }
-                    return result;
+                    return Optional.of(result);
                 });
 
         DynamicBranchPort branchPort = new DynamicBranchPort() {
             @Override
-            public List<FrozenBranch> freeze(String tenantId, String processInstanceId, String nodeKey,
-                                             String sourceType, String sourceDesc, String mode,
-                                             List<BranchCandidate> candidates) {
+            public Optional<List<FrozenBranch>> freeze(String tenantId, String processInstanceId, String nodeKey,
+                                                       String sourceType, String sourceDesc, String mode,
+                                                       List<BranchCandidate> candidates) {
                 FREEZE_CALLS.put(processInstanceId + ":" + nodeKey,
                         candidates.stream().map(c -> c.deptId()
                                 + (c.skipReason() == null ? "@" + c.leaderId() : "!" + c.skipReason()))
@@ -120,42 +122,52 @@ class I4DynamicParallelFlowableTest {
                     result.add(new FrozenBranch(index++, entry.getKey(),
                             String.join(",", entry.getValue())));
                 }
-                return result;
+                return Optional.of(result);
             }
 
             @Override
-            public void recordAction(String tenantId, String processInstanceId, String nodeKey,
-                                     String leaderId, String taskId, String action, String reason) {
+            public Optional<MutationOutcome> recordAction(String tenantId, String processInstanceId, String nodeKey,
+                                                          String leaderId, String taskId, String action,
+                                                          String reason) {
                 BRANCH_ACTIONS.put(taskId, action + ":" + leaderId);
+                return Optional.of(MutationOutcome.APPLIED);
             }
 
             @Override
-            public void closeRemaining(String tenantId, String processInstanceId, String nodeKey,
-                                       String reason) {
+            public Optional<MutationOutcome> closeRemaining(String tenantId, String processInstanceId,
+                                                            String nodeKey, String reason) {
                 BRANCH_ACTIONS.put("closed", reason);
+                return Optional.of(MutationOutcome.APPLIED);
             }
         };
 
         ConsensusVotePort votePort = new ConsensusVotePort() {
             @Override
-            public boolean record(String tenantId, String processInstanceId, String nodeKey,
-                                  String taskId, String actorId, String outcome) {
-                return VOTES.put(processInstanceId + ":" + taskId + ":" + actorId, outcome) == null;
+            public Optional<Boolean> record(String tenantId, String processInstanceId, String nodeKey,
+                                            String taskId, String actorId, String outcome) {
+                return Optional.of(VOTES.put(processInstanceId + ":" + taskId + ":" + actorId, outcome) == null);
             }
 
             @Override
-            public long count(String tenantId, String processInstanceId, String nodeKey, String outcome) {
-                return VOTES.entrySet().stream()
+            public Optional<Long> count(String tenantId, String processInstanceId, String nodeKey,
+                                        String outcome) {
+                return Optional.of(VOTES.entrySet().stream()
                         .filter(entry -> entry.getKey().startsWith(processInstanceId + ":"))
                         .filter(entry -> entry.getValue().equals(outcome))
-                        .count();
+                        .count());
             }
         };
         ConsensusSettlementPort settlementPort =
-                (tenantId, processInstanceId, nodeKey, reason) -> SETTLEMENTS.incrementAndGet();
+                (tenantId, processInstanceId, nodeKey, reason) -> {
+                    SETTLEMENTS.incrementAndGet();
+                    return Optional.of(MutationOutcome.APPLIED);
+                };
         ParticipantSnapshotRecorder snapshotRecorder = new ParticipantSnapshotRecorder() {
-            @Override public void record(String processInstanceId, String nodeKey, String taskId,
-                                         List<String> participantIds, Long tenantId) { }
+            @Override public Optional<MutationOutcome> record(String processInstanceId, String nodeKey,
+                                                              String taskId, List<String> participantIds,
+                                                              Long tenantId) {
+                return Optional.of(MutationOutcome.APPLIED);
+            }
         };
 
         processEngine = config.buildProcessEngine();

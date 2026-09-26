@@ -71,9 +71,11 @@ public class NotifyInboxController {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "该消息没有可跳转对象");
         }
         NotifyLinkAuthorizer authorizer = authorizerProvider.getIfAvailable();
-        if (authorizerProvider.getIfAvailable() == null) {
-            failClosed(msg);
-        } else if (!authorizerProvider.getIfAvailable().canOpen(msg.getLinkType(), msg.getLinkId())) {
+        // fail closed：无实现、empty（无法裁决）与 present(false) 一律按拒绝处理
+        boolean allowed = authorizer != null
+                && authorizer.canOpen(msg.getLinkType(), msg.getLinkId())
+                        .filter(Boolean.TRUE::equals).isPresent();
+        if (!allowed) {
             failClosed(msg);
         }
         log.info("深链打开: msgId={}, linkType={}, userId={}", id, msg.getLinkType(),

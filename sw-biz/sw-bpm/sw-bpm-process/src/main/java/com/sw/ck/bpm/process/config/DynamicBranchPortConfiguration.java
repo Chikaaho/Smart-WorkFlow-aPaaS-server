@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.config;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper;
 import org.springframework.context.annotation.Bean;
@@ -14,6 +15,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * I4 动态并行分支冻结端口装配（bpm-process）。
@@ -30,9 +32,9 @@ public class DynamicBranchPortConfiguration {
     public DynamicBranchPort dynamicBranchPort(DynamicBranchSnapshotMapper mapper) {
         return new DynamicBranchPort() {
             @Override
-            public List<FrozenBranch> freeze(String tenantId, String processInstanceId, String nodeKey,
-                                             String sourceType, String sourceDesc, String mode,
-                                             List<BranchCandidate> candidates) {
+            public Optional<List<FrozenBranch>> freeze(String tenantId, String processInstanceId, String nodeKey,
+                                                       String sourceType, String sourceDesc, String mode,
+                                                       List<BranchCandidate> candidates) {
                 long tenant = parseTenant(tenantId);
                 List<DynamicBranchSnapshot> existing = mapper.selectList(
                         new LambdaQueryWrapper<DynamicBranchSnapshot>()
@@ -42,7 +44,7 @@ public class DynamicBranchPortConfiguration {
                                 .eq(DynamicBranchSnapshot::getDeleted, 0)
                                 .orderByAsc(DynamicBranchSnapshot::getBranchIndex));
                 if (!existing.isEmpty()) {
-                    return frozenOf(existing); // 冻结快照权威：不重算
+                    return Optional.of(frozenOf(existing)); // 冻结快照权威：不重算
                 }
                 List<BranchCandidate> ordered = new ArrayList<>(candidates == null
                         ? List.of() : candidates);
@@ -83,12 +85,12 @@ public class DynamicBranchPortConfiguration {
                     mapper.insert(row);
                     index++;
                 }
-                return result;
+                return Optional.of(result);
             }
 
             @Override
-            public void recordAction(String tenantId, String processInstanceId, String nodeKey,
-                                     String leaderId, String taskId, String action, String reason) {
+            public Optional<MutationOutcome> recordAction(String tenantId, String processInstanceId, String nodeKey,
+                                                          String leaderId, String taskId, String action, String reason) {
                 long tenant = parseTenant(tenantId);
                 DynamicBranchSnapshot current = mapper.selectOne(
                         new LambdaQueryWrapper<DynamicBranchSnapshot>()
@@ -100,7 +102,8 @@ public class DynamicBranchPortConfiguration {
                                 .orderByAsc(DynamicBranchSnapshot::getBranchIndex)
                                 .last("LIMIT 1"));
                 if (current == null) {
-                    return; // 冻结前回调（防御）：不凭空造分支
+                    // 冻结前回调（防御）：该分支尚未冻结，不凭空造分支
+                    return Optional.empty();
                 }
                 DynamicBranchSnapshot patch = new DynamicBranchSnapshot();
                 patch.setId(current.getId());
@@ -109,29 +112,31 @@ public class DynamicBranchPortConfiguration {
                 }
                 if ("START".equals(action)) {
                     if ("CANCELED".equals(current.getStatus())) {
-                        return; // 取消态不被 START 覆写
+                        return Optional.of(MutationOutcome.ALREADY_APPLIED); // 取消态不被 START 覆写
                     }
                     patch.setStatus("START");
                 } else if ("APPROVE".equals(action) || "DISAPPROVE".equals(action)) {
                     patch.setStatus(action);
                 } else if ("CANCEL".equals(action)) {
                     if ("APPROVE".equals(current.getStatus()) || "DISAPPROVE".equals(current.getStatus())) {
-                        return; // 已终态动作的分支不改写
+                        return Optional.of(MutationOutcome.ALREADY_APPLIED); // 已终态动作的分支不改写
                     }
                     patch.setStatus("CANCELED");
                     patch.setCancelReason(reason);
                 } else {
-                    return;
+                    // 未受支持的动作：不写入任何变更，幂等语义下无第二次效果
+                    return Optional.of(MutationOutcome.ALREADY_APPLIED);
                 }
                 patch.setUpdateTime(LocalDateTime.now());
                 mapper.updateById(patch);
+                return Optional.of(MutationOutcome.APPLIED);
             }
 
             @Override
-            public void closeRemaining(String tenantId, String processInstanceId, String nodeKey,
-                                       String reason) {
+            public Optional<MutationOutcome> closeRemaining(String tenantId, String processInstanceId, String nodeKey,
+                                                            String reason) {
                 long tenant = parseTenant(tenantId);
-                mapper.update(null, new LambdaUpdateWrapper<DynamicBranchSnapshot>()
+                int updated = mapper.update(null, new LambdaUpdateWrapper<DynamicBranchSnapshot>()
                         .eq(DynamicBranchSnapshot::getTenantId, tenant)
                         .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
                         .eq(nodeKey != null && !nodeKey.isBlank(),
@@ -141,6 +146,8 @@ public class DynamicBranchPortConfiguration {
                         .set(DynamicBranchSnapshot::getStatus, "CANCELED")
                         .set(DynamicBranchSnapshot::getCancelReason, reason)
                         .set(DynamicBranchSnapshot::getUpdateTime, LocalDateTime.now()));
+                return Optional.of(updated > 0
+                        ? MutationOutcome.APPLIED : MutationOutcome.ALREADY_APPLIED);
             }
 
             private List<FrozenBranch> frozenOf(List<DynamicBranchSnapshot> existing) {

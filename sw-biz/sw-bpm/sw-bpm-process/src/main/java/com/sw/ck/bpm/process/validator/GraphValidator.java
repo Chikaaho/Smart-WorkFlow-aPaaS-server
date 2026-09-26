@@ -101,7 +101,10 @@ public class GraphValidator {
                 errors.add(err(node.getId(), BpmErrorCode.GRAPH_UNKNOWN_NODE_TYPE));
             } else {
                 // 注册器返回的配置错误统一补齐 nodeKey/edgeKey（I3 设计器定位锚）
-                for (GraphValidationError configError : nodeRegistry.validateConfig(node)) {
+                // validateConfig 当前契约恒 present（未知节点以错误码表达，不以上空表达）
+                for (GraphValidationError configError : nodeRegistry.validateConfig(node)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "节点配置校验未返回结果: type=" + type))) {
                     errors.add(fillLocatorKeys(configError));
                 }
             }
@@ -160,6 +163,7 @@ public class GraphValidator {
                     continue;
                 }
                 try {
+                    // 仅做语法探针：empty = 路径/变量不存在，属合法业务结论，不构成语法错误
                     RestrictedExpressionEvaluator.value(expression, Map.of());
                 } catch (RuntimeException ex) {
                     errors.add(err(edge.getId(), BpmErrorCode.BRANCH_CONFIG_INVALID));
@@ -207,15 +211,18 @@ public class GraphValidator {
             for (GraphElement node : nodes) {
                 String type = node.getType();
                 if (type == null) continue;
-                BpmNodeDefinition definition = nodeRegistry.find(type).orElse(null);
-                if (definition == null || definition.metadata() == null) continue;
+                java.util.Optional<BpmNodeDefinition> definitionLookup = nodeRegistry.find(type);
+                if (definitionLookup.isEmpty()) continue;
+                BpmNodeDefinition definition = definitionLookup.get();
+                // metadata empty = 该定义未提供元数据（旧翻译器兼容路径）：无法做基数校验
+                if (definition.metadata().isEmpty()) continue;
+                var topology = definition.metadata().orElseThrow().topology(); // 上方 isEmpty 已证明存在
                 if ("CONDITION".equals(type)) {
                     List<GraphElement> outgoing = edges.stream()
                             .filter(edge -> node.getId() != null && node.getId().equals(edge.getSource()))
                             .toList();
                     if (isLegacyGatewayPlaceholder(node, outgoing, nodes)) continue;
                 }
-                var topology = definition.metadata().topology();
 
                 int in = inDegree.getOrDefault(node.getId(), 0);
                 int out = outDegree.getOrDefault(node.getId(), 0);
@@ -263,7 +270,11 @@ public class GraphValidator {
 
         // --- 6. 表单存在校验 ---
         if (formKey != null && !formKey.isBlank()) {
-            if (!formDefinitionService.formExists(formKey)) {
+            // formExists 当前契约恒 present（formKey 为空也给出明确 false 判定）
+            boolean formExists = formDefinitionService.formExists(formKey)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "表单存在性判定未返回结果: formKey=" + formKey));
+            if (!formExists) {
                 errors.add(err(null, BpmErrorCode.GRAPH_FORM_NOT_FOUND));
             }
         }
@@ -297,16 +308,17 @@ public class GraphValidator {
 
     private Map<String, String> formFieldTypes(String formKey) {
         if (formKey == null || formKey.isBlank()) return Map.of();
-        String definition;
+        Optional<String> definition;
         try {
             definition = formDefinitionService.getFormDefinition(formKey);
         } catch (RuntimeException e) {
             log.warn("读取表单字段用于分支校验失败: formKey={}, reason={}", formKey, e.getMessage());
             return Map.of();
         }
-        if (definition == null || definition.isBlank()) return Map.of();
+        // empty = 该 formKey 无表单定义（原 null 返回路径）：无字段可校验
+        if (definition.isEmpty() || definition.get().isBlank()) return Map.of();
         try {
-            JsonNode fields = new ObjectMapper().readTree(definition).path("fields");
+            JsonNode fields = new ObjectMapper().readTree(definition.get()).path("fields");
             if (!fields.isArray()) return Map.of();
             Map<String, String> result = new HashMap<>();
             for (JsonNode field : fields) {
@@ -367,13 +379,15 @@ public class GraphValidator {
 
     private boolean isStartNode(GraphElement node) {
         return node.getType() != null && nodeRegistry.find(node.getType())
-                .map(definition -> definition.metadata().startNode())
+                .flatMap(BpmNodeDefinition::metadata)
+                .map(metadata -> metadata.startNode())
                 .orElse(false);
     }
 
     private boolean isEndNode(GraphElement node) {
         return node.getType() != null && nodeRegistry.find(node.getType())
-                .map(definition -> definition.metadata().endNode())
+                .flatMap(BpmNodeDefinition::metadata)
+                .map(metadata -> metadata.endNode())
                 .orElse(false);
     }
 

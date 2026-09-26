@@ -43,12 +43,14 @@ public class NotificationNodeDelegate extends NodeDelegateSupport implements Jav
             Long recipientId = parseLong(recipient);
             if (recipientId == null) throw new com.sw.ck.common.exception.BaseException(
                     com.sw.ck.bpm.api.exception.BpmErrorCode.PARTICIPANT_CONFIG_INVALID);
+            // 投递入口契约恒 present：渠道失败以结果状态表达，真实异常按既有映射抛出
             NotifySendResult result = notifyFacade.send(NotifySendRequest.builder()
                     .recipientId(recipientId).title(title).content(content)
                     .bizType(NotifyBizType.SYSTEM).bizId(execution.getProcessInstanceId())
                     .tenantId(context.getTenantId()).channel(channel)
                     .idempotencyKey(execution.getProcessInstanceId() + ":"
-                            + execution.getCurrentActivityId() + ":" + recipient).build());
+                            + execution.getCurrentActivityId() + ":" + recipient).build())
+                    .orElseThrow(() -> new IllegalStateException("通知投递结果缺失"));
             if (!"SUCCESS".equals(result.getStatus()) && shouldBlock(config)) {
                 throw new com.sw.ck.common.exception.BaseException(
                         com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),

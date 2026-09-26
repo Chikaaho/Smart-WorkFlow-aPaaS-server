@@ -83,13 +83,15 @@ public class SqlExecutor {
     public SqlExecutionResult execute(Long datasourceId, String sql, Long operatorId, String operatorName) {
         long startTime = System.currentTimeMillis();
 
-        // 1. 加载数据源配置
+        // 1. 加载数据源配置（目标缺失/停用以专用 IAE 子类表达，供 form 端口适配转 empty）
         ExternalDatasource entity = datasourceService.getById(datasourceId);
         if (entity == null) {
-            throw new IllegalArgumentException("External datasource not found: id=" + datasourceId);
+            throw new com.sw.ck.bpm.engine.datasource.ExternalDatasourceUnavailableException(
+                    "External datasource not found: id=" + datasourceId);
         }
         if (entity.getEnabled() == null || entity.getEnabled() != 1) {
-            throw new IllegalArgumentException("External datasource is disabled: " + entity.getName());
+            throw new com.sw.ck.bpm.engine.datasource.ExternalDatasourceUnavailableException(
+                    "External datasource is disabled: " + entity.getName());
         }
 
         // 2. SQL 安全校验

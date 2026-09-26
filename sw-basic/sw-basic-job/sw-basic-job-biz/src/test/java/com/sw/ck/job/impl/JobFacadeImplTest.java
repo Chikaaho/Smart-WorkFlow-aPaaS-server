@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -52,39 +53,40 @@ class JobFacadeImplTest {
     class GetByIdTests {
 
         @Test
-        @DisplayName("任务存在 → 返回 DTO，字段逐项映射正确")
+        @DisplayName("任务存在 → 返回 present DTO，字段逐项映射正确")
         void getById_shouldReturnDTO() {
             JobInfo entity = createJobInfo(1L, "test-job");
             when(jobInfoService.getById(1L)).thenReturn(entity);
 
-            JobInfoDTO dto = jobFacade.getById(1L);
+            Optional<JobInfoDTO> dto = jobFacade.getById(1L);
 
-            assertThat(dto).isNotNull();
-            assertThat(dto.getId()).isEqualTo(1L);
-            assertThat(dto.getJobName()).isEqualTo("test-job");
-            assertThat(dto.getJobGroup()).isEqualTo("DEFAULT");
-            assertThat(dto.getJobType()).isEqualTo("BEAN");
-            assertThat(dto.getCronExpression()).isEqualTo("0/30 * * * * ?");
-            assertThat(dto.getStatus()).isEqualTo("NORMAL");
-            assertThat(dto.getConcurrent()).isFalse();
-            assertThat(dto.getMisfirePolicy()).isEqualTo(0);
-            assertThat(dto.getDescription()).isEqualTo("测试任务");
-            assertThat(dto.getBeanName()).isEqualTo("testHandler");
-            assertThat(dto.getFlowDefKey()).isNull();
-            assertThat(dto.getLastFireTime()).isNotNull();
-            assertThat(dto.getNextFireTime()).isNotNull();
-            assertThat(dto.getCreateTime()).isNotNull();
+            assertThat(dto).isPresent();
+            JobInfoDTO value = dto.orElseThrow();
+            assertThat(value.getId()).isEqualTo(1L);
+            assertThat(value.getJobName()).isEqualTo("test-job");
+            assertThat(value.getJobGroup()).isEqualTo("DEFAULT");
+            assertThat(value.getJobType()).isEqualTo("BEAN");
+            assertThat(value.getCronExpression()).isEqualTo("0/30 * * * * ?");
+            assertThat(value.getStatus()).isEqualTo("NORMAL");
+            assertThat(value.getConcurrent()).isFalse();
+            assertThat(value.getMisfirePolicy()).isEqualTo(0);
+            assertThat(value.getDescription()).isEqualTo("测试任务");
+            assertThat(value.getBeanName()).isEqualTo("testHandler");
+            assertThat(value.getFlowDefKey()).isNull();
+            assertThat(value.getLastFireTime()).isNotNull();
+            assertThat(value.getNextFireTime()).isNotNull();
+            assertThat(value.getCreateTime()).isNotNull();
             verify(jobInfoService).getById(1L);
         }
 
         @Test
-        @DisplayName("任务不存在 → 返回 null")
-        void getById_notFound_shouldReturnNull() {
+        @DisplayName("任务不存在 → 返回 empty")
+        void getById_notFound_shouldReturnEmpty() {
             when(jobInfoService.getById(999L)).thenReturn(null);
 
-            JobInfoDTO dto = jobFacade.getById(999L);
+            Optional<JobInfoDTO> dto = jobFacade.getById(999L);
 
-            assertThat(dto).isNull();
+            assertThat(dto).isEmpty();
             verify(jobInfoService).getById(999L);
         }
     }
@@ -96,27 +98,27 @@ class JobFacadeImplTest {
     class GetByJobNameTests {
 
         @Test
-        @DisplayName("任务存在 → 返回 DTO")
+        @DisplayName("任务存在 → 返回 present DTO")
         void getByJobName_shouldReturnDTO() {
             JobInfo entity = createJobInfo(2L, "cron-cleanup");
             when(jobInfoService.getByJobName("cron-cleanup")).thenReturn(entity);
 
-            JobInfoDTO dto = jobFacade.getByJobName("cron-cleanup");
+            Optional<JobInfoDTO> dto = jobFacade.getByJobName("cron-cleanup");
 
-            assertThat(dto).isNotNull();
-            assertThat(dto.getId()).isEqualTo(2L);
-            assertThat(dto.getJobName()).isEqualTo("cron-cleanup");
+            assertThat(dto).isPresent();
+            assertThat(dto.orElseThrow().getId()).isEqualTo(2L);
+            assertThat(dto.orElseThrow().getJobName()).isEqualTo("cron-cleanup");
             verify(jobInfoService).getByJobName("cron-cleanup");
         }
 
         @Test
-        @DisplayName("任务不存在 → 返回 null")
-        void getByJobName_notFound_shouldReturnNull() {
+        @DisplayName("任务不存在 → 返回 empty")
+        void getByJobName_notFound_shouldReturnEmpty() {
             when(jobInfoService.getByJobName("ghost-job")).thenReturn(null);
 
-            JobInfoDTO dto = jobFacade.getByJobName("ghost-job");
+            Optional<JobInfoDTO> dto = jobFacade.getByJobName("ghost-job");
 
-            assertThat(dto).isNull();
+            assertThat(dto).isEmpty();
             verify(jobInfoService).getByJobName("ghost-job");
         }
 
@@ -129,7 +131,7 @@ class JobFacadeImplTest {
             entity.setFlowDefKey("approval_flow_v1");
             when(jobInfoService.getByJobName("flow-trigger")).thenReturn(entity);
 
-            JobInfoDTO dto = jobFacade.getByJobName("flow-trigger");
+            JobInfoDTO dto = jobFacade.getByJobName("flow-trigger").orElseThrow();
 
             assertThat(dto.getJobType()).isEqualTo("FLOW");
             assertThat(dto.getBeanName()).isNull();

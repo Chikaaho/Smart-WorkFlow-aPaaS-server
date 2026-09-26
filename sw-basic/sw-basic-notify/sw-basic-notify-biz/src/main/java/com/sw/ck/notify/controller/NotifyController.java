@@ -209,7 +209,8 @@ public class NotifyController {
                     .tenantId(loginUser == null || loginUser.getTenantId() == null
                             ? null : loginUser.getTenantId())
                     .idempotencyKey("batch:" + batchKey + ":" + recipientId)
-                    .build());
+                    .build())
+                    .orElseThrow(() -> new IllegalStateException("通知发送未返回结果"));
             String status = result.getStatus() == null ? "FAILED" : result.getStatus();
             switch (status) {
                 case "SUCCESS" -> delivered++;

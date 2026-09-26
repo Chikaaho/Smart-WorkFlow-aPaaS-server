@@ -26,6 +26,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.EnumSet;
+import java.util.Optional;
 
 /**
  * APPROVAL 节点翻译器 —— 画布 APPROVAL 节点 → BPMN {@link UserTask}。
@@ -69,13 +70,13 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
     }
 
     @Override
-    public String type() {
-        return "APPROVAL";
+    public Optional<String> type() {
+        return Optional.of("APPROVAL");
     }
 
     @Override
-    public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata(
+    public Optional<BpmNodeMetadata> metadata() {
+        return Optional.of(new BpmNodeMetadata(
                 "审批",
                 "人工审批节点",
                 "TASK",
@@ -94,53 +95,53 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                 false,
                 false,
                 false,
-                true);
+                true));
     }
 
     @Override
-    public List<GraphValidationError> validateConfig(GraphElement node) {
+    public Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
         Map<String, Object> config = node.getConfig();
         if (config == null || (!config.containsKey("participant") && !config.containsKey("approver"))) {
-            return List.of(configError(node, BpmErrorCode.APPROVER_CONFIG_MISSING,
-                    "审批节点缺少 approver 配置"));
+            return Optional.of(List.of(configError(node, BpmErrorCode.APPROVER_CONFIG_MISSING,
+                    "审批节点缺少 approver 配置")));
         }
         Object approverObj = config.containsKey("participant")
                 ? config.get("participant") : config.get("approver");
         if (!(approverObj instanceof Map<?, ?> approverMap)) {
-            return List.of(configError(node, BpmErrorCode.NODE_CONFIG_INVALID,
-                    "审批人配置必须是对象"));
+            return Optional.of(List.of(configError(node, BpmErrorCode.NODE_CONFIG_INVALID,
+                    "审批人配置必须是对象")));
         }
         Object typeValue = approverMap.containsKey("strategy")
                 ? approverMap.get("strategy") : approverMap.get("type");
         String approverType = typeValue == null ? null : String.valueOf(typeValue).trim();
         if (approverType == null || approverType.isBlank()) {
-            return List.of(configError(node, BpmErrorCode.APPROVER_CONFIG_MISSING,
-                    "审批人类型不能为空"));
+            return Optional.of(List.of(configError(node, BpmErrorCode.APPROVER_CONFIG_MISSING,
+                    "审批人类型不能为空")));
         }
         if (config.containsKey("participant")) {
             if (!ParticipantStrategy.ALL.contains(approverType.toUpperCase())) {
-                return List.of(configError(node, BpmErrorCode.PARTICIPANT_TYPE_NOT_IMPLEMENTED,
-                        "未实现的参与人策略: " + approverType));
+                return Optional.of(List.of(configError(node, BpmErrorCode.PARTICIPANT_TYPE_NOT_IMPLEMENTED,
+                        "未实现的参与人策略: " + approverType)));
             }
         if (ParticipantStrategy.ADAPTER.equalsIgnoreCase(approverType)
                     && (approverMap.get("adapterId") == null
                     || String.valueOf(approverMap.get("adapterId")).isBlank())) {
-                return List.of(configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "参与人适配器标识不能为空"));
+                return Optional.of(List.of(configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "参与人适配器标识不能为空")));
         }
         GraphValidationError strategyError = validateParticipantValue(node, approverType, approverMap.get("value"));
-        if (strategyError != null) return List.of(strategyError);
+        if (strategyError != null) return Optional.of(List.of(strategyError));
         } else if (!NodeApproverType.DESIGNATED.equalsIgnoreCase(approverType)) {
-            return List.of(configError(node, BpmErrorCode.APPROVER_TYPE_NOT_IMPLEMENTED,
-                    "未实现的审批人类型: " + approverType));
+            return Optional.of(List.of(configError(node, BpmErrorCode.APPROVER_TYPE_NOT_IMPLEMENTED,
+                    "未实现的审批人类型: " + approverType)));
         }
         Object value = approverMap.get("value");
         if (value == null || (value instanceof String text && text.isBlank())
                 || (value instanceof Collection<?> collection
                 && (collection.isEmpty() || collection.stream().allMatch(item -> item == null
                 || item.toString().isBlank())))) {
-            return List.of(configError(node, BpmErrorCode.APPROVER_RESOLVE_EMPTY,
-                    "参与人配置值不能为空"));
+            return Optional.of(List.of(configError(node, BpmErrorCode.APPROVER_RESOLVE_EMPTY,
+                    "参与人配置值不能为空")));
         }
         // 意见表单组件适用矩阵（I3 §4.10）：不可用组件（富文本、表格、外键等）
         // 必须在设计端/发布校验被拒，不得带病发布；类型集合与 ApprovalOpinionValidator 一致。
@@ -149,20 +150,20 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                 && opinionForm.get("fields") instanceof Collection<?> opinionFields) {
             for (Object fieldObj : opinionFields) {
                 if (!(fieldObj instanceof Map<?, ?> field)) {
-                    return List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
-                            "审批意见表单字段定义不合法"));
+                    return Optional.of(List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
+                            "审批意见表单字段定义不合法")));
                 }
                 Object typeObj = field.get("type");
                 String fieldType = typeObj == null ? null
                         : String.valueOf(typeObj).trim().toUpperCase();
                 if (fieldType == null || fieldType.isBlank()
                         || !OPINION_SUPPORTED_TYPES.contains(fieldType)) {
-                    return List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
-                            "审批意见表单组件不可用: " + fieldType));
+                    return Optional.of(List.of(configError(node, BpmErrorCode.OPINION_FORM_COMPONENT_UNAVAILABLE,
+                            "审批意见表单组件不可用: " + fieldType)));
                 }
             }
         }
-        return List.of();
+        return Optional.of(List.of());
     }
 
     private GraphValidationError validateParticipantValue(GraphElement node, String strategy, Object value) {

@@ -457,9 +457,18 @@ class FormDataUpdateServiceTest {
         }
         @Bean public DictFacade df() {
             return new DictFacade() {
-                public boolean isValidCode(String t, String c) { return true; }
-                public List<com.sw.ck.system.api.dict.DictItemDTO> listByType(String t) { return List.of(); }
-                public String resolveLabel(String t, String c) { return null; }
+                public Optional<Boolean> isValidCode(String t, String c) {
+                    if (t == null || t.isBlank() || c == null || c.isBlank()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(true);
+                }
+                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String t) {
+                    if (t == null || t.isBlank()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(List.of());
+                }
             };
         }
         @Bean public DomainEventPublisher dep(org.springframework.context.ApplicationEventPublisher d) {

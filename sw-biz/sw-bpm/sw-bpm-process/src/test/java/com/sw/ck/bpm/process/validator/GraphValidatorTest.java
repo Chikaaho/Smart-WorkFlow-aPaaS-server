@@ -43,7 +43,8 @@ class GraphValidatorTest {
         BpmNodeRegistry registry = mock(BpmNodeRegistry.class);
         when(registry.find(any())).thenAnswer(invocation ->
                 Optional.ofNullable(definitions.get(invocation.getArgument(0))));
-        when(registry.validateConfig(any())).thenReturn(List.of());
+        // validateConfig 当前契约恒 present（空列表=通过校验）
+        when(registry.validateConfig(any())).thenReturn(java.util.Optional.of(List.of()));
         // formDefinitionService 在 formKey=null 时不会被调用，safe-null mock
         validator = new GraphValidator(registry, mock(FormDefinitionService.class));
     }
@@ -53,13 +54,13 @@ class GraphValidatorTest {
                                                 boolean startNode, boolean endNode) {
         return new BpmNodeDefinition() {
             @Override
-            public String type() {
-                return type;
+            public java.util.Optional<String> type() {
+                return java.util.Optional.of(type);
             }
 
             @Override
-            public BpmNodeMetadata metadata() {
-                return new BpmNodeMetadata(
+            public java.util.Optional<BpmNodeMetadata> metadata() {
+                return java.util.Optional.of(new BpmNodeMetadata(
                         type, type, "OTHER",
                         new BpmNodeTopology(minIn, maxIn, minOut, maxOut),
                         List.of(), "test-v1", EnumSet.of(
@@ -67,7 +68,7 @@ class GraphValidatorTest {
                                 com.sw.ck.bpm.api.node.BpmNodeCapability.TRANSLATE,
                                 com.sw.ck.bpm.api.node.BpmNodeCapability.RUNTIME,
                                 com.sw.ck.bpm.api.node.BpmNodeCapability.CONFIG_VALIDATE),
-                        startNode, endNode, startNode || endNode, false);
+                        startNode, endNode, startNode || endNode, false));
             }
         };
     }

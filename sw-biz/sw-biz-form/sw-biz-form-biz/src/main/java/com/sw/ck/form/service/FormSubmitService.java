@@ -11,8 +11,8 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.event.FormSubmittedEvent;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FlowStartPort;
-import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.*;
 import com.sw.ck.form.mapper.FormConfigMapper;
@@ -62,7 +62,6 @@ public class FormSubmitService {
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbcTemplate;
     private final DictFacade dictFacade;
-    private final DomainEventPublisher eventPublisher;
     private final AesGcmCipher aesCipher;
     private final FormFieldValidator formFieldValidator;
     private final FlowStartPort flowStartPort;
@@ -91,7 +90,6 @@ public class FormSubmitService {
         this.objectMapper = objectMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.dictFacade = dictFacade;
-        this.eventPublisher = eventPublisher;
         this.aesCipher = aesCipher.orElse(null);
         this.formFieldValidator = formFieldValidator;
         this.flowStartPort = flowStartPort.getIfAvailable();
@@ -156,7 +154,6 @@ public class FormSubmitService {
         this.objectMapper = objectMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.dictFacade = dictFacade;
-        this.eventPublisher = eventPublisher;
         this.aesCipher = aesCipher.orElse(null);
         this.formFieldValidator = formFieldValidator;
         this.flowStartPort = flowStartPort.getIfAvailable();
@@ -333,6 +330,12 @@ public class FormSubmitService {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,
                     "该表单尚未完成数据表初始化，请联系管理员处理");
         }
+        // 表名在 SQL 构造边界统一校验（受控入口 DynamicTableSql 会再校验一次）
+        if (!DynamicTableSql.isValidTableName(tableName)) {
+            log.error("Table name '{}' does not match expected pattern '{}'",
+                    tableName, DynamicTableSql.TABLE_NAME_PATTERN);
+            throw new BaseException(FormErrorCode.SUBMIT_FAILED, "该表单的数据表配置异常，请联系管理员处理");
+        }
 
         // ==========================================================
         // Step 3: 加载表单配置并解析字段定义 + 服务端复算有效载荷
@@ -376,7 +379,7 @@ public class FormSubmitService {
                 continue; // 说明文字：非输入字段，不产生列
             }
 
-            String colName = ColumnValidation.physicalColumnName(fieldName, FieldType.valueOf(def.type()));
+            String colName = DynamicTableSql.requireColumn(fieldName, FieldType.valueOf(def.type()));
             Object value = effectiveData.get(fieldName);
 
             // BOOL 类型转换：true/false → 1/0；PG 严格类型要求 DATE/NUMBER 按列语义转换
@@ -401,7 +404,7 @@ public class FormSubmitService {
         allValues.addAll(userValues);
 
         String insertSql = buildInsertSql(tableName, allColumns);
-        jdbcTemplate.update(insertSql, allValues.toArray());
+        DynamicTableSql.update(jdbcTemplate, tableName, insertSql, allValues.toArray());
         log.debug("Inserted main record: table={}, recordId={}", tableName, recordId);
 
         // ==========================================================
@@ -412,6 +415,11 @@ public class FormSubmitService {
             if (subTableName == null) {
                 log.warn("No sub-table mapping for TABLE field '{}', skipping", tableFieldName);
                 continue;
+            }
+            // 表名在 SQL 构造边界统一校验（历史/越权元数据不得绕过）
+            if (!DynamicTableSql.isValidTableName(subTableName)) {
+                log.error("Invalid sub-table name '{}' in subTableMapping", subTableName);
+                throw new BaseException(FormErrorCode.SUBMIT_FAILED, "该表单的子表配置异常，请联系管理员处理");
             }
 
             Object rawValue = effectiveData.get(tableFieldName);
@@ -444,7 +452,7 @@ public class FormSubmitService {
                         continue; // 说明文字：非输入字段，不产生列
                     }
                     subFieldDefs.add(subDef);
-                    subUserColumns.add(ColumnValidation.physicalColumnName(subDef.name(), FieldType.valueOf(subDef.type())));
+                    subUserColumns.add(DynamicTableSql.requireColumn(subDef.name(), FieldType.valueOf(subDef.type())));
                 }
             }
 
@@ -470,7 +478,7 @@ public class FormSubmitService {
                 }
 
                 String subInsertSql = buildInsertSql(subTableName, subCols);
-                jdbcTemplate.update(subInsertSql, subVals.toArray());
+                DynamicTableSql.update(jdbcTemplate, subTableName, subInsertSql, subVals.toArray());
             }
             log.debug("Inserted {} rows into sub-table '{}' for field '{}'", rows.size(), subTableName, tableFieldName);
         }
@@ -509,11 +517,18 @@ public class FormSubmitService {
         boolean canStartFlow = enrichment == null
                 || enrichment.canCurrentUserPerformAction(formDef.getId(), "flowStart");
         if (flowStartPort != null && canStartFlow) {
-            Long commandId = flowStartPort.acceptFlowStart(event);
-            log.info("Flow start accepted in-tx: formKey={}, recordId={}, commandId={}",
-                    formKey, recordId, commandId);
-        } else if (flowStartPort == null && canStartFlow) {
-            eventPublisher.publish(event);
+            // empty = 该 formKey 无启用流程绑定，属合法 no-op（非失败）
+            flowStartPort.acceptFlowStart(event).ifPresentOrElse(
+                    commandId -> log.info("Flow start accepted in-tx: formKey={}, recordId={}, commandId={}",
+                            formKey, recordId, commandId),
+                    () -> log.info("Flow start no-op (no enabled binding): formKey={}, recordId={}",
+                            formKey, recordId));
+        } else if (flowStartPort == null) {
+            // Phase 4 可靠业务事件：进程内兜底发布已退役——该事件在生产无任何监听者，
+            // 继续发布只会把“无人受理”伪装成可靠降级。此处显式记录未受理事实，
+            // 权威路径仍是 FlowStartPort + sw_bpm_command 持久命令队列。
+            log.warn("BPM 模块未装配，表单 {} 的流程发起未受理（不影响表单落库）: recordId={}",
+                    formKey, recordId);
         } else {
             log.info("Flow start skipped by form action permission: formKey={}, recordId={}, userId={}",
                     formKey, recordId, userId);
@@ -632,16 +647,18 @@ public class FormSubmitService {
 
     /**
      * 构建 INSERT SQL（PreparedStatement 占位符）。
+     * <p>标识符经 {@link DynamicTableSql#quote(String)} 白名单校验后引用。</p>
      */
     private String buildInsertSql(String tableName, List<String> columns) {
         String quotedCols = columns.stream()
-                .map(c -> "\"" + c + "\"")
+                .map(DynamicTableSql::quote)
                 .collect(Collectors.joining(", "));
         String placeholders = columns.stream().map(c -> "?").collect(Collectors.joining(", "));
-        return "INSERT INTO \"" + tableName + "\" (" + quotedCols + ") VALUES (" + placeholders + ")";
+        return "INSERT INTO " + DynamicTableSql.quote(tableName)
+                + " (" + quotedCols + ") VALUES (" + placeholders + ")";
     }
 
-    // convertToColumnName() 已删除，改为调用 ColumnValidation.physicalColumnName() 单一出口
+    // convertToColumnName() 已删除，改为调用 DynamicTableSql.requireColumn() 单一出口（映射 + 校验）
 
     /**
      * 解析子表映射 JSON。

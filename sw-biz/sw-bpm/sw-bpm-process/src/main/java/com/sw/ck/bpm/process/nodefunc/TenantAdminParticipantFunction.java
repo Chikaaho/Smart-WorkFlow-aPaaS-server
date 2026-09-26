@@ -6,6 +6,7 @@ import com.sw.ck.system.api.user.UserQueryFacade;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 内建参与人函数：tenantAdmins —— 解析当前租户 superadmin 角色的有效用户。
@@ -21,10 +22,12 @@ public class TenantAdminParticipantFunction implements ParticipantFunction {
     }
 
     @Override
-    public List<String> resolveParticipants(NodeFunctionContext context) {
+    public Optional<List<String>> resolveParticipants(NodeFunctionContext context) {
+        // 契约恒 present：查询上下文缺失（empty）只表示无法确定租户范围，
+        // 该事实由 NodeFunctionService 的失败策略裁决，此处保持原有“空列表”结论。
         List<Long> users = userQueryFacade.findActiveUserIdsByRoleCodes(
-                List.of("superadmin"), context.getTenantId());
-        return users == null ? List.of()
-                : users.stream().map(String::valueOf).limit(100).toList();
+                        List.of("superadmin"), context.getTenantId())
+                .orElse(List.of());
+        return Optional.of(users.stream().map(String::valueOf).limit(100).toList());
     }
 }

@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -30,6 +30,15 @@
     </dependencyManagement>
 
     <dependencies>
+        <!--
+            Phase 5 · 边界抽取：跨模块契约已抽到 sw-basic-iot-api，实现模块反向依赖契约。
+            消费者（sw-bpm-process）只声明 -api，因此不会再传递获得本模块的 MQTT/GraalJS/Tencent 依赖。
+        -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-iot-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.sw.ck</groupId>
             <artifactId>sw-common</artifactId>
@@ -62,17 +71,15 @@
             <artifactId>js-community</artifactId>
             <type>pom</type>
         </dependency>
-        <!-- 腾讯云 IoT Explorer SDK -->
+        <!-- 腾讯云 IoT Explorer SDK（版本由 sw-dependencies 统一管理） -->
         <dependency>
             <groupId>com.tencentcloudapi</groupId>
             <artifactId>tencentcloud-sdk-java-iotexplorer</artifactId>
-            <version>3.1.1235</version>
         </dependency>
-        <!-- Fastjson2：JSON 解析（对齐 Demo 使用 JSONObject） -->
+        <!-- Fastjson2：JSON 解析（对齐 Demo 使用 JSONObject）；版本由 sw-dependencies 统一管理 -->
         <dependency>
             <groupId>com.alibaba.fastjson2</groupId>
             <artifactId>fastjson2</artifactId>
-            <version>2.0.53</version>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -96,4 +103,71 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                Phase 6B 补证 · dev 源根的双重身份：
+                1) 默认/生产构建：src/dev/java 只作为 **test** 源码根，编译进 target/test-classes，
+                   供本模块测试引用 dev 归属类（模拟实现与其 dev 装配类）；绝不进入 target/classes，
+                   更不进入 Boot Jar。
+                2) `-Pdev` 构建（下方 dev profile）：同一源根额外作为 **main** 源码根编译进
+                   target/classes，dev/local 运行时才能装配模拟实现。
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>add-dev-source-root-for-tests</id>
+                        <phase>generate-test-sources</phase>
+                        <goals>
+                            <goal>add-test-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>src/dev/java</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>dev</id>
+            <build>
+                <plugins>
+                    <!--
+                        Phase 6B 补证 · mock provider 物理隔离：模拟实现与其 dev 装配类位于
+                        src/dev/java，只在 dev/local 构建（-Pdev）下作为额外 main 源码根参与编译。
+                        默认（生产）构建的编译输入天然看不到它们，因此正式 Boot Jar 内不存在
+                        MockCloudProvider，也不需要任何 Jar 精确排除。
+                    -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.1</version>
+                        <executions>
+                            <execution>
+                                <id>add-dev-source-root</id>
+                                <phase>generate-sources</phase>
+                                <goals>
+                                    <goal>add-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>src/dev/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

@@ -136,11 +136,15 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
         if (binding == null) {
             return null;
         }
-        FormDefDTO form = formDefinitionService.getFormDef(def.getFormKey());
-        if (form == null || !"PUBLISHED".equals(form.getStatus())) {
+        // empty = 该 formKey 无表单定义（原 null 返回路径）：不可见，返回 null 不泄漏存在性
+        java.util.Optional<FormDefDTO> formLookup = formDefinitionService.getFormDef(def.getFormKey());
+        if (formLookup.isEmpty() || !"PUBLISHED".equals(formLookup.get().getStatus())) {
             return null;
         }
-        if (!formDefinitionService.canCurrentUserInitiate(def.getFormKey())) {
+        // empty = formKey 空白缺少判定目标：与不可发起同判不可见（fail closed）
+        java.util.Optional<Boolean> initiateDecision =
+                formDefinitionService.canCurrentUserInitiate(def.getFormKey());
+        if (!(initiateDecision.isPresent() && initiateDecision.get())) {
             return null;
         }
         return CatalogItemDTO.builder()
@@ -157,14 +161,17 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
     /** 管理视角投影：全量展示（含 DRAFT/未绑定/表单未发布），逐项独立检查由操作端点承担。 */
     private CatalogItemDTO toAdminItem(BpmProcessDef def) {
         BpmFormBinding binding = findActiveBinding(def.getProcessKey());
-        FormDefDTO form = formDefinitionService.getFormDef(def.getFormKey());
+        // empty = 该 formKey 无表单定义（原 null 返回路径）：视为未发布
+        java.util.Optional<FormDefDTO> formLookup = formDefinitionService.getFormDef(def.getFormKey());
+        boolean formPublished = formLookup.isPresent()
+                && "PUBLISHED".equals(formLookup.get().getStatus());
         return CatalogItemDTO.builder()
                 .itemKey(def.getProcessKey())
                 .name(def.getName())
                 .formKey(def.getFormKey())
                 .categoryId(def.getCategoryId())
                 .status(def.getStatus())
-                .formPublished(form != null && "PUBLISHED".equals(form.getStatus()))
+                .formPublished(formPublished)
                 .bindingActive(binding != null)
                 .build();
     }

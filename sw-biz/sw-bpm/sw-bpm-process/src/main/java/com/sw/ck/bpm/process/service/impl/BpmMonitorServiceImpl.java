@@ -97,11 +97,17 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         List<BpmInstance> records = monitorMapper.monitorList(q.processDefKey(), q.processInstanceId(),
                 q.initiatorId(), q.status(), q.timeFrom(), q.timeTo(), instanceIds, scope,
                 (int) pageParam.getPageSize(), offset);
-        List<InstanceMonitorView> views = records.stream().map(instance -> new InstanceMonitorView(
-                instance,
-                bpmRuntimeFacade.getActiveActivityIds(instance.getProcessInstanceId()),
-                bpmTaskFacade.isProcessInstanceSuspended(instance.getProcessInstanceId())))
-                .toList();
+        // empty = 实例标识缺失，或该实例无运行期记录：无活跃节点可展示（原空列表口径）
+        List<InstanceMonitorView> views = records.stream().map(instance -> {
+            List<String> activeNodeIds = bpmRuntimeFacade
+                    .getActiveActivityIds(instance.getProcessInstanceId())
+                    .orElse(List.of());
+            // empty = 实例标识缺失（此处标识非空，契约不产生）：按未挂起展示
+            java.util.Optional<Boolean> suspendedDecision = bpmTaskFacade
+                    .isProcessInstanceSuspended(instance.getProcessInstanceId());
+            boolean suspended = suspendedDecision.isPresent() && suspendedDecision.get();
+            return new InstanceMonitorView(instance, activeNodeIds, suspended);
+        }).toList();
         PageResult<InstanceMonitorView> result = new PageResult<>();
         result.setRecords(views);
         result.setTotal(total);
@@ -118,9 +124,15 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         }
         String tenantId = LoginUserHolder.get() == null ? null
                 : String.valueOf(LoginUserHolder.get().getTenantId());
-        List<BpmTaskDTO> tasks = q.assignee() != null
-                ? bpmTaskFacade.queryTodo(tenantId, String.valueOf(q.assignee()))
-                : List.of();
+        List<BpmTaskDTO> tasks;
+        if (q.assignee() == null) {
+            tasks = List.of();
+        } else {
+            java.util.Optional<List<BpmTaskDTO>> todo =
+                    bpmTaskFacade.queryTodo(tenantId, String.valueOf(q.assignee()));
+            // empty = 租户或处理人上下文缺失，无法确定查询范围：按无可见任务处理（原空列表口径）
+            tasks = todo.isEmpty() ? List.of() : todo.get();
+        }
         if (q.assignee() != null && q.nodeKey() != null && !q.nodeKey().isBlank()) {
             return tasks.stream().filter(t -> q.nodeKey().equals(t.getTaskDefinitionKey()))
                     .map(BpmTaskDTO::getProcessInstanceId).distinct().toList();
@@ -159,21 +171,36 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
 
         switch (action) {
             case "SUSPEND" -> {
-                boolean before = bpmTaskFacade.isProcessInstanceSuspended(processInstanceId);
+                // empty = 实例标识缺失，无法判定（此处标识非空）：按未挂起记录前态
+                java.util.Optional<Boolean> suspendedDecision =
+                        bpmTaskFacade.isProcessInstanceSuspended(processInstanceId);
+                boolean before = suspendedDecision.isPresent() && suspendedDecision.get();
                 record.setBeforeState(before ? "SUSPENDED" : "RUNNING");
-                bpmTaskFacade.suspendProcessInstance(processInstanceId);
+                // present = APPLIED（本次挂起）/ ALREADY_APPLIED（已挂起或已无运行期记录）
+                bpmTaskFacade.suspendProcessInstance(processInstanceId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "BpmTaskFacade#suspendProcessInstance 契约恒 present，empty 属契约违约"));
                 record.setAfterState("SUSPENDED");
             }
             case "RESUME" -> {
-                boolean before = bpmTaskFacade.isProcessInstanceSuspended(processInstanceId);
+                // empty = 实例标识缺失，无法判定（此处标识非空）：按未挂起记录前态
+                java.util.Optional<Boolean> suspendedDecision =
+                        bpmTaskFacade.isProcessInstanceSuspended(processInstanceId);
+                boolean before = suspendedDecision.isPresent() && suspendedDecision.get();
                 record.setBeforeState(before ? "SUSPENDED" : "RUNNING");
-                bpmTaskFacade.resumeProcessInstance(processInstanceId);
+                // present = APPLIED（本次恢复）/ ALREADY_APPLIED（未挂起或已无运行期记录）
+                bpmTaskFacade.resumeProcessInstance(processInstanceId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "BpmTaskFacade#resumeProcessInstance 契约恒 present，empty 属契约违约"));
                 record.setAfterState("RUNNING");
             }
             case "TERMINATE" -> {
                 record.setBeforeState(instance.getStatus());
-                List<BpmTaskDTO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId);
+                // empty = 实例标识缺失：无运行任务（原空列表口径）
+                List<BpmTaskDTO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+                        .orElse(List.of());
                 affected = active.size();
+                // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）
                 bpmTaskFacade.terminateProcess(processInstanceId,
                         reason == null || reason.isBlank() ? "ADMIN_TERMINATE" : reason);
                 bpmInstanceService.updateStatus(processInstanceId, "TERMINATED");
@@ -184,7 +211,9 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
                     throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                             "迁移办理人必须指定目标办理人");
                 }
-                List<BpmTaskDTO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId);
+                // empty = 实例标识缺失：无运行任务（原空列表口径）
+                List<BpmTaskDTO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+                        .orElse(List.of());
                 // 可选迁移范围：提供 taskIds 时只迁移所选子集，未选任务保持原办理人（三级提示 R2）
                 List<BpmTaskDTO> selected = taskIds == null || taskIds.isEmpty() ? active
                         : active.stream()
@@ -201,7 +230,10 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
                 BpmInstanceIntervention last = record;
                 for (Map.Entry<Long, List<BpmTaskDTO>> group : byFromAssignee.entrySet()) {
                     for (BpmTaskDTO task : group.getValue()) {
-                        bpmTaskFacade.setAssignee(task.getTaskId(), String.valueOf(toAssignee));
+                        // present = APPLIED；任务不存在/已被处理继续抛原异常
+                        bpmTaskFacade.setAssignee(task.getTaskId(), String.valueOf(toAssignee))
+                        .orElseThrow(() -> new IllegalStateException(
+                                "BpmTaskFacade#setAssignee 契约恒 present，empty 属契约违约"));
                     }
                     BpmInstanceIntervention groupRecord = new BpmInstanceIntervention();
                     groupRecord.setProcessInstanceId(processInstanceId);
@@ -303,8 +335,11 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         for (BpmInstance instance : sampled) {
             try {
                 java.time.LocalDateTime maxActivityEnd = null;
-                for (BpmActivityDTO activity : bpmRuntimeFacade
-                        .queryHistoricActivities(instance.getProcessInstanceId())) {
+                // empty = 实例标识缺失或该实例无历史记录：无活动可统计
+                List<BpmActivityDTO> historicActivities = bpmRuntimeFacade
+                        .queryHistoricActivities(instance.getProcessInstanceId())
+                        .orElse(List.of());
+                for (BpmActivityDTO activity : historicActivities) {
                     if (activity.getEndTime() != null) {
                         maxActivityEnd = maxActivityEnd == null
                                 ? activity.getEndTime()

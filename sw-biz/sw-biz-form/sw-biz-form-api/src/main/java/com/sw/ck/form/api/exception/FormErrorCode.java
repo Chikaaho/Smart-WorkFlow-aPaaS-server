@@ -72,7 +72,15 @@ public enum FormErrorCode implements ErrorCode {
 
     // ==================== 数据更新 / 详情（1507-1509） ====================
     RECORD_NOT_FOUND(1507, "form.record_not_found", "记录不存在或已删除"),
-    VERSION_CONFLICT(1508, "form.version_conflict", "数据版本冲突，请刷新后重试");
+    VERSION_CONFLICT(1508, "form.version_conflict", "数据版本冲突，请刷新后重试"),
+
+    // ==================== 动态宽表受控入口（1509-1511） ====================
+    DYNAMIC_SQL_CONTRACT_VIOLATION(1509, "form.dynamic_sql_contract_violation",
+            "动态宽表访问未通过受控 SQL 契约，已拒绝执行"),
+    DYNAMIC_TABLE_METADATA_UNAVAILABLE(1510, "form.dynamic_table_metadata_unavailable",
+            "动态宽表元数据或引用检查不可用，已拒绝本次操作"),
+    DYNAMIC_ROW_LOCK_TIMEOUT(1511, "form.dynamic_row_lock_timeout",
+            "该记录正在被其他操作占用，请稍后重试");
 
     private final int code;
     private final String errorKey;

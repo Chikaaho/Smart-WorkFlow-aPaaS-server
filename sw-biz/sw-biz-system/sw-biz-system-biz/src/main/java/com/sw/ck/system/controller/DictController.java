@@ -13,6 +13,7 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 字典管理控制器。
@@ -105,7 +106,12 @@ public class DictController {
      */
     @GetMapping("/data/list/{dictType}")
     public R<List<DictItemDTO>> listDataByType(@PathVariable String dictType) {
-        return R.ok(dictFacade.listByType(dictType));
+        Optional<List<DictItemDTO>> items = dictFacade.listByType(dictType);
+        if (items.isEmpty()) {
+            // 契约 empty：dictType 为空白，缺少查询目标；对外响应保持空列表（HTTP 行为不变）
+            return R.ok(List.of());
+        }
+        return R.ok(items.get());
     }
 
     /**

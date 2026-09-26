@@ -30,13 +30,13 @@ public class P57IsolatedVerificationNode implements NodeTypeTranslator {
     public static final String DELEGATE_EXPRESSION = "${p57VerificationNodeDelegate}";
 
     @Override
-    public String type() {
-        return TYPE;
+    public java.util.Optional<String> type() {
+        return java.util.Optional.of(TYPE);
     }
 
     @Override
-    public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata(
+    public java.util.Optional<BpmNodeMetadata> metadata() {
+        return java.util.Optional.of(new BpmNodeMetadata(
                 "隔离验证",
                 "P57 隔离节点运行验证夹具",
                 "TASK",
@@ -48,20 +48,20 @@ public class P57IsolatedVerificationNode implements NodeTypeTranslator {
                 false,
                 false,
                 false,
-                true);
+                true));
     }
 
     @Override
-    public List<GraphValidationError> validateConfig(GraphElement node) {
+    public java.util.Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
         Object message = node.getConfig() == null ? null : node.getConfig().get("message");
         if (message == null || message.toString().isBlank()) {
-            return List.of(GraphValidationError.builder()
+            return java.util.Optional.of(List.of(GraphValidationError.builder()
                     .elementId(node.getId())
                     .errorCode(2106)
                     .message("隔离验证节点缺少 message 配置")
-                    .build());
+                    .build()));
         }
-        return List.of();
+        return java.util.Optional.of(List.of());
     }
 
     @Override

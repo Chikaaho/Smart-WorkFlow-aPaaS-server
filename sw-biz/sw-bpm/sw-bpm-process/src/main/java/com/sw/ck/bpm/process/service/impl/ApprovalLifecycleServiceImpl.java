@@ -134,7 +134,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
         BpmTaskDTO task = requireTask(taskId);
         boolean assigned = String.valueOf(actor.getUserId()).equals(task.getAssignee());
-        boolean candidate = bpmTaskFacade.canHandle(taskId, String.valueOf(actor.getUserId()));
+        // empty = 无法判定（任务/用户标识缺失；此处任务已存在且登录用户非空）：
+        // fail closed，按不可处理拒绝
+        java.util.Optional<Boolean> handleDecision = bpmTaskFacade.canHandle(
+                taskId, String.valueOf(actor.getUserId()));
+        boolean candidate = handleDecision.isPresent() && handleDecision.get();
         if (!assigned && !candidate) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权处理该任务");
         }
@@ -160,7 +164,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             throw new BaseException(BpmErrorCode.ACTION_SELF_INVALID);
         }
         String originalAssignee = task.getAssignee();
-        bpmTaskFacade.setAssignee(task.getTaskId(), String.valueOf(target));
+        // 命令方法：present = APPLIED；任务不存在/已被处理继续抛原异常
+        bpmTaskFacade.setAssignee(task.getTaskId(), String.valueOf(target))
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmTaskFacade#setAssignee 契约恒 present，empty 属契约违约"));
         recordLifecycle(task, actor, ApprovalAction.TRANSFER, "TRANSFERRED", request,
                 mapOf("targetUserId", target, "reason", nullSafe(request.getReason()),
                         "originalAssignee", originalAssignee));
@@ -177,7 +184,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         if (target.equals(actor.getUserId())) {
             throw new BaseException(BpmErrorCode.ACTION_SELF_INVALID);
         }
-        bpmTaskFacade.delegateTask(task.getTaskId(), String.valueOf(target));
+        // 命令方法：present = APPLIED；任务不存在/已在委托链中继续抛原异常
+        bpmTaskFacade.delegateTask(task.getTaskId(), String.valueOf(target))
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmTaskFacade#delegateTask 契约恒 present，empty 属契约违约"));
         recordLifecycle(task, actor, ApprovalAction.DELEGATE, "DELEGATED", request,
                 mapOf("targetUserId", target));
         publishNotice(actor, task.getProcessInstanceId(), target, BpmNotifyTrigger.TASK_DELEGATED);
@@ -286,7 +296,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         if (handled > 0) {
             throw new BaseException(BpmErrorCode.WITHDRAW_NOT_PERMITTED);
         }
-        bpmTaskFacade.terminateProcess(processInstanceId, "WITHDRAWN");
+        // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
+        bpmTaskFacade.terminateProcess(processInstanceId, "WITHDRAWN")
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         bpmInstanceService.updateStatus(processInstanceId,
                 InstanceStatusEnum.WITHDRAWN.getCode());
         closeDeadlines(processInstanceId, "撤回关闭");
@@ -309,7 +322,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             }
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED);
         }
-        bpmTaskFacade.terminateProcess(processInstanceId, "DISCARDED");
+        // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
+        bpmTaskFacade.terminateProcess(processInstanceId, "DISCARDED")
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         bpmInstanceService.updateStatus(processInstanceId,
                 InstanceStatusEnum.DISCARDED.getCode());
         closeDeadlines(processInstanceId, "废弃关闭");
@@ -369,13 +385,14 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         // 补签记录的 taskId 是 "SUPPLEMENT#<pid>"，不是 Flowable 任务——用签名记录自身的
         // 实例/节点/记录 ID 构造生命周期任务信息，保证补签表态同样落 ApprovalActionRecord
         // 与意见表单快照（Z5/Z8：SUPPLEMENT_SIGN 行不得缺快照）。
-        BpmTaskDTO lifecycleTask = bpmTaskFacade.getTask(record.getTaskId());
-        if (lifecycleTask == null) {
-            lifecycleTask = new BpmTaskDTO();
-            lifecycleTask.setTaskId(record.getTaskId());
-            lifecycleTask.setProcessInstanceId(record.getProcessInstanceId());
-            lifecycleTask.setTaskDefinitionKey(nullSafe(record.getNodeKey(), "SUPPLEMENT"));
-        }
+        // empty = 该任务不存在（原 null 返回路径）：补签任务非 Flowable 任务，回落自造生命周期任务信息
+        BpmTaskDTO lifecycleTask = bpmTaskFacade.getTask(record.getTaskId()).orElseGet(() -> {
+            BpmTaskDTO fallback = new BpmTaskDTO();
+            fallback.setTaskId(record.getTaskId());
+            fallback.setProcessInstanceId(record.getProcessInstanceId());
+            fallback.setTaskDefinitionKey(nullSafe(record.getNodeKey(), "SUPPLEMENT"));
+            return fallback;
+        });
         recordLifecycle(lifecycleTask, actor,
                 SIGN_TYPE_ADD.equals(record.getSignType())
                         ? ApprovalAction.ADD_SIGN : ApprovalAction.SUPPLEMENT_SIGN,
@@ -410,10 +427,12 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         patch.setSignStatus("CANCELLED");
         patch.setCancelReason(nullSafe(request.getReason(), "操作人取消"));
         signRecordMapper.updateById(patch);
-        recordLifecycle(bpmTaskFacade.getTask(record.getTaskId()), actor,
+        // empty = 该任务不存在（原 null 返回路径）：lifecycleTask 为空时不记录生命周期，语义等同
+        bpmTaskFacade.getTask(record.getTaskId()).ifPresent(lifecycleTask -> recordLifecycle(
+                lifecycleTask, actor,
                 SIGN_TYPE_ADD.equals(record.getSignType())
                         ? ApprovalAction.ADD_SIGN : ApprovalAction.SUPPLEMENT_SIGN,
-                "SIGN_CANCELLED", request, mapOf("recordId", record.getId()));
+                "SIGN_CANCELLED", request, mapOf("recordId", record.getId())));
         return R.ok();
     }
 
@@ -434,11 +453,13 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         } else {
             negative = all.stream().noneMatch(item -> "APPROVE".equals(item.getResultStatus()));
         }
-        BpmTaskDTO task = bpmTaskFacade.getTask(settled.getTaskId());
-        if (task == null) {
+        // empty = 该任务不存在（原 null 返回路径）：原任务已消失，跳过结算
+        java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(settled.getTaskId());
+        if (taskLookup.isEmpty()) {
             log.warn("原任务已消失，跳过加签结算: taskId={}", settled.getTaskId());
             return;
         }
+        BpmTaskDTO task = taskLookup.get();
         boolean autoFinish = "AUTO_FINISH".equals(policy);
         if (!autoFinish) {
             log.info("加签表决完成（原待办保留，由原责任人办理）: taskId={}, negative={}",
@@ -600,7 +621,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                         .eq(BpmAuthorizeRule::getPrincipalId, principal)
                         .eq(BpmAuthorizeRule::getStatus, "ACTIVE"));
         BpmProcessDef def = findDefByInstance(processInstanceId);
-        String businessKey = bpmTaskFacade.getBusinessKey(processInstanceId);
+        // empty = 运行期与历史均无该实例或无业务键（原 null 返回路径）：BUSINESS 作用域不命中
+        java.util.Optional<String> businessKey = bpmTaskFacade.getBusinessKey(processInstanceId);
         List<BpmAuthorizeRule> matched = candidates.stream()
                 .filter(this::inEffect)
                 .filter(rule -> scopeMatches(rule, def == null ? null : def.getProcessKey(),
@@ -647,15 +669,17 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     }
 
     private boolean scopeMatches(BpmAuthorizeRule rule, String processDefKey,
-                                 String nodeKey, String businessKey) {
+                                 String nodeKey, java.util.Optional<String> businessKey) {
         return switch (nullSafe(rule.getScopeType(), "GLOBAL")) {
             case "GLOBAL" -> true;
             case "PROCESS" -> processDefKey != null
                     && processDefKey.equals(rule.getProcessDefKey());
             case "NODE" -> processDefKey != null && processDefKey.equals(rule.getProcessDefKey())
                     && nodeKey != null && nodeKey.equals(rule.getNodeKey());
-            case "BUSINESS" -> businessKey != null
-                    && businessKey.equals(rule.getBusinessKey());
+            // empty = 实例无业务键（原 null 判定）：BUSINESS 作用域不命中
+            case "BUSINESS" -> businessKey
+                    .filter(key -> key.equals(rule.getBusinessKey()))
+                    .isPresent();
             default -> false;
         };
     }
@@ -737,13 +761,18 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 || !InstanceStatusEnum.RUNNING.getCode().equals(instance.getStatus())) {
             return; // 幂等：已终局
         }
-        bpmTaskFacade.terminateProcess(processInstanceId, "CONSENSUS_REJECTED");
+        // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
+        bpmTaskFacade.terminateProcess(processInstanceId, "CONSENSUS_REJECTED")
+        .orElseThrow(() -> new IllegalStateException(
+                "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         bpmInstanceService.updateStatus(processInstanceId,
                 InstanceStatusEnum.REJECTED.getCode());
         closeDeadlines(processInstanceId, "会签负向结算关闭");
         DynamicBranchPort branchPort = dynamicBranchPort == null ? null : dynamicBranchPort.getIfAvailable();
         if (branchPort != null) {
-            branchPort.closeRemaining(tenantId, processInstanceId, nodeKey, "CONSENSUS_NEGATIVE_SETTLED");
+            branchPort.closeRemaining(tenantId, processInstanceId, nodeKey, "CONSENSUS_NEGATIVE_SETTLED")
+            .orElseThrow(() -> new IllegalStateException(
+                    "DynamicBranchPort#closeRemaining 契约恒 present，empty 属契约违约"));
         }
         if (tenantId == null) {
             // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
@@ -775,8 +804,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     public com.sw.ck.bpm.api.participant.ConsensusVotePort consensusVotePort() {
         return new com.sw.ck.bpm.api.participant.ConsensusVotePort() {
             @Override
-            public boolean record(String tenantId, String processInstanceId, String nodeKey,
-                                  String taskId, String actorId, String outcome) {
+            public Optional<Boolean> record(String tenantId, String processInstanceId, String nodeKey,
+                                            String taskId, String actorId, String outcome) {
                 try {
                     Long actor = Long.valueOf(actorId);
                     if (tenantId == null) {
@@ -788,7 +817,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                             Wrappers.<BpmConsensusVote>lambdaQuery()
                                     .eq(BpmConsensusVote::getTaskId, taskId)
                                     .eq(BpmConsensusVote::getActorId, actor)) > 0) {
-                        return false; // 幂等：同任务同人一票
+                        return Optional.of(false); // 幂等：同任务同人一票
                     }
                     BpmConsensusVote vote = new BpmConsensusVote();
                     vote.setProcessInstanceId(processInstanceId);
@@ -809,27 +838,28 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                     if (vote.getVersion() == null) {
                         vote.setVersion(0L);
                     }
-                    return consensusVoteMapper.insert(vote) > 0;
+                    return Optional.of(consensusVoteMapper.insert(vote) > 0);
                 } catch (DuplicateKeyException duplicate) {
                     // 唯一键 uk_sw_bpm_vote_task_actor 兜底并发（多实例/重复命令）
-                    return false;
+                    return Optional.of(false);
                 } catch (NumberFormatException e) {
-                    return false;
+                    // 投票人/租户标识无法解析：无法给出记录判定，不得伪装成幂等重复
+                    return Optional.empty();
                 }
             }
 
             @Override
-            public long count(String tenantId, String processInstanceId, String nodeKey,
-                              String outcome) {
-                return consensusVoteMapper.selectCount(
+            public Optional<Long> count(String tenantId, String processInstanceId, String nodeKey,
+                                        String outcome) {
+                return Optional.of(consensusVoteMapper.selectCount(
                         Wrappers.<BpmConsensusVote>lambdaQuery()
                                 .eq(BpmConsensusVote::getProcessInstanceId, processInstanceId)
                                 .eq(BpmConsensusVote::getNodeKey, nodeKey)
-                                .eq(BpmConsensusVote::getOutcome, outcome));
+                                .eq(BpmConsensusVote::getOutcome, outcome)));
             }
 
             @Override
-            public long total(String tenantId, String processInstanceId, String nodeKey) {
+            public Optional<Long> total(String tenantId, String processInstanceId, String nodeKey) {
                 try {
                     QueryWrapper<ParticipantSnapshot> qw = new QueryWrapper<>();
                     qw.select("COUNT(DISTINCT participant_id) AS total")
@@ -839,9 +869,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                     java.util.List<java.util.Map<String, Object>> rows =
                             participantSnapshotMapper.selectMaps(qw);
                     Object total = rows.isEmpty() ? null : rows.get(0).get("total");
-                    return total instanceof Number number ? number.longValue() : -1L;
+                    // 无冻结快照（或口径缺失）：调用方回退变量口径（原 -1 哨兵已移除）
+                    return total instanceof Number number
+                            ? Optional.of(number.longValue()) : Optional.empty();
                 } catch (RuntimeException e) {
-                    return -1L; // 端口不可用：调用方回退变量口径
+                    return Optional.empty(); // 端口不可用：调用方回退变量口径
                 }
             }
         };
@@ -852,22 +884,24 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     public com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort lifecycleTaskEntryPort() {
         return new com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort() {
             @Override
-            public String onTaskCreate(Long tenantId, String processInstanceId, String nodeKey,
-                                       String taskId, java.util.List<String> resolvedUsers,
-                                       String nodeConfig) {
+            public Optional<String> onTaskCreate(Long tenantId, String processInstanceId, String nodeKey,
+                                                 String taskId, java.util.List<String> resolvedUsers,
+                                                 String nodeConfig) {
                 String proxyAgent = resolveProxy(tenantId, processInstanceId, nodeKey, taskId,
                         resolvedUsers);
                 registerDeadline(tenantId, processInstanceId, nodeKey, taskId, nodeConfig);
-                return proxyAgent;
+                // present = 代理改写后的 assignee；empty = 本次不改写（走默认派发）
+                return Optional.ofNullable(proxyAgent);
             }
 
             @Override
-            public java.util.List<String> resolveParticipantsByFunction(Long tenantId,
-                                                                        String processInstanceId,
-                                                                        String nodeKey, String taskId,
-                                                                        java.util.Map<String, Object> variables,
-                                                                        String nodeConfig) {
-                return null; // 函数型参与人由配置适配器直连实现（见 BpmLifecyclePortConfiguration）
+            public Optional<java.util.List<String>> resolveParticipantsByFunction(Long tenantId,
+                                                                                  String processInstanceId,
+                                                                                  String nodeKey, String taskId,
+                                                                                  java.util.Map<String, Object> variables,
+                                                                                  String nodeConfig) {
+                // 函数型参与人由配置适配器直连实现（见 BpmLifecyclePortConfiguration）
+                return Optional.empty();
             }
         };
     }
@@ -875,11 +909,9 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     // ==================== 内部工具 ====================
 
     private BpmTaskDTO requireTask(String taskId) {
-        BpmTaskDTO task = bpmTaskFacade.getTask(taskId);
-        if (task == null) {
-            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
-        }
-        return task;
+        // empty = 该任务不存在（原 null 返回路径）
+        return bpmTaskFacade.getTask(taskId)
+                .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
     }
 
     private BpmInstance requireInstance(String processInstanceId) {
@@ -893,8 +925,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         if (facade == null) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(), "用户权威不可用");
         }
-        List<Long> active = facade.findActiveUserIds(List.of(userId), tenantId);
-        if (active == null || !active.contains(userId)) {
+        // empty = 查询对象/租户上下文缺失：无法确认有效性，按原有“无效目标”拒绝
+        List<Long> active = facade.findActiveUserIds(List.of(userId), tenantId)
+                .orElse(List.of());
+        if (!active.contains(userId)) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
                     "目标人员无效或不属于当前租户: " + userId);
         }

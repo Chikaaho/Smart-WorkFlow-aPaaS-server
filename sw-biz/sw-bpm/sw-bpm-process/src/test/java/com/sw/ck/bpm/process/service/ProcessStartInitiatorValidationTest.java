@@ -63,7 +63,7 @@ class ProcessStartInitiatorValidationTest {
     void start_withInvalidInitiator_shouldReject() {
         ProcessStartService service = serviceWithFacade();
         when(bindingService.findActiveByFormKey("form-1")).thenReturn(List.of(binding()));
-        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(List.of());
+        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(java.util.Optional.of(List.of()));
 
         StartCommand cmd = command();
         assertThatThrownBy(() -> service.start(cmd))
@@ -77,11 +77,11 @@ class ProcessStartInitiatorValidationTest {
     void start_withActiveInitiator_shouldProceed() {
         ProcessStartService service = serviceWithFacade();
         when(bindingService.findActiveByFormKey("form-1")).thenReturn(List.of(binding()));
-        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(List.of(810L));
-        when(approverResolver.resolve(any())).thenReturn("1");
+        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(java.util.Optional.of(List.of(810L)));
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("process-1"), eq("record-1"), any(), eq("1")))
-                .thenReturn("instance-1");
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(false);
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(false));
 
         service.start(command());
 

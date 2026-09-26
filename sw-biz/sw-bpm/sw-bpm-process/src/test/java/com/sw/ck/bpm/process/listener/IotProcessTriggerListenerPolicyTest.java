@@ -55,8 +55,9 @@ class IotProcessTriggerListenerPolicyTest {
                 + "\"failurePolicy\":\"" + policy + "\"}");
         when(processDefs.findByProcessKey("p21-policy-test")).thenReturn(def);
         when(runtime.startProcess(eq("p21-policy-test"), eq("policy-" + policy), anyMap(), eq("0")))
-                .thenReturn("process-" + policy);
-        when(deviceQuery.getDeviceKeyById(99999L)).thenReturn(null);
+                .thenReturn(java.util.Optional.of("process-" + policy));
+        // 契约返回 Optional<String>：设备不存在必须用 empty 表达（旧契约的 null 返回已废除）
+        when(deviceQuery.getDeviceKeyById(99999L)).thenReturn(java.util.Optional.empty());
 
         IotProcessTriggerEvent event = new IotProcessTriggerEvent();
         event.setTenantId(0L);
@@ -65,8 +66,14 @@ class IotProcessTriggerListenerPolicyTest {
         event.setTriggerId(999L);
         event.setDeviceId(2097131606828916738L);
 
+        org.springframework.transaction.PlatformTransactionManager txManager =
+                mock(org.springframework.transaction.PlatformTransactionManager.class);
+        when(txManager.getTransaction(any(org.springframework.transaction.TransactionDefinition.class)))
+                .thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+        ObjectProvider<org.springframework.transaction.PlatformTransactionManager> txProvider = provider(txManager);
         new IotProcessTriggerListener(runtimeProvider, processProvider, triggerProvider,
-                instanceProvider, taskProvider, deviceProvider, deviceQueryProvider).onIotTrigger(event);
+                instanceProvider, taskProvider, deviceProvider, deviceQueryProvider, txProvider)
+                .onIotTrigger(event);
 
         if (expectedProcessId != null || expectedError != null) {
             verify(triggers).markTriggerResult(eq("policy-" + policy),

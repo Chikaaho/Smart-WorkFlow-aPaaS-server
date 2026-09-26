@@ -237,17 +237,23 @@ class CommandOverlapRealEngineTest {
         }
 
         @Override
-        public void complete(String taskId, Map<String, Object> variables) {
+        public java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> complete(
+                String taskId, Map<String, Object> variables) {
             beforeComplete(taskId);
-            super.complete(taskId, variables);
+            java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> outcome =
+                    super.complete(taskId, variables);
             afterComplete(taskId);
+            return outcome;
         }
 
         @Override
-        public void completeAsUser(String taskId, String userId, Map<String, Object> variables) {
+        public java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> completeAsUser(
+                String taskId, String userId, Map<String, Object> variables) {
             beforeComplete(taskId);
-            super.completeAsUser(taskId, userId, variables);
+            java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> outcome =
+                    super.completeAsUser(taskId, userId, variables);
             afterComplete(taskId);
+            return outcome;
         }
 
         private static void await(CountDownLatch latch) {

@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -49,7 +50,10 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
     }
 
     @Override
-    public List<NotifyChannel> channelsFor(String eventType, Long recipientId) {
+    public Optional<List<NotifyChannel>> channelsFor(String eventType, Long recipientId) {
+        if (eventType == null || eventType.isBlank()) {
+            return Optional.empty();
+        }
         List<NotifyRule> rules = enabledRules(eventType);
         Set<String> tokens = new LinkedHashSet<>();
         if (rules.isEmpty()) {
@@ -91,20 +95,23 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
         if (channels.isEmpty()) {
             channels.add(NotifyChannel.IN_APP);
         }
-        return channels;
+        return Optional.of(channels);
     }
 
     @Override
-    public boolean required(String eventType) {
-        return enabledRules(eventType).stream().anyMatch(r ->
-                r.getRequiredFlag() != null && r.getRequiredFlag() == 1);
+    public Optional<Boolean> required(String eventType) {
+        if (eventType == null || eventType.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(enabledRules(eventType).stream().anyMatch(r ->
+                r.getRequiredFlag() != null && r.getRequiredFlag() == 1));
     }
 
     @Override
-    public NotifyTemplateSelection templateFor(String eventType, NotifyChannel channel, Long tenantId) {
+    public Optional<NotifyTemplateSelection> templateFor(String eventType, NotifyChannel channel, Long tenantId) {
         if (templateVersionMapper == null || eventType == null || eventType.isBlank()
                 || channel == null || tenantId == null) {
-            return null;
+            return Optional.empty();
         }
         NotifyTemplateVersion snapshot = templateVersionMapper.selectOne(
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<NotifyTemplateVersion>lambdaQuery()
@@ -119,10 +126,10 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
                 || snapshot.getTemplateVersion() == null
                 || snapshot.getTitleTemplate() == null || snapshot.getTitleTemplate().isBlank()
                 || snapshot.getContentTemplate() == null || snapshot.getContentTemplate().isBlank()) {
-            return null;
+            return Optional.empty();
         }
-        return new NotifyTemplateSelection(snapshot.getTemplateId(), snapshot.getTemplateVersion(),
-                snapshot.getTitleTemplate(), snapshot.getContentTemplate());
+        return Optional.of(new NotifyTemplateSelection(snapshot.getTemplateId(), snapshot.getTemplateVersion(),
+                snapshot.getTitleTemplate(), snapshot.getContentTemplate()));
     }
 
     // ==================== 内部 ====================

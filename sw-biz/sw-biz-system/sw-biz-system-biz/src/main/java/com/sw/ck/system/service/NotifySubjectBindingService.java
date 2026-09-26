@@ -17,7 +17,7 @@ public interface NotifySubjectBindingService {
     /** 当前租户指定 Provider 的绑定列表（主体仅回摘要）。 */
     List<NotifySubjectBinding> list(String provider);
 
-    /** 启停绑定（DISABLED 后 resolveProviderSubject 返回 null → 渠道明确失败）。 */
+    /** 启停绑定（DISABLED 后 resolveProviderSubject 返回 empty → 渠道明确失败）。 */
     void toggle(Long id, boolean enabled);
 
     /** 解绑（逻辑删除）。 */

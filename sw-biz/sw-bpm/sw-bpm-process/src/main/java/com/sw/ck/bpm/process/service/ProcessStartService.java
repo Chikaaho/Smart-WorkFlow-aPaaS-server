@@ -135,13 +135,15 @@ public class ProcessStartService {
             binding = bindings.get(0);
         }
 
-        // 2. 解析审批人
+        // 2. 解析审批人（契约恒 present：解析失败抛明确异常）
         ApproverContext ctx = new ApproverContext();
         ctx.setFormKey(cmd.getFormKey());
         ctx.setSubmittedData(cmd.getSubmittedData());
         ctx.setSubmitter(cmd.getSubmitter());
         ctx.setTenantId(cmd.getTenantId());
-        String approver = approverResolver.resolve(ctx);
+        String approver = approverResolver.resolve(ctx)
+                .orElseThrow(() -> new IllegalStateException(
+                        "审批人解析未返回结果: formKey=" + cmd.getFormKey()));
 
         log.debug("审批人解析完成: resolver={}, approver={}",
                 approverResolver.getClass().getSimpleName(), approver);
@@ -170,12 +172,16 @@ public class ProcessStartService {
 
         // 原: runtimeService.startProcessInstanceByKeyAndTenantId(...)
         // → bpmRuntimeFacade.startProcess(...)
+        // empty = 该 key/租户无已发布定义（原 FlowableObjectNotFoundException 缺失路径）：
+        // 发起目标缺失属真实失败，保持原有“发起失败”结论，不得静默成功。
         String processInstanceId = bpmRuntimeFacade.startProcess(
                 binding.getProcessDefKey(),
                 cmd.getRecordId(),
                 variables,
                 String.valueOf(cmd.getTenantId())
-        );
+        ).orElseThrow(() -> new BaseException(BpmErrorCode.PROCESS_DEF_NOT_FOUND,
+                "流程定义未发布或不可用: processDefKey=" + binding.getProcessDefKey()
+                        + ", tenantId=" + cmd.getTenantId()));
 
         log.info("流程已发起: processInstanceId={}, processDefKey={}, businessKey={}, tenantId={}",
                 processInstanceId, binding.getProcessDefKey(), cmd.getRecordId(), cmd.getTenantId());
@@ -195,7 +201,9 @@ public class ProcessStartService {
         // Flowable 可能在 startProcess 返回前就完成无人工节点的流程。此时若无条件写
         // RUNNING，会产生“引擎已到 End、业务记录仍运行中”的假终态；沿用审批完成路径
         // 的 APPROVED 语义。
-        boolean processActive = bpmTaskFacade.isProcessActive(processInstanceId);
+        boolean processActive = bpmTaskFacade.isProcessActive(processInstanceId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "流程实例标识缺失，无法判定活跃状态: processInstanceId=" + processInstanceId));
         instance.setStatus(processActive
                 ? InstanceStatusEnum.RUNNING.getCode()
                 : InstanceStatusEnum.APPROVED.getCode());
@@ -230,8 +238,10 @@ public class ProcessStartService {
         if (userQueryFacade == null || cmd.getSubmitter() == null) {
             return;
         }
-        List<Long> active = userQueryFacade.findActiveUserIds(List.of(cmd.getSubmitter()), cmd.getTenantId());
-        if (active == null || active.isEmpty()) {
+        List<Long> active = userQueryFacade.findActiveUserIds(List.of(cmd.getSubmitter()), cmd.getTenantId())
+                        // empty = 查询对象/租户上下文缺失：无法确认有效性，按原有“无有效发起人”fail closed
+                        .orElse(List.of());
+        if (active.isEmpty()) {
             log.error("流程发起人无效: submitter={}, tenantId={}, formKey={}",
                     cmd.getSubmitter(), cmd.getTenantId(), cmd.getFormKey());
             throw new BaseException(BpmErrorCode.INSTANCE_INITIATOR_INVALID);
@@ -265,7 +275,9 @@ public class ProcessStartService {
      */
     private void publishTodoCreatedEvent(String processInstanceId, StartCommand cmd) {
         // 经 Facade 按流程实例精确查询刚创建的任务
-        List<BpmTaskDTO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId);
+        // empty = 实例标识缺失（此处实例刚发起，标识已非空）：与“无待办 task”同为非预期但非阻断
+        List<BpmTaskDTO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+                .orElse(List.of());
         BpmTaskDTO matchedTask = tasks.stream()
                 .findFirst()
                 .orElse(null);

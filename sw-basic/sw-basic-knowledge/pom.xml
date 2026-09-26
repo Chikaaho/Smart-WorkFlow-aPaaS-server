@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -72,6 +72,17 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
+        </dependency>
+
+        <!--
+            Phase 6A 补证 G2：本模块此前无任何测试类，Tika/PDFBox 调用域在依赖收敛后
+            没有行为锚点。此依赖仅为测试类路径（BOM 管理，scope=test），不进入生产制品，
+            也不改变任何生产依赖。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>

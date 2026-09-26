@@ -74,9 +74,12 @@ public class DraftSubmitCommandHandler implements BpmCommandHandler {
         String processDefKey = (String) payload.get("processDefKey");
         // 没有流程快照时走旧四参契约，保持中台 Facade 的二进制/测试兼容；
         // 正式草稿提交命令始终携带服务端解析出的快照并走五参扩展契约。
-        String recordId = processDefKey == null || processDefKey.isBlank()
+        // submit 当前契约恒 present（提交失败抛业务异常），为空属契约破坏即显式失败。
+        String recordId = (processDefKey == null || processDefKey.isBlank()
                 ? formDataSubmitFacade.submit(formKey, submittedData, idempotencyKey, dispatchChannel)
-                : formDataSubmitFacade.submit(formKey, submittedData, idempotencyKey, dispatchChannel, processDefKey);
+                : formDataSubmitFacade.submit(formKey, submittedData, idempotencyKey, dispatchChannel, processDefKey))
+                .orElseThrow(() -> new IllegalStateException(
+                        "表单提交未返回记录标识: formKey=" + formKey + ", idempotencyKey=" + idempotencyKey));
 
         draft.setStatus(DraftStatusEnum.SUBMITTED.getCode());
         draft.setResultRecordId(recordId);

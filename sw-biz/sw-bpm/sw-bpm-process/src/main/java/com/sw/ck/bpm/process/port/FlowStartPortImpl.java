@@ -16,11 +16,12 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * {@link FlowStartPort} 默认实现：表单提交事务内持久化流程发起受理。
  * <p>
- * 无启用绑定时 no-op 返回 null（与既有 ProcessStartService 语义一致）；
+ * 无启用绑定时为合法 no-op，返回 {@code Optional.empty()}（与既有 ProcessStartService 语义一致）；
  * 同一 recordId 重复受理（幂等键冲突）返回既有受理标识，不产生第二条命令。
  * </p>
  */
@@ -42,11 +43,11 @@ public class FlowStartPortImpl implements FlowStartPort {
     }
 
     @Override
-    public Long acceptFlowStart(FormSubmittedEvent event) {
+    public Optional<Long> acceptFlowStart(FormSubmittedEvent event) {
         var bindings = bindingService.findActiveByFormKey(event.getFormKey());
         if (bindings.isEmpty()) {
             log.debug("表单 {} 无启用绑定，不受理流程发起", event.getFormKey());
-            return null;
+            return Optional.empty();
         }
         if (bindings.size() != 1) {
             throw new IllegalStateException("表单存在多个有效流程绑定: formKey=" + event.getFormKey());
@@ -65,12 +66,17 @@ public class FlowStartPortImpl implements FlowStartPort {
         envelope.setInitiatorId(Long.valueOf(event.getSubmitter()));
         envelope.setPayload(toPayload(event, resolvedProcessDefKey));
         try {
-            return commandQueue.enqueue(envelope);
+            return Optional.of(commandQueue.enqueue(envelope));
         } catch (DuplicateKeyException e) {
-            // 幂等：同一提交意图的重复受理返回同一结果
+            // 幂等：同一提交意图的重复受理返回同一结果；并发未提交可见时无法回查受理标识，
+            // 此时受理事实已由并发方持久化，本次按 no-op 返回（不得伪造标识）。
             return commandQueue.findByKey(event.getTenantId(), commandKey)
-                    .map(CommandEnvelope::getCommandId)
-                    .orElse(null);
+                    .map(envelope1 -> Optional.of(envelope1.getCommandId()))
+                    .orElseGet(() -> {
+                        log.warn("流程发起命令幂等键冲突但回查不可见: tenantId={}, commandKey={}",
+                                event.getTenantId(), commandKey);
+                        return Optional.empty();
+                    });
         }
     }
 

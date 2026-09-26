@@ -622,18 +622,19 @@ class FormDataDeleteServiceTest {
         public DictFacade dictFacade() {
             return new DictFacade() {
                 @Override
-                public boolean isValidCode(String dictType, String code) {
-                    return true;
+                public Optional<Boolean> isValidCode(String dictType, String code) {
+                    if (dictType == null || dictType.isBlank() || code == null || code.isBlank()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(true);
                 }
 
                 @Override
-                public List<com.sw.ck.system.api.dict.DictItemDTO> listByType(String dictType) {
-                    return List.of();
-                }
-
-                @Override
-                public String resolveLabel(String dictType, String code) {
-                    return null;
+                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
+                    if (dictType == null || dictType.isBlank()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(List.of());
                 }
             };
         }

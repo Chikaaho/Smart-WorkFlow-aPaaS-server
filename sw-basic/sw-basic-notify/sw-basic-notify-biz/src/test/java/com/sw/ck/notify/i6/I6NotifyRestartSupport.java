@@ -137,12 +137,12 @@ public class I6NotifyRestartSupport {
     public NotifyChannelAdapter failingAdapter() {
         return new NotifyChannelAdapter() {
             @Override
-            public NotifyChannel channel() {
-                return NotifyChannel.FEISHU;
+            public java.util.Optional<NotifyChannel> channel() {
+                return java.util.Optional.of(NotifyChannel.FEISHU);
             }
 
             @Override
-            public com.sw.ck.notify.api.NotifySendResult send(NotifySendRequest request) {
+            public java.util.Optional<com.sw.ck.notify.api.NotifySendResult> send(NotifySendRequest request) {
                 throw new RuntimeException(new java.net.SocketTimeoutException("飞书发送超时(测试注入)"));
             }
         };

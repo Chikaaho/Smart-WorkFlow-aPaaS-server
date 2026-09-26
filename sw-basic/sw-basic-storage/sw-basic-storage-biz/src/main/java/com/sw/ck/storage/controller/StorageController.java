@@ -25,8 +25,10 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
 /**
  * 文件存储 REST 控制器。
@@ -53,9 +55,11 @@ public class StorageController {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "上传文件不能为空");
         }
         StorageUploadResult result = storageFacade.upload(
-                file.getInputStream(),
-                file.getOriginalFilename(),
-                file.getContentType());
+                        file.getInputStream(),
+                        file.getOriginalFilename(),
+                        file.getContentType())
+                // 契约：上传恒 present，empty 属实现违约
+                .orElseThrow(() -> new IllegalStateException("文件上传未返回结果"));
         return R.ok(result);
     }
 
@@ -89,7 +93,10 @@ public class StorageController {
     @DeleteMapping("/{storageKey}")
     @PreAuthorize("@ss.hasPermi('storage:delete')")
     public R<Void> delete(@PathVariable String storageKey) {
-        storageFacade.delete(storageKey);
+        // 契约：删除恒 present（记录不存在为 ALREADY_APPLIED 幂等）；对外仍统一返回 R.ok()
+        storageFacade.delete(storageKey)
+        .orElseThrow(() -> new IllegalStateException(
+                "StorageFacade#delete 契约恒 present，empty 属契约违约"));
         return R.ok();
     }
 
@@ -103,7 +110,12 @@ public class StorageController {
         if (file == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "文件不存在");
         }
-        InputStreamResource resource = new InputStreamResource(storageFacade.download(storageKey));
+        Optional<InputStream> inputStream = storageFacade.download(storageKey);
+        if (inputStream.isEmpty()) {
+            // 契约：empty = 记录不存在或已逻辑删除；对外保持原 NOT_FOUND 语义
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "文件不存在");
+        }
+        InputStreamResource resource = new InputStreamResource(inputStream.orElseThrow());
         String encodedFileName = URLEncoder.encode(
                 file.getOriginalName() != null ? file.getOriginalName() : "file",
                 StandardCharsets.UTF_8).replace("+", "%20");

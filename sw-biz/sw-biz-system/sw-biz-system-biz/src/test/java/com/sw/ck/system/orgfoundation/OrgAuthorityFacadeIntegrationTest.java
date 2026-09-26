@@ -96,40 +96,48 @@ class OrgAuthorityFacadeIntegrationTest {
     @Test
     @DisplayName("DEPT_LEADER：只解析正常状态部门的启用负责人；停用部门/停用负责人/跨租户排除")
     void deptLeaderResolution_shouldFilterByDeptAndUserState() {
-        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(901L), 1L))
+        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(901L), 1L).orElseThrow())
                 .containsExactly(903L);
         // 停用部门不产出负责人
-        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(902L), 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(902L), 1L).orElseThrow()).isEmpty();
         // 负责人停用：部门正常也不产出
-        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(906L), 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(906L), 1L).orElseThrow()).isEmpty();
         // 跨租户部门不可见
-        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(905L), 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(905L), 1L).orElseThrow()).isEmpty();
         // 组合查询去重（同负责人合并）
-        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(901L, 902L), 1L))
+        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(901L, 902L), 1L).orElseThrow())
                 .containsExactly(903L);
+        // 租户上下文缺失：契约 empty（查询未执行）
+        assertThat(userQueryFacade.findActiveUserIdsByDeptLeaders(List.of(901L), null)).isEmpty();
     }
 
     @Test
     @DisplayName("POST：只解析启用岗位的有效任职用户；停用岗位/停用用户/跨租户排除")
     void postResolution_shouldFilterByPostAndUserState() {
-        assertThat(userQueryFacade.findActiveUserIdsByPostCodes(List.of("MANAGER"), 1L))
+        assertThat(userQueryFacade.findActiveUserIdsByPostCodes(List.of("MANAGER"), 1L).orElseThrow())
                 .containsExactly(903L);
         // 907 任职行存在但用户停用；908 的 MANAGER 属租户 2
-        assertThat(userQueryFacade.findActiveUserIdsByPostCodes(List.of("OLDPOST"), 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByPostCodes(List.of("OLDPOST"), 1L).orElseThrow()).isEmpty();
+        // 租户上下文缺失：契约 empty（查询未执行）
+        assertThat(userQueryFacade.findActiveUserIdsByPostCodes(List.of("MANAGER"), null)).isEmpty();
     }
 
     @Test
     @DisplayName("DEPT_POST：任职部门精确匹配，部门/岗位/用户任一失效即空")
     void deptPostResolution_shouldRequireExactDeptMatch() {
-        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(901L, "MANAGER", 1L))
+        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(901L, "MANAGER", 1L).orElseThrow())
                 .containsExactly(903L);
         // 停用部门上的组合解析为空
-        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(902L, "OLDPOST", 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(902L, "OLDPOST", 1L).orElseThrow()).isEmpty();
         // 跨租户
-        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(905L, "MANAGER", 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(905L, "MANAGER", 1L).orElseThrow()).isEmpty();
         // 租户 2 自身解析正常
-        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(905L, "MANAGER", 2L))
+        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(905L, "MANAGER", 2L).orElseThrow())
                 .containsExactly(908L);
+        // 部门/岗位/租户上下文缺失：契约 empty（查询未执行）
+        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(null, "MANAGER", 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(901L, " ", 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIdsByDeptAndPost(901L, "MANAGER", null)).isEmpty();
     }
 
     private void seedDept(Long id, Long tenantId, int status, Long leaderId) {
@@ -219,6 +227,38 @@ class OrgAuthorityFacadeIntegrationTest {
                     return LoginUserHolder.get() != null && LoginUserHolder.get().isSuperAdmin();
                 }
             };
+        }
+    }
+
+    @Test
+    @DisplayName("§4.4 两层语义：上下文缺失为 empty；合法零匹配为 present 空集合/空 Map")
+    void collectionAndMapSemantics_shouldDistinguishMissingContextFromEmptyMatch() {
+        // 集合：null 查询对象 → empty；空集合 → present 空列表（查询已执行且零匹配）
+        assertThat(userQueryFacade.findActiveUserIds(null, 1L)).isEmpty();
+        assertThat(userQueryFacade.findActiveUserIds(List.of(), 1L)).isPresent();
+        assertThat(userQueryFacade.findActiveUserIds(List.of(), 1L).orElseThrow()).isEmpty();
+        // 集合：命中与零匹配都以 present 表达
+        assertThat(userQueryFacade.findActiveUserIds(List.of(903L), 1L).orElseThrow()).containsExactly(903L);
+        assertThat(userQueryFacade.findActiveUserIds(List.of(999L), 1L).orElseThrow()).isEmpty();
+
+        // Map：null → empty；空集合 → present 空 Map；命中缺失 ID 不在结果中
+        assertThat(userQueryFacade.getUserDisplayNames(null)).isEmpty();
+        assertThat(userQueryFacade.getUserDisplayNames(List.of())).isPresent();
+        assertThat(userQueryFacade.getUserDisplayNames(List.of()).orElseThrow()).isEmpty();
+
+        // 展示名与候选用户查询经租户拦截器取当前租户，需已认证身份上下文
+        LoginUser user = new LoginUser();
+        user.setUserId(903L);
+        user.setTenantId(1L);
+        LoginUserHolder.set(user);
+        try {
+            assertThat(userQueryFacade.getUserDisplayNames(List.of(903L, 999L)).orElseThrow())
+                    .containsOnlyKeys(903L);
+            // 列表查询：恒 present（关键字空白即列出全部，零匹配同样 present）
+            assertThat(userQueryFacade.searchActiveUsers(" ", 10)).isPresent();
+            assertThat(userQueryFacade.searchActiveUsers("不存在的关键字", 10).orElseThrow()).isEmpty();
+        } finally {
+            LoginUserHolder.clear();
         }
     }
 }

@@ -108,8 +108,9 @@ public class TaskActionService {
         LoginUser loginUser = LoginUserHolder.get();
 
         // 1. 查询 task（经 Facade 包装，无 Flowable 泄漏）
-        BpmTaskDTO task = bpmTaskFacade.getTask(taskId);
-        if (task == null) {
+        // empty = 该任务不存在（原 null 返回路径），继续走既有“已被处理/任务不存在”判定
+        java.util.Optional<BpmTaskDTO> foundTask = bpmTaskFacade.getTask(taskId);
+        if (foundTask.isEmpty()) {
             ApprovalActionRecord handled = approvalActionService == null
                     ? null : approvalActionService.findByTaskId(taskId);
             if (handled != null) {
@@ -125,10 +126,15 @@ public class TaskActionService {
             }
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
         }
+        BpmTaskDTO task = foundTask.get(); // 上方 empty 分支已证明存在
 
         // 2. 越权校验：审批人
         boolean assigned = String.valueOf(loginUser.getUserId()).equals(task.getAssignee());
-        if (!assigned && !bpmTaskFacade.canHandle(taskId, String.valueOf(loginUser.getUserId()))) {
+        java.util.Optional<Boolean> handleDecision = bpmTaskFacade.canHandle(
+                taskId, String.valueOf(loginUser.getUserId()));
+        // empty = 无法判定（任务/用户标识缺失）：fail closed，按不可处理拒绝
+        boolean canHandle = handleDecision.isPresent() && handleDecision.get();
+        if (!assigned && !canHandle) {
             log.warn("越权拒绝（审批人不匹配）: taskId={}, taskAssignee={}, currentUserId={}",
                     taskId, task.getAssignee(), loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权处理该任务");
@@ -144,17 +150,20 @@ public class TaskActionService {
         }
 
         // 2.5 流程结束前读取设备透传变量（实例结束后 Runtime 变量不可查）
-        String productId = asString(bpmTaskFacade.getVariable(processInstanceId, "productId"));
-        String deviceName = asString(bpmTaskFacade.getVariable(processInstanceId, "deviceName"));
-        String commandKey = asString(bpmTaskFacade.getVariable(processInstanceId, "commandKey"));
-        String commandType = asString(bpmTaskFacade.getVariable(processInstanceId, "commandType"));
+        // empty = 运行期与历史均无该变量：缺省即不发布设备命令（原变量缺省语义）
+        java.util.Optional<String> productIdVar = bpmTaskFacade.getVariable(processInstanceId, "productId");
+        java.util.Optional<String> deviceNameVar = bpmTaskFacade.getVariable(processInstanceId, "deviceName");
+        java.util.Optional<String> commandKeyVar = bpmTaskFacade.getVariable(processInstanceId, "commandKey");
+        java.util.Optional<String> commandTypeVar = bpmTaskFacade.getVariable(processInstanceId, "commandType");
 
         boolean legacyInvocation = request == null;
         ApprovalActionRequest effectiveRequest = legacyInvocation ? new ApprovalActionRequest() : request;
         ApprovalAction action = effectiveRequest.getAction() == null ? ApprovalAction.APPROVE
                 : effectiveRequest.getAction();
         effectiveRequest.setAction(action);
-        Map<String, Object> processVariables = bpmTaskFacade.getVariables(processInstanceId);
+        // empty = 实例标识缺失或该实例不存在：按原有“无流程变量”结论继续（不阻断动作）
+        Map<String, Object> processVariables = bpmTaskFacade.getVariables(processInstanceId)
+                .orElse(Map.of());
         // I3 动作资格：任务存在待处理加签时，普通办理（APPROVE/DISAPPROVE/REJECT/
         // RETURN）必须先等加签完成或取消（生命周期门）。
         com.sw.ck.bpm.process.service.ApprovalLifecycleService lifecycleService = lifecycle();
@@ -167,8 +176,12 @@ public class TaskActionService {
                     || effectiveRequest.getReturnTargetNodeId().isBlank()) {
                 throw new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.APPROVAL_RETURN_TARGET_INVALID);
             }
-            bpmTaskFacade.returnTask(taskId, effectiveRequest.getReturnTargetNodeId());
+            // 命令方法：present = APPLIED，任务不存在/目标节点非法继续抛原异常
+            bpmTaskFacade.returnTask(taskId, effectiveRequest.getReturnTargetNodeId())
+            .orElseThrow(() -> new IllegalStateException(
+                    "BpmTaskFacade#returnTask 契约恒 present，empty 属契约违约"));
             if (participantSnapshotRecorder != null) {
+                // present = APPLIED（本次结算）/ ALREADY_APPLIED（无可结算候选，合法幂等）
                 participantSnapshotRecorder.settle(processInstanceId, task.getTaskDefinitionKey(),
                         task.getTaskId(), String.valueOf(loginUser.getUserId()), action.name(),
                         loginUser.getTenantId());
@@ -194,6 +207,7 @@ public class TaskActionService {
             variables.put("lastApprovalActorId", loginUser.getUserId());
         }
         try {
+            // 命令方法：present = APPLIED；状态冲突/任务不存在继续抛原异常
             if (assigned) bpmTaskFacade.complete(taskId, variables);
             else bpmTaskFacade.completeAsUser(taskId, String.valueOf(loginUser.getUserId()),
                     variables == null ? Map.of() : variables);
@@ -221,9 +235,13 @@ public class TaskActionService {
         // 由节点 disapprovePolicy 结算。旧「会签 REJECT 交给结算条件」的路径
         // 关闭：会签参与人的负向意见统一使用 DISAPPROVE。
         if (action == ApprovalAction.REJECT) {
-            bpmTaskFacade.terminateProcess(processInstanceId, "REJECTED");
+            // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
+            bpmTaskFacade.terminateProcess(processInstanceId, "REJECTED")
+            .orElseThrow(() -> new IllegalStateException(
+                    "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         }
         if (participantSnapshotRecorder != null) {
+            // present = APPLIED（本次结算）/ ALREADY_APPLIED（无可结算候选，合法幂等）
             participantSnapshotRecorder.settle(processInstanceId, task.getTaskDefinitionKey(),
                     task.getTaskId(), String.valueOf(loginUser.getUserId()), action.name(),
                     loginUser.getTenantId());
@@ -235,7 +253,10 @@ public class TaskActionService {
             String policy = nodeDisapprovePolicy(task);
             if (legacyInvocation || "TERMINATE".equalsIgnoreCase(policy)
                     || policy == null || policy.isBlank()) {
-                bpmTaskFacade.terminateProcess(processInstanceId, "DISAPPROVED");
+                // present = APPLIED / ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
+                bpmTaskFacade.terminateProcess(processInstanceId, "DISAPPROVED")
+                .orElseThrow(() -> new IllegalStateException(
+                        "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
             }
         }
         recordAction(task, loginUser, effectiveRequest, action,
@@ -248,7 +269,10 @@ public class TaskActionService {
         log.info("审批已完成: taskId={}, processInstanceId={}, userId={}",
                 taskId, processInstanceId, loginUser.getUserId());
 
-        boolean processGone = !bpmTaskFacade.isProcessActive(processInstanceId)
+        // empty = 实例标识缺失，无法判定；按原有“未知即视为已结束”保守口径处理（原 false 判定）
+        java.util.Optional<Boolean> activeDecision = bpmTaskFacade.isProcessActive(processInstanceId);
+        boolean processActive = activeDecision.isPresent() && activeDecision.get();
+        boolean processGone = !processActive
                 || action == ApprovalAction.REJECT
                 || ((!legacyInvocation && action == ApprovalAction.DISAPPROVE)
                     && !isConsensusTask(task)
@@ -290,10 +314,11 @@ public class TaskActionService {
                                 : BpmNotifyTrigger.PROCESS_APPROVED);
 
                 // — 审批结果驱动设备：流程变量携带 productId/deviceName/commandKey 时发布设备命令事件 —
-                if (productId != null && deviceName != null && commandKey != null) {
-                    if (commandType == null) {
-                        commandType = "PROPERTY";
-                    }
+                if (productIdVar.isPresent() && deviceNameVar.isPresent() && commandKeyVar.isPresent()) {
+                    String productId = productIdVar.get();
+                    String deviceName = deviceNameVar.get();
+                    String commandKey = commandKeyVar.get();
+                    String commandType = commandTypeVar.orElse("PROPERTY");
                     domainEventPublisher.publish(new BpmDeviceCommandEvent(
                             processInstanceId, productId, deviceName,
                             commandKey, commandType,
@@ -313,7 +338,13 @@ public class TaskActionService {
             return Map.of();
         }
         try {
-            return userQueryFacade.getUserDisplayNames(ids);
+            // empty = 查询上下文缺失（ids 为 null，此处已判非空，契约上不产生）
+            java.util.Optional<Map<Long, String>> names = userQueryFacade.getUserDisplayNames(ids);
+            if (names.isEmpty()) {
+                log.warn("用户展示名批量查询未返回结果（查询上下文缺失），回退为空映射");
+                return Map.of();
+            }
+            return names.get();
         } catch (Exception e) {
             log.warn("用户展示名批量查询失败，回退为 null: {}", e.getMessage());
             return Map.of();
@@ -462,8 +493,9 @@ public class TaskActionService {
             Map<String, Object> variables = new java.util.LinkedHashMap<>(
                     processVariables == null ? Map.of() : processVariables);
             variables.put("outcome", action.name());
-            com.sw.ck.bpm.api.nodefunc.NodeFunctionResult result = nodeFunctionService
-                    .handleResult(
+            // empty = 未配置结果函数或函数服务不可用：无输出，按原有“无结果函数”结论跳过
+            java.util.Optional<com.sw.ck.bpm.api.nodefunc.NodeFunctionResult> resultLookup =
+                    nodeFunctionService.handleResult(
                             com.sw.ck.bpm.api.nodefunc.NodeFunctionContext.builder()
                                     .tenantId(loginUser.getTenantId())
                                     .processInstanceId(task.getProcessInstanceId())
@@ -479,13 +511,17 @@ public class TaskActionService {
                                 case DISAPPROVE -> "DISAPPROVED";
                                 default -> "APPROVED";
                             }));
-            if (result != null && result.getSummary() != null) {
+            if (resultLookup.isEmpty()) {
+                return;
+            }
+            com.sw.ck.bpm.api.nodefunc.NodeFunctionResult result = resultLookup.get();
+            if (result.getSummary() != null) {
                 log.info("节点结果函数完成: taskId={}, summary={}", task.getTaskId(),
                         result.getSummary());
             }
             // 白名单结果变量写回流程（I3 §4.9）：变量名限 [a-z_][a-z0-9_]{0,63}、值≤2000 字符、≤10 个，
             // 只允许补充结果变量，不改变 outcome/task/表单；超限即拒绝。
-            if (result != null && result.getResultVariables() != null
+            if (result.getResultVariables() != null
                     && !result.getResultVariables().isEmpty()) {
                 if (result.getResultVariables().size() > 10) {
                     throw new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT);
@@ -499,7 +535,10 @@ public class TaskActionService {
                     if (value.length() > 2000) {
                         throw new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT);
                     }
-                    bpmTaskFacade.setVariable(task.getProcessInstanceId(), name, value);
+                    // 命令方法：present = APPLIED；实例不存在继续抛原异常
+                    bpmTaskFacade.setVariable(task.getProcessInstanceId(), name, value)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "BpmTaskFacade#setVariable 契约恒 present，empty 属契约违约"));
                 }
             }
         } catch (BaseException e) {
@@ -568,7 +607,9 @@ public class TaskActionService {
      */
     private void publishReturnedRoundTodoCreated(String processInstanceId, LoginUser loginUser) {
         try {
-            java.util.List<BpmTaskDTO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId);
+            // empty = 实例标识缺失：与“无重建待办 task”同为非预期但不阻断退回，仅 warn
+            java.util.List<BpmTaskDTO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+                    .orElse(java.util.List.of());
             BpmTaskDTO matchedTask = tasks.stream().findFirst().orElse(null);
             if (matchedTask == null) {
                 log.warn("流程 {} 退回后无重建待办 task，跳过新轮次 TODO_CREATED 通知", processInstanceId);

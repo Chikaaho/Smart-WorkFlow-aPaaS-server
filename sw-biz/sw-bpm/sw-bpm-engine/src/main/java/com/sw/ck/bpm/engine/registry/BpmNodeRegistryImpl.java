@@ -49,16 +49,16 @@ public final class BpmNodeRegistryImpl implements BpmNodeRegistry {
 
         List<BpmNodeDefinition> ordered = definitions.stream()
                 .map(definition -> (BpmNodeDefinition) definition)
+                // 类型缺失的定义排在首位（空串小于任何合法大写类型），随后由校验 fail-fast
                 .sorted(Comparator
-                        .comparing(BpmNodeRegistryImpl::typeForSort,
-                                Comparator.nullsFirst(String::compareTo))
+                        .comparing((BpmNodeDefinition definition) -> definition.type().orElse(""))
                         .thenComparing(definition -> definition.getClass().getName()))
                 .toList();
         Map<String, BpmNodeDefinition> result = new TreeMap<>();
         for (BpmNodeDefinition definition : ordered) {
-            validateDefinition(definition);
-            if (result.putIfAbsent(definition.type(), definition) != null) {
-                throw invalid("节点类型重复: " + definition.type());
+            String type = validateDefinition(definition);
+            if (result.putIfAbsent(type, definition) != null) {
+                throw invalid("节点类型重复: " + type);
             }
         }
         if (result.isEmpty()) {
@@ -68,8 +68,9 @@ public final class BpmNodeRegistryImpl implements BpmNodeRegistry {
     }
 
     @Override
-    public List<BpmNodeDefinition> definitions() {
-        return List.copyOf(definitionsByType.values());
+    public Optional<List<BpmNodeDefinition>> definitions() {
+        // 构造期已校验定义集非空：当前契约恒 present
+        return Optional.of(List.copyOf(definitionsByType.values()));
     }
 
     @Override
@@ -77,23 +78,26 @@ public final class BpmNodeRegistryImpl implements BpmNodeRegistry {
         return Optional.ofNullable(definitionsByType.get(type));
     }
 
-    private static String typeForSort(BpmNodeDefinition definition) {
-        return definition == null ? null : definition.type();
-    }
-
-    private static void validateDefinition(BpmNodeDefinition definition) {
-        String type = definition.type();
-        if (type == null || !TYPE_PATTERN.matcher(type).matches()) {
+    /**
+     * 校验单个定义并返回其稳定类型标识。
+     */
+    private static String validateDefinition(BpmNodeDefinition definition) {
+        String type = definition.type().orElseThrow(
+                () -> invalid("节点类型标识非法: 未提供稳定类型标识"));
+        if (!TYPE_PATTERN.matcher(type).matches()) {
             throw invalid("节点类型标识非法: " + type);
         }
         if (!(definition instanceof NodeTypeTranslator)) {
             throw invalid("节点缺少翻译能力实现: " + type);
         }
 
-        BpmNodeMetadata metadata = definition.metadata();
-        if (metadata == null) {
-            throw invalid("节点元数据缺失: " + type);
-        }
+        BpmNodeMetadata metadata = definition.metadata().orElseThrow(
+                () -> invalid("节点元数据缺失: " + type));
+        validateMetadata(metadata, type);
+        return type;
+    }
+
+    private static void validateMetadata(BpmNodeMetadata metadata, String type) {
         requireText(metadata.displayName(), "显示名称", type);
         requireText(metadata.description(), "说明", type);
         requireText(metadata.category(), "类别", type);

@@ -1,7 +1,6 @@
 package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.system.api.dept.DeptOptionDTO;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.mapper.SysDeptMapper;
@@ -9,14 +8,18 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * DeptQueryFacade 实现。
  * <p>
  * 其它模块通过 {@link DeptQueryFacade} 接口查询部门候选，
  * 禁止直接访问 sys_dept 表或 Mapper。仅返回正常状态（status=0）部门。
+ * </p>
+ * <p>
+ * 模块内部调用边界返回非空 {@link Optional}：查询对象缺失（{@code ids == null}）以 empty 表达，
+ * 合法零匹配以 present 的空集合表达。
  * </p>
  */
 @Service
@@ -32,24 +35,14 @@ public class DeptFacadeImpl implements DeptQueryFacade {
     }
 
     @Override
-    public List<DeptOptionDTO> searchActiveDepts(String keyword, int limit) {
-        String kw = keyword == null ? "" : keyword.trim();
-        int safeLimit = Math.max(limit, 1);
-        List<SysDept> depts = sysDeptMapper.selectList(Wrappers.lambdaQuery(SysDept.class)
-                .select(SysDept::getId, SysDept::getName, SysDept::getParentId, SysDept::getStatus)
-                .eq(SysDept::getStatus, STATUS_ACTIVE)
-                .like(!kw.isEmpty(), SysDept::getName, kw)
-                .orderByAsc(SysDept::getId)
-                .last("LIMIT " + safeLimit));
-        return depts.stream()
-                .map(d -> new DeptOptionDTO(d.getId(), d.getName(), d.getParentId(), d.getStatus()))
-                .toList();
-    }
-
-    @Override
-    public List<Long> findActiveDeptIds(Collection<Long> ids) {
-        if (ids == null || ids.isEmpty()) {
-            return Collections.emptyList();
+    public Optional<List<Long>> findActiveDeptIds(Collection<Long> ids) {
+        if (ids == null) {
+            // 缺少查询对象：查询未执行
+            return Optional.empty();
+        }
+        if (ids.isEmpty()) {
+            // 查询已执行且零匹配（合法零结果）
+            return Optional.of(List.of());
         }
         List<SysDept> depts = sysDeptMapper.selectList(Wrappers.lambdaQuery(SysDept.class)
                 .select(SysDept::getId)
@@ -59,6 +52,6 @@ public class DeptFacadeImpl implements DeptQueryFacade {
         for (SysDept d : depts) {
             found.add(d.getId());
         }
-        return found;
+        return Optional.of(found);
     }
 }

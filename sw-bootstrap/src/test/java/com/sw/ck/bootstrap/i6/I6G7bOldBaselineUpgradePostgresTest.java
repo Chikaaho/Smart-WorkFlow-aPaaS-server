@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * migrate() 完成全链升级（不重建、不删数据、不换对象）。
  * </p>
  */
-@DisplayName("I6 G7b 真实 PG 旧基线 V87 → V94 升级")
+@DisplayName("I6 G7b 真实 PG 旧基线 V87 → V95 升级")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class I6G7bOldBaselineUpgradePostgresTest {
 
@@ -93,14 +93,14 @@ class I6G7bOldBaselineUpgradePostgresTest {
                 assertTrue("92".equals(current) || "93".equals(current) || "94".equals(current),
                         "G7b 库应处于 V87 基线或链尾升级终点，实际: " + current);
             }
-            // 4. 全链升级到链尾：V87 起为真实全链升级，已升级库为 V94 前向补齐（幂等）
+            // 4. 全链升级到链尾：V87 起为真实全链升级，已升级库为 V95 前向补齐（幂等）
             var result = Flyway.configure().dataSource(URL, USER, PASSWORD).locations(APP_LOCATIONS).load().migrate();
-            assertTrue(result.success, "V87→V94 全链升级应成功");
+            assertTrue(result.success, "V87→V95 全链升级应成功");
             System.out.println("[G7b] migrationsExecuted=" + result.migrationsExecuted);
             try (ResultSet rs2 = stmt.executeQuery(
                     "SELECT version FROM flyway_schema_history WHERE success = true AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")) {
                 assertTrue(rs2.next());
-                assertEquals("94", rs2.getString(1), "升级终点应为 V94");
+                assertEquals("95", rs2.getString(1), "升级终点应为 V95");
             }
         }
     }

@@ -2,6 +2,8 @@ package com.sw.ck.bpm.engine.facade;
 
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.result.BpmProcessStatus;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.runtime.ProcessInstance;
@@ -13,10 +15,15 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
  * BPM 运行时门面实现 —— 封装 Flowable {@link RuntimeService} + {@link HistoryService}。
+ * <p>
+ * {@code Optional.empty()} 只表达"查询目标/上下文缺失"（实例标识缺失、定义未发布、
+ * 实例不存在）；参数非法与引擎执行失败继续抛明确异常，不以上空吞异常。
+ * </p>
  */
 @Service
 public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
@@ -32,34 +39,44 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
     }
 
     @Override
-    public String startProcess(String processDefKey, String businessKey,
-                               Map<String, Object> variables, String tenantId) {
-        ProcessInstance instance = runtimeService.startProcessInstanceByKeyAndTenantId(
-                processDefKey, businessKey, variables, tenantId);
+    public Optional<String> startProcess(String processDefKey, String businessKey,
+                                         Map<String, Object> variables, String tenantId) {
+        ProcessInstance instance;
+        try {
+            instance = runtimeService.startProcessInstanceByKeyAndTenantId(
+                    processDefKey, businessKey, variables, tenantId);
+        } catch (FlowableObjectNotFoundException e) {
+            // 该 key/租户下没有已发布的流程定义：启动目标缺失，未产生实例
+            log.warn("BPM process start target missing: processDefKey={}, tenantId={}, error={}",
+                    processDefKey, tenantId, e.getMessage());
+            return Optional.empty();
+        }
         log.info("BPM process started: processInstanceId={}, processDefKey={}, businessKey={}, tenantId={}",
                 instance.getId(), processDefKey, businessKey, tenantId);
-        return instance.getId();
+        return Optional.of(instance.getId());
     }
 
     @Override
-    public List<String> getActiveActivityIds(String processInstanceId) {
+    public Optional<List<String>> getActiveActivityIds(String processInstanceId) {
         if (processInstanceId == null || processInstanceId.isBlank()) {
-            return List.of();
+            // 实例标识缺失：无法给出活跃节点
+            return Optional.empty();
         }
         try {
             List<String> ids = runtimeService.getActiveActivityIds(processInstanceId);
-            return ids != null ? ids : List.of();
+            return Optional.of(ids != null ? ids : List.of());
         } catch (Exception e) {
+            // 保留原“容错不抛”行为：实例不存在/引擎查询失败时无法给出活跃节点
             log.warn("Failed to get active activity ids: processInstanceId={}, error={}",
                     processInstanceId, e.getMessage());
-            return List.of();
+            return Optional.empty();
         }
     }
 
     @Override
-    public List<BpmActivityDTO> queryHistoricActivities(String processInstanceId) {
+    public Optional<List<BpmActivityDTO>> queryHistoricActivities(String processInstanceId) {
         if (processInstanceId == null || processInstanceId.isBlank()) {
-            return List.of();
+            return Optional.empty();
         }
         try {
             List<org.flowable.engine.history.HistoricActivityInstance> activities =
@@ -69,7 +86,8 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
                             .list();
 
             if (activities == null || activities.isEmpty()) {
-                return List.of();
+                // 查询已执行且零匹配：合法零结果以 present 空列表保留
+                return Optional.of(List.of());
             }
 
             // 兜底：本引擎版本在 create 监听器内 setAssignee 不落 HI_ACTINST/HI_TASKINST 的
@@ -87,7 +105,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
                             (a, b) -> a));
             String approverFallback = resolveApproverVariable(processInstanceId);
 
-            return activities.stream()
+            return Optional.of(activities.stream()
                     .map(this::toActivityDto)
                     .peek(dto -> {
                         if (dto.getAssignee() == null && "userTask".equals(dto.getActivityType())) {
@@ -99,11 +117,12 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
                             dto.setAssignee(a);
                         }
                     })
-                    .collect(Collectors.toList());
+                    .collect(Collectors.toList()));
         } catch (Exception e) {
+            // 保留原“容错不抛”行为：实例无历史记录/引擎查询失败时无法给出历史活动
             log.warn("Failed to query historic activities: processInstanceId={}, error={}",
                     processInstanceId, e.getMessage());
-            return List.of();
+            return Optional.empty();
         }
     }
 
@@ -162,8 +181,20 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
         return dto;
     }
     @Override
-    public java.util.Map<String, Object> getProcessVariables(String processInstanceId) {
-        java.util.Map<String, Object> variables = new java.util.LinkedHashMap<>();
+    public Optional<Map<String, Object>> getProcessVariables(String processInstanceId) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            // 实例标识缺失：无法确定查询目标
+            return Optional.empty();
+        }
+        // 目标不存在（运行期与历史均无该实例）→ empty；实例存在但无变量才是 present 空 Map
+        boolean instanceExists = runtimeService.createProcessInstanceQuery()
+                .processInstanceId(processInstanceId).count() > 0
+                || historyService.createHistoricProcessInstanceQuery()
+                .processInstanceId(processInstanceId).count() > 0;
+        if (!instanceExists) {
+            return Optional.empty();
+        }
+        Map<String, Object> variables = new java.util.LinkedHashMap<>();
         try {
             for (org.flowable.variable.api.history.HistoricVariableInstance var :
                     historyService.createHistoricVariableInstanceQuery()
@@ -171,47 +202,52 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
                             .list()) {
                 variables.put(var.getVariableName(), var.getValue());
             }
-        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException e) {
-            return java.util.Map.of();
+        } catch (FlowableObjectNotFoundException e) {
+            // 运行期与历史均不存在该实例
+            return Optional.empty();
         }
-        return variables;
+        return Optional.of(variables);
     }
 
     @Override
-    public String getProcessInstanceStatus(String processInstanceId) {
+    public Optional<BpmProcessStatus> getProcessInstanceStatus(String processInstanceId) {
         if (processInstanceId == null || processInstanceId.isBlank()) {
-            return "NOT_FOUND";
+            return Optional.empty();
         }
         ProcessInstance running = runtimeService.createProcessInstanceQuery()
                 .processInstanceId(processInstanceId).singleResult();
         if (running != null) {
-            return "RUNNING";
+            return Optional.of(BpmProcessStatus.RUNNING);
         }
         try {
             org.flowable.engine.history.HistoricProcessInstance historic =
                     historyService.createHistoricProcessInstanceQuery()
                             .processInstanceId(processInstanceId).singleResult();
             if (historic == null) {
-                return "NOT_FOUND";
+                return Optional.empty();
             }
             String deleteReason = historic.getDeleteReason();
             if (deleteReason == null || deleteReason.isBlank()) {
-                return "APPROVED"; // 正常走完：无删除原因
+                return Optional.of(BpmProcessStatus.APPROVED); // 正常走完：无删除原因
             }
-            return mapTerminalStatus(deleteReason);
+            return Optional.of(mapTerminalStatus(deleteReason));
         } catch (RuntimeException e) {
-            return "UNKNOWN";
+            return Optional.of(BpmProcessStatus.UNKNOWN);
         }
     }
 
     /** 删除原因 → 对外终态（I3/I4 动作语义映射，未知原因统一 TERMINATED）。 */
-    private String mapTerminalStatus(String reason) {
+    private BpmProcessStatus mapTerminalStatus(String reason) {
         String normalized = reason == null ? "" : reason.toUpperCase();
-        if (normalized.contains("REJECT") || normalized.contains("DISAPPROVE")) return "REJECTED";
-        if (normalized.contains("WITHDRAW")) return "WITHDRAWN";
-        if (normalized.contains("DISCARD")) return "DISCARDED";
-        if (normalized.contains("FAILED") || normalized.contains("ERROR")) return "FAILED";
-        return "TERMINATED";
+        if (normalized.contains("REJECT") || normalized.contains("DISAPPROVE")) {
+            return BpmProcessStatus.REJECTED;
+        }
+        if (normalized.contains("WITHDRAW")) return BpmProcessStatus.WITHDRAWN;
+        if (normalized.contains("DISCARD")) return BpmProcessStatus.DISCARDED;
+        if (normalized.contains("FAILED") || normalized.contains("ERROR")) {
+            return BpmProcessStatus.FAILED;
+        }
+        return BpmProcessStatus.TERMINATED;
     }
 
 }

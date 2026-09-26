@@ -10,6 +10,7 @@ import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
+import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.junit.jupiter.api.AfterEach;
@@ -129,7 +130,13 @@ class BpmUrgeServiceTest {
         BpmTaskDTO task = new BpmTaskDTO();
         task.setTaskId("t-1");
         task.setAssignee("9");
-        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(List.of(task));
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(java.util.Optional.of(List.of(task)));
+
+        when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
+                java.util.Optional.of(NotifySendResult.builder()
+                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                        .status("SUCCESS")
+                        .build()));
 
         UrgeRespDTO resp = urgeService.urge(1L);
         assertThat(resp.getResult()).isEqualTo("ACCEPTED");

@@ -8,6 +8,12 @@ public enum CommandTypeEnum {
     /** 流程发起（表单提交 / 草稿提交 / 定时触发统一入口）。 */
     FLOW_START("FLOW_START"),
 
+    /**
+     * 定时任务流程发起（Phase 4 可靠业务事件）：与 {@link #FLOW_START} 的区别是发起目标由
+     * {@code flow_def_key} 反查启用表单绑定，业务键派生自 {@code jobId + fireTime}（无表单记录）。
+     */
+    SCHEDULED_FLOW_START("SCHEDULED_FLOW_START"),
+
     /** 草稿正式提交（落表单数据 + 触发 FLOW_START）。 */
     DRAFT_SUBMIT("DRAFT_SUBMIT"),
 

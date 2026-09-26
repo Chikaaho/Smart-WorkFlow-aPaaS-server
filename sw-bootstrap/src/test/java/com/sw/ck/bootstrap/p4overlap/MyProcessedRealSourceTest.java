@@ -416,7 +416,9 @@ class MyProcessedRealSourceTest {
             List<String> seen = new java.util.ArrayList<>();
             for (int pageNum = 1; pageNum <= 2; pageNum++) {
                 List<com.sw.ck.bpm.api.dto.BpmTaskDTO> tasks =
-                        bpmTaskFacade.queryProcessedPage("1", String.valueOf(u3), pageNum - 1, 1);
+                        bpmTaskFacade.queryProcessedPage("1", String.valueOf(u3), pageNum - 1, 1)
+                                .orElseThrow(() -> new IllegalStateException(
+                                        "已办分页上下文缺失：tenantId=1, assignee=" + u3));
                 assertThat(tasks).hasSize(1);
                 seen.add(tasks.get(0).getTaskId());
             }
@@ -426,7 +428,9 @@ class MyProcessedRealSourceTest {
         assertThat(pageOrders.get(0).split(",")[0])
                 .as("同 endTime 按唯一 taskId 次键全序").isGreaterThan(pageOrders.get(0).split(",")[1]);
         assertThat(pageOrders.get(0)).as("重复读取顺序稳定").isEqualTo(pageOrders.get(1));
-        assertThat(bpmTaskFacade.countProcessed("1", String.valueOf(u3))).isEqualTo(2L);
+        assertThat(bpmTaskFacade.countProcessed("1", String.valueOf(u3)).orElseThrow(
+                () -> new IllegalStateException(
+                        "已办统计上下文缺失：tenantId=1, assignee=" + u3))).isEqualTo(2L);
 
         // ── 默认合并（真实 ACTION 记录）：u4 经真实审批核心完成两个任务后归一时间 ──
         String a1 = startAndHandle("biz-p3-real-same-3", u4, true);

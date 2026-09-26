@@ -78,15 +78,15 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "全链迁移应成功");
-        assertEquals(95, result.migrationsExecuted,
-                "全链迁移计数应为 95（94 个版本迁移 + I6 菜单可重复对账迁移），实际: " + result.migrationsExecuted);
+        assertEquals(97, result.migrationsExecuted,
+                "全链迁移计数应为 96（95 个版本迁移 + I6 菜单可重复对账迁移），实际: " + result.migrationsExecuted);
     }
 
     @Test
     @DisplayName("全链迁移后：info().applied() 共 55 条，包含 P58 通知渠道与流程节点能力迁移")
     void appliedMigrationCount_shouldBe35() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(95, applied.length, "已应用迁移数应为 95");
+        assertEquals(97, applied.length, "已应用迁移数应为 97");
         boolean v8Seen = false;
         boolean v14Seen = false;
         boolean v31Seen = false;
@@ -230,7 +230,7 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult second = full.migrate();
         assertTrue(second.success, "V32→链尾升级链应成功");
-        assertEquals(62, second.migrationsExecuted, "升级链应执行 V33-V94 六十二条，实际: " + second.migrationsExecuted);
+        assertEquals(64, second.migrationsExecuted, "升级链应执行 V33-V96 六十四条，实际: " + second.migrationsExecuted);
         full.validate();
 
         try (Connection conn = DriverManager.getConnection(upgradeUrl, USER, PASSWORD);
@@ -240,7 +240,7 @@ class FlywayFullChainH2Test {
                 assertTrue(rs.next(), "V33 菜单 id=209（大模型管理）应存在");
                 assertEquals("agent:model:view", rs.getString("permission"));
                 assertEquals("agent/views/ModelList", rs.getString("component"));
-                assertEquals("model", rs.getString("path"));
+                assertEquals("agent/model", rs.getString("path"));
                 assertEquals(1, rs.getInt("menu_type"));
                 assertEquals(7, rs.getInt("parent_id"));
                 assertTrue(rs.getInt("sort") > 15, "sort 应在图定义管理(15)之后");
@@ -287,7 +287,7 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult second = full.migrate();
         assertTrue(second.success, "V33→V36 升级链应成功");
-        assertEquals(61, second.migrationsExecuted, "升级链应执行 V34-V94 六十一条，实际: " + second.migrationsExecuted);
+        assertEquals(63, second.migrationsExecuted, "升级链应执行 V34-V96 六十三条，实际: " + second.migrationsExecuted);
         full.validate();
 
         try (Connection conn = DriverManager.getConnection(upgradeUrl, USER, PASSWORD)) {
@@ -531,10 +531,10 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult second = toV37.migrate();
         assertTrue(second.success, "V36→链尾 应成功");
-        assertEquals(58, second.migrationsExecuted, "V36→链尾 应执行 V37-V94 五十八条，实际: " + second.migrationsExecuted);
+        assertEquals(60, second.migrationsExecuted, "V36→链尾 应执行 V37-V96 六十条，实际: " + second.migrationsExecuted);
         org.flywaydb.core.api.MigrationInfoService infoAfter = toV37.info();
         String afterVersion = infoAfter.current() == null ? "EMPTY" : infoAfter.current().getVersion().getVersion();
-        assertEquals("94", afterVersion, "终点当前版本应为 V94，实际: " + afterVersion);
+        assertEquals("96", afterVersion, "终点当前版本应为 V96，实际: " + afterVersion);
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
 
         // 4. 同一数据库会话实际查询：页面/按钮行的 id,parent_id,path,component,permission + view/manage
@@ -544,7 +544,7 @@ class FlywayFullChainH2Test {
                     "SELECT id, parent_id, path, component, permission, menu_type FROM sys_menu WHERE id IN (212, 213) ORDER BY id")) {
                 assertTrue(rs.next(), "页面菜单 id=212 应存在");
                 assertEquals(7, rs.getInt("parent_id"));
-                assertEquals("tool", rs.getString("path"));
+                assertEquals("agent/tool", rs.getString("path"));
                 assertEquals("agent/views/ToolList", rs.getString("component"));
                 assertEquals("agent:tool:view", rs.getString("permission"));
                 assertEquals(1, rs.getInt("menu_type"));
@@ -563,7 +563,7 @@ class FlywayFullChainH2Test {
                     "SELECT id, parent_id, path, component, permission, menu_type FROM sys_menu WHERE id IN (218, 219) ORDER BY id")) {
                 assertTrue(rs.next(), "V39 批量发送页面菜单 id=218 应存在");
                 assertEquals(6, rs.getInt("parent_id"));
-                assertEquals("batch-send", rs.getString("path"));
+                assertEquals("notify/batch-send", rs.getString("path"));
                 assertEquals("notify/views/NotifyBatchSend", rs.getString("component"));
                 assertEquals("notify:batch:send", rs.getString("permission"));
                 assertEquals(1, rs.getInt("menu_type"));

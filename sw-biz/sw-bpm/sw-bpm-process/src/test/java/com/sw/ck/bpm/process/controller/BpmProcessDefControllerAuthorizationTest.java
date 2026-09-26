@@ -149,8 +149,12 @@ class BpmProcessDefControllerAuthorizationTest {
 
         @Bean
         BpmProcessDefController controller() {
+            BpmNodeRegistry registry = mock(BpmNodeRegistry.class);
+            // capabilities 当前契约恒 present（注册结果构造期已保证定义集非空）：桩需兑现契约
+            org.mockito.Mockito.when(registry.capabilities())
+                    .thenReturn(java.util.Optional.of(List.of()));
             return new BpmProcessDefController(mock(BpmProcessDefService.class),
-                    new ObjectMapper(), mock(UserQueryFacade.class), mock(BpmNodeRegistry.class));
+                    new ObjectMapper(), mock(UserQueryFacade.class), registry);
         }
 
         @Bean("ss")

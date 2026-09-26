@@ -82,8 +82,11 @@ public final class ApprovalOpinionValidator {
             String visibleWhen = text(field.get("visibleWhen"));
             if (visibleWhen != null) {
                 try {
+                    // matches 当前契约恒 present：empty 不产生，缺失即显式失败（由外层归一为意见非法）
                     visible = RestrictedExpressionEvaluator.matches(visibleWhen, variables == null
-                            ? Map.of() : variables);
+                                    ? Map.of() : variables)
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "visibleWhen 表达式未返回判定结果: " + visibleWhen));
                 } catch (RuntimeException e) {
                     throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
                 }
@@ -92,9 +95,10 @@ public final class ApprovalOpinionValidator {
                 String initialExpression = text(field.get("initialExpression"));
                 if (initialExpression != null) {
                     try {
-                        Object initialValue = RestrictedExpressionEvaluator.value(initialExpression,
-                                variables == null ? Map.of() : variables);
-                        if (initialValue != null) data.put(key, initialValue);
+                        // empty = 表达式引用的路径/变量不存在（原 null 返回路径）：不写入初始值
+                        RestrictedExpressionEvaluator.value(initialExpression,
+                                        variables == null ? Map.of() : variables)
+                                .ifPresent(initialValue -> data.put(key, initialValue));
                     } catch (RuntimeException e) {
                         throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
                     }

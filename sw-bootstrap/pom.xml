@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
     </parent>
 
     <artifactId>sw-bootstrap</artifactId>
@@ -25,16 +25,10 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- zonky embedded-postgres-binaries BOM：统一全部受支持平台（linux/darwin/windows，
-                 amd64/arm64 等）的 PostgreSQL 二进制版本为 17.5.0，由 zonky 运行时按 os/arch
-                 自动选择对应平台产物（FlywayFullChainPostgresTest 跨平台可运行）。 -->
-            <dependency>
-                <groupId>io.zonky.test.postgres</groupId>
-                <artifactId>embedded-postgres-binaries-bom</artifactId>
-                <version>17.5.0</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
+            <!--
+                zonky embedded-postgres-binaries BOM 已随 Phase 6A 移入 sw-dependencies，本模块
+                不再自行 import；平台二进制版本（17.5.0）经 sw-dependencies 统一供给。
+            -->
         </dependencies>
     </dependencyManagement>
 
@@ -155,10 +149,16 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!--
+            Phase 6B · H2 只归属 test/dev 运行边界：默认构建下 H2 仅进入测试类路径，
+            生产运行时依赖树与正式 Boot Jar 均不含 H2；dev/local 运行入口由 `dev` profile
+            以 runtime scope 供应该驱动（见本 POM 的 dev profile）。
+            生产数据库行为以 PostgreSQL 为准。
+        -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <scope>test</scope>
         </dependency>
 
         <!-- =================== 后续常用基础依赖 =================== -->
@@ -186,15 +186,14 @@
         </dependency>
         <!-- zonky embedded-postgres：JUnit 内嵌真实 PostgreSQL 二进制，
              用于 PG 侧全链 Flyway 迁移验证（FlywayFullChainPostgresTest）。
-             平台二进制版本由 dependencyManagement 中的 embedded-postgres-binaries-bom
-             （17.5.0）统一管理：core 默认携带 windows-amd64/darwin-amd64/linux-amd64/
-             linux-amd64-alpine 四个平台产物，darwin-arm64v8 显式补充——任一受支持
-             平台（linux/darwin/windows × amd64/arm64）由 zonky 运行时按 os/arch
-             自动解析对应 17.5.0 产物，不在 pom 中做平台排除。 -->
+             core 与平台二进制版本（2.1.0 / 17.5.0）均由 sw-dependencies 统一管理：
+             core 默认携带 windows-amd64/darwin-amd64/linux-amd64/linux-amd64-alpine
+             四个平台产物，darwin-arm64v8 显式补充——任一受支持平台
+             （linux/darwin/windows × amd64/arm64）由 zonky 运行时按 os/arch
+             自动解析对应产物，不在 pom 中做平台排除。 -->
         <dependency>
             <groupId>io.zonky.test</groupId>
             <artifactId>embedded-postgres</artifactId>
-            <version>2.1.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -225,6 +224,103 @@
                 </configuration>
             </plugin>
         </plugins>
+        <!--
+            Phase 6B · dev/local 专属资源根 src/dev/resources（application-dev.yml、
+            application-local.yml、db/migration/devseed/**）只进入测试类路径与 dev/local
+            构建，绝不进入默认（生产）主资源；生产 Boot Jar 由 prod profile 校验其不存在。
+        -->
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>src/dev/resources</directory>
+            </testResource>
+        </testResources>
     </build>
 
+    <profiles>
+        <profile>
+            <id>prod</id>
+            <build>
+                <!--
+                    Phase 6B · 正式生产身份标记：src/prod/resources 只在 prod profile 下作为
+                    额外资源根加入，因此 Boot Jar 内的 META-INF/production-build.properties
+                    是「本制品由正式生产构建入口生成」的机器可判定标记（等价 marker）。
+                -->
+                <resources>
+                    <!-- 必须显式列出主资源根：profile 内声明 resources 会顶掉默认的 src/main/resources -->
+                    <resource>
+                        <directory>src/main/resources</directory>
+                    </resource>
+                    <resource>
+                        <directory>src/prod/resources</directory>
+                    </resource>
+                    <!--
+                        Phase 6C · 仅对身份标记文件开启 Maven 资源过滤，把 build.version
+                        解析为 ${project.version}（CI-friendly revision 的有效值，如
+                        -Drevision=0.2.0 时为 0.2.0）。刻意只 include 这一个文件：
+                        Spring 的 application*.yml 充满 ${...} 占位符，绝不能被 Maven 过滤改写。
+                    -->
+                    <resource>
+                        <directory>src/prod/resources</directory>
+                        <includes>
+                            <include>META-INF/production-build.properties</include>
+                        </includes>
+                        <filtering>true</filtering>
+                    </resource>
+                </resources>
+            </build>
+        </profile>
+        <profile>
+            <id>dev</id>
+            <build>
+                <!-- dev/local 运行入口：额外资源根 + 独立 finalName，避免覆盖正式生产制品 -->
+                <finalName>bootstrap-dev</finalName>
+                <resources>
+                    <!-- 必须显式列出主资源根：profile 内声明 resources 会顶掉默认的 src/main/resources -->
+                    <resource>
+                        <directory>src/main/resources</directory>
+                    </resource>
+                    <resource>
+                        <directory>src/dev/resources</directory>
+                    </resource>
+                </resources>
+                <plugins>
+                    <!--
+                        Phase 6B · dev-only 验证设施物理隔离：VerificationRunner、BpmVerificationRunner
+                        与 VerifyMapper 位于 src/dev/java，只在 dev/local 构建（-Pdev）下参与编译；
+                        默认（生产）构建的编译输入天然看不到它们。
+                    -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.1</version>
+                        <executions>
+                            <execution>
+                                <id>add-dev-source-root</id>
+                                <phase>generate-sources</phase>
+                                <goals>
+                                    <goal>add-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>src/dev/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <!-- 仅 dev/local 运行入口以 runtime scope 供应 H2；默认（生产）构建不含 -->
+                <dependency>
+                    <groupId>com.h2database</groupId>
+                    <artifactId>h2</artifactId>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

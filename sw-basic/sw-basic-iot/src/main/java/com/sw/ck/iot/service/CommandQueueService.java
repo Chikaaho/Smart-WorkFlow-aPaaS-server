@@ -115,6 +115,49 @@ public interface CommandQueueService {
     List<IotDeviceCommand> getStuckCommands(int stuckMinutes);
 
     /**
+     * 原子领取滞留 QUEUED 命令用于发送（Phase 4 补偿调度）。
+     *
+     * <p>条件更新 {@code QUEUED → SENDING} 且仅当命令在 {@code staleBefore} 之前更新过：
+     * 多实例竞争时只有一个领取者能把行数改为 1，旧持有者不会覆盖新结果。</p>
+     *
+     * @return true = 本次领取成功（调用方负责发送并回写结果）
+     */
+    boolean claimQueuedForSend(Long commandId, java.time.LocalDateTime staleBefore);
+
+    /**
+     * 原子领取可重试的 FAILED 命令（重试预算内、未过期）。
+     *
+     * @param maxRetryCount 最大重试次数（含）
+     * @return true = 本次领取成功（retry_count 已 +1，调用方负责发送并回写结果）
+     */
+    boolean claimFailedForRetry(Long commandId, int maxRetryCount);
+
+    /**
+     * 查询可重试的 FAILED 命令（跨租户；重试预算内且未过期，按创建时间升序有界返回）。
+     */
+    List<IotDeviceCommand> findRetryableFailed(int maxRetryCount, int limit);
+
+    /**
+     * 查询滞留 QUEUED 命令（跨租户；更新时间早于阈值，有界返回）。
+     */
+    List<IotDeviceCommand> findStuckQueued(int stuckMinutes, int limit);
+
+    /**
+     * 查询滞留 SENDING 命令（跨租户；更新时间早于阈值 = 发送租约已过期，有界返回）。
+     *
+     * <p>发送者认领（QUEUED/FAILED → SENDING）后崩溃会把命令永久留在 SENDING：
+     * 它既不在滞留 QUEUED 扫描里，也不在可重试 FAILED 扫描里。此查询让补偿调度能发现它。</p>
+     */
+    List<IotDeviceCommand> findStaleSending(int staleMinutes, int limit);
+
+    /**
+     * 回收滞留 SENDING 命令为可重试失败（条件更新：仍处于 SENDING 且更新时间早于阈值）。
+     *
+     * @return true = 本次回收成功（调用方随后走统一重试路径）
+     */
+    boolean reclaimStaleSending(Long commandId, java.time.LocalDateTime staleBefore);
+
+    /**
      * 检查幂等键是否已存在。
      *
      * @param idempotentKey 幂等键

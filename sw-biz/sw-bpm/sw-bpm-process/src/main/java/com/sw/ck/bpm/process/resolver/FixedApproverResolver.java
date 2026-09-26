@@ -4,6 +4,8 @@ import com.sw.ck.bpm.api.dto.ApproverContext;
 import com.sw.ck.bpm.api.spi.ApproverResolver;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
+
 /**
  * 固定审批人解析器（骨架实现）。
  * <p>
@@ -26,13 +28,14 @@ public class FixedApproverResolver implements ApproverResolver {
      * 骨架阶段：始终返回发起人（submitter）的字符串表示。
      *
      * @param context 流程发起上下文
-     * @return submitter 的字符串形式，作为 Flowable assignee
+     * @return present = submitter 的字符串形式，作为 Flowable assignee（当前契约恒 present）
+     * @throws IllegalArgumentException context 或 submitter 缺失时
      */
     @Override
-    public String resolve(ApproverContext context) {
+    public Optional<String> resolve(ApproverContext context) {
         if (context == null || context.getSubmitter() == null) {
             throw new IllegalArgumentException("ApproverContext 或 submitter 不能为空");
         }
-        return String.valueOf(context.getSubmitter());
+        return Optional.of(String.valueOf(context.getSubmitter()));
     }
 }

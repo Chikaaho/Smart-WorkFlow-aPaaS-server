@@ -161,9 +161,13 @@ public class FormExtDataService {
         LoginUser user = LoginUserHolder.get();
         ExtQueryResult result;
         try {
+            // empty = 数据源未登记或已停用（查询未执行）：保持原 IllegalArgumentException 语义，
+            // 由统一异常处理器落 400 受控参数错误，不伪装成查询结果、不静默降级。
             result = port.executeQuery(entity.getDatasourceId(), entity.getSqlText(),
                     user == null ? null : user.getUserId(),
-                    user == null ? null : user.getUsername());
+                    user == null ? null : user.getUsername())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "External datasource not found or disabled: id=" + entity.getDatasourceId()));
         } catch (ExternalDatasourceResultLimitExceededException e) {
             log.warn("External query rejected because result exceeds configured row limit: key={}, maxRows={}",
                     queryKey, e.getMaxRows());

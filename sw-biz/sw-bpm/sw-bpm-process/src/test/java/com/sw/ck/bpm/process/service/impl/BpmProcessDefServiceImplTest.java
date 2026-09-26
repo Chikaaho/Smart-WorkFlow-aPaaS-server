@@ -80,7 +80,7 @@ class BpmProcessDefServiceImplTest {
         void getBpmnXml_shouldDelegateToFacade() {
             BpmProcessDef def = createPublishedDef();
             when(mapper.selectById(1L)).thenReturn(def);
-            when(bpmDeployFacade.getBpmnXml("proc-def-1")).thenReturn("<xml/>");
+            when(bpmDeployFacade.getBpmnXml("proc-def-1")).thenReturn(java.util.Optional.of("<xml/>"));
 
             String result = service.getBpmnXml(1L);
 

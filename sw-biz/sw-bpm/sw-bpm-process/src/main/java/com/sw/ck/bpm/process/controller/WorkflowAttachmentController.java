@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -65,8 +66,10 @@ public class WorkflowAttachmentController {
         if (file == null || file.isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "上传文件不能为空");
         }
+        // upload 当前契约恒 present（上传失败抛异常，不以上空表达失败）
         StorageUploadResult result = storageFacade.upload(file.getInputStream(),
-                file.getOriginalFilename(), file.getContentType());
+                        file.getOriginalFilename(), file.getContentType())
+                .orElseThrow(() -> new IllegalStateException("文件上传未返回结果"));
         return R.ok(Map.of(
                 "storageKey", result.getStorageKey(),
                 "storageName", result.getStorageName() == null ? "" : result.getStorageName(),
@@ -95,7 +98,10 @@ public class WorkflowAttachmentController {
             log.warn("附件下载越权拒绝: recordId={}, user={}", recordId, loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该记录附件");
         }
-        var stream = storageFacade.download(storageKey);
+        // empty = 该 storageKey 无存储记录或已逻辑删除（原 getFileOrThrow 的 NOT_FOUND 缺失路径）：
+        // 对外保持原有 404 语义，不改变下载接口行为
+        var stream = storageFacade.download(storageKey)
+                .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "附件不存在"));
         String fileName = (name == null || name.isBlank()) ? storageKey : name;
         return ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename*=UTF-8''"
@@ -124,8 +130,10 @@ public class WorkflowAttachmentController {
         if (user.getUserId().equals(instance.getInitiatorId())) {
             return true;
         }
+        // empty = 实例标识缺失：无活动任务可判定参与（原空列表口径），fail closed 继续判定
         boolean taskParticipant = bpmTaskFacade
-                .queryByProcessInstance(instance.getProcessInstanceId()).stream()
+                .queryByProcessInstance(instance.getProcessInstanceId())
+                .orElse(List.of()).stream()
                 .anyMatch(task -> uid.equals(task.getAssignee())
                         || (task.getCandidateUserIds() != null
                             && task.getCandidateUserIds().contains(uid)));

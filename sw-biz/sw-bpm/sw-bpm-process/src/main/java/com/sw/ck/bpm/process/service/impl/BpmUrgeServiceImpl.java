@@ -141,8 +141,11 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         }
 
         // 服务端核对活动审批任务（任务变化/实例结束以引擎当前状态为准）
-        List<BpmTaskDTO> activeTasks = bpmTaskFacade.queryByProcessInstance(instance.getProcessInstanceId());
-        if (activeTasks == null || activeTasks.isEmpty()) {
+        // empty = 实例标识缺失：与“无活动审批任务”同判拒绝
+        List<BpmTaskDTO> activeTasks = bpmTaskFacade
+                .queryByProcessInstance(instance.getProcessInstanceId())
+                .orElse(List.of());
+        if (activeTasks.isEmpty()) {
             return reject(instance, loginUser.getUserId(), "当前无活动审批任务，不能催办");
         }
         Set<Long> targets = new LinkedHashSet<>();
@@ -173,8 +176,11 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         for (Long target : targets) {
             java.util.List<NotifyChannel> urgeChannels = notifyRoutingService == null
                     ? java.util.List.of(NotifyChannel.IN_APP)
-                    : notifyRoutingService.channelsFor("TASK_URGE", target);
+                    // empty = 事件类型/上下文缺失无法裁决路由：与路由服务缺席同用 IN_APP 保底
+                    : notifyRoutingService.channelsFor("TASK_URGE", target)
+                            .orElse(java.util.List.of(NotifyChannel.IN_APP));
             for (NotifyChannel channel : urgeChannels) {
+                // send 当前契约恒 present（渠道失败以结果状态表达，不以上空表达失败）
                 notifyFacade.send(NotifySendRequest.builder()
                         .channel(channel)
                         .recipientId(target)
@@ -187,7 +193,9 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                         .occurrenceNo(urgeOccurrence())
                         .linkType("WF_PROCESS")
                         .linkId(instance.getProcessInstanceId())
-                        .build());
+                        .build())
+                        .orElseThrow(() -> new IllegalStateException(
+                                "NotifyFacade#send 契约恒 present，empty 属契约违约"));
             }
         }
 

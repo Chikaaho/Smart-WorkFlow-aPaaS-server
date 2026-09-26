@@ -12,12 +12,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
+
 /**
  * I6 深链对象权限裁决（方向 §6-11：发起人/参与人/抄送接收人可开，其余 fail closed）。
  * <p>
  * WF_TASK：任务可处理（assignee/candidate）或曾是该任务动作记录人；
  * WF_PROCESS：实例发起人、动作参与人（actor/target）或抄送接收人。
- * 无记录/无上下文一律 false——不泄露对象存在性。
+ * 无记录/无上下文一律拒绝——不泄露对象存在性；
+ * 上下文缺失以 {@code Optional.empty()} 表达，调用方必须按拒绝处理（fail closed）。
  * </p>
  */
 @Component
@@ -35,10 +38,11 @@ public class BpmNotifyLinkAuthorizer implements NotifyLinkAuthorizer {
     private CopyRecordMapper copyRecordMapper;
 
     @Override
-    public boolean canOpen(String linkType, String linkId) {
+    public Optional<Boolean> canOpen(String linkType, String linkId) {
         Long userId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
         if (userId == null || linkType == null || linkId == null || linkId.isBlank()) {
-            return false;
+            // 缺少裁决上下文：fail closed，由调用方统一按拒绝处理
+            return Optional.empty();
         }
         boolean allowed;
         if ("WF_PROCESS".equals(linkType)) {
@@ -51,7 +55,7 @@ public class BpmNotifyLinkAuthorizer implements NotifyLinkAuthorizer {
         if (!allowed) {
             log.info("深链对象权限拒绝: linkType={}, userId={}", linkType, userId);
         }
-        return allowed;
+        return Optional.of(allowed);
     }
 
     private boolean canOpenProcess(String processInstanceId, Long userId) {

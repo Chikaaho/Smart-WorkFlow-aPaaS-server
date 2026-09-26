@@ -41,7 +41,8 @@ class DynamicBranchPortTest {
                         new DynamicBranchPort.BranchCandidate("1", "10", null),
                         new DynamicBranchPort.BranchCandidate("3", "30", null),
                         new DynamicBranchPort.BranchCandidate("4", "30", null),
-                        new DynamicBranchPort.BranchCandidate("7", null, "LEADER_MISSING")));
+                        new DynamicBranchPort.BranchCandidate("7", null, "LEADER_MISSING")))
+                .orElseThrow();
 
         assertThat(frozen).hasSize(2);
         assertThat(frozen.get(0).leaderId()).isEqualTo("10");
@@ -72,7 +73,8 @@ class DynamicBranchPortTest {
 
         List<DynamicBranchPort.FrozenBranch> frozen = port.freeze("1", "pi-1", "dyn",
                 "VARIABLE", "deptList", "ALL", List.of(
-                        new DynamicBranchPort.BranchCandidate("9", "99", null)));
+                        new DynamicBranchPort.BranchCandidate("9", "99", null)))
+                .orElseThrow();
 
         assertThat(frozen).hasSize(1);
         assertThat(frozen.get(0).leaderId()).as("冻结快照权威：不重算新候选").isEqualTo("10");
@@ -83,7 +85,9 @@ class DynamicBranchPortTest {
     void shouldCloseRemainingWithoutRewritingFinishedBranches() {
         DynamicBranchSnapshotMapper mapper = mock(DynamicBranchSnapshotMapper.class);
         DynamicBranchPort port = new DynamicBranchPortConfiguration().dynamicBranchPort(mapper);
-        port.closeRemaining("1", "pi-1", null, "INSTANCE_TERMINATED");
+        // mock update 影响行数 0 → 已无未完成分支：合法幂等，以 present ALREADY_APPLIED 表达
+        assertThat(port.closeRemaining("1", "pi-1", null, "INSTANCE_TERMINATED"))
+                .contains(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
         // 实现按条件 UPDATE（只命中 START 行）；APPROVE/DISAPPROVE/CANCELED 天然不被改写
         verify(mapper).update(any(), any());
     }

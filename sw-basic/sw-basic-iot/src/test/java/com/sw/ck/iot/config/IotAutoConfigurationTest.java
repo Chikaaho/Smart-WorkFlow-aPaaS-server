@@ -5,89 +5,108 @@ import com.sw.ck.iot.provider.MockCloudProvider;
 import com.sw.ck.iot.provider.TencentCloudProvider;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedConstruction;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mockConstruction;
 
 /**
- * G1 聚焦测试：验证 Provider 选择行为。
- * <p>
- * 场景1: providerMode=mock → MockCloudProvider
- * 场景2: providerMode=tencent + 完整凭证 → TencentCloudProvider
- * 场景3: providerMode=tencent + 缺凭证 → IllegalStateException，不创建 Mock
+ * G1 聚焦测试：生产选择器的 provider 装配行为。
+ *
+ * <p>断言对象是**条件生效后的真实装配结果**（{@link ApplicationContextRunner}），不是对
+ * {@code @Bean} 方法的直接调用，因此 {@code @ConditionalOnProperty} 与
+ * {@code @ConditionalOnMissingBean} 都参与判定。</p>
+ *
+ * <p>场景：
+ * <ol>
+ *   <li>enabled + provider-mode=mock（生产制品里没有 dev 装配类）→ 不装配任何 provider；</li>
+ *   <li>enabled + provider-mode 未配置 → 不装配任何 provider；</li>
+ *   <li>enabled + provider-mode=tencent + 完整凭证 → 恰好一个 TencentCloudProvider；</li>
+ *   <li>enabled + provider-mode=tencent + 缺凭证 → 上下文 fail closed，且零模拟实现构造；</li>
+ *   <li>enabled + provider-mode=mock + dev 装配类（-Pdev 才有）→ 恰好一个 dev 模拟实现。</li>
+ * </ol>
  */
 class IotAutoConfigurationTest {
 
-    private final IotAutoConfiguration config = new IotAutoConfiguration();
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(IotPropertiesAutoConfiguration.class,
+                    IotAutoConfiguration.class));
 
     @Test
-    void testMockMode_createsMockProvider() {
-        TencentCloudProperties props = new TencentCloudProperties();
-        props.setProviderMode("mock");
-
-        DeviceControlProvider provider = config.deviceControlProvider(props);
-
-        assertInstanceOf(MockCloudProvider.class, provider,
-                "providerMode=mock 应创建 MockCloudProvider");
-        assertFalse(provider instanceof TencentCloudProvider,
-                "providerMode=mock 不应创建 TencentCloudProvider");
+    void productionSelector_mockMode_assemblesNoProvider() {
+        runner.withPropertyValues("sw.iot.enabled=true",
+                        "sw.iot.tencent.provider-mode=mock")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(DeviceControlProvider.class);
+                });
     }
 
     @Test
-    void testTencentMode_withCredentials_createsTencentProvider() {
-        TencentCloudProperties props = new TencentCloudProperties();
-        props.setProviderMode("tencent");
-        props.setSecretId("AKIDtest123456");
-        props.setSecretKey("testSecretKey789");
-
-        DeviceControlProvider provider = config.deviceControlProvider(props);
-
-        assertInstanceOf(TencentCloudProvider.class, provider,
-                "providerMode=tencent + 完整凭证应创建 TencentCloudProvider");
-        assertFalse(provider instanceof MockCloudProvider,
-                "providerMode=tencent + 完整凭证不应创建 MockCloudProvider");
+    void productionSelector_providerModeAbsent_assemblesNoProvider() {
+        runner.withPropertyValues("sw.iot.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(DeviceControlProvider.class);
+                });
     }
 
     @Test
-    void testTencentMode_withoutCredentials_throwsIllegalState() {
-        TencentCloudProperties props = new TencentCloudProperties();
-        props.setProviderMode("tencent");
-        // 不设置 secretId 和 secretKey
+    void productionSelector_tencentModeWithCredentials_assemblesTencentProvider() {
+        runner.withPropertyValues("sw.iot.enabled=true",
+                        "sw.iot.tencent.provider-mode=tencent",
+                        "sw.iot.tencent.secret-id=AKIDtest123456",
+                        "sw.iot.tencent.secret-key=testSecretKey789")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(DeviceControlProvider.class);
+                    assertThat(context.getBean(DeviceControlProvider.class))
+                            .isInstanceOf(TencentCloudProvider.class);
+                });
+    }
 
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> config.deviceControlProvider(props),
-                "providerMode=tencent + 缺凭证应抛 IllegalStateException");
-
-        assertTrue(ex.getMessage().contains("SecretId"),
-                "异常信息应提及 SecretId");
-        assertTrue(ex.getMessage().contains("mock"),
-                "异常信息应建议切换为 mock 模式");
+    @Test
+    void productionSelector_tencentModeWithoutCredentials_failsClosed() {
+        runner.withPropertyValues("sw.iot.enabled=true",
+                        "sw.iot.tencent.provider-mode=tencent")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasRootCauseInstanceOf(IllegalStateException.class)
+                            .hasStackTraceContaining("SecretId");
+                });
     }
 
     /**
-     * R1 反向零残留断言：providerMode=tencent 且缺凭证时，
-     * 除抛出 IllegalStateException 外，MockCloudProvider 构造/工厂调用
-     * 次数严格为零，不得返回任何 Mock 实例兜底。
+     * R1 反向零残留断言：provider-mode=tencent 且缺凭证时，除启动 fail closed 外，
+     * 模拟实现的构造/工厂调用次数严格为零，不得返回任何模拟实例兜底。
      */
     @Test
-    void testTencentMode_withoutCredentials_neverConstructsMockProvider() {
-        TencentCloudProperties props = new TencentCloudProperties();
-        props.setProviderMode("tencent");
-        // 不设置 secretId 和 secretKey
-
+    void productionSelector_tencentModeWithoutCredentials_neverConstructsMockProvider() {
         try (MockedConstruction<MockCloudProvider> mocked = mockConstruction(MockCloudProvider.class)) {
-            IllegalStateException ex = assertThrows(IllegalStateException.class,
-                    () -> config.deviceControlProvider(props),
-                    "providerMode=tencent + 缺凭证应抛 IllegalStateException");
+            runner.withPropertyValues("sw.iot.enabled=true",
+                            "sw.iot.tencent.provider-mode=tencent")
+                    .run(context -> assertThat(context).hasFailed());
 
-            assertTrue(ex.getMessage().contains("SecretId"),
-                    "异常信息应提及 SecretId");
-
-            // 反向断言：Mock 构造次数严格为零，无任何 Mock 实例被创建或返回
-            assertEquals(0, mocked.constructed().size(),
-                    "缺凭证时 MockCloudProvider 构造/工厂调用次数必须严格为 0");
-            assertTrue(mocked.constructed().isEmpty(),
-                    "不得创建或返回任何 MockCloudProvider 实例");
+            assertThat(mocked.constructed()).isEmpty();
         }
+    }
+
+    /**
+     * dev/mock 入口（{@code -Pdev} 才有 {@link MockDeviceControlProviderConfiguration}）：
+     * 同一份选择器条件下装配 dev 模拟实现，证明 mock 归属 dev 后开发入口仍可用。
+     */
+    @Test
+    void devMockEntry_mockMode_assemblesSingleMockProvider() {
+        runner.withUserConfiguration(MockDeviceControlProviderConfiguration.class)
+                .withPropertyValues("sw.iot.enabled=true",
+                        "sw.iot.tencent.provider-mode=mock")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(DeviceControlProvider.class);
+                    assertThat(context.getBean(DeviceControlProvider.class))
+                            .isInstanceOf(MockCloudProvider.class);
+                });
     }
 }

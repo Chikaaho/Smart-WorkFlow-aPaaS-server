@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
         <relativePath>../../../pom.xml</relativePath>
     </parent>
 
@@ -61,11 +61,10 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Apache POI for Excel processing -->
+        <!-- Apache POI for Excel processing（版本由 sw-dependencies 统一管理，Phase 6A 收敛为 5.4.0） -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
-            <version>5.2.5</version>
         </dependency>
 
         <!-- ===== 测试依赖 ===== -->

@@ -131,7 +131,10 @@ public class BpmMyInstanceController {
         }
 
         // 当前进度：活动任务
-        List<BpmTaskDTO> activeTasks = bpmTaskFacade.queryByProcessInstance(instance.getProcessInstanceId());
+        // empty = 实例标识缺失：无活动任务（响应字段保持原列表形状，不漂移为 Optional）
+        List<BpmTaskDTO> activeTasks = bpmTaskFacade
+                .queryByProcessInstance(instance.getProcessInstanceId())
+                .orElse(List.of());
         List<Map<String, Object>> progress = activeTasks.stream()
                 .<Map<String, Object>>map(task -> Map.of(
                         "taskId", task.getTaskId(),
@@ -144,8 +147,10 @@ public class BpmMyInstanceController {
         // A1/C1 修复：已办理节点必须回显真实动作/结果/意见（否则前端对 null 结果
         // 一律显示"进行中"，流程已结束的终审节点仍显示进行中）；无动作记录的
         // 节点（如取消成员）不伪造动作。
+        // empty = 实例标识缺失：无历史（响应字段保持原列表形状，不漂移为 Optional）
         List<BpmTaskDTO> historyTasks =
-                bpmTaskFacade.queryHistoryByProcessInstance(instance.getProcessInstanceId());
+                bpmTaskFacade.queryHistoryByProcessInstance(instance.getProcessInstanceId())
+                        .orElse(List.of());
         Map<String, com.sw.ck.bpm.process.entity.ApprovalActionRecord> actionByTask =
                 approvalActionService == null ? Map.of()
                         : approvalActionService

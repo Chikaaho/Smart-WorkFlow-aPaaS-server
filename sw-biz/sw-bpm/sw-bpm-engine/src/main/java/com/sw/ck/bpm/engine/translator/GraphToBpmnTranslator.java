@@ -106,9 +106,12 @@ public class GraphToBpmnTranslator {
         this.objectMapper = Objects.requireNonNull(objectMapper, "ObjectMapper must not be null");
         Objects.requireNonNull(nodeRegistry, "BpmNodeRegistry must not be null");
         this.translatorMap = new LinkedHashMap<>();
-        for (BpmNodeDefinition definition : nodeRegistry.definitions()) {
+        // 统一注册结果在构造期已校验非空：definitions() 契约恒 present
+        List<BpmNodeDefinition> registeredDefinitions = nodeRegistry.definitions().orElseThrow(
+                () -> new IllegalStateException("节点注册结果缺失，无法创建 BPMN 翻译器"));
+        for (BpmNodeDefinition definition : registeredDefinitions) {
             if (!(definition instanceof NodeTypeTranslator translator)) {
-                throw new IllegalStateException("节点缺少引擎翻译能力: " + definition.type());
+                throw new IllegalStateException("节点缺少引擎翻译能力: " + definition.getClass().getName());
             }
             register(translator);
         }
@@ -120,12 +123,17 @@ public class GraphToBpmnTranslator {
     }
 
     private void register(NodeTypeTranslator translator) {
-        if (translator == null || translator.type() == null || translator.type().isBlank()) {
+        if (translator == null) {
             throw new IllegalStateException("节点翻译器类型标识为空");
         }
-        NodeTypeTranslator previous = translatorMap.putIfAbsent(translator.type(), translator);
+        String type = translator.type().orElseThrow(
+                () -> new IllegalStateException("节点翻译器类型标识为空"));
+        if (type.isBlank()) {
+            throw new IllegalStateException("节点翻译器类型标识为空");
+        }
+        NodeTypeTranslator previous = translatorMap.putIfAbsent(type, translator);
         if (previous != null) {
-            throw new IllegalStateException("节点翻译器类型重复: " + translator.type());
+            throw new IllegalStateException("节点翻译器类型重复: " + type);
         }
     }
 

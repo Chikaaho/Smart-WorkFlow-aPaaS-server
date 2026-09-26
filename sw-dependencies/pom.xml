@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.sw.ck</groupId>
         <artifactId>smart-workflow</artifactId>
-        <version>0.1.0</version>
+        <version>${revision}</version>
     </parent>
 
     <artifactId>sw-dependencies</artifactId>
@@ -61,6 +61,46 @@
         <mapstruct.version>1.6.3</mapstruct.version>
         <hutool.version>5.8.36</hutool.version>
         <jjwt.version>0.12.6</jjwt.version>
+
+        <!--
+            ===================== 专项依赖（Phase 6A 集中化） =====================
+            以下版本原先各自写在业务/实现 POM 的 <dependency> 内（BAO-03），存在版本漂移与
+            升级收敛成本；集中到本 BOM 后业务/实现 POM 只声明坐标、不写 version，本文件是
+            这些构件的唯一版本所有者。取值一律保持集中化前的实际解析值，集中化本身不改变解析结果。
+        -->
+        <fastjson2.version>2.0.53</fastjson2.version>
+        <tencentcloud-iot.version>3.1.1235</tencentcloud-iot.version>
+        <!-- 内嵌 PostgreSQL 及平台二进制：JUnit 内嵌真实 PG，仅测试类路径（FlywayFullChainPostgresTest）。 -->
+        <embedded-postgres.version>2.1.0</embedded-postgres.version>
+        <embedded-postgres-binaries.version>17.5.0</embedded-postgres-binaries.version>
+
+        <!--
+            ===================== 传递树收敛（Phase 6A Step B） =====================
+            以下构件在反应堆内由多个上游以不同版本引入，激活 Enforcer dependencyConvergence
+            后必须落到唯一版本。定版原则有两条，二者冲突时以第一条为准：
+              ① 不得把任何消费方压回其编译基线之下（上游框架声明的版本即其编译基线）；
+              ② 其次取最终装配制品（sw-bootstrap fat jar）现已解析到的版本，使生产制品尽量少变。
+            取值一律为该构件在原树中已出现过的版本，不引入新版本。
+        -->
+        <antlr4-runtime.version>4.13.2</antlr4-runtime.version>
+        <bcprov-jdk18on.version>1.80.2</bcprov-jdk18on.version>
+        <commons-compress.version>1.27.1</commons-compress.version>
+        <commons-io.version>2.18.0</commons-io.version>
+        <commons-logging.version>1.3.4</commons-logging.version>
+        <error_prone_annotations.version>2.28.0</error_prone_annotations.version>
+        <jackcess.version>4.0.8</jackcess.version>
+        <joda-time.version>2.13.0</joda-time.version>
+        <okhttp.version>4.12.0</okhttp.version>
+        <okio.version>3.6.0</okio.version>
+        <swagger-annotations-jakarta.version>2.2.30</swagger-annotations-jakarta.version>
+        <tencentcloud-sdk-java-common.version>3.1.1235</tencentcloud-sdk-java-common.version>
+        <!-- Apache POI：form-biz 直接声明与 Tika 3.1.0 编译基线（5.4.0）取齐，详见下方说明。 -->
+        <poi.version>5.4.0</poi.version>
+        <!--
+            checker-qual 为纯注解构件：guava 33.3.1-jre 声明 3.43.0，PostgreSQL JDBC 声明 3.48.3。
+            取较高档 3.48.3，与装配制品现解析值一致，且不改变任何运行期行为（注解保留级别）。
+        -->
+        <checker-qual.version>3.48.3</checker-qual.version>
     </properties>
 
     <dependencyManagement>
@@ -256,6 +296,143 @@
                 <artifactId>jjwt-jackson</artifactId>
                 <version>${jjwt.version}</version>
                 <scope>runtime</scope>
+            </dependency>
+
+            <!--
+                =================== 专项依赖（Phase 6A 集中化） ===================
+                原分散在 sw-basic-iot / sw-bpm-process / sw-biz-form-biz / sw-bootstrap 的局部
+                <version>；此处为唯一版本声明处，业务/实现 POM 只写坐标。
+            -->
+            <dependency>
+                <groupId>com.alibaba.fastjson2</groupId>
+                <artifactId>fastjson2</artifactId>
+                <version>${fastjson2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tencentcloudapi</groupId>
+                <artifactId>tencentcloud-sdk-java-iotexplorer</artifactId>
+                <version>${tencentcloud-iot.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test</groupId>
+                <artifactId>embedded-postgres</artifactId>
+                <version>${embedded-postgres.version}</version>
+            </dependency>
+            <!--
+                zonky 平台二进制 BOM：统一全部受支持平台（linux/darwin/windows × amd64/arm64）的
+                PostgreSQL 二进制版本，由 zonky 运行时按 os/arch 自动选择对应平台产物
+                （FlywayFullChainPostgresTest 跨平台可运行）。原由 sw-bootstrap 自行 import，
+                Phase 6A 集中到本 BOM，使平台二进制版本同样只有单一所有者。
+            -->
+            <dependency>
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${embedded-postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!--
+                =================== 传递树收敛（Phase 6A Step B） ===================
+                每个条目收敛一个在原树中多版本并存的构件；均为“管理”而非“排除”，
+                因此不切断任何真实传递依赖边、不改 scope、不移除任何生产能力。
+            -->
+            <dependency>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-runtime</artifactId>
+                <version>${antlr4-runtime.version}</version>
+            </dependency>
+            <!--
+                BouncyCastle jdk18on 家族：原树中 bcprov 为 1.78.1（MinIO）而 bcpkix/bcutil 已是
+                1.80.2（Tika 加密解析链），装配制品内本就存在 1.78.1 与 1.80.2 的家族内错配；
+                取家族最高档 1.80.2 使 bcprov/bcpkix/bcutil 一致，同时不低于任何消费方基线。
+            -->
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>${bcprov-jdk18on.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>${commons-compress.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>${commons-io.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-logging</groupId>
+                <artifactId>commons-logging</artifactId>
+                <version>${commons-logging.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.errorprone</groupId>
+                <artifactId>error_prone_annotations</artifactId>
+                <version>${error_prone_annotations.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.healthmarketscience.jackcess</groupId>
+                <artifactId>jackcess</artifactId>
+                <version>${jackcess.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>joda-time</groupId>
+                <artifactId>joda-time</artifactId>
+                <version>${joda-time.version}</version>
+            </dependency>
+            <!--
+                okhttp3：MinIO 需要 4.12.0，而 qiniu 3.14.4 / 腾讯云 SDK 3.12.13 声明 3.x。
+                取 4.12.0 有两条独立依据：① okhttp 4 对 3.x 的 Java 调用方保持二进制兼容，
+                没有把任何消费方压到基线之下；② 装配制品现即解析为 4.12.0，属既有运行期事实。
+                okio 与 okhttp 同族，按同一依据取 3.6.0。
+            -->
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okio</groupId>
+                <artifactId>okio</artifactId>
+                <version>${okio.version}</version>
+            </dependency>
+            <!--
+                Apache POI：form-biz 直接声明 5.2.5，Tika 3.1.0 的编译基线为 5.4.0
+                （tika-parent 3.1.0 的 poi.version=5.4.0），且原树中 poi-scratchpad 已固定为 5.4.0，
+                装配制品内存在 poi 5.2.5 与 poi-scratchpad 5.4.0 的家族内错配。
+                取 5.4.0 使 poi/poi-ooxml/poi-ooxml-lite/poi-scratchpad 四件一致并满足 Tika 基线；
+                form-biz 由 5.2.5 升到 5.4.0（同 major），须以 Excel 域回归覆盖。
+            -->
+            <dependency>
+                <groupId>org.apache.poi</groupId>
+                <artifactId>poi</artifactId>
+                <version>${poi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.poi</groupId>
+                <artifactId>poi-ooxml</artifactId>
+                <version>${poi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-annotations-jakarta</artifactId>
+                <version>${swagger-annotations-jakarta.version}</version>
+            </dependency>
+            <!--
+                腾讯云 SDK common：cos_api 经 kms 引入 3.1.213，IoT Explorer 声明 3.1.1235。
+                取 3.1.1235 与装配制品现解析值一致；kms 仍为 3.1.213（SDK 家族内向前兼容方向）。
+            -->
+            <dependency>
+                <groupId>com.tencentcloudapi</groupId>
+                <artifactId>tencentcloud-sdk-java-common</artifactId>
+                <version>${tencentcloud-sdk-java-common.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.checkerframework</groupId>
+                <artifactId>checker-qual</artifactId>
+                <version>${checker-qual.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

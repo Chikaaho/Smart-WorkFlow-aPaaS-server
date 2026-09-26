@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.storage.api.StorageFacade;
+import com.sw.ck.storage.api.StorageMutationOutcome;
 import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.config.StorageProperties;
 import com.sw.ck.storage.entity.StorageFile;
@@ -15,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
+import java.util.Optional;
 import java.util.UUID;
 
 @Slf4j
@@ -27,7 +29,7 @@ public class StorageFacadeImpl implements StorageFacade {
     private final StorageProperties storageProperties;
 
     @Override
-    public StorageUploadResult upload(InputStream inputStream, String originalName, String contentType) {
+    public Optional<StorageUploadResult> upload(InputStream inputStream, String originalName, String contentType) {
         // 1. 生成存储文件名：UUID（无连字符）+ 小写扩展名
         String storageName = generateStorageName(originalName);
 
@@ -52,32 +54,43 @@ public class StorageFacadeImpl implements StorageFacade {
         log.info("文件上传成功: originalName={}, storageKey={}, provider={}, size={}",
                 originalName, result.getStorageKey(), provider.getType(), result.getFileSize());
 
-        return result;
+        // 契约：上传恒 present，失败以异常表达
+        return Optional.of(result);
     }
 
     @Override
-    public boolean exists(String storageKey) {
+    public Optional<Boolean> exists(String storageKey) {
         if (storageKey == null || storageKey.isBlank()) {
-            return false;
+            // 契约：storageKey 为空属明确判定（不存在），恒 present
+            return Optional.of(false);
         }
-        return storageFileService.count(new LambdaQueryWrapper<StorageFile>()
-                .eq(StorageFile::getStorageKey, storageKey)) > 0;
+        return Optional.of(storageFileService.count(new LambdaQueryWrapper<StorageFile>()
+                .eq(StorageFile::getStorageKey, storageKey)) > 0);
     }
 
     @Override
-    public InputStream download(String storageKey) {
-        StorageFile file = getFileOrThrow(storageKey);
+    public Optional<InputStream> download(String storageKey) {
+        StorageFile file = storageFileService.findByStorageKey(storageKey);
+        if (file == null) {
+            // 契约：记录不存在或已逻辑删除 → empty（不再抛 NOT_FOUND）
+            return Optional.empty();
+        }
         StorageProvider provider = registry.getProvider(file.getProviderType());
         if (provider == null) {
             throw new BaseException(CommonErrorCode.SYSTEM_ERROR.getCode(),
                     "存储提供商不可用: " + file.getProviderType());
         }
-        return provider.download(storageKey);
+        return Optional.of(provider.download(storageKey));
     }
 
     @Override
-    public void delete(String storageKey) {
-        StorageFile file = getFileOrThrow(storageKey);
+    public Optional<StorageMutationOutcome> delete(String storageKey) {
+        StorageFile file = storageFileService.findByStorageKey(storageKey);
+        if (file == null) {
+            // 契约：记录本就不存在或已逻辑删除 → 合法幂等，不再是异常
+            log.info("删除文件时记录不存在，按幂等已处置: storageKey={}", storageKey);
+            return Optional.of(StorageMutationOutcome.ALREADY_APPLIED);
+        }
         StorageProvider provider = registry.getProvider(file.getProviderType());
         if (provider != null) {
             provider.delete(storageKey);
@@ -87,18 +100,7 @@ public class StorageFacadeImpl implements StorageFacade {
         }
         storageFileService.removeById(file.getId());
         log.info("文件删除成功: storageKey={}, providerType={}", storageKey, file.getProviderType());
-    }
-
-    @Override
-    public String getUrl(String storageKey) {
-        StorageFile file = getFileOrThrow(storageKey);
-        StorageProvider provider = registry.getProvider(file.getProviderType());
-        if (provider != null) {
-            return provider.getUrl(storageKey);
-        }
-        // 提供商不可用时返回缓存的 URL（降级）
-        log.warn("URL 生成时提供商不可用，返回缓存 URL: storageKey={}", storageKey);
-        return file.getStorageUrl();
+        return Optional.of(StorageMutationOutcome.APPLIED);
     }
 
     // ---------- 私有方法 ----------
@@ -138,16 +140,5 @@ public class StorageFacadeImpl implements StorageFacade {
             return config.getBasePath() != null ? config.getBasePath() : "./uploads";
         }
         return config.getBucket();
-    }
-
-    /**
-     * 按 storageKey 查询文件记录，不存在时抛 NOT_FOUND。
-     */
-    private StorageFile getFileOrThrow(String storageKey) {
-        StorageFile file = storageFileService.findByStorageKey(storageKey);
-        if (file == null) {
-            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "文件不存在: " + storageKey);
-        }
-        return file;
     }
 }

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /** 岗位策略：只解析启用岗位的有效任职用户（用户启用、同租户）。 */
 @Component
@@ -20,19 +21,24 @@ public class PostParticipantResolver implements NodeParticipantResolver {
     }
 
     @Override
-    public String strategy() {
-        return ParticipantStrategy.POST;
+    public Optional<String> strategy() {
+        return Optional.of(ParticipantStrategy.POST);
     }
 
     @Override
-    public List<String> resolve(NodeParticipantContext context) {
+    public Optional<List<String>> resolve(NodeParticipantContext context) {
         Collection<?> values = context.getStrategyValue() instanceof Collection<?> collection
                 ? collection : List.of(context.getStrategyValue());
         List<String> codes = values.stream().map(String::valueOf).filter(item -> !item.isBlank()).distinct().toList();
         if (codes.isEmpty()) {
-            return List.of();
+            return Optional.of(List.of());
         }
-        return userQueryFacade.findActiveUserIdsByPostCodes(codes, context.getTenantId()).stream()
-                .map(String::valueOf).distinct().toList();
+        Optional<List<Long>> memberIds = userQueryFacade.findActiveUserIdsByPostCodes(codes, context.getTenantId());
+        if (memberIds.isEmpty()) {
+            // 岗位集合/租户上下文缺失：无法解析任职用户，交由注册失败策略处置
+            return Optional.of(List.of());
+        }
+        return Optional.of(memberIds.orElseThrow().stream()
+                .map(String::valueOf).distinct().toList());
     }
 }

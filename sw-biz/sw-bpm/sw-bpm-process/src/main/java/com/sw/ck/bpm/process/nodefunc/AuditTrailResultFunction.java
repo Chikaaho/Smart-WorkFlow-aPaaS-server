@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.StringWriter;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 内建结果函数：auditTrail —— 产物为纯审计解释摘要与受限白名单变量，
@@ -16,15 +17,15 @@ import java.util.Map;
 public class AuditTrailResultFunction implements ResultFunction {
 
     @Override
-    public NodeFunctionResult handleResult(NodeFunctionContext context,
-                                           Map<String, Object> nodeResult) {
+    public Optional<NodeFunctionResult> handleResult(NodeFunctionContext context,
+                                                     Map<String, Object> nodeResult) {
         String summary = "audit:" + safe(context.getProcessInstanceId()) + ":"
                 + safe(context.getNodeKey()) + ":outcome="
                 + safe(nodeResult.get("outcome"));
-        return NodeFunctionResult.builder()
+        return Optional.of(NodeFunctionResult.builder()
                 .summary(summary)
                 .resultVariables(Map.of("audit_note", summary))
-                .build();
+                .build());
     }
 
     private String safe(Object value) {

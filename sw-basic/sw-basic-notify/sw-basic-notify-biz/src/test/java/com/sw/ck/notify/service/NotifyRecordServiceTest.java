@@ -17,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -83,8 +84,8 @@ class NotifyRecordServiceTest {
         when(messageMapper.update(isNull(), any())).thenReturn(1);
         when(attemptMapper.selectList(any())).thenReturn(List.of());
         when(notifyFacade.attemptDelivery(any())).thenReturn(
-                NotifySendResult.builder().channel(com.sw.ck.notify.api.NotifyChannel.SMS)
-                        .status("SUCCESS").externalMessageId("ext-1").build());
+                Optional.of(NotifySendResult.builder().channel(com.sw.ck.notify.api.NotifyChannel.SMS)
+                        .status("SUCCESS").externalMessageId("ext-1").build()));
 
         String latest = recordService.resend(2L);
 
@@ -112,7 +113,7 @@ class NotifyRecordServiceTest {
         when(attemptMapper.selectList(any())).thenReturn(List.of(inFlight));
         when(messageMapper.update(isNull(), any())).thenReturn(1);
         when(notifyFacade.attemptDelivery(any())).thenReturn(
-                NotifySendResult.builder().status("FAILED").failureReason("渠道仍失败").build());
+                Optional.of(NotifySendResult.builder().status("FAILED").failureReason("渠道仍失败").build()));
 
         String latest = recordService.resend(2L);
 
@@ -135,7 +136,7 @@ class NotifyRecordServiceTest {
         when(attemptMapper.selectList(any())).thenReturn(List.of(original));
         when(messageMapper.update(isNull(), any())).thenReturn(1);
         when(notifyFacade.attemptDelivery(any())).thenReturn(
-                NotifySendResult.builder().status("FAILED").failureReason("渠道仍失败").build());
+                Optional.of(NotifySendResult.builder().status("FAILED").failureReason("渠道仍失败").build()));
 
         assertThat(recordService.resend(2L)).isEqualTo("FAILED");
         verify(notifyFacade, times(1)).attemptDelivery(any());

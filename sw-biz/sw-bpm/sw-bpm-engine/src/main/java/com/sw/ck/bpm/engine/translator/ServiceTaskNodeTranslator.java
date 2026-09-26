@@ -20,6 +20,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Collection;
+import java.util.Optional;
 
 /** P58 服务节点翻译公共基类：配置只作为 BPMN 扩展属性传给受控委托。 */
 abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
@@ -35,8 +36,8 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
     protected abstract String nodeName();
 
     @Override
-    public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata(nodeName(), nodeName() + "节点", "TASK",
+    public Optional<BpmNodeMetadata> metadata() {
+        return Optional.of(new BpmNodeMetadata(nodeName(), nodeName() + "节点", "TASK",
                 new BpmNodeTopology(1, 1, 1, 1),
                 List.of(new BpmNodeConfigField("name", "节点名称", "string", false, Map.of()),
                         new BpmNodeConfigField("participant", "参与人", "object", true, Map.of()),
@@ -44,37 +45,37 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
                                 Map.of("values", List.of("BLOCK", "CONTINUE")))),
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
                         BpmNodeCapability.RUNTIME, BpmNodeCapability.CONFIG_VALIDATE),
-                false, false, false, true);
+                false, false, false, true));
     }
 
     @Override
-    public List<GraphValidationError> validateConfig(GraphElement node) {
+    public Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
         Map<String, Object> config = node.getConfig();
         if (config == null || !(config.get("participant") instanceof Map<?, ?> participant)) {
-            return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                    "节点缺少 participant 配置"));
+            return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                    "节点缺少 participant 配置")));
         }
         Object strategy = participant.get("strategy");
         Object type = participant.get("type");
         String selected = strategy == null ? (type == null ? null : String.valueOf(type))
                 : String.valueOf(strategy);
         if (selected == null || selected.isBlank()) {
-            return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                    "参与人策略不能为空"));
+            return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                    "参与人策略不能为空")));
         }
         if (!ParticipantStrategy.ALL.contains(selected.toUpperCase())) {
-            return List.of(error(node, BpmErrorCode.PARTICIPANT_TYPE_NOT_IMPLEMENTED,
-                    "未实现的参与人策略: " + selected));
+            return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_TYPE_NOT_IMPLEMENTED,
+                    "未实现的参与人策略: " + selected)));
         }
         if (participant.get("value") == null && !"ADAPTER".equalsIgnoreCase(selected)) {
-            return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                    "参与人值不能为空"));
+            return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                    "参与人值不能为空")));
         }
         if ("ADAPTER".equalsIgnoreCase(selected)
                 && (participant.get("adapterId") == null
                 || String.valueOf(participant.get("adapterId")).isBlank())) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "适配器标识不能为空"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "适配器标识不能为空")));
         }
         if (ParticipantStrategy.DEPT_LEADER.equalsIgnoreCase(selected)) {
             Collection<?> values = participant.get("value") instanceof Collection<?> collection
@@ -83,23 +84,23 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
                 try { return Long.parseLong(String.valueOf(item)) <= 0; }
                 catch (Exception e) { return true; }
             })) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "DEPT_LEADER 只能配置正整数部门 ID"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "DEPT_LEADER 只能配置正整数部门 ID")));
             }
         } else if (ParticipantStrategy.POST.equalsIgnoreCase(selected)) {
             Collection<?> values = participant.get("value") instanceof Collection<?> collection
                     ? collection : List.of(participant.get("value"));
             if (values.isEmpty() || values.stream().anyMatch(item -> item == null || String.valueOf(item).isBlank())) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "POST 必须配置非空岗位编码"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "POST 必须配置非空岗位编码")));
             }
         } else if (ParticipantStrategy.DEPT_POST.equalsIgnoreCase(selected)) {
             if (!(participant.get("value") instanceof java.util.Map<?, ?> mapping)
                     || mapping.get("deptId") == null
                     || mapping.get("postCode") == null
                     || String.valueOf(mapping.get("postCode")).isBlank()) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "DEPT_POST 必须配置 {deptId, postCode}"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "DEPT_POST 必须配置 {deptId, postCode}")));
             }
         } else if (ParticipantStrategy.FIXED_USER.equalsIgnoreCase(selected)) {
             Collection<?> values = participant.get("value") instanceof Collection<?> collection
@@ -108,30 +109,31 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
                 try { return Long.parseLong(String.valueOf(item)) <= 0; }
                 catch (Exception e) { return true; }
             })) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "FIXED_USER 只能配置正整数用户 ID"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "FIXED_USER 只能配置正整数用户 ID")));
             }
         } else if (ParticipantStrategy.ROLE.equalsIgnoreCase(selected)) {
             Collection<?> values = participant.get("value") instanceof Collection<?> collection
                     ? collection : List.of(participant.get("value"));
             if (values.isEmpty() || values.stream().anyMatch(item -> item == null || String.valueOf(item).isBlank())) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "ROLE 必须配置非空角色编码"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "ROLE 必须配置非空角色编码")));
             }
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(selected)) {
             Object expression = participant.get("value");
             if (!(expression instanceof String text) || text.isBlank()) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "EXPRESSION 必须配置受控表达式"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "EXPRESSION 必须配置受控表达式")));
             }
             try {
+                // 仅做语法校验：结果按新契约返回 Optional，本处不消费求值结果
                 RestrictedExpressionEvaluator.value(text, Map.of());
             } catch (RuntimeException e) {
-                return List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "EXPRESSION 语法不合法"));
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "EXPRESSION 语法不合法")));
             }
         }
-        return List.of();
+        return Optional.of(List.of());
     }
 
     @Override

@@ -1,7 +1,6 @@
 package com.sw.ck.bpm.engine.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
@@ -141,28 +140,35 @@ public class BpmEngineAutoConfiguration {
     }
 
     /**
-     * Flowable 引擎绑定主库 master DataSource。
-     * <p>
-     * 当 dynamic-datasource 启用时（主应用），从 {@link DynamicRoutingDataSource} 提取物理 master
-     * DataSource 注入 Flowable，避免 {@code @DS} 线程上下文污染引擎连接。
-     * 当 dynamic-datasource 不存在时（如单元测试使用独立 H2），保持 Flowable 默认 DataSource 不变。
-     * </p>
+     * Flowable 引擎绑定应用 DataSource 与同一个事务管理器（G3a：单一提交边界）。
+     *
+     * <p>Spring 事务按 <b>DataSource 实例身份</b>绑定连接（{@code ConnectionHolder} 以 DataSource 为键）。
+     * 若引擎改用 dynamic-datasource 内部的物理 master 视图，引擎命令会在另一条连接上自行提交：
+     * 运行时已证明这会形成"引擎已推进、应用事务回滚"的分裂边界，审批状态与其设备命令/通知/回调
+     * 持久意图无法原子成立。因此这里显式绑定应用 DataSource（与 MyBatis 写入同一实例）并把应用的
+     * {@link PlatformTransactionManager} 交给引擎，使引擎命令按 REQUIRED 语义加入调用方事务。</p>
+     *
+     * <p>{@code @DS} 风险评估：当前全仓生产代码无任何 {@code @DS} 使用（仅 VerificationRunner 注释），
+     * 因此不存在引擎调用被路由到非 master 的路径；一旦引入 {@code @DS}，必须重新评估引擎调用的
+     * 数据源路由，不得让引擎在非 master 上执行。</p>
      */
     @Bean
     public ProcessEngineConfigurationConfigurer masterDataSourceBinding(
-            ObjectProvider<DataSource> dataSourceProvider) {
+            ObjectProvider<DataSource> dataSourceProvider,
+            ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactionManagerProvider) {
         return config -> {
             DataSource ds = dataSourceProvider.getIfUnique();
-            if (ds instanceof DynamicRoutingDataSource drds) {
-                DataSource masterDs = drds.getDataSource("master");
-                if (masterDs != null) {
-                    config.setDataSource(masterDs);
-                    log.info("Flowable engine bound to master DataSource (extracted from DynamicRoutingDataSource)");
-                }
-            } else {
-                log.info("Flowable engine using application DataSource directly: {}",
-                        ds != null ? ds.getClass().getSimpleName() : "null");
+            if (ds != null) {
+                config.setDataSource(ds);
             }
+            org.springframework.transaction.PlatformTransactionManager transactionManager =
+                    transactionManagerProvider.getIfUnique();
+            if (transactionManager != null) {
+                config.setTransactionManager(transactionManager);
+            }
+            log.info("Flowable engine bound to application DataSource={} transactionManager={} (single commit boundary)",
+                    ds != null ? ds.getClass().getSimpleName() : "null",
+                    transactionManager != null ? transactionManager.getClass().getSimpleName() : "null");
         };
     }
 }

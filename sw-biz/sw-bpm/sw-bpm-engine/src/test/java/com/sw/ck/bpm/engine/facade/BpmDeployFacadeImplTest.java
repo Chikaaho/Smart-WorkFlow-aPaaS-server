@@ -16,7 +16,6 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -62,7 +61,7 @@ class BpmDeployFacadeImplTest {
             when(repositoryService.getResourceAsStream("deploy-1", "process.bpmn20.xml"))
                     .thenReturn(inputStream);
 
-            String result = facade.getBpmnXml("proc-def-1");
+            String result = facade.getBpmnXml("proc-def-1").orElseThrow();
 
             assertThat(result).isEqualTo(expectedXml);
             verify(repositoryService).createProcessDefinitionQuery();
@@ -71,16 +70,14 @@ class BpmDeployFacadeImplTest {
         }
 
         @Test
-        @DisplayName("异常：查询不到 ProcessDefinition → 抛 IllegalStateException")
-        void getBpmnXml_processDefNotFound_shouldThrowIllegalState() {
+        @DisplayName("目标缺失：查询不到 ProcessDefinition → 返回 empty（原 IllegalStateException 路径）")
+        void getBpmnXml_processDefNotFound_shouldReturnEmpty() {
             ProcessDefinitionQuery query = mock(ProcessDefinitionQuery.class);
             when(repositoryService.createProcessDefinitionQuery()).thenReturn(query);
             when(query.processDefinitionId("proc-def-missing")).thenReturn(query);
             when(query.singleResult()).thenReturn(null);
 
-            assertThatThrownBy(() -> facade.getBpmnXml("proc-def-missing"))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("proc-def-missing");
+            assertThat(facade.getBpmnXml("proc-def-missing")).isEmpty();
 
             verify(repositoryService, never()).getResourceAsStream(anyString(), anyString());
         }

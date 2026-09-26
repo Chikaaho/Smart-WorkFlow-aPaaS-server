@@ -47,7 +47,7 @@ class ConsensusVoteConcurrencyTest {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch ready = new CountDownLatch(threads);
         CountDownLatch start = new CountDownLatch(1);
-        List<Future<Boolean>> futures = new java.util.ArrayList<>();
+        List<Future<java.util.Optional<Boolean>>> futures = new java.util.ArrayList<>();
         for (int i = 0; i < threads; i++) {
             futures.add(pool.submit(() -> {
                 ready.countDown();
@@ -59,19 +59,23 @@ class ConsensusVoteConcurrencyTest {
         start.countDown();
 
         int accepted = 0;
-        for (Future<Boolean> future : futures) {
-            if (future.get()) accepted++;
+        for (Future<java.util.Optional<Boolean>> future : futures) {
+            // present=true 记录成功；present=false 幂等重复；empty=端口不可用（不计入成功）
+            java.util.Optional<Boolean> outcome = future.get();
+            if (outcome.isPresent() && outcome.get()) accepted++;
         }
         pool.shutdown();
 
         // 唯一键保证：6 路并发只有一次合法计数
         assertThat(accepted).isEqualTo(1);
-        assertThat(port.count("0", "pi-i3-vote", "node_consensus", "APPROVE")).isEqualTo(1);
+        assertThat(port.count("0", "pi-i3-vote", "node_consensus", "APPROVE"))
+                .contains(1L);
 
-        // 换 outcome 重投也必须被同键拦截（同人同任务一票）
-        boolean secondOutcome = port.record("0", "pi-i3-vote", "node_consensus", "task-1", "1001", "DISAPPROVE");
-        assertThat(secondOutcome).isFalse();
-        assertThat(port.count("0", "pi-i3-vote", "node_consensus", "DISAPPROVE")).isEqualTo(0);
+        // 换 outcome 重投也必须被同键拦截（同人同任务一票）：present-false = 幂等重复
+        assertThat(port.record("0", "pi-i3-vote", "node_consensus", "task-1", "1001", "DISAPPROVE"))
+                .contains(false);
+        assertThat(port.count("0", "pi-i3-vote", "node_consensus", "DISAPPROVE"))
+                .contains(0L);
     }
 
     @Configuration(proxyBeanMethods = false)

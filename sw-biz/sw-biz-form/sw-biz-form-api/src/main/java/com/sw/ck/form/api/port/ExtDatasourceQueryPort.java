@@ -2,6 +2,8 @@ package com.sw.ck.form.api.port;
 
 import com.sw.ck.form.api.dto.ExtQueryResult;
 
+import java.util.Optional;
+
 /**
  * 受控外部数据源查询端口（I2，方向 §4.3）。
  * <p>
@@ -13,6 +15,13 @@ import com.sw.ck.form.api.dto.ExtQueryResult;
  * 实现方契约：仅允许单条只读 SELECT；强制 maxRows/queryTimeout/只读连接；
  * 密码/连接串不出现在结果、日志或异常中；执行留审计。
  * </p>
+ * <p>
+ * 目标缺失与请求非法必须分开表达：
+ * </p>
+ * <ul>
+ *   <li>{@code Optional.empty()} = 数据源目标缺失（未登记或已停用），未执行查询；</li>
+ *   <li>异常 = 请求非法（SQL 非单条只读 SELECT、行数超限等）或执行失败，继续抛出明确异常。</li>
+ * </ul>
  */
 public interface ExtDatasourceQueryPort {
 
@@ -23,9 +32,10 @@ public interface ExtDatasourceQueryPort {
      * @param sql          服务端注册表中的查询 SQL（绝不来自客户端）
      * @param operatorId   操作人 ID（审计）
      * @param operatorName 操作人用户名（审计）
-     * @return 查询结果
-     * @throws IllegalArgumentException 数据源不存在/停用、SQL 非法时
-     * @throws RuntimeException         执行失败时
+     * @return present = 查询结果（可为零行，属合法零匹配）；empty = 数据源不存在或已停用，
+     *         查询未执行
+     * @throws IllegalArgumentException SQL 非法（空、非单条只读 SELECT 等）时
+     * @throws RuntimeException         执行失败或行数超限时
      */
-    ExtQueryResult executeQuery(Long datasourceId, String sql, Long operatorId, String operatorName);
+    Optional<ExtQueryResult> executeQuery(Long datasourceId, String sql, Long operatorId, String operatorName);
 }

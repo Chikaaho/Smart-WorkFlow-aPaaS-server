@@ -53,15 +53,22 @@ public class ConsensusTaskListener implements TaskListener {
                     Long pid = null;
                     try { pid = Long.valueOf(String.valueOf(participant)); } catch (Exception ignored) { }
                     if (pid != null) {
-                        String name = userQueryFacade.getUserDisplayNames(java.util.List.of(pid)).get(pid);
-                        if (name != null) {
-                            displayNames = java.util.Map.of(String.valueOf(participant), name);
+                        // empty = 查询对象缺失：无展示名可冻结，快照仅记录 ID
+                        java.util.Optional<java.util.Map<Long, String>> names =
+                                userQueryFacade.getUserDisplayNames(java.util.List.of(pid));
+                        if (names.isPresent()) {
+                            String name = names.orElseThrow().get(pid);
+                            if (name != null) {
+                                displayNames = java.util.Map.of(String.valueOf(participant), name);
+                            }
                         }
                     }
                 } catch (Exception ignored) { }
             }
             snapshotRecorder.record(task.getProcessInstanceId(), task.getTaskDefinitionKey(), task.getId(),
-                    java.util.List.of(String.valueOf(participant)), displayNames, tenant);
+                    java.util.List.of(String.valueOf(participant)), displayNames, tenant)
+            .orElseThrow(() -> new IllegalStateException(
+                    "ParticipantSnapshotRecorder#record 契约恒 present，empty 属契约违约"));
         }
         // 分母权威已迁移：ConsensusVotePort.total（进入节点冻结的快照人数）。
         // 首个子任务创建时 nrOfInstances 可能尚未完整（并行多实例逐个建执行），
@@ -87,21 +94,29 @@ public class ConsensusTaskListener implements TaskListener {
                 String actionKey = "consensusAction:" + task.getId();
                 if (runtimeService.getVariable(task.getProcessInstanceId(), actionKey) != null) return;
                 boolean counted = false;
+                boolean votePortUnavailable = false;
                 if (votePortProvider != null) {
                     com.sw.ck.bpm.api.participant.ConsensusVotePort port = votePortProvider.getIfAvailable();
                     if (port != null) {
-                        counted = port.record(String.valueOf(task.getVariable("tenantId")),
+                        // empty = 投票服务不可用：不得据此认为重复，按旧变量计数兜底
+                        java.util.Optional<Boolean> recorded = port.record(
+                                String.valueOf(task.getVariable("tenantId")),
                                 task.getProcessInstanceId(), task.getTaskDefinitionKey(),
                                 task.getId(),
                                 task.getAssignee() == null
                                         ? String.valueOf(task.getVariable("participantId"))
                                         : task.getAssignee(),
                                 outcome);
+                        if (recorded.isPresent()) {
+                            counted = recorded.orElseThrow();
+                        } else {
+                            votePortUnavailable = true;
+                        }
                     }
                 }
                 runtimeService.setVariable(task.getProcessInstanceId(), actionKey, outcome);
                 // 只在形成新的合法计数时更新变量缓存；端口不可用时按旧变量计数兜底
-                if (counted || votePortProvider == null
+                if (counted || votePortUnavailable || votePortProvider == null
                         || votePortProvider.getIfAvailable() == null) {
                     String counter = "APPROVE".equals(outcome)
                             ? "consensusApprovedCount" : "consensusRejectedCount";

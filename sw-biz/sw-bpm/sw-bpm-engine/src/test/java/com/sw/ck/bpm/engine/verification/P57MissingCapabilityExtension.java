@@ -16,12 +16,12 @@ import java.util.List;
 @Profile("p57-invalid-missing-capability")
 @Component
 public class P57MissingCapabilityExtension implements NodeTypeTranslator {
-    @Override public String type() { return "P57_MISSING"; }
-    @Override public BpmNodeMetadata metadata() {
-        return new BpmNodeMetadata("缺能力", "缺能力节点", "TASK",
+    @Override public java.util.Optional<String> type() { return java.util.Optional.of("P57_MISSING"); }
+    @Override public java.util.Optional<BpmNodeMetadata> metadata() {
+        return java.util.Optional.of(new BpmNodeMetadata("缺能力", "缺能力节点", "TASK",
                 new BpmNodeTopology(0, 1, 0, 1), List.of(), "invalid",
                 EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE),
-                false, false, true, false);
+                false, false, true, false));
     }
     @Override public FlowElement translate(GraphElement node) { return null; }
 }

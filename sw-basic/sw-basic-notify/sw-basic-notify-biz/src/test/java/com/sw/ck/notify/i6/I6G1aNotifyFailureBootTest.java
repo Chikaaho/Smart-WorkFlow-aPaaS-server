@@ -64,7 +64,8 @@ class I6G1aNotifyFailureBootTest {
                 .occurrenceNo(1L)
                 .linkType("WF_TASK")
                 .linkId("task-g1")
-                .build());
+                .build())
+                .orElseThrow();
 
         assertThat(result.getStatus()).isEqualTo("FAILED");
 

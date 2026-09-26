@@ -150,7 +150,7 @@ class FormSubmitServiceTest {
     // ==================== 测试 1：正常提交（主表 + trace + 事件） ====================
 
     @Test
-    @DisplayName("提交含 TEXT/NUMBER/BOOL 字段 → 数据落库、tenant_id 正确、trace 写一行、事件被发布")
+    @DisplayName("提交含 TEXT/NUMBER/BOOL 字段 → 数据落库、tenant_id 正确、trace 写一行、兜底事件已退役")
     void submitForm_validData_shouldPersistAllData() {
         // —— Arrange：建草稿 → 保存 config → 发布 ——
         String formKey = "submit_test_basic";
@@ -230,20 +230,13 @@ class FormSubmitServiceTest {
         System.out.println("  formId=" + trace.getFormId() + ", recordId=" + trace.getRecordId()
                 + ", userId=" + trace.getSubmitUserId() + ", tenantId=" + trace.getTenantId());
 
-        // —— Assert 5：事件被发布 ——
+        // —— Assert 5：兜底发布已退役（Phase 4 可靠业务事件） ——
+        // 无 BPM 端口时既不发布无人消费的进程内事件，也不影响表单落库；
+        // 权威流程发起路径是 FlowStartPort + sw_bpm_command 持久命令队列。
         assertThat(testEventListener.events)
-                .as("FormSubmittedEvent 应被发布")
-                .hasSize(1);
-        FormSubmittedEvent event = testEventListener.events.get(0);
-        assertThat(event.getFormKey()).isEqualTo(formKey);
-        assertThat(event.getSubmitter()).isEqualTo(String.valueOf(TEST_USER_ID));
-        assertThat(event.getRecordId()).isNotNull();
-        assertThat(event.getTenantId()).isEqualTo(TEST_TENANT_ID);
-        assertThat(event.getSubmittedData()).containsKey("full_name");
-
-        System.out.println("=== 事件证据 ===");
-        System.out.println("  formKey=" + event.getFormKey() + ", submitter=" + event.getSubmitter()
-                + ", data=" + event.getSubmittedData());
+                .as("进程内兜底事件不得再发布（原为无监听者的伪降级）")
+                .isEmpty();
+        System.out.println("=== 事件证据：兜底发布已退役，本次提交未产生进程内事件 ===");
     }
 
     // ==================== 测试 2：TABLE 子表写入 ====================
@@ -436,7 +429,7 @@ class FormSubmitServiceTest {
     // ==================== 测试 5：事件被发布验证 ====================
 
     @Test
-    @DisplayName("提交成功 → 断言事件被发布（含完整数据）")
+    @DisplayName("提交成功 → 进程内兜底事件不再发布（Phase 4 退役）")
     void submitForm_shouldPublishEvent() {
         // —— Arrange ——
         String formKey = "event_pub_test";
@@ -456,21 +449,12 @@ class FormSubmitServiceTest {
         formData.put("msg", "Hello Event");
         formSubmitService.submitForm(formKey, formData, null, null, null);
 
-        // —— Assert ——
-        assertThat(testEventListener.events).as("应捕获到事件").hasSize(1);
-        FormSubmittedEvent event = testEventListener.events.get(0);
-        assertThat(event.getFormKey()).isEqualTo(formKey);
-        assertThat(event.getSubmittedData().get("msg")).isEqualTo("Hello Event");
-        assertThat(event.getSubmitter()).isEqualTo(String.valueOf(TEST_USER_ID));
-        assertThat(event.getRecordId()).as("事件应携带 recordId").isNotNull();
-        assertThat(event.getTenantId()).as("事件应携带 tenantId").isEqualTo(TEST_TENANT_ID);
-
-        System.out.println("=== 事件捕获 ===");
-        System.out.println("  formKey=" + event.getFormKey());
-        System.out.println("  recordId=" + event.getRecordId());
-        System.out.println("  tenantId=" + event.getTenantId());
-        System.out.println("  data=" + event.getSubmittedData());
-        System.out.println("  submitter=" + event.getSubmitter());
+        // —— Assert：兜底发布已退役，提交本身仍成功（数据与溯源已在前述断言覆盖） ——
+        assertThat(testEventListener.events)
+                .as("无 BPM 端口时不得发布无人消费的兜底事件")
+                .isEmpty();
+        System.out.println("=== 兜底发布已退役：本次提交未发布 FormSubmittedEvent ===");
+        System.out.println("  （兜底发布已退役，无事件对象可打印）");
     }
 
     // ==================== 测试辅助 ====================
@@ -698,21 +682,22 @@ class FormSubmitServiceTest {
                 private final Set<String> validSexCodes = Set.of("0", "1", "2");
 
                 @Override
-                public boolean isValidCode(String dictType, String code) {
-                    if ("sys_user_sex".equals(dictType)) {
-                        return validSexCodes.contains(code);
+                public Optional<Boolean> isValidCode(String dictType, String code) {
+                    if (dictType == null || dictType.isBlank() || code == null || code.isBlank()) {
+                        return Optional.empty();
                     }
-                    return false;
+                    if ("sys_user_sex".equals(dictType)) {
+                        return Optional.of(validSexCodes.contains(code));
+                    }
+                    return Optional.of(false);
                 }
 
                 @Override
-                public List<com.sw.ck.system.api.dict.DictItemDTO> listByType(String dictType) {
-                    return List.of();
-                }
-
-                @Override
-                public String resolveLabel(String dictType, String code) {
-                    return null;
+                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
+                    if (dictType == null || dictType.isBlank()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(List.of());
                 }
             };
         }

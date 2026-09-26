@@ -1,9 +1,11 @@
 package com.sw.ck.bpm.process.config;
 
 import java.util.Map;
+import java.util.Optional;
 
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.service.ApprovalLifecycleService;
 import com.sw.ck.bpm.process.service.NodeFunctionService;
 import org.springframework.beans.factory.ObjectProvider;
@@ -15,6 +17,8 @@ import org.springframework.context.annotation.Configuration;
  * <p>
  * 代理/时限与订阅计数端口面向 sw-bpm-api 契约暴露；实现全部委托
  * {@link ApprovalLifecycleService}，避免业务服务直接进入引擎监听类。
+ * 实现 Bean 不可用（装配缺失）时以 {@code Optional.empty()} 表达"无法裁决/未配置"，
+ * 不得伪造业务结论；租户上下文缺失等非法调用继续抛原有异常。
  * </p>
  */
 @Configuration
@@ -26,22 +30,26 @@ public class BpmLifecyclePortConfiguration {
             ObjectProvider<NodeFunctionService> nodeFunctionService) {
         return new LifecycleTaskEntryPort() {
             @Override
-            public String onTaskCreate(Long tenantId, String processInstanceId, String nodeKey,
-                                       String taskId, java.util.List<String> resolvedUsers,
-                                       String nodeConfig) {
+            public Optional<String> onTaskCreate(Long tenantId, String processInstanceId, String nodeKey,
+                                                 String taskId, java.util.List<String> resolvedUsers,
+                                                 String nodeConfig) {
                 ApprovalLifecycleService service = lifecycleService.getIfAvailable();
-                return service == null ? null
-                        : service.lifecycleTaskEntryPort().onTaskCreate(tenantId, processInstanceId,
+                if (service == null) {
+                    // 服务未装配：本次不改写 assignee（走默认派发），不得伪装成空改写结论
+                    return Optional.empty();
+                }
+                return service.lifecycleTaskEntryPort().onTaskCreate(tenantId, processInstanceId,
                         nodeKey, taskId, resolvedUsers, nodeConfig);
             }
 
             @Override
-            public java.util.List<String> resolveParticipantsByFunction(
+            public Optional<java.util.List<String>> resolveParticipantsByFunction(
                     Long tenantId, String processInstanceId, String nodeKey, String taskId,
                     java.util.Map<String, Object> variables, String nodeConfig) {
                 NodeFunctionService functions = nodeFunctionService.getIfAvailable();
                 if (functions == null) {
-                    return null;
+                    // 函数服务不可用：走默认策略解析（原 null 返回路径）
+                    return Optional.empty();
                 }
                 java.util.Map<String, Object> config = parse(configOf(nodeConfig));
                 return functions.resolveParticipants(tenantId, processInstanceId, nodeKey,
@@ -76,19 +84,26 @@ public class BpmLifecyclePortConfiguration {
             ObjectProvider<ApprovalLifecycleService> lifecycleService) {
         return new ConsensusVotePort() {
             @Override
-            public boolean record(String tenantId, String processInstanceId, String nodeKey,
-                                  String taskId, String actorId, String outcome) {
+            public Optional<Boolean> record(String tenantId, String processInstanceId, String nodeKey,
+                                            String taskId, String actorId, String outcome) {
                 ApprovalLifecycleService service = lifecycleService.getIfAvailable();
-                return service != null && service.consensusVotePort().record(tenantId,
+                if (service == null) {
+                    // 投票服务不可用：调用方不得据此认为重复（原 false 哨兵已移除）
+                    return Optional.empty();
+                }
+                return service.consensusVotePort().record(tenantId,
                         processInstanceId, nodeKey, taskId, actorId, outcome);
             }
 
             @Override
-            public long count(String tenantId, String processInstanceId, String nodeKey,
-                              String outcome) {
+            public Optional<Long> count(String tenantId, String processInstanceId, String nodeKey,
+                                        String outcome) {
                 ApprovalLifecycleService service = lifecycleService.getIfAvailable();
-                return service == null ? -1L
-                        : service.consensusVotePort().count(tenantId, processInstanceId,
+                if (service == null) {
+                    // 端口不可用：调用方按既有回退口径处理（原 -1 哨兵已移除）
+                    return Optional.empty();
+                }
+                return service.consensusVotePort().count(tenantId, processInstanceId,
                         nodeKey, outcome);
             }
         };
@@ -99,11 +114,12 @@ public class BpmLifecyclePortConfiguration {
             ObjectProvider<ApprovalLifecycleService> lifecycleService) {
         return new com.sw.ck.bpm.api.participant.ConsensusSettlementPort() {
             @Override
-            public void onNegativeSettlement(String tenantId, String processInstanceId,
-                                             String nodeKey, String reason) {
+            public Optional<MutationOutcome> onNegativeSettlement(String tenantId, String processInstanceId,
+                                                                  String nodeKey, String reason) {
                 ApprovalLifecycleService service = lifecycleService.getIfAvailable();
                 if (service == null) {
-                    return;
+                    // 结算服务未装配：无可变更对象、未产生任何效果（不是失败）
+                    return Optional.of(MutationOutcome.ALREADY_APPLIED);
                 }
                 if (tenantId == null) {
                     // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
@@ -111,6 +127,7 @@ public class BpmLifecyclePortConfiguration {
                             "会签负向结算缺少租户上下文: processInstanceId=" + processInstanceId);
                 }
                 service.settleConsensusNegative(tenantId, processInstanceId, nodeKey, reason);
+                return Optional.of(MutationOutcome.APPLIED);
             }
         };
     }

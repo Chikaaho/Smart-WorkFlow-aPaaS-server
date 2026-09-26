@@ -116,8 +116,8 @@ class BpmMyInstanceControllerTest {
         def.setName("请假流程");
         def.setProcessKey("leave_flow");
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(def);
-        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(List.of(task("t1", false)));
-        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(List.of(task("t2", true)));
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of(task("t1", false))));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of(task("t2", true))));
 
         R<Map<String, Object>> resp = controller.myInstanceDetail(1L);
 
@@ -152,10 +152,10 @@ class BpmMyInstanceControllerTest {
 
         when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);
-        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(List.of());
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
         // 终审节点（已完成）+ 一个无动作记录节点（如取消成员）
         when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
-                .thenReturn(List.of(task("t-done", true), task("t-cancelled", true)));
+                .thenReturn(java.util.Optional.of(List.of(task("t-done", true), task("t-cancelled", true))));
 
         com.sw.ck.bpm.process.entity.ApprovalActionRecord handled =
                 new com.sw.ck.bpm.process.entity.ApprovalActionRecord();

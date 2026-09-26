@@ -77,9 +77,13 @@ class BpmDraftControllerTest {
         loginUser.setUserId(2L);
         loginUser.setTenantId(0L);
         LoginUserHolder.set(loginUser);
-        when(formDefinitionService.canCurrentUserInitiate(anyString())).thenReturn(true);
-        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(true);
-        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(true);
+        when(formDefinitionService.canCurrentUserInitiate(anyString())).thenReturn(java.util.Optional.of(true));
+        org.mockito.Mockito.lenient()
+                .when(formDataSubmitFacade.validateSubmission(anyString(), any()))
+                .thenReturn(java.util.Optional.of(
+                        com.sw.ck.form.api.facade.SubmissionValidationOutcome.VALID));
+        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(java.util.Optional.of(true));
+        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(java.util.Optional.of(true));
     }
 
     @AfterEach
@@ -120,7 +124,7 @@ class BpmDraftControllerTest {
         @DisplayName("formKey 未发布 → 抛 BaseException")
         void create_shouldRejectUnpublishedForm() {
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("DRAFT", 1));
+                    .thenReturn(java.util.Optional.of(formDef("DRAFT", 1)));
 
             assertThatThrownBy(() -> controller.create(Map.of("formKey", "leave_form")))
                     .isInstanceOf(BaseException.class)
@@ -132,7 +136,7 @@ class BpmDraftControllerTest {
         @DisplayName("create 成功：formVersion 从 FormDefDTO 快照、status=EDITING、submitSeq=0")
         void create_shouldSnapshotFormVersionAndSetEditing() {
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("PUBLISHED", 3));
+                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 3)));
             when(draftService.save(any(BpmDraft.class))).thenReturn(true);
 
             R<BpmDraft> resp = controller.create(Map.of(
@@ -164,7 +168,7 @@ class BpmDraftControllerTest {
             own.setPayload("{\"secret\":\"should-not-leak\"}");
             when(draftService.getById(6L)).thenReturn(own);
             when(formDefinitionService.canCurrentUserPerformAction("leave_form", "view"))
-                    .thenReturn(false);
+                    .thenReturn(java.util.Optional.of(false));
 
             assertThatThrownBy(() -> controller.get(6L))
                     .isInstanceOf(BaseException.class)
@@ -258,7 +262,7 @@ class BpmDraftControllerTest {
             BpmDraft d = draft(9L, DraftStatusEnum.EDITING.getCode());
             when(draftService.getById(9L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("PUBLISHED", 1));
+                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
             com.sw.ck.bpm.process.entity.BpmFormBinding binding =
                     new com.sw.ck.bpm.process.entity.BpmFormBinding();
             binding.setFormKey("leave_form");
@@ -284,7 +288,7 @@ class BpmDraftControllerTest {
             d.setProcessDefKey(null);
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("PUBLISHED", 1));
+                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
 
             assertThatThrownBy(() -> controller.submit(5L))
                     .isInstanceOf(BaseException.class)
@@ -296,7 +300,7 @@ class BpmDraftControllerTest {
         void submit_shouldRejectWhenNoActiveBinding() {
             when(draftService.getById(5L)).thenReturn(draft(5L, DraftStatusEnum.EDITING.getCode()));
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("PUBLISHED", 1));
+                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
             when(bindingService.findActiveByFormKey("leave_form")).thenReturn(List.of());
 
             assertThatThrownBy(() -> controller.submit(5L))
@@ -310,7 +314,7 @@ class BpmDraftControllerTest {
             BpmDraft d = draft(5L, DraftStatusEnum.EDITING.getCode());
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("PUBLISHED", 2));
+                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 2)));
 
             assertThatThrownBy(() -> controller.submit(5L))
                     .isInstanceOf(BaseException.class)
@@ -327,7 +331,7 @@ class BpmDraftControllerTest {
             BpmDraft d = draft(5L, DraftStatusEnum.EDITING.getCode());
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("PUBLISHED", 1));
+                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
             BpmFormBinding binding = new BpmFormBinding();
             binding.setFormKey("leave_form");
             binding.setProcessDefKey("leave_flow");
@@ -404,7 +408,7 @@ class BpmDraftControllerTest {
             when(permissionService.hasPermi("workflow:p0:dispatch")).thenReturn(true);
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(formDef("PUBLISHED", 1));
+                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
             BpmFormBinding binding = new BpmFormBinding();
             binding.setFormKey("leave_form");
             binding.setProcessDefKey("leave_flow");

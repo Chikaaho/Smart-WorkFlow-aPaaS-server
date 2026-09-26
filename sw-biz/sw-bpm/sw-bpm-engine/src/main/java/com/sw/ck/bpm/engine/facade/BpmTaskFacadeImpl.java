@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.common.exception.BaseException;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RepositoryService;
@@ -18,6 +19,7 @@ import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.task.api.Task;
 import org.flowable.common.engine.api.FlowableOptimisticLockingException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -25,11 +27,18 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
 import java.util.Collection;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * BPM 任务门面实现 —— 封装 Flowable {@link TaskService} + {@link RuntimeService} + {@link RepositoryService} 查询。
+ * <p>
+ * 查询类方法的 {@code Optional.empty()} 只表达"查询目标/上下文缺失"（实例标识或租户/处理人
+ * 上下文缺失）；合法零匹配（空列表 / 0 / false）一律以 present 保留；参数非法、状态冲突
+ * （任务已被处理）继续抛原有异常。变更类方法以 {@link MutationOutcome} 区分"本次生效"与
+ * "合法幂等重复"。
+ * </p>
  */
 @Service
 public class BpmTaskFacadeImpl implements BpmTaskFacade {
@@ -54,38 +63,42 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public List<BpmTaskDTO> queryTodo(String tenantId, String assignee) {
+    public Optional<List<BpmTaskDTO>> queryTodo(String tenantId, String assignee) {
+        if (isBlank(tenantId) || isBlank(assignee)) {
+            // 租户或处理人上下文缺失：无法确定查询范围
+            return Optional.empty();
+        }
         List<Task> tasks = taskService.createTaskQuery()
                 .taskTenantId(tenantId)
                 .taskCandidateOrAssigned(assignee)
                 .list();
 
-        return tasks.stream()
+        return Optional.of(tasks.stream()
                 .map(this::toDto)
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public List<BpmTaskDTO> queryByProcessInstance(String processInstanceId) {
+    public Optional<List<BpmTaskDTO>> queryByProcessInstance(String processInstanceId) {
+        if (isBlank(processInstanceId)) {
+            return Optional.empty();
+        }
         List<Task> tasks = taskService.createTaskQuery()
                 .processInstanceId(processInstanceId)
                 .list();
-        return tasks.stream()
+        return Optional.of(tasks.stream()
                 .map(this::toDto)
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public BpmTaskDTO getTask(String taskId) {
+    public Optional<BpmTaskDTO> getTask(String taskId) {
         Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
-        if (task == null) {
-            return null;
-        }
-        return toDto(task);
+        return Optional.ofNullable(task).map(this::toDto);
     }
 
     @Override
-    public void complete(String taskId, Map<String, Object> variables) {
+    public Optional<MutationOutcome> complete(String taskId, Map<String, Object> variables) {
         Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
         String lockKey = snapshot == null ? "task:" + taskId
                 : "process:" + snapshot.getProcessInstanceId();
@@ -97,17 +110,21 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
             completeWithOptimisticRetry(taskId, variables);
         }
         log.info("BPM task completed: taskId={}", taskId);
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     @Override
-    public boolean canHandle(String taskId, String userId) {
-        return taskId != null && userId != null
-                && taskService.createTaskQuery().taskId(taskId)
-                .taskCandidateOrAssigned(userId).singleResult() != null;
+    public Optional<Boolean> canHandle(String taskId, String userId) {
+        if (isBlank(taskId) || isBlank(userId)) {
+            // 任务标识或用户标识缺失：无法判定
+            return Optional.empty();
+        }
+        return Optional.of(taskService.createTaskQuery().taskId(taskId)
+                .taskCandidateOrAssigned(userId).singleResult() != null);
     }
 
     @Override
-    public void completeAsUser(String taskId, String userId, Map<String, Object> variables) {
+    public Optional<MutationOutcome> completeAsUser(String taskId, String userId, Map<String, Object> variables) {
         Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
         String lockKey = snapshot == null ? "task:" + taskId
                 : "process:" + snapshot.getProcessInstanceId();
@@ -121,6 +138,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
             if (task.getAssignee() == null) taskService.claim(taskId, userId);
             completeWithOptimisticRetry(taskId, variables);
         }
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     /**
@@ -150,7 +168,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public void setAssignee(String taskId, String userId) {
+    public Optional<MutationOutcome> setAssignee(String taskId, String userId) {
         synchronized (lockFor(taskId)) {
             if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
                 throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
@@ -159,10 +177,11 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
             taskService.setAssignee(taskId, userId);
         }
         log.info("BPM task assignee replaced (TRANSFER): taskId={}, userId={}", taskId, userId);
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     @Override
-    public void delegateTask(String taskId, String userId) {
+    public Optional<MutationOutcome> delegateTask(String taskId, String userId) {
         synchronized (lockFor(taskId)) {
             Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
             if (task == null) {
@@ -178,24 +197,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
             taskService.setVariableLocal(taskId, "delegateState", "DELEGATED");
         }
         log.info("BPM task delegated: taskId={}, userId={}", taskId, userId);
-    }
-
-    @Override
-    public String getTaskOwner(String taskId) {
-        Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
-        return task == null ? null : task.getOwner();
-    }
-
-    @Override
-    public void addCandidateUser(String taskId, String userId) {
-        synchronized (lockFor(taskId)) {
-            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
-                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
-                        "任务不存在或已被处理: " + taskId);
-            }
-            taskService.addCandidateUser(taskId, userId);
-        }
-        log.info("BPM task candidate added (ADD_SIGN): taskId={}, userId={}", taskId, userId);
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     private Object lockFor(String taskId) {
@@ -219,61 +221,70 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public void terminateProcess(String processInstanceId, String reason) {
-        if (processInstanceId == null || processInstanceId.isBlank()) {
+    public Optional<MutationOutcome> terminateProcess(String processInstanceId, String reason) {
+        if (isBlank(processInstanceId)) {
             throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR,
                     "流程实例标识不能为空");
         }
+        boolean terminated = false;
         synchronized (ACTION_LOCKS.computeIfAbsent("process:" + processInstanceId, key -> new Object())) {
             if (runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult() != null) {
                 runtimeService.deleteProcessInstance(processInstanceId,
                         reason == null || reason.isBlank() ? "REJECTED" : reason);
+                terminated = true;
             }
         }
         log.info("BPM process terminated: processInstanceId={}, reason={}", processInstanceId, reason);
+        // 已结束或不存在的实例：无运行期记录可终止，属合法幂等（不是失败）
+        return Optional.of(terminated ? MutationOutcome.APPLIED : MutationOutcome.ALREADY_APPLIED);
     }
 
     @Override
-    public void suspendProcessInstance(String processInstanceId) {
-        if (processInstanceId == null || processInstanceId.isBlank()) {
+    public Optional<MutationOutcome> suspendProcessInstance(String processInstanceId) {
+        if (isBlank(processInstanceId)) {
             throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR,
                     "流程实例标识不能为空");
         }
         // 幂等：已挂起实例重复挂起不产生第二次效果
         org.flowable.engine.runtime.ProcessInstance instance = runtimeService
                 .createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
-        if (instance != null && !instance.isSuspended()) {
-            runtimeService.suspendProcessInstanceById(processInstanceId);
-            log.info("BPM process suspended: processInstanceId={}", processInstanceId);
+        if (instance == null || instance.isSuspended()) {
+            return Optional.of(MutationOutcome.ALREADY_APPLIED);
         }
+        runtimeService.suspendProcessInstanceById(processInstanceId);
+        log.info("BPM process suspended: processInstanceId={}", processInstanceId);
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     @Override
-    public void resumeProcessInstance(String processInstanceId) {
-        if (processInstanceId == null || processInstanceId.isBlank()) {
+    public Optional<MutationOutcome> resumeProcessInstance(String processInstanceId) {
+        if (isBlank(processInstanceId)) {
             throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR,
                     "流程实例标识不能为空");
         }
         org.flowable.engine.runtime.ProcessInstance instance = runtimeService
                 .createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
-        if (instance != null && instance.isSuspended()) {
-            runtimeService.activateProcessInstanceById(processInstanceId);
-            log.info("BPM process resumed: processInstanceId={}", processInstanceId);
+        if (instance == null || !instance.isSuspended()) {
+            return Optional.of(MutationOutcome.ALREADY_APPLIED);
         }
+        runtimeService.activateProcessInstanceById(processInstanceId);
+        log.info("BPM process resumed: processInstanceId={}", processInstanceId);
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     @Override
-    public boolean isProcessInstanceSuspended(String processInstanceId) {
-        if (processInstanceId == null || processInstanceId.isBlank()) {
-            return false;
+    public Optional<Boolean> isProcessInstanceSuspended(String processInstanceId) {
+        if (isBlank(processInstanceId)) {
+            // 实例标识缺失：无法判定
+            return Optional.empty();
         }
         org.flowable.engine.runtime.ProcessInstance instance = runtimeService
                 .createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
-        return instance != null && instance.isSuspended();
+        return Optional.of(instance != null && instance.isSuspended());
     }
 
     @Override
-    public void returnTask(String taskId, String targetNodeId) {
+    public Optional<MutationOutcome> returnTask(String taskId, String targetNodeId) {
         Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
         String lockKey = snapshot == null ? "task:" + taskId
                 : "process:" + snapshot.getProcessInstanceId();
@@ -297,6 +308,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                     .moveActivityIdTo(task.getTaskDefinitionKey(), targetNodeId)
                     .changeState();
         }
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     /**
@@ -320,50 +332,67 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public List<BpmTaskDTO> queryTodoPage(String tenantId, String assignee, int offset, int limit) {
+    public Optional<List<BpmTaskDTO>> queryTodoPage(String tenantId, String assignee, int offset, int limit) {
+        if (isBlank(tenantId) || isBlank(assignee)) {
+            return Optional.empty();
+        }
         List<Task> tasks = taskService.createTaskQuery()
                 .taskTenantId(tenantId)
                 .taskCandidateOrAssigned(assignee)
                 .orderByTaskCreateTime().desc()
                 .listPage(offset, limit);
 
-        return tasks.stream()
+        return Optional.of(tasks.stream()
                 .map(this::toDto)
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public long countTodo(String tenantId, String assignee) {
-        return taskService.createTaskQuery()
+    public Optional<Long> countTodo(String tenantId, String assignee) {
+        if (isBlank(tenantId) || isBlank(assignee)) {
+            return Optional.empty();
+        }
+        return Optional.of(taskService.createTaskQuery()
                 .taskTenantId(tenantId)
                 .taskCandidateOrAssigned(assignee)
-                .count();
+                .count());
     }
 
     @Override
-    public Map<String, Object> getVariables(String processInstanceId) {
-        return runtimeService.getVariables(processInstanceId);
+    public Optional<Map<String, Object>> getVariables(String processInstanceId) {
+        try {
+            return Optional.of(runtimeService.getVariables(processInstanceId));
+        } catch (FlowableObjectNotFoundException e) {
+            // 运行期实例不存在：无变量可读
+            return Optional.empty();
+        }
     }
 
     @Override
-    public void setVariable(String processInstanceId, String name, Object value) {
+    public Optional<MutationOutcome> setVariable(String processInstanceId, String name, Object value) {
         runtimeService.setVariable(processInstanceId, name, value);
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     @Override
-    public Map<String, Object> getHistoricVariables(String processInstanceId) {
-        // 历史变量查询对已结束实例仍可读；最后一次 set 的值即最终快照
-        return historyService.createHistoricVariableInstanceQuery()
+    public Optional<Map<String, Object>> getHistoricVariables(String processInstanceId) {
+        // 历史变量查询对已结束实例仍可读；最后一次 set 的值即最终快照。
+        // 引擎无该实例历史时为空 Map（合法零匹配），当前契约恒 present。
+        Map<String, Object> variables = historyService.createHistoricVariableInstanceQuery()
                 .processInstanceId(processInstanceId)
                 .list().stream()
                 .filter(v -> v.getVariableName() != null)
                 .collect(java.util.LinkedHashMap::new,
                         (m, v) -> m.putIfAbsent(v.getVariableName(), v.getValue()),
                         java.util.Map::putAll);
+        return Optional.of(variables);
     }
 
     @Override
-    public List<BpmTaskDTO> queryProcessedPage(String tenantId, String assignee, int offset, int limit) {
+    public Optional<List<BpmTaskDTO>> queryProcessedPage(String tenantId, String assignee, int offset, int limit) {
+        if (isBlank(tenantId) || isBlank(assignee)) {
+            return Optional.empty();
+        }
         // taskWithoutDeleteReason：finished 历史同时包含正常完成与被取消/删除的任务
         //（后者 endTime 亦有值但 deleteReason 非空）。已办兼容来源只承认本人实际
         // 完成的任务，取消/删除记录不得混为已办（D4）。
@@ -377,23 +406,29 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                 .orderByTaskId().desc()
                 .listPage(offset, limit);
 
-        return tasks.stream()
+        return Optional.of(tasks.stream()
                 .map(this::toDtoFromHistory)
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     @Override
-    public long countProcessed(String tenantId, String assignee) {
-        return historyService.createHistoricTaskInstanceQuery()
+    public Optional<Long> countProcessed(String tenantId, String assignee) {
+        if (isBlank(tenantId) || isBlank(assignee)) {
+            return Optional.empty();
+        }
+        return Optional.of(historyService.createHistoricTaskInstanceQuery()
                 .taskTenantId(tenantId)
                 .taskAssignee(assignee)
                 .finished()
                 .taskWithoutDeleteReason()
-                .count();
+                .count());
     }
 
     @Override
-    public List<BpmTaskDTO> queryHistoryByProcessInstance(String processInstanceId) {
+    public Optional<List<BpmTaskDTO>> queryHistoryByProcessInstance(String processInstanceId) {
+        if (isBlank(processInstanceId)) {
+            return Optional.empty();
+        }
         List<HistoricTaskInstance> tasks = historyService.createHistoricTaskInstanceQuery()
                 .processInstanceId(processInstanceId)
                 .finished()
@@ -405,7 +440,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         // 一致）补齐，否则审批历史审批人显示 "-"（R-04 缺口）。
         String approverFallback = resolveApproverVariable(processInstanceId);
 
-        return tasks.stream()
+        return Optional.of(tasks.stream()
                 .map(this::toDtoFromHistory)
                 .peek(dto -> {
                     if ((dto.getAssignee() == null || dto.getAssignee().isBlank())
@@ -413,7 +448,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                         dto.setAssignee(approverFallback);
                     }
                 })
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     /**
@@ -441,21 +476,25 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public boolean isProcessActive(String processInstanceId) {
+    public Optional<Boolean> isProcessActive(String processInstanceId) {
+        if (isBlank(processInstanceId)) {
+            // 实例标识缺失：无法判定
+            return Optional.empty();
+        }
         long count = runtimeService.createProcessInstanceQuery()
                 .processInstanceId(processInstanceId)
                 .count();
-        return count > 0;
+        return Optional.of(count > 0);
     }
 
     @Override
-    public String getVariable(String processInstanceId, String name) {
+    public Optional<String> getVariable(String processInstanceId, String name) {
         try {
             Object val = runtimeService.getVariable(processInstanceId, name);
             if (val != null) {
-                return val.toString();
+                return Optional.of(val.toString());
             }
-        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException e) {
+        } catch (FlowableObjectNotFoundException e) {
             // 流程已结束：运行时实例被清空，回落历史变量（已办任务列表需要读取结束实例的 formKey）
         }
         org.flowable.variable.api.history.HistoricVariableInstance hv = historyService
@@ -463,16 +502,18 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                 .processInstanceId(processInstanceId)
                 .variableName(name)
                 .singleResult();
-        return hv != null && hv.getValue() != null ? hv.getValue().toString() : null;
+        // 运行期与历史都没有该变量：查询目标不存在
+        return hv != null && hv.getValue() != null
+                ? Optional.of(hv.getValue().toString()) : Optional.empty();
     }
 
     @Override
-    public String getBusinessKey(String processInstanceId) {
+    public Optional<String> getBusinessKey(String processInstanceId) {
         ProcessInstance pi = runtimeService.createProcessInstanceQuery()
                 .processInstanceId(processInstanceId)
                 .singleResult();
         if (pi != null) {
-            return pi.getBusinessKey();
+            return Optional.ofNullable(pi.getBusinessKey());
         }
         // 流程已结束（无活动实例）：运行时实例被清空，回落历史实例的 businessKey
         // （已办任务列表需要展示结束实例的业务单号）
@@ -480,10 +521,14 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
                 .createHistoricProcessInstanceQuery()
                 .processInstanceId(processInstanceId)
                 .singleResult();
-        return hpi != null ? hpi.getBusinessKey() : null;
+        return hpi != null ? Optional.ofNullable(hpi.getBusinessKey()) : Optional.empty();
     }
 
     // ==================== 内部方法 ====================
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
 
     private BpmTaskDTO toDto(Task task) {
         BpmTaskDTO dto = new BpmTaskDTO();

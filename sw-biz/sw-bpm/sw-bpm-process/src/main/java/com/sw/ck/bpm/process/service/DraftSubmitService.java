@@ -119,7 +119,10 @@ public class DraftSubmitService {
         // D3：受理前执行字段级校验（与消费落库同一实现）。失败定位到字段、
         // 保留草稿内容，不受理审批命令、不启动流程。
         Map<String, Object> draftData = fromJson(draft.getPayload());
-        formDataSubmitFacade.validateSubmission(draft.getFormKey(), draftData);
+        // validateSubmission 当前契约恒 present（VALID）或抛业务异常：显式断言 present，契约违背不得静默通过
+        formDataSubmitFacade.validateSubmission(draft.getFormKey(), draftData)
+        .orElseThrow(() -> new IllegalStateException(
+                "FormDataSubmitFacade#validateSubmission 契约恒 present，empty 属契约违约"));
 
         // 冻结快照 + 受理（同事务；commandKey 带提交序号防重复实例）
         int submitSeq = (draft.getSubmitSeq() == null ? 0 : draft.getSubmitSeq()) + 1;
@@ -183,7 +186,8 @@ public class DraftSubmitService {
                     id, draft.getCreateBy(), loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该草稿");
         }
-        if (!formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view")) {
+        // empty = formKey 空白缺少判定目标：与 present-false 同判拒绝（fail closed）
+        if (!isAllowed(formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view"))) {
             log.warn("草稿视图权限拒绝: draftId={}, formKey={}, currentUser={}",
                     id, draft.getFormKey(), loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该草稿");
@@ -199,7 +203,14 @@ public class DraftSubmitService {
                 && loginUser.getUserId() != null
                 && loginUser.getUserId().equals(draft.getCreateBy())
                 && isSameTenant(loginUser, draft)
-                && formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view");
+                && isAllowed(formDefinitionService.canCurrentUserPerformAction(draft.getFormKey(), "view"));
+    }
+
+    /**
+     * 判定类契约统一 fail closed：empty（缺少判定目标/上下文）与 present-false 同判拒绝。
+     */
+    private static boolean isAllowed(java.util.Optional<Boolean> decision) {
+        return decision.isPresent() && decision.get();
     }
 
     private boolean isSameTenant(LoginUser loginUser, BpmDraft draft) {
@@ -213,15 +224,18 @@ public class DraftSubmitService {
         if (formKey == null || formKey.isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "formKey 不能为空");
         }
-        FormDefDTO formDef = formDefinitionService.getFormDef(formKey);
-        if (formDef == null) {
+        // empty = 该 formKey 无表单定义（原 null 返回路径）：与“表单不存在”同判
+        java.util.Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+        if (formDefLookup.isEmpty()) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "表单 '" + formKey + "' 不存在");
         }
+        FormDefDTO formDef = formDefLookup.get();
         if (!"PUBLISHED".equals(formDef.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     "表单 '" + formKey + "' 未发布，不能保存/提交草稿");
         }
-        if (!formDefinitionService.canCurrentUserInitiate(formKey)) {
+        // empty = formKey 空白（此处已判非空，契约不产生）：与 present-false 同判拒绝
+        if (!isAllowed(formDefinitionService.canCurrentUserInitiate(formKey))) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "表单不存在");
         }
         return formDef;

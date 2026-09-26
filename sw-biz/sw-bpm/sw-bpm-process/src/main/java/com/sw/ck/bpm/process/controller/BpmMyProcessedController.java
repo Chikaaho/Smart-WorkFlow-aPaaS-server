@@ -89,11 +89,14 @@ public class BpmMyProcessedController {
                 actionTaskIds.add(record.getTaskId());
                 merged.add(toItem(record, null));
             }
+            // empty = 租户/处理人上下文缺失：兼容来源无数据（响应形状保持原样）
             long compatTotal = bpmTaskFacade.countProcessed(
-                    String.valueOf(loginUser.getTenantId()), String.valueOf(actorId));
+                    String.valueOf(loginUser.getTenantId()), String.valueOf(actorId))
+                    .orElse(0L);
             for (int off = 0; off < compatTotal; off += pageSize) {
                 List<BpmTaskDTO> finished = bpmTaskFacade.queryProcessedPage(
-                        String.valueOf(loginUser.getTenantId()), String.valueOf(actorId), off, pageSize);
+                                String.valueOf(loginUser.getTenantId()), String.valueOf(actorId), off, pageSize)
+                        .orElse(List.of());
                 for (BpmTaskDTO task : finished) {
                     if (actionTaskIds.contains(task.getTaskId())) {
                         continue;
@@ -143,11 +146,14 @@ public class BpmMyProcessedController {
             // 兼容来源：引擎 finished 历史（assignee=本人）中无动作记录的部分。
             // 引擎查询口径：taskAssignee + finished；被取消/删除的任务不在 finished 历史。
             long offset = (long) (pageParam.getPageNum() - 1) * pageParam.getPageSize();
+            // empty = 租户/处理人上下文缺失：兼容来源无数据（响应形状保持原样）
             List<BpmTaskDTO> finished = bpmTaskFacade.queryProcessedPage(
-                    String.valueOf(loginUser.getTenantId()), String.valueOf(actorId),
-                    (int) offset, (int) pageParam.getPageSize());
+                            String.valueOf(loginUser.getTenantId()), String.valueOf(actorId),
+                            (int) offset, (int) pageParam.getPageSize())
+                    .orElse(List.of());
             long total = bpmTaskFacade.countProcessed(
-                    String.valueOf(loginUser.getTenantId()), String.valueOf(actorId));
+                    String.valueOf(loginUser.getTenantId()), String.valueOf(actorId))
+                    .orElse(0L);
             for (BpmTaskDTO task : finished) {
                 if (taskIdsFromActions.contains(task.getTaskId())) {
                     continue;

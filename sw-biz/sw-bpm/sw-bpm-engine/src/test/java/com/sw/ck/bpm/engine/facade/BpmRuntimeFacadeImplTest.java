@@ -52,26 +52,24 @@ class BpmRuntimeFacadeImplTest {
             when(runtimeService.getActiveActivityIds("pi-1"))
                     .thenReturn(List.of("Activity_1", "Activity_2"));
 
-            List<String> ids = facade.getActiveActivityIds("pi-1");
+            List<String> ids = facade.getActiveActivityIds("pi-1").orElseThrow();
 
             assertThat(ids).containsExactly("Activity_1", "Activity_2");
             verify(runtimeService).getActiveActivityIds("pi-1");
         }
 
         @Test
-        @DisplayName("边界：已结束实例返回空列表")
-        void getActiveActivityIds_finishedInstance_shouldReturnEmptyList() {
+        @DisplayName("边界：查询成功但无活跃节点 → present 空列表（合法零匹配）")
+        void getActiveActivityIds_noActiveNodes_shouldReturnPresentEmptyList() {
             when(runtimeService.getActiveActivityIds("pi-finished"))
                     .thenReturn(List.of());
 
-            List<String> ids = facade.getActiveActivityIds("pi-finished");
-
-            assertThat(ids).isEmpty();
+            assertThat(facade.getActiveActivityIds("pi-finished")).contains(List.of());
         }
 
         @Test
-        @DisplayName("边界：null 或空字符串返回空列表")
-        void getActiveActivityIds_nullOrBlank_shouldReturnEmptyList() {
+        @DisplayName("上下文缺失：null 或空字符串实例标识 → empty")
+        void getActiveActivityIds_nullOrBlank_shouldReturnEmpty() {
             assertThat(facade.getActiveActivityIds(null)).isEmpty();
             assertThat(facade.getActiveActivityIds("")).isEmpty();
             assertThat(facade.getActiveActivityIds("  ")).isEmpty();
@@ -80,15 +78,13 @@ class BpmRuntimeFacadeImplTest {
         }
 
         @Test
-        @DisplayName("异常：RuntimeService 抛异常 → 返回空列表 + 不向外抛")
-        void getActiveActivityIds_exception_shouldReturnEmptyList() {
+        @DisplayName("异常：RuntimeService 抛异常 → empty + 不向外抛（保留原容错行为）")
+        void getActiveActivityIds_exception_shouldReturnEmpty() {
             when(runtimeService.getActiveActivityIds("pi-error"))
                     .thenThrow(new RuntimeException("Flowable error"));
 
-            List<String> ids = facade.getActiveActivityIds("pi-error");
-
-            assertThat(ids).isEmpty();
-            // 验证日志已调用（异常场景，验证不抛出且返回空列表即达标）
+            assertThat(facade.getActiveActivityIds("pi-error")).isEmpty();
+            // 验证日志已调用（异常场景，验证不抛出即达标）
         }
     }
 
@@ -152,7 +148,7 @@ class BpmRuntimeFacadeImplTest {
             when(varQuery.variableName("approver")).thenReturn(varQuery);
             when(varQuery.singleResult()).thenReturn(null);
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-1");
+            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-1").orElseThrow();
 
             assertThat(results).hasSize(3);
             assertThat(results.get(0).getActivityId()).isEqualTo("Activity_start");
@@ -200,15 +196,15 @@ class BpmRuntimeFacadeImplTest {
             when(var.getValue()).thenReturn("1");
             when(varQuery.singleResult()).thenReturn(var);
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-2");
+            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-2").orElseThrow();
 
             assertThat(results).hasSize(1);
             assertThat(results.get(0).getAssignee()).isEqualTo("1");
         }
 
         @Test
-        @DisplayName("边界：空历史记录返回空列表")
-        void queryHistoricActivities_emptyHistory_shouldReturnEmptyList() {
+        @DisplayName("边界：查询成功但无历史记录 → present 空列表（合法零匹配）")
+        void queryHistoricActivities_emptyHistory_shouldReturnPresentEmptyList() {
             HistoricActivityInstanceQuery query = mock(HistoricActivityInstanceQuery.class);
             when(historyService.createHistoricActivityInstanceQuery()).thenReturn(query);
             when(query.processInstanceId("pi-empty")).thenReturn(query);
@@ -219,14 +215,12 @@ class BpmRuntimeFacadeImplTest {
 
             when(query.list()).thenReturn(List.of());
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-empty");
-
-            assertThat(results).isEmpty();
+            assertThat(facade.queryHistoricActivities("pi-empty")).contains(List.of());
         }
 
         @Test
-        @DisplayName("边界：null 或空字符串返回空列表")
-        void queryHistoricActivities_nullOrBlank_shouldReturnEmptyList() {
+        @DisplayName("上下文缺失：null 或空字符串实例标识 → empty")
+        void queryHistoricActivities_nullOrBlank_shouldReturnEmpty() {
             assertThat(facade.queryHistoricActivities(null)).isEmpty();
             assertThat(facade.queryHistoricActivities("")).isEmpty();
             assertThat(facade.queryHistoricActivities("  ")).isEmpty();
@@ -235,8 +229,8 @@ class BpmRuntimeFacadeImplTest {
         }
 
         @Test
-        @DisplayName("异常：HistoryService 抛异常 → 返回空列表 + 不向外抛")
-        void queryHistoricActivities_exception_shouldReturnEmptyList() {
+        @DisplayName("异常：HistoryService 抛异常 → empty + 不向外抛（保留原容错行为）")
+        void queryHistoricActivities_exception_shouldReturnEmpty() {
             HistoricActivityInstanceQuery query = mock(HistoricActivityInstanceQuery.class);
             when(historyService.createHistoricActivityInstanceQuery()).thenReturn(query);
             when(query.processInstanceId("pi-error")).thenReturn(query);
@@ -247,9 +241,7 @@ class BpmRuntimeFacadeImplTest {
 
             when(query.list()).thenThrow(new RuntimeException("Flowable error"));
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-error");
-
-            assertThat(results).isEmpty();
+            assertThat(facade.queryHistoricActivities("pi-error")).isEmpty();
         }
     }
 }

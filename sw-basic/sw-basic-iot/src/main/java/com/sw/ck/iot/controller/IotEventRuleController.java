@@ -88,11 +88,18 @@ public class IotEventRuleController {
         if (existing == null) {
             return R.fail(404, "规则不存在: id=" + id);
         }
-        // G3 表单契约校验：发布时按真实流程模板与表单版本校验字段映射
+        // G3 表单契约校验：发布时按真实流程模板与表单版本校验字段映射。
+        // empty = 无法裁决（如流程模板 key 空白）→ fail closed，不得当作通过。
         if (existing.getProcessEnabled() != null && existing.getProcessEnabled() == 1
                 && formContractCheckerProvider.getIfAvailable() instanceof IotFormContractChecker checker) {
-            List<String> errors = checker.checkMapping(existing.getProcessTemplateKey(),
-                    existing.getFormMappingJson());
+            java.util.Optional<List<String>> checkOutcome =
+                    checker.checkMapping(existing.getProcessTemplateKey(), existing.getFormMappingJson());
+            if (checkOutcome.isEmpty()) {
+                return R.fail(400, "表单契约校验无法裁决: processTemplateKey="
+                        + existing.getProcessTemplateKey());
+            }
+            List<String> errors = checkOutcome.orElseThrow(() -> new IllegalStateException(
+                    "表单契约校验无法裁决: processTemplateKey=" + existing.getProcessTemplateKey()));
             if (!errors.isEmpty()) {
                 return R.fail(400, "表单契约校验失败: " + String.join("; ", errors));
             }

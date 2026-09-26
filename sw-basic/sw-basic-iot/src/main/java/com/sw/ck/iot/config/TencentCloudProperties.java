@@ -14,7 +14,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class TencentCloudProperties {
 
     /**
-     * 是否启用腾讯云 IoT Provider（true: 使用腾讯 SDK；false: 使用 Mock Provider）。
+     * 是否启用腾讯云 IoT Provider（true: 使用腾讯 SDK；false: 不启用腾讯 SDK 接入）。
      */
     private boolean enabled = false;
 
@@ -49,9 +49,13 @@ public class TencentCloudProperties {
     private int maxRetryCount = 3;
 
     /**
-     * Provider 模式：mock / tencent。
+     * Provider 模式：{@code tencent} 装配腾讯云 Provider；{@code mock} 只在 dev 源根的
+     * dev 装配类下有效（正式制品无模拟实现）；{@code none}（默认）不装配任何 provider。
+     *
+     * <p>默认值刻意不是 {@code mock}：未配置时生产侧不装配 provider，需要 provider 的操作
+     * 在调用点 fail closed，不产生模拟成功。</p>
      */
-    private String providerMode = "mock";
+    private String providerMode = "none";
 
     /**
      * 检查腾讯云凭证是否已配置。
@@ -62,7 +66,7 @@ public class TencentCloudProperties {
     }
 
     /**
-     * 检查是否应使用腾讯 Provider。
+     * 检查是否应使用腾讯 Provider（显式 {@code tencent} 模式且凭证完整）。
      */
     public boolean shouldUseTencent() {
         return "tencent".equals(providerMode) && hasCredentials();

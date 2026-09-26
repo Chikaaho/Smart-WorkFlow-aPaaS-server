@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
 import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -9,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecorder {
@@ -21,8 +23,8 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
 
     @Override
     @Transactional
-    public void record(String processInstanceId, String nodeKey, String taskId,
-                       List<String> participantIds, Long tenantId) {
+    public Optional<MutationOutcome> record(String processInstanceId, String nodeKey, String taskId,
+                                            List<String> participantIds, Long tenantId) {
         for (String participantId : participantIds) {
             ParticipantSnapshot row = new ParticipantSnapshot();
             row.setProcessInstanceId(processInstanceId);
@@ -33,12 +35,15 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
             row.setTenantId(tenantId);
             mapper.insert(row);
         }
+        // participantIds 为空时无候选需冻结：无行写入即语义已满足，仍为 APPLIED（非失败）
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     @Override
     @Transactional
-    public void record(String processInstanceId, String nodeKey, String taskId,
-                       List<String> participantIds, Map<String, String> displayNames, Long tenantId) {
+    public Optional<MutationOutcome> record(String processInstanceId, String nodeKey, String taskId,
+                                            List<String> participantIds, Map<String, String> displayNames,
+                                            Long tenantId) {
         for (String participantId : participantIds) {
             ParticipantSnapshot row = new ParticipantSnapshot();
             row.setProcessInstanceId(processInstanceId);
@@ -51,12 +56,14 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
             row.setTenantId(tenantId);
             mapper.insert(row);
         }
+        // participantIds 为空时无候选需冻结：无行写入即语义已满足，仍为 APPLIED（非失败）
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
     @Override
     @Transactional
-    public void settle(String processInstanceId, String nodeKey, String taskId,
-                       String actorId, String action, Long tenantId) {
+    public Optional<MutationOutcome> settle(String processInstanceId, String nodeKey, String taskId,
+                                            String actorId, String action, Long tenantId) {
         LambdaUpdateWrapper<ParticipantSnapshot> invalidated = new LambdaUpdateWrapper<>();
         // 普通候选共享同一个 taskId；会签的每个多实例子任务拥有不同 taskId。
         // 结算必须覆盖同一流程实例 + 节点下仍为 PENDING 的其他候选，
@@ -69,8 +76,9 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
         invalidated.set(ParticipantSnapshot::getParticipantStatus, "INVALIDATED")
                 .set(ParticipantSnapshot::getInvalidReason,
                         "节点已由 " + actorId + " 以 " + action + " 处理");
-        mapper.update(null, invalidated);
+        int invalidatedRows = mapper.update(null, invalidated);
 
+        int handledRows = 0;
         if (actorId != null) {
             LambdaUpdateWrapper<ParticipantSnapshot> handled = new LambdaUpdateWrapper<>();
             handled.eq(ParticipantSnapshot::getProcessInstanceId, processInstanceId)
@@ -81,7 +89,10 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
                     .set(ParticipantSnapshot::getParticipantStatus, "HANDLED")
                     .set(ParticipantSnapshot::getInvalidReason, action);
             if (tenantId != null) handled.eq(ParticipantSnapshot::getTenantId, tenantId);
-            mapper.update(null, handled);
+            handledRows = mapper.update(null, handled);
         }
+        // 无可结算候选（两处更新均未命中）属合法幂等，不得伪装成失败
+        return Optional.of(invalidatedRows + handledRows > 0
+                ? MutationOutcome.APPLIED : MutationOutcome.ALREADY_APPLIED);
     }
 }

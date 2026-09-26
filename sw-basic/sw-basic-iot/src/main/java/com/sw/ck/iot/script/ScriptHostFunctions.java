@@ -64,6 +64,9 @@ public class ScriptHostFunctions implements IotScriptApi {
     /** 每脚本执行的订阅声明（仅记录声明，不直接建立网络订阅）。 */
     private final List<Map<String, Object>> subscriptionDeclarations = new ArrayList<>();
 
+    /** 本次执行中脚本请求的流程启动意图（由 ScriptEngineService 在同一事务内持久化）。 */
+    private final List<ProcessStartRequest> processStartRequests = new ArrayList<>();
+
     /** 每脚本执行的幂等键上下文（外部触发时携带）。 */
     private final Map<String, String> idempotentKeys = new ConcurrentHashMap<>();
 
@@ -273,20 +276,62 @@ public class ScriptHostFunctions implements IotScriptApi {
                 ? "script-" + spec.getScriptId() + "-v" + spec.getScriptVersion() + "-"
                         + UUID.randomUUID()
                 : String.valueOf(options.get("idempotentKey"));
+        // Phase 4：脚本传入的表单对象是绑定到 JS 执行上下文的代理视图，上下文关闭后
+        // 既不能序列化也不能作为流程变量。此处（上下文仍然存活）立即快照为普通 Java 结构，
+        // 使持久意图与流程变量在所有后续阶段都是自持数据。
+        Map<String, Object> formSnapshot = plainSnapshot(formData);
         IotProcessTriggerEvent event = new IotProcessTriggerEvent();
         event.setTenantId(spec.getTenantId());
         event.setScriptId(spec.getScriptId());
         event.setDeviceId(spec.getDeviceId());
         event.setProcessTemplateKey(templateKey);
-        event.setFormData(formData == null ? Map.of() : formData);
+        event.setFormData(formSnapshot);
         event.setIdempotentKey(idempotentKey);
         event.setTriggerSource("SCRIPT");
         event.setConfiguredBy(spec.getActorId());
         eventPublisher.publish(event);
+        processStartRequests.add(new ProcessStartRequest(templateKey, idempotentKey,
+                spec.getTenantId(), spec.getScriptId(), spec.getDeviceId(), spec.getActorId(),
+                spec.getTriggerSource(), formSnapshot));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("idempotentKey", idempotentKey);
         result.put("status", "PENDING");
         return result;
+    }
+
+    /** 把脚本侧对象（可能是代理视图）逐层快照为普通 Map/List/标量。 */
+    private static Map<String, Object> plainSnapshot(Map<String, Object> source) {
+        if (source == null || source.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> copy = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : new LinkedHashMap<>(source).entrySet()) {
+            copy.put(entry.getKey(), plainValue(entry.getValue()));
+        }
+        return copy;
+    }
+
+    private static Object plainValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : new LinkedHashMap<>(map).entrySet()) {
+                copy.put(String.valueOf(entry.getKey()), plainValue(entry.getValue()));
+            }
+            return copy;
+        }
+        if (value instanceof Iterable<?> iterable) {
+            List<Object> copy = new ArrayList<>();
+            for (Object element : iterable) {
+                copy.add(plainValue(element));
+            }
+            return copy;
+        }
+        if (value instanceof Number || value instanceof Boolean || value instanceof CharSequence
+                || value == null) {
+            return value;
+        }
+        // 其余（脚本内自定义对象/代理）转为字符串，避免持久化阶段触碰已关闭的上下文
+        return String.valueOf(value);
     }
 
     @Override
@@ -398,5 +443,16 @@ public class ScriptHostFunctions implements IotScriptApi {
             input.putAll(extra);
         }
         return input;
+    }
+
+    /** 本次执行请求的流程启动意图（只读快照）。 */
+    public List<ProcessStartRequest> getProcessStartRequests() {
+        return List.copyOf(processStartRequests);
+    }
+
+    /** 脚本请求的流程启动意图（持久化身份完整给出，不依赖内存事件）。 */
+    public record ProcessStartRequest(String processTemplateKey, String idempotentKey, Long tenantId,
+                                      Long scriptId, Long deviceId, Long configuredBy,
+                                      String triggerSource, Map<String, Object> formData) {
     }
 }

@@ -152,9 +152,9 @@ class NotifyFacadeIdempotencyIntegrationTest {
     @Test
     @DisplayName("同一幂等键重复投递 → 仅一条消息，回放既有结果")
     void duplicateDeliveryPersistsSingleRow() {
-        NotifySendResult first = notifyFacade.send(request(KEY, 42L));
-        NotifySendResult second = notifyFacade.send(request(KEY, 42L));
-        NotifySendResult third = notifyFacade.send(request(KEY, 42L));
+        NotifySendResult first = notifyFacade.send(request(KEY, 42L)).orElseThrow();
+        NotifySendResult second = notifyFacade.send(request(KEY, 42L)).orElseThrow();
+        NotifySendResult third = notifyFacade.send(request(KEY, 42L)).orElseThrow();
 
         assertThat(first.getStatus()).isEqualTo("SUCCESS");
         assertThat(second.getStatus()).isEqualTo("SUCCESS");

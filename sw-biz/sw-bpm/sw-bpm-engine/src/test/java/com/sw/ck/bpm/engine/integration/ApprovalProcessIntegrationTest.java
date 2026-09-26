@@ -200,7 +200,7 @@ class ApprovalProcessIntegrationTest {
 
         // ========== 3. 调用 getBpmnXml ==========
         BpmDeployFacadeImpl facadeImpl = new BpmDeployFacadeImpl(repositoryService);
-        String resultXml = facadeImpl.getBpmnXml(def.getId());
+        String resultXml = facadeImpl.getBpmnXml(def.getId()).orElseThrow();
 
         // ========== 4. 断言 ==========
         assertThat(resultXml).isNotEmpty();

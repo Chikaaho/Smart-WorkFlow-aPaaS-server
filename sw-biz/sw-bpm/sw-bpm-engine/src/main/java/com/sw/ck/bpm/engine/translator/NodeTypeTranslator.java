@@ -4,6 +4,8 @@ import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.node.BpmNodeDefinition;
 import org.flowable.bpmn.model.FlowElement;
 
+import java.util.Optional;
+
 /**
  * 节点类型翻译器 SPI —— 把一种流程画布节点类型翻译为 Flowable BPMN 元素。
  * <p>
@@ -25,9 +27,11 @@ public interface NodeTypeTranslator extends BpmNodeDefinition {
 
     /**
      * 本翻译器处理的节点类型（作为注册表分发 key，如 {@code START}）。
+     *
+     * @return present = 稳定类型标识；当前契约恒 present（翻译器注册期契约，不得缺省）
      */
     @Override
-    String type();
+    Optional<String> type();
 
     /**
      * 将节点翻译为 Flowable BPMN 元素。

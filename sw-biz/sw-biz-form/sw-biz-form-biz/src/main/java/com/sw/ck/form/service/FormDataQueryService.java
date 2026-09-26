@@ -11,7 +11,7 @@ import com.sw.ck.form.api.dto.FormDataFilter;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dynamic.ColumnValidation;
+import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.service.FormFieldEnrichmentService;
@@ -26,19 +26,19 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
  * 表单数据查询服务。
  *
  * <p>对已发布表单的动态宽表执行条件分页查询。
- * 裸 JDBC 查询（不依赖 MyBatis-Plus 拦截器），
- * 因此手动编写 {@code WHERE deleted = 0 AND tenant_id = ?}。</p>
+ * 全部 SQL 经 {@link DynamicTableSql} 受控入口构造与执行：
+ * 表名/列名在构造边界校验，{@code "deleted" = 0 AND "tenant_id" = ?} 由入口强制，
+ * 值一律 {@code ?} 绑定，缺失即拒绝执行。</p>
  *
  * <h3>红线</h3>
  * <ul>
- *   <li>列名/表名过白名单（{@link ColumnValidation#physicalColumnName(String, FieldType)}）</li>
+ *   <li>列名/表名过白名单（{@link DynamicTableSql#requireColumn(String, FieldType)}）</li>
  *   <li>值一律 PreparedStatement ? 参数化绑定</li>
  *   <li>绝不 SELECT *，显式枚举列</li>
  *   <li>绝不复用 IPage（拦截器对裸 JdbcTemplate 失效）</li>
@@ -54,9 +54,6 @@ public class FormDataQueryService {
 
     /** 默认分页大小（对齐 PageParam 默认值） */
     private static final int DEFAULT_PAGE_SIZE = 10;
-
-    /** 表名校验正则（对齐 DynamicTableManager.generateTableName 的 assert 模式） */
-    private static final String TABLE_NAME_PATTERN = "^sw_form(_table)?_[a-z][a-z0-9]{9}$";
 
     // ==================== op × type 合法矩阵 ====================
 
@@ -75,13 +72,6 @@ public class FormDataQueryService {
             FieldType.TABLE, FieldType.RICH_TEXT
     );
 
-    // ==================== 系统列（以 DynamicTableManager.SYSTEM_COLUMNS 为准） ====================
-
-    static final List<String> SYSTEM_COLUMNS = List.of(
-            "id", "tenant_id", "deleted", "create_time", "create_by",
-            "update_time", "update_by", "version"
-    );
-
     // ==================== 依赖 ====================
 
     private final FormDefService formDefService;
@@ -89,9 +79,6 @@ public class FormDataQueryService {
     private final FormConfigMapper formConfigMapper;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-
-    /** 已确保 deleted 列存在的表名集合（幂等回填缓存） */
-    private final Set<String> deletedColumnEnsured = ConcurrentHashMap.newKeySet();
 
     public FormDataQueryService(FormDefService formDefService,
                                 FormDefMapper formDefMapper,
@@ -233,10 +220,10 @@ public class FormDataQueryService {
         String whereSql = whereBuilder.toString();
 
         // —— Step 8: COUNT 查询 ——
-        String countSql = "SELECT COUNT(*) FROM \"" + tableName + "\" WHERE " + whereSql;
+        String countSql = "SELECT COUNT(*) FROM " + DynamicTableSql.quote(tableName) + " WHERE " + whereSql;
         Long total;
         try {
-            total = jdbcTemplate.queryForObject(countSql, Long.class, filterParams.toArray());
+            total = DynamicTableSql.queryForLong(jdbcTemplate, tableName, countSql, filterParams.toArray());
         } catch (Exception e) {
             log.error("Count query failed: table={}, sql={}", tableName, countSql, e);
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "查询记录时系统未能完成，请稍后重试");
@@ -245,9 +232,9 @@ public class FormDataQueryService {
 
         // —— Step 9: 数据查询 ——
         String columns = projectionColumns.stream()
-                .map(c -> "\"" + c + "\"")
+                .map(DynamicTableSql::quote)
                 .collect(Collectors.joining(", "));
-        String dataSql = "SELECT " + columns + " FROM \"" + tableName + "\" WHERE " + whereSql
+        String dataSql = "SELECT " + columns + " FROM " + DynamicTableSql.quote(tableName) + " WHERE " + whereSql
                 + " ORDER BY \"create_time\" DESC LIMIT ? OFFSET ?";
 
         List<Object> dataParams = new ArrayList<>(filterParams);
@@ -256,7 +243,7 @@ public class FormDataQueryService {
 
         List<Map<String, Object>> records;
         try {
-            records = jdbcTemplate.queryForList(dataSql, dataParams.toArray());
+            records = DynamicTableSql.query(jdbcTemplate, tableName, dataSql, dataParams.toArray());
         } catch (Exception e) {
             log.error("Data query failed: table={}, sql={}", tableName, dataSql, e);
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "查询记录时系统未能完成，请稍后重试");
@@ -319,17 +306,18 @@ public class FormDataQueryService {
 
         // —— Step 5: 查询主记录（数据范围条件与列表同口径强制） ——
         String columns = projectionColumns.stream()
-                .map(c -> "\"" + c + "\"")
+                .map(DynamicTableSql::quote)
                 .collect(Collectors.joining(", "));
         StringBuilder detailWhere = new StringBuilder("\"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
         List<Object> detailParams = new ArrayList<>(List.of(recordId, tenantId));
         DataScopeFilter detailScope = FormDataScopeSupport.resolve(loginUser, loginContextProvider, deptScopeProvider);
         FormDataScopeSupport.appendWhere(detailWhere, detailParams, detailScope);
-        String sql = "SELECT " + columns + " FROM \"" + tableName + "\" WHERE " + detailWhere;
+        String sql = "SELECT " + columns + " FROM " + DynamicTableSql.quote(tableName)
+                + " WHERE " + detailWhere;
 
         List<Map<String, Object>> records;
         try {
-            records = jdbcTemplate.queryForList(sql, detailParams.toArray());
+            records = DynamicTableSql.query(jdbcTemplate, tableName, sql, detailParams.toArray());
         } catch (Exception e) {
             log.error("Detail query failed: table={}, recordId={}", tableName, recordId, e);
             throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询记录时系统未能完成，请稍后重试");
@@ -351,9 +339,10 @@ public class FormDataQueryService {
                 String subTableName = entry.getValue();
 
                 if (subTableName == null || subTableName.isBlank()) continue;
-                if (!subTableName.matches(TABLE_NAME_PATTERN)) {
-                    log.warn("Invalid sub-table name '{}' in subTableMapping, skip", subTableName);
-                    continue;
+                if (!DynamicTableSql.isValidTableName(subTableName)) {
+                    log.error("Invalid sub-table name '{}' in subTableMapping", subTableName);
+                    throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                            "该表单的子表配置异常，请联系管理员处理");
                 }
 
                 // 获取子表字段定义
@@ -368,18 +357,23 @@ public class FormDataQueryService {
 
                 // 查询子表行
                 String subColumns = subProjection.stream()
-                        .map(c -> "\"" + c + "\"")
+                        .map(DynamicTableSql::quote)
                         .collect(Collectors.joining(", "));
-                String subSql = "SELECT " + subColumns + " FROM \"" + subTableName
-                        + "\" WHERE \"parent_record_id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?"
+                String subSql = "SELECT " + subColumns + " FROM " + DynamicTableSql.quote(subTableName)
+                        + " WHERE \"parent_record_id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?"
                         + " ORDER BY \"create_time\" ASC";
 
                 List<Map<String, Object>> subRows;
                 try {
-                    subRows = jdbcTemplate.queryForList(subSql, recordId, tenantId);
+                    subRows = DynamicTableSql.query(jdbcTemplate, subTableName, subSql, recordId, tenantId);
+                } catch (BaseException e) {
+                    // 受控入口契约违规：原样上抛，不降级为空列表
+                    throw e;
                 } catch (Exception e) {
-                    log.warn("Sub-table query failed for '{}': {}", subTableName, e.getMessage());
-                    subRows = List.of();
+                    // fail closed：子表读取失败不得伪装成“无子行”
+                    log.error("Sub-table query failed for '{}': {}", subTableName, e.getMessage(), e);
+                    throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                            "读取子表数据时系统未能完成，请稍后重试");
                 }
 
                 result.put(tableFieldName, subRows != null ? subRows : List.of());
@@ -411,14 +405,14 @@ public class FormDataQueryService {
             return false;
         }
         String tableName = formDef.getPhysicalTableName();
-        if (tableName == null || !tableName.matches(TABLE_NAME_PATTERN)) {
+        if (tableName == null || !DynamicTableSql.isValidTableName(tableName)) {
             return false;
         }
-        String sql = "SELECT 1 FROM \"" + tableName
-                + "\" WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ? LIMIT 1";
+        String sql = "SELECT 1 AS present FROM " + DynamicTableSql.quote(tableName)
+                + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ? LIMIT 1";
         try {
-            List<Integer> rows = jdbcTemplate.query(sql,
-                    (rs, rowNum) -> rs.getInt(1), recordId, loginUser.getTenantId());
+            List<Map<String, Object>> rows = DynamicTableSql.query(jdbcTemplate, tableName, sql,
+                    recordId, loginUser.getTenantId());
             return !rows.isEmpty();
         } catch (Exception e) {
             log.warn("REFERENCE record access check failed: formKey={}, recordId={}", formKey, recordId, e);
@@ -430,47 +424,13 @@ public class FormDataQueryService {
 
     /**
      * 防御性表名校验（表名来自注册表，发布期已校验，此处为纵深防御）。
+     * <p>与 {@link DynamicTableSql} 共用同一正则常量；受控入口在执行前会再校验一次。</p>
      */
     private void validateTableName(String tableName) {
-        if (!tableName.matches(TABLE_NAME_PATTERN)) {
-            log.error("Table name '{}' does not match expected pattern '{}'", tableName, TABLE_NAME_PATTERN);
+        if (!DynamicTableSql.isValidTableName(tableName)) {
+            log.error("Table name '{}' does not match expected pattern '{}'",
+                    tableName, DynamicTableSql.TABLE_NAME_PATTERN);
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "该表单的数据表配置异常，请联系管理员处理");
-        }
-    }
-
-    // ==================== deleted 列回填 ====================
-
-    /**
-     * 幂等确保指定宽表存在 deleted 列。
-     * <p>
-     * 虽然 DynamicTableManager 模板始终包含 deleted 列，
-     * 但若模板变更加列之前已有旧表，则需回填。
-     * 先查 information_schema，缺失时 ALTER ADD COLUMN。
-     * </p>
-     */
-    private void ensureDeletedColumn(String tableName) {
-        if (!deletedColumnEnsured.add(tableName)) {
-            return; // 本进程已检查过
-        }
-
-        try {
-            // H2 用小写，PG 用小写 — 统一查小写
-            String checkSql = "SELECT COUNT(*) FROM information_schema.columns "
-                    + "WHERE LOWER(table_name) = LOWER(?) AND LOWER(column_name) = 'deleted'";
-            Integer count = jdbcTemplate.queryForObject(checkSql, Integer.class, tableName);
-            if (count != null && count > 0) {
-                return; // 已存在
-            }
-
-            log.warn("Table '{}' missing 'deleted' column, backfilling...", tableName);
-            String alterSql = "ALTER TABLE \"" + tableName
-                    + "\" ADD COLUMN \"deleted\" SMALLINT NOT NULL DEFAULT 0";
-            jdbcTemplate.execute(alterSql);
-            log.info("Backfilled 'deleted' column on table '{}'", tableName);
-        } catch (Exception e) {
-            log.warn("Failed to ensure 'deleted' column on table '{}': {}", tableName, e.getMessage());
-            // 不阻断查询 — 如果表本身就没 deleted 列，查询 SQL 会报错，
-            // 届时由 catch 块包装为业务异常
         }
     }
 
@@ -626,7 +586,7 @@ public class FormDataQueryService {
                         new Object[]{fieldDisplay.getOrDefault(field, field), fieldType},
                         "说明文字字段「" + fieldDisplay.getOrDefault(field, field) + "」不支持筛选");
             }
-            String physicalCol = ColumnValidation.physicalColumnName(field, fieldType);
+            String physicalCol = DynamicTableSql.requireColumn(field, fieldType);
 
             // —— 构建 SQL 子句 ——
             clauses.add(buildClause(physicalCol, op, value, fieldType));
@@ -747,7 +707,7 @@ public class FormDataQueryService {
             // I2：无 view 权字段不进 SELECT 投影
             if (viewDenied.contains(entry.getKey())) continue;
 
-            String physicalCol = ColumnValidation.physicalColumnName(entry.getKey(), ft);
+            String physicalCol = DynamicTableSql.requireColumn(entry.getKey(), ft);
             columns.add(physicalCol);
         }
 
@@ -781,7 +741,7 @@ public class FormDataQueryService {
             // I2：无 view 权字段不进详情投影
             if (viewDenied.contains(entry.getKey())) continue;
 
-            String physicalCol = ColumnValidation.physicalColumnName(entry.getKey(), ft);
+            String physicalCol = DynamicTableSql.requireColumn(entry.getKey(), ft);
             columns.add(physicalCol);
         }
 
@@ -895,7 +855,7 @@ public class FormDataQueryService {
                     if (!subFieldType.isEnabled() || subFieldType == FieldType.TABLE
                             || subFieldType == FieldType.LABEL) continue;
 
-                    String physicalCol = ColumnValidation.physicalColumnName(subName, subFieldType);
+                    String physicalCol = DynamicTableSql.requireColumn(subName, subFieldType);
                     subFields.add(new SubFieldMeta(subName, subFieldType, physicalCol));
                 }
                 result.put(name, subFields);

@@ -49,10 +49,10 @@ class ProcessStartServiceTest {
     void start_whenRuntimeAlreadyEnded_shouldPersistApproved() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn("1");
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn("instance-1");
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(false);
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(false));
 
         service.start(command());
 
@@ -68,11 +68,11 @@ class ProcessStartServiceTest {
     void start_whenRuntimeActive_shouldPersistRunning() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn("1");
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn("instance-1");
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(true);
-        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(List.of());
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
 
         service.start(command());
 

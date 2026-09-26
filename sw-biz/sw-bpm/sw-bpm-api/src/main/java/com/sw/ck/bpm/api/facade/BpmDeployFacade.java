@@ -2,12 +2,19 @@ package com.sw.ck.bpm.api.facade;
 
 import com.sw.ck.bpm.api.dto.BpmDeployResult;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.api.result.MutationOutcome;
+
+import java.util.Optional;
 
 /**
  * BPM 部署门面 —— 封装流程引擎 RepositoryService。
  * <p>
  * 定义流程定义部署操作契约。
  * 实现类位于 sw-bpm-engine（闭源），由 Spring 注入。
+ * </p>
+ * <p>
+ * 模块内部调用边界统一返回非空 {@link Optional}：empty 只表达"目标定义不存在"，
+ * 部署失败、参数非法与引擎异常继续抛明确异常。
  * </p>
  *
  * @since 1.0.0
@@ -19,9 +26,9 @@ public interface BpmDeployFacade {
      *
      * @param resourcePath    classpath 下的 BPMN 资源路径
      * @param deploymentName  部署名称
-     * @return 部署 ID
+     * @return present = 部署 ID；当前契约恒 present，部署失败抛异常
      */
-    String deployClasspathBpmn(String resourcePath, String deploymentName);
+    Optional<String> deployClasspathBpmn(String resourcePath, String deploymentName);
 
     /**
      * 将 {@link ProcessGraph} 翻译为 BPMN XML 字节数组。
@@ -31,9 +38,9 @@ public interface BpmDeployFacade {
      * </p>
      *
      * @param graph 流程设计器图模型
-     * @return BPMN 2.0 XML 字节数组
+     * @return present = BPMN 2.0 XML 字节数组；当前契约恒 present，图非法抛异常
      */
-    byte[] translateToBpmn(ProcessGraph graph);
+    Optional<byte[]> translateToBpmn(ProcessGraph graph);
 
     /**
      * 部署内存中的 BPMN XML。
@@ -44,9 +51,10 @@ public interface BpmDeployFacade {
      *
      * @param bpmnXml        BPMN 2.0 XML 字节数组
      * @param deploymentName 部署名称
-     * @return 部署结果（含 deploymentId + processDefinitionId）
+     * @return present = 部署结果（含 deploymentId + processDefinitionId）；当前契约恒 present，
+     *         部署失败抛异常
      */
-    BpmDeployResult deployModel(byte[] bpmnXml, String deploymentName);
+    Optional<BpmDeployResult> deployModel(byte[] bpmnXml, String deploymentName);
 
     /**
      * 返回 Flowable 已部署流程定义对应的原始 BPMN XML 字符串。
@@ -56,22 +64,26 @@ public interface BpmDeployFacade {
      * </p>
      *
      * @param processDefinitionId Flowable 流程定义 ID
-     * @return 原始 BPMN XML 字符串
+     * @return present = 原始 BPMN XML 字符串；empty = 该流程定义不存在（原 IllegalStateException
+     *         的缺失路径改由 empty 表达）；资源读取失败继续抛异常
      */
-    String getBpmnXml(String processDefinitionId);
+    Optional<String> getBpmnXml(String processDefinitionId);
 
     /**
      * 挂起 Flowable 流程定义：只禁止新实例发起，保持既有实例可解释（I3 §4.3）。
+     *
+     * @return present = {@link MutationOutcome#APPLIED} 本次已挂起 /
+     *         {@link MutationOutcome#ALREADY_APPLIED} 定义已处于挂起态（合法幂等）；
+     *         定义不存在抛明确异常
      */
-    void suspendProcessDefinition(String processDefinitionId);
+    Optional<MutationOutcome> suspendProcessDefinition(String processDefinitionId);
 
     /**
      * 激活 Flowable 流程定义：恢复同一已发布版本的发起能力（I3 §4.3）。
+     *
+     * @return present = {@link MutationOutcome#APPLIED} 本次已激活 /
+     *         {@link MutationOutcome#ALREADY_APPLIED} 定义已处于激活态（合法幂等）；
+     *         定义不存在抛明确异常
      */
-    void activateProcessDefinition(String processDefinitionId);
-
-    /**
-     * 按部署 ID 查询 Flowable 流程定义 ID（发布版本与实例勾稽用）。
-     */
-    String findProcessDefinitionIdByDeployment(String deploymentId);
+    Optional<MutationOutcome> activateProcessDefinition(String processDefinitionId);
 }

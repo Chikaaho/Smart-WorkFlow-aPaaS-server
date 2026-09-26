@@ -137,10 +137,10 @@ class BpmTodoControllerTest {
             BpmTaskDTO t2 = createTask("task-002");
 
             when(bpmTaskFacade.queryTodoPage(eq("1"), eq("2"), anyInt(), anyInt()))
-                    .thenReturn(List.of(t1, t2));
-            when(bpmTaskFacade.countTodo("1", "2")).thenReturn(2L);
-            when(bpmTaskFacade.getVariable("pi-task-001", "formKey")).thenReturn("test_form");
-            when(bpmTaskFacade.getVariable("pi-task-002", "formKey")).thenReturn("leave_form");
+                    .thenReturn(java.util.Optional.of(List.of(t1, t2)));
+            when(bpmTaskFacade.countTodo("1", "2")).thenReturn(java.util.Optional.of(2L));
+            when(bpmTaskFacade.getVariable("pi-task-001", "formKey")).thenReturn(java.util.Optional.of("test_form"));
+            when(bpmTaskFacade.getVariable("pi-task-002", "formKey")).thenReturn(java.util.Optional.of("leave_form"));
             when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
 
             R<PageResult<TodoTaskRespDTO>> result = controller.todo(new PageParam());
@@ -161,8 +161,8 @@ class BpmTodoControllerTest {
         void todo_shouldReturnEmptyList() {
             setLoginUser();
             when(bpmTaskFacade.queryTodoPage(anyString(), anyString(), anyInt(), anyInt()))
-                    .thenReturn(Collections.emptyList());
-            when(bpmTaskFacade.countTodo(anyString(), anyString())).thenReturn(0L);
+                    .thenReturn(java.util.Optional.of(Collections.emptyList()));
+            when(bpmTaskFacade.countTodo(anyString(), anyString())).thenReturn(java.util.Optional.of(0L));
 
             R<PageResult<TodoTaskRespDTO>> result = controller.todo(new PageParam());
 
@@ -177,8 +177,8 @@ class BpmTodoControllerTest {
             setLoginUser();
             BpmTaskDTO t1 = createTask("task-001");
             when(bpmTaskFacade.queryTodoPage(anyString(), anyString(), anyInt(), anyInt()))
-                    .thenReturn(List.of(t1));
-            when(bpmTaskFacade.countTodo(anyString(), anyString())).thenReturn(1L);
+                    .thenReturn(java.util.Optional.of(List.of(t1)));
+            when(bpmTaskFacade.countTodo(anyString(), anyString())).thenReturn(java.util.Optional.of(1L));
             when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(null);
 
             R<PageResult<TodoTaskRespDTO>> result = controller.todo(new PageParam());
@@ -199,8 +199,8 @@ class BpmTodoControllerTest {
         void complete_shouldApproveAndPublishEvent() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
-            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(false);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
+            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(java.util.Optional.of(false));
             when(bpmInstanceService.findByProcessInstanceId("pi-task-001"))
                     .thenReturn(Optional.of(createInstance()));
 
@@ -217,8 +217,8 @@ class BpmTodoControllerTest {
         void complete_flowStillActive_shouldNotUpdateStatusOrPublish() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
-            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(true);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
+            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(java.util.Optional.of(true));
 
             R<Void> result = controller.complete("task-001");
 
@@ -236,7 +236,7 @@ class BpmTodoControllerTest {
             BpmInstance failed = createInstance();
             failed.setProcessInstanceId("pi-task-failed");
             failed.setStatus(InstanceStatusEnum.FAILED.getCode());
-            when(bpmTaskFacade.getTask("task-failed")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-failed")).thenReturn(java.util.Optional.of(task));
             when(bpmInstanceService.findByProcessInstanceId("pi-task-failed"))
                     .thenReturn(Optional.of(failed));
 
@@ -253,7 +253,7 @@ class BpmTodoControllerTest {
         @DisplayName("任务不存在 → 抛 BaseException 含「任务不存在」")
         void complete_taskNotFound_shouldThrow() {
             setLoginUser();
-            when(bpmTaskFacade.getTask("task-999")).thenReturn(null);
+            when(bpmTaskFacade.getTask("task-999")).thenReturn(java.util.Optional.empty());
 
             assertThatThrownBy(() -> controller.complete("task-999"))
                     .isInstanceOf(BaseException.class)
@@ -266,7 +266,7 @@ class BpmTodoControllerTest {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
             task.setAssignee("3"); // 非当前登录用户
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
 
             assertThatThrownBy(() -> controller.complete("task-001"))
                     .isInstanceOf(BaseException.class)
@@ -285,8 +285,11 @@ class BpmTodoControllerTest {
         void reject_shouldRejectAndNotPublishEvent() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
-            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(false);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
+            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(java.util.Optional.of(false));
+            org.mockito.Mockito.lenient()
+                    .when(bpmTaskFacade.terminateProcess(anyString(), anyString()))
+                    .thenReturn(java.util.Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED));
 
             R<Void> result = controller.reject("task-001");
 
@@ -302,8 +305,11 @@ class BpmTodoControllerTest {
         void reject_flowStillActive_shouldTerminateProcessLevel() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
-            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(true);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
+            when(bpmTaskFacade.isProcessActive("pi-task-001")).thenReturn(java.util.Optional.of(true));
+            org.mockito.Mockito.lenient()
+                    .when(bpmTaskFacade.terminateProcess(anyString(), anyString()))
+                    .thenReturn(java.util.Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED));
 
             R<Void> result = controller.reject("task-001");
 
@@ -316,7 +322,7 @@ class BpmTodoControllerTest {
         @DisplayName("任务不存在 → 抛 BaseException 含「任务不存在」")
         void reject_taskNotFound_shouldThrow() {
             setLoginUser();
-            when(bpmTaskFacade.getTask("task-999")).thenReturn(null);
+            when(bpmTaskFacade.getTask("task-999")).thenReturn(java.util.Optional.empty());
 
             assertThatThrownBy(() -> controller.reject("task-999"))
                     .isInstanceOf(BaseException.class)
@@ -329,7 +335,7 @@ class BpmTodoControllerTest {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
             task.setAssignee("3");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
 
             assertThatThrownBy(() -> controller.reject("task-001"))
                     .isInstanceOf(BaseException.class)
@@ -348,11 +354,11 @@ class BpmTodoControllerTest {
         void detail_shouldReturnFullInfo() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
             when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
             BpmInstance instance = createInstance();
             when(bpmInstanceService.findByProcessInstanceId("pi-task-001")).thenReturn(Optional.of(instance));
-            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(Map.of("formKey", "leave_form", "amount", 5000));
+            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(java.util.Optional.of(Map.of("formKey", "leave_form", "amount", 5000)));
 
             // 审批历史：2 条已完成记录
             BpmTaskDTO h1 = createProcessedTask("hist-001");
@@ -365,7 +371,7 @@ class BpmTodoControllerTest {
             h2.setAssignee("1");
             h2.setCreateTime(new Date(System.currentTimeMillis() - 7200_000));
             h2.setEndTime(new Date(System.currentTimeMillis() - 3600_000));
-            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(List.of(h1, h2));
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(java.util.Optional.of(List.of(h1, h2)));
 
             R<TaskDetailRespDTO> result = controller.detail("task-001");
 
@@ -394,7 +400,7 @@ class BpmTodoControllerTest {
             outsider.setSuperAdmin(false);
             LoginUserHolder.set(outsider);
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
 
             assertThatThrownBy(() -> controller.detail("task-001"))
                     .isInstanceOf(BaseException.class)
@@ -413,10 +419,10 @@ class BpmTodoControllerTest {
             monitor.setSuperAdmin(false);
             LoginUserHolder.set(monitor);
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
             when(bpmInstanceService.findByProcessInstanceId("pi-task-001")).thenReturn(Optional.of(createInstance()));
-            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(Collections.emptyMap());
-            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(Collections.emptyList());
+            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyMap()));
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyList()));
 
             assertThat(controller.detail("task-001").getCode()).isZero();
         }
@@ -426,10 +432,10 @@ class BpmTodoControllerTest {
         void detail_emptyHistory_shouldReturnEmptyList() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
             when(bpmInstanceService.findByProcessInstanceId("pi-task-001")).thenReturn(Optional.of(createInstance()));
-            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(Collections.emptyMap());
-            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(Collections.emptyList());
+            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyMap()));
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyList()));
 
             R<TaskDetailRespDTO> result = controller.detail("task-001");
 
@@ -441,7 +447,7 @@ class BpmTodoControllerTest {
         @DisplayName("任务不存在 → 抛 BaseException 含「任务不存在」")
         void detail_taskNotFound_shouldThrow() {
             setLoginUser();
-            when(bpmTaskFacade.getTask("task-999")).thenReturn(null);
+            when(bpmTaskFacade.getTask("task-999")).thenReturn(java.util.Optional.empty());
 
             assertThatThrownBy(() -> controller.detail("task-999"))
                     .isInstanceOf(BaseException.class)
@@ -453,11 +459,11 @@ class BpmTodoControllerTest {
         void detail_processDefDeleted_shouldSetProcessNameNull() {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001");
-            when(bpmTaskFacade.getTask("task-001")).thenReturn(task);
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
             when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(null);
             when(bpmInstanceService.findByProcessInstanceId("pi-task-001")).thenReturn(Optional.of(createInstance()));
-            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(Collections.emptyMap());
-            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(Collections.emptyList());
+            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyMap()));
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyList()));
 
             R<TaskDetailRespDTO> result = controller.detail("task-001");
 
@@ -480,10 +486,10 @@ class BpmTodoControllerTest {
             BpmTaskDTO t2 = createProcessedTask("task-002");
 
             when(bpmTaskFacade.queryProcessedPage(eq("1"), eq("2"), anyInt(), anyInt()))
-                    .thenReturn(List.of(t1, t2));
-            when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(2L);
-            when(bpmTaskFacade.getVariable(eq("pi-task-001"), eq("formKey"))).thenReturn("leave_form");
-            when(bpmTaskFacade.getVariable(eq("pi-task-002"), eq("formKey"))).thenReturn("expense_form");
+                    .thenReturn(java.util.Optional.of(List.of(t1, t2)));
+            when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(java.util.Optional.of(2L));
+            when(bpmTaskFacade.getVariable(eq("pi-task-001"), eq("formKey"))).thenReturn(java.util.Optional.of("leave_form"));
+            when(bpmTaskFacade.getVariable(eq("pi-task-002"), eq("formKey"))).thenReturn(java.util.Optional.of("expense_form"));
             when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
 
             R<PageResult<ProcessedTaskRespDTO>> result = controller.processed(new PageParam());
@@ -505,8 +511,8 @@ class BpmTodoControllerTest {
         void processed_shouldReturnEmptyList() {
             setLoginUser();
             when(bpmTaskFacade.queryProcessedPage(anyString(), anyString(), anyInt(), anyInt()))
-                    .thenReturn(Collections.emptyList());
-            when(bpmTaskFacade.countProcessed(anyString(), anyString())).thenReturn(0L);
+                    .thenReturn(java.util.Optional.of(Collections.emptyList()));
+            when(bpmTaskFacade.countProcessed(anyString(), anyString())).thenReturn(java.util.Optional.of(0L));
 
             R<PageResult<ProcessedTaskRespDTO>> result = controller.processed(new PageParam());
 
@@ -521,9 +527,9 @@ class BpmTodoControllerTest {
             setLoginUser();
             BpmTaskDTO task = createTask("task-001"); // createTask 不设 endTime
             when(bpmTaskFacade.queryProcessedPage(anyString(), anyString(), anyInt(), anyInt()))
-                    .thenReturn(List.of(task));
-            when(bpmTaskFacade.countProcessed(anyString(), anyString())).thenReturn(1L);
-            when(bpmTaskFacade.getVariable(anyString(), eq("formKey"))).thenReturn("leave_form");
+                    .thenReturn(java.util.Optional.of(List.of(task)));
+            when(bpmTaskFacade.countProcessed(anyString(), anyString())).thenReturn(java.util.Optional.of(1L));
+            when(bpmTaskFacade.getVariable(anyString(), eq("formKey"))).thenReturn(java.util.Optional.of("leave_form"));
             when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
 
             R<PageResult<ProcessedTaskRespDTO>> result = controller.processed(new PageParam());

@@ -21,10 +21,13 @@ public record BpmNodeCapabilityDTO(
         boolean deletable) {
 
     public static BpmNodeCapabilityDTO from(BpmNodeDefinition definition) {
-        BpmNodeMetadata metadata = definition.metadata();
+        String type = definition.type().orElseThrow(() -> new IllegalStateException(
+                "节点定义缺少稳定类型标识: " + definition.getClass().getName()));
+        BpmNodeMetadata metadata = definition.metadata().orElseThrow(() -> new IllegalStateException(
+                "节点定义缺少元数据契约: " + type));
         Set<BpmNodeCapability> capabilities = metadata.capabilities();
         return new BpmNodeCapabilityDTO(
-                definition.type(),
+                type,
                 metadata.displayName(),
                 metadata.description(),
                 metadata.category(),
