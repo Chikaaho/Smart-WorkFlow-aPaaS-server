@@ -482,7 +482,8 @@ class FormI2ClosureIntegrationTest {
             return new FormDefServiceImpl(formDefMapper, formConfigMapper, formSnapshotMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper,
                     new com.sw.ck.form.service.FormVisibilityRules(objectMapper),
-                    formulaEngine, fieldPermissionService, null, listConfigMapper, lifecycleAuditMapper);
+                    formulaEngine, fieldPermissionService, null, listConfigMapper, lifecycleAuditMapper,
+                    null);
         }
     }
 

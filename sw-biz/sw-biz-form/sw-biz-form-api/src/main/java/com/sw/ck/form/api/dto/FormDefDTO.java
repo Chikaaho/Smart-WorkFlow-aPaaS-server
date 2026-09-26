@@ -31,4 +31,12 @@ public class FormDefDTO implements Serializable {
     private String visibilityScope;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
+    /**
+     * 创建人展示名（优先 real_name，其次 username）。
+     * <p>
+     * 仅分页列表端点批量解析下发；其余路径（详情/发起可见列表等）为 null。
+     * 解析失败或查询上下文缺失时为 null，不阻断列表查询。
+     * </p>
+     */
+    private String createByName;
 }

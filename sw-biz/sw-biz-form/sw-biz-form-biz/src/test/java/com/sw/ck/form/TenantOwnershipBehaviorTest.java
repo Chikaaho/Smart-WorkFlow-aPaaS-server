@@ -291,7 +291,7 @@ class TenantOwnershipBehaviorTest {
                     new com.sw.ck.form.service.FormulaEngine(),
                     new com.sw.ck.form.service.FieldPermissionService(
                             new com.fasterxml.jackson.databind.ObjectMapper()),
-                    null, null, null);
+                    null, null, null, null);
         }
     }
 }

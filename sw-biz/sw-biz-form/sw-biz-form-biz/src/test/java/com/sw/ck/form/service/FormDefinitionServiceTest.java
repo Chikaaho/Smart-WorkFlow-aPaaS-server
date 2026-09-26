@@ -79,6 +79,9 @@ class FormDefinitionServiceTest {
     @Autowired
     private FormSnapshotMapper formSnapshotMapper;
 
+    @Autowired
+    private com.sw.ck.form.dynamic.DynamicTableManager dynamicTableManager;
+
     /** 测试中创建的动态宽表名，在 @AfterEach 中清理 */
     private final java.util.ArrayList<String> createdTables = new java.util.ArrayList<>();
 
@@ -603,6 +606,111 @@ class FormDefinitionServiceTest {
                 + ", first=" + page1.getRecords().get(0).getName());
         System.out.println("page2 total=" + page2.getTotal() + ", records=" + page2.getRecords().size());
         System.out.println("keyword match total=" + keywordResult.getTotal());
+    }
+
+    // ==================== 测试 13b：分页列表创建人展示名解析 ====================
+
+    @Test
+    @DisplayName("分页列表 → createByName 批量解析回填，未命中/缺失降级为 null 不阻断")
+    void pageFormDefs_shouldResolveCreatorDisplayNames() {
+        // —— Arrange：三个草稿，create_by 分别为 已知101 / 未知999 / NULL ——
+        FormDefDTO d1 = formDefService.createDraft("creator_a", "创建人解析甲", null, null);
+        createdFormIds.add(d1.getId());
+        FormDefDTO d2 = formDefService.createDraft("creator_b", "创建人解析乙", null, null);
+        createdFormIds.add(d2.getId());
+        FormDefDTO d3 = formDefService.createDraft("creator_c", "创建人解析丙", null, null);
+        createdFormIds.add(d3.getId());
+        jdbcTemplate.update("UPDATE sw_form_def SET create_by = 101 WHERE id = ?", d1.getId());
+        jdbcTemplate.update("UPDATE sw_form_def SET create_by = 999 WHERE id = ?", d2.getId());
+        jdbcTemplate.update("UPDATE sw_form_def SET create_by = NULL WHERE id = ?", d3.getId());
+
+        // stub 门面：101 → 张三；999 未命中应保持 null
+        com.sw.ck.system.api.user.UserQueryFacade stubFacade =
+                new com.sw.ck.system.api.user.UserQueryFacade() {
+                    @Override
+                    public java.util.Optional<List<com.sw.ck.system.api.user.UserOptionDTO>> searchActiveUsers(
+                            String keyword, int limit) {
+                        return java.util.Optional.empty();
+                    }
+
+                    @Override
+                    public java.util.Optional<Map<Long, String>> getUserDisplayNames(
+                            java.util.Collection<Long> ids) {
+                        Map<Long, String> names = new java.util.HashMap<>();
+                        if (ids != null && ids.contains(101L)) {
+                            names.put(101L, "张三");
+                        }
+                        return java.util.Optional.of(names);
+                    }
+
+                    @Override
+                    public java.util.Optional<List<Long>> findActiveUserIds(
+                            java.util.Collection<Long> ids) {
+                        return java.util.Optional.empty();
+                    }
+
+                    @Override
+                    public java.util.Optional<List<Long>> findActiveUserIds(
+                            java.util.Collection<Long> ids, Long tenantId) {
+                        return java.util.Optional.empty();
+                    }
+
+                    @Override
+                    public java.util.Optional<List<Long>> findActiveUserIdsByRoleCodes(
+                            java.util.Collection<String> roleCodes) {
+                        return java.util.Optional.empty();
+                    }
+
+                    @Override
+                    public java.util.Optional<List<Long>> findActiveUserIdsByRoleCodes(
+                            java.util.Collection<String> roleCodes, Long tenantId) {
+                        return java.util.Optional.empty();
+                    }
+
+                    @Override
+                    public java.util.Optional<List<Long>> findActiveUserIdsByDeptLeaders(
+                            java.util.Collection<Long> deptIds, Long tenantId) {
+                        return java.util.Optional.empty();
+                    }
+
+                    @Override
+                    public java.util.Optional<List<Long>> findActiveUserIdsByPostCodes(
+                            java.util.Collection<String> postCodes, Long tenantId) {
+                        return java.util.Optional.empty();
+                    }
+
+                    @Override
+                    public java.util.Optional<List<Long>> findActiveUserIdsByDeptAndPost(
+                            Long deptId, String postCode, Long tenantId) {
+                        return java.util.Optional.empty();
+                    }
+                };
+        FormDefServiceImpl resolvingService = new FormDefServiceImpl(
+                formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
+                new FormIdGenerator(), new ObjectMapper(),
+                new FormVisibilityRules(new ObjectMapper()), new FormulaEngine(),
+                new FieldPermissionService(new ObjectMapper()), null, null, null, stubFacade);
+
+        // —— Act ——
+        PageParam pageParam = new PageParam();
+        pageParam.setPageNum(1);
+        pageParam.setPageSize(10);
+        PageResult<FormDefDTO> page = resolvingService.pageFormDefs(pageParam, null);
+
+        // —— Assert：按 id 断言解析结果 ——
+        Map<String, FormDefDTO> byId = new java.util.HashMap<>();
+        page.getRecords().forEach(dto -> byId.put(dto.getId(), dto));
+        assertThat(byId.get(d1.getId()).getCreateByName())
+                .as("已命中创建人应解析为展示名").isEqualTo("张三");
+        assertThat(byId.get(d2.getId()).getCreateByName())
+                .as("门面未命中的 ID 应保持 null，不阻断列表").isNull();
+        assertThat(byId.get(d3.getId()).getCreateByName())
+                .as("create_by 为 NULL 的行应保持 null").isNull();
+
+        // —— Assert：无门面（兼容构造）时全部降级为 null，不抛错 ——
+        PageResult<FormDefDTO> degraded = formDefService.pageFormDefs(pageParam, null);
+        assertThat(degraded.getRecords())
+                .allSatisfy(dto -> assertThat(dto.getCreateByName()).isNull());
     }
 
     /** 毫秒级睡眠，辅助方法不做异常声明 */

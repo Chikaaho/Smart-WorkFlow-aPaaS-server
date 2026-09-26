@@ -29,6 +29,7 @@ import com.sw.ck.form.service.FormVisibilityRules;
 import com.sw.ck.form.service.FormulaEngine;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.user.UserQueryFacade;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -58,6 +59,8 @@ public class FormDefServiceImpl implements FormDefService {
     private final FormExtDataService extDataService;
     private final com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper;
     private final com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper;
+    // ==== V012-BUG-015：创建人展示名解析（system 契约；兼容构造可为 null） ====
+    private final UserQueryFacade userQueryFacade;
 
     @org.springframework.beans.factory.annotation.Autowired
     public FormDefServiceImpl(FormDefMapper formDefMapper,
@@ -72,7 +75,8 @@ public class FormDefServiceImpl implements FormDefService {
                               @org.springframework.beans.factory.annotation.Autowired(required = false)
                               FormExtDataService extDataService,
                               com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper,
-                              com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper) {
+                              com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper,
+                              UserQueryFacade userQueryFacade) {
         this.formDefMapper = formDefMapper;
         this.formConfigMapper = formConfigMapper;
         this.formSnapshotMapper = formSnapshotMapper;
@@ -85,6 +89,7 @@ public class FormDefServiceImpl implements FormDefService {
         this.extDataService = extDataService;
         this.listConfigMapper = listConfigMapper;
         this.lifecycleAuditMapper = lifecycleAuditMapper;
+        this.userQueryFacade = userQueryFacade;
     }
 
     /** 兼容既有测试构造（无显隐规则注入时使用默认实现；I2 协作对象用默认/空实现）。 */
@@ -97,7 +102,7 @@ public class FormDefServiceImpl implements FormDefService {
         this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
                 idGenerator, objectMapper, new FormVisibilityRules(objectMapper),
                 new FormulaEngine(), new FieldPermissionService(objectMapper),
-                null, null, null);
+                null, null, null, null);
     }
 
     @Override
@@ -444,12 +449,46 @@ public class FormDefServiceImpl implements FormDefService {
         List<FormDefDTO> dtoList = entityPage.getRecords().stream()
                 .map(this::toDTO)
                 .toList();
+        resolveCreatorNames(entityPage.getRecords(), dtoList);
         PageResult<FormDefDTO> result = new PageResult<>();
         result.setRecords(dtoList);
         result.setTotal(entityPage.getTotal());
         result.setPageNum(entityPage.getPageNum());
         result.setPageSize(entityPage.getPageSize());
         return result;
+    }
+
+    /**
+     * 批量解析当前页创建人展示名（V012-BUG-015）：按 createBy 去重经
+     * {@link UserQueryFacade#getUserDisplayNames} 查询后逐行回填。
+     * 查询上下文缺失、失败或无解析结果时降级为 null，不阻断列表查询。
+     */
+    private void resolveCreatorNames(List<FormDefEntity> entities, List<FormDefDTO> dtoList) {
+        if (userQueryFacade == null) {
+            return;
+        }
+        Set<Long> ids = new HashSet<>();
+        for (FormDefEntity entity : entities) {
+            if (entity.getCreateBy() != null) {
+                ids.add(entity.getCreateBy());
+            }
+        }
+        if (ids.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names;
+        try {
+            names = userQueryFacade.getUserDisplayNames(ids).orElse(Map.of());
+        } catch (Exception e) {
+            log.warn("批量解析表单创建人展示名失败，创建人列降级为空: {}", e.getMessage());
+            return;
+        }
+        for (int i = 0; i < entities.size(); i++) {
+            Long createBy = entities.get(i).getCreateBy();
+            if (createBy != null) {
+                dtoList.get(i).setCreateByName(names.get(createBy));
+            }
+        }
     }
 
     @Override
