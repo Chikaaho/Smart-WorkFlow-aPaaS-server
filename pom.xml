@@ -34,10 +34,10 @@
         <!--
             Phase 6C · CI-friendly 版本身份（BAO-09）：
             ${revision} 是全部 34 个 POM 唯一的工程版本来源；develop 工作树默认解析为
-            0.2.0-SNAPSHOT，正式发布构建以 -Drevision=0.2.0 显式覆盖。可消费 POM 的
+            0.1.2-SNAPSHOT，正式发布构建以 -Drevision=0.1.2 显式覆盖。可消费 POM 的
             版本收敛由 Flatten Maven Plugin（resolveCiFriendliesOnly）完成。
         -->
-        <revision>0.2.0-SNAPSHOT</revision>
+        <revision>0.1.2-SNAPSHOT</revision>
         <java.version>21</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>

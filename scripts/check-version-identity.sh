@@ -9,7 +9,7 @@
 #
 #   scripts/check-version-identity.sh develop
 #       Maven effective version：全 reactor project.version 必须全部等于根 POM 的
-#       <revision> 开发默认值（0.2.0-SNAPSHOT）；无空值、占位符残留或模块分叉。
+#       <revision> 开发默认值（0.1.2-SNAPSHOT）；无空值、占位符残留或模块分叉。
 #
 #   scripts/check-version-identity.sh release <version>
 #       显式 -Drevision=<version>：全 reactor project.version 必须全部等于 <version>；
@@ -155,8 +155,8 @@ mode_workflow() { # 静态结构检查：Release workflow 的版本链必须 Mav
     else
         ok "workflow 无 XML grep 读版本"
     fi
-    grep -q "!= '0.2.0-SNAPSHOT'" "${wf}" \
-        && ok "workflow 断言 develop 默认版本为 0.2.0-SNAPSHOT" \
+    grep -q "!= '0.1.2-SNAPSHOT'" "${wf}" \
+        && ok "workflow 断言 develop 默认版本为 0.1.2-SNAPSHOT" \
         || bad "workflow 缺少 develop 默认版本断言"
     grep -q '%-SNAPSHOT' "${wf}" \
         && ok "workflow 由 effective version 剥离 -SNAPSHOT 解析正式值" \

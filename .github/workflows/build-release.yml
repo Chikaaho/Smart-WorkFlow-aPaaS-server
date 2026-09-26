@@ -32,8 +32,8 @@ jobs:
           cache: maven
 
       # Phase 6C · CI-friendly 版本身份：开发默认 effective version 必须经 Maven 求值
-      # （禁止 XML grep 得到字面 ${revision}），并断言为 0.2.0-SNAPSHOT；正式值 0.2.0
-      # 由该有效值剥掉 -SNAPSHOT 解析而来，随后以 -Drevision=0.2.0 驱动唯一生产构建入口
+      # （禁止 XML grep 得到字面 ${revision}），并断言为 0.1.2-SNAPSHOT；正式值 0.1.2
+      # 由该有效值剥掉 -SNAPSHOT 解析而来，随后以 -Drevision=0.1.2 驱动唯一生产构建入口
       # （测试、打包与制品门禁同版本），Release 标题与上传制品名取自同一版本变量。
       - name: Resolve CI-friendly version (Maven effective)
         id: version
@@ -43,8 +43,8 @@ jobs:
           if [ -z "${DEV_VERSION}" ] || [ "${DEV_VERSION}" = '${revision}' ]; then
             echo "::error::Maven effective version 为空或未解析: ${DEV_VERSION}"; exit 1
           fi
-          if [ "${DEV_VERSION}" != '0.2.0-SNAPSHOT' ]; then
-            echo "::error::develop 默认版本必须为 0.2.0-SNAPSHOT，实际 ${DEV_VERSION}"; exit 1
+          if [ "${DEV_VERSION}" != '0.1.2-SNAPSHOT' ]; then
+            echo "::error::develop 默认版本必须为 0.1.2-SNAPSHOT，实际 ${DEV_VERSION}"; exit 1
           fi
           RELEASE_VERSION="${DEV_VERSION%-SNAPSHOT}"
           if [ -z "${RELEASE_VERSION}" ] || [ "${RELEASE_VERSION}" = "${DEV_VERSION}" ] || [ "${RELEASE_VERSION}" = '${revision}' ]; then

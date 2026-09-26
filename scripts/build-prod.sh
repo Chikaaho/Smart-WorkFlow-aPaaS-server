@@ -24,7 +24,7 @@ read -r -a mvn_flags <<< "${MVN_FLAGS:-}"
 # Phase 6C · CI-friendly 版本身份：REVISION 可选透传。设置后 -Drevision=<value> 必须同时
 # 作用于全量测试、prod 打包与制品门禁（不能测试一个版本、打包另一个版本），并以
 # EXPECTED_VERSION 交给制品门禁做版本一致性断言；不设置则使用根 POM 的开发默认
-# revision（0.2.0-SNAPSHOT），门禁此时只断言 build.version 已解析。
+# revision（0.1.2-SNAPSHOT），门禁此时只断言 build.version 已解析。
 REVISION="${REVISION:-}"
 read -r -a revision_args <<< "${REVISION:+-Drevision=${REVISION}}"
 export EXPECTED_VERSION="${REVISION}"

@@ -259,7 +259,7 @@
                     <!--
                         Phase 6C · 仅对身份标记文件开启 Maven 资源过滤，把 build.version
                         解析为 ${project.version}（CI-friendly revision 的有效值，如
-                        -Drevision=0.2.0 时为 0.2.0）。刻意只 include 这一个文件：
+                        -Drevision=0.1.2 时为 0.1.2）。刻意只 include 这一个文件：
                         Spring 的 application*.yml 充满 ${...} 占位符，绝不能被 Maven 过滤改写。
                     -->
                     <resource>
