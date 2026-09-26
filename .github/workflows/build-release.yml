@@ -57,7 +57,7 @@ jobs:
       # Phase 6B/6C：发布必须走仓内唯一生产构建入口（先全量测试门禁 → prod profile 打包 →
       # 制品门禁），-Drevision 同版本贯穿测试/打包/门禁；门禁不通过则整个 workflow 失败，
       # 不会产出 Release。
-      - name: Production build (in-repo entry: tests + prod package + artifact gate)
+      - name: "Production build (in-repo entry: tests + prod package + artifact gate)"
         run: REVISION="${{ steps.version.outputs.release_version }}" bash scripts/build-prod.sh
 
       - name: Locate executable JAR
