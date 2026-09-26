@@ -470,6 +470,85 @@ class BpmTodoControllerTest {
             assertThat(result.getCode()).isZero();
             assertThat(result.getData().getProcessName()).isNull();
         }
+
+        @Test
+        @DisplayName("V012-BUG-001：已办历史任务详情 → FINISHED + 只读（canHandle=false、无意见表单）+ 历史变量/业务键回落")
+        void detail_historicTask_shouldReturnReadOnlyFinishedDetail() {
+            setLoginUser();
+            BpmTaskDTO historic = createProcessedTask("task-done");
+            when(bpmTaskFacade.getTask("task-done")).thenReturn(java.util.Optional.empty());
+            when(bpmTaskFacade.getHistoricTask("task-done")).thenReturn(java.util.Optional.of(historic));
+            when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
+            BpmInstance instance = createInstance();
+            instance.setStatus(InstanceStatusEnum.APPROVED.getCode());
+            when(bpmInstanceService.findByProcessInstanceId("pi-task-done")).thenReturn(Optional.of(instance));
+            when(bpmTaskFacade.getBusinessKey("pi-task-done")).thenReturn(java.util.Optional.of("rec-done"));
+            when(bpmTaskFacade.getVariable("pi-task-done", "formKey")).thenReturn(java.util.Optional.of("leave_form"));
+            // 实例已结束：运行期变量视图为空 → 回落历史变量快照
+            when(bpmTaskFacade.getVariables("pi-task-done")).thenReturn(java.util.Optional.empty());
+            when(bpmTaskFacade.getHistoricVariables("pi-task-done"))
+                    .thenReturn(java.util.Optional.of(Map.of("formKey", "leave_form", "amount", 5000)));
+            BpmTaskDTO h1 = createProcessedTask("hist-done");
+            h1.setName("审批");
+            h1.setAssignee("2");
+            h1.setEndTime(new Date());
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-done"))
+                    .thenReturn(java.util.Optional.of(List.of(h1)));
+
+            R<TaskDetailRespDTO> result = controller.detail("task-done");
+
+            assertThat(result.getCode()).isZero();
+            TaskDetailRespDTO dto = result.getData();
+            assertThat(dto.getTaskStatus()).isEqualTo("FINISHED");
+            assertThat(dto.getInstanceStatus()).isEqualTo("APPROVED");
+            assertThat(dto.getCanHandle()).isFalse();
+            assertThat(dto.getOpinionForm()).isNull();
+            assertThat(dto.getBusinessKey()).isEqualTo("rec-done");
+            assertThat(dto.getProcessVariables()).containsEntry("amount", 5000);
+            assertThat(dto.getApprovalHistory()).hasSize(1);
+            verify(bpmTaskFacade, never()).canHandle(anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("V012-BUG-001：已办历史任务非办理人查看 → 拒绝「无权查看该任务」")
+        void detail_historicTask_outsider_shouldDeny() {
+            LoginUser outsider = new LoginUser();
+            outsider.setUserId(999L);
+            outsider.setTenantId(1L);
+            outsider.setUsername("outsider");
+            outsider.setRoles(Collections.emptyList());
+            outsider.setPermissions(Collections.emptyList());
+            outsider.setSuperAdmin(false);
+            LoginUserHolder.set(outsider);
+            BpmTaskDTO historic = createProcessedTask("task-done");
+            historic.setAssignee("2"); // 历史办理人是 2，不是当前用户 999
+            when(bpmTaskFacade.getTask("task-done")).thenReturn(java.util.Optional.empty());
+            when(bpmTaskFacade.getHistoricTask("task-done")).thenReturn(java.util.Optional.of(historic));
+
+            assertThatThrownBy(() -> controller.detail("task-done"))
+                    .isInstanceOf(BaseException.class)
+                    .hasMessageContaining("无权查看该任务");
+        }
+
+        @Test
+        @DisplayName("V012-BUG-001：待办运行期详情 → RUNNING + canHandle 按服务端办理权限判定")
+        void detail_runningTask_shouldExposeCanHandle() {
+            setLoginUser();
+            BpmTaskDTO task = createTask("task-001");
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
+            when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
+            when(bpmInstanceService.findByProcessInstanceId("pi-task-001")).thenReturn(Optional.of(createInstance()));
+            when(bpmTaskFacade.getVariables("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyMap()));
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001")).thenReturn(java.util.Optional.of(Collections.emptyList()));
+            when(bpmTaskFacade.canHandle("task-001", "2")).thenReturn(java.util.Optional.of(true));
+
+            R<TaskDetailRespDTO> result = controller.detail("task-001");
+
+            assertThat(result.getCode()).isZero();
+            TaskDetailRespDTO dto = result.getData();
+            assertThat(dto.getTaskStatus()).isEqualTo("RUNNING");
+            assertThat(dto.getCanHandle()).isTrue();
+        }
     }
 
     // ==================== GET /workflow/tasks/processed ====================

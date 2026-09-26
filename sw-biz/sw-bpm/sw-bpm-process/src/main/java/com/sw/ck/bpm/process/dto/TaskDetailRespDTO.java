@@ -21,6 +21,12 @@ public class TaskDetailRespDTO {
     /** 任务名称 */
     private String taskName;
 
+    /** 任务状态：RUNNING=待办进行中；FINISHED=已办结（历史任务，详情只读） */
+    private String taskStatus;
+
+    /** 流程实例状态（业务实例记录：RUNNING/APPROVED/REJECTED/FAILED 等；无记录时为 null） */
+    private String instanceStatus;
+
     /** Flowable 流程实例 ID */
     private String processInstanceId;
 
@@ -40,6 +46,9 @@ public class TaskDetailRespDTO {
     private String assignee;
     /** 审批人展示名（可读身份回显） */
     private String assigneeName;
+
+    /** 当前登录用户是否可办理该任务（服务端办理权限判定；已办历史任务恒 false） */
+    private Boolean canHandle;
 
     /** 发起人 ID */
     private Long initiatorId;

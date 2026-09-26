@@ -180,16 +180,27 @@ public class BpmTodoController {
 
     /**
      * 任务详情。
+     * <p>
+     * 运行期任务优先（待办视角）；已完成任务回落已完成历史查询（已办视角，只读，
+     * V012-BUG-001）。任务在运行期与完成历史中均不存在时仍为 404。已办详情
+     * {@code taskStatus=FINISHED}、{@code canHandle=false}、无意见表单，流程变量
+     * 与业务键走历史回落；访问权限口径与待办一致（本人/超管/监控查看），不放宽。
+     * </p>
      */
     @GetMapping("/{taskId}")
     public R<TaskDetailRespDTO> detail(@PathVariable String taskId) {
-        // empty = 该任务不存在（原 null 返回路径）：对外仍为 404 语义，不改变错误码
+        // 运行期优先；empty 回落已完成历史（已办详情），两处均空仍为 404 语义，不改变错误码
         java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(taskId);
+        boolean finished = false;
+        if (taskLookup.isEmpty()) {
+            taskLookup = bpmTaskFacade.getHistoricTask(taskId);
+            finished = taskLookup.isPresent();
+        }
         if (taskLookup.isEmpty()) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
         }
         BpmTaskDTO task = taskLookup.get();
-        // 对象权限（I4 §3.7：消息摘要与深链再次执行对象权限）：仅任务办理人、
+        // 对象权限（I4 §3.7：消息摘要与深链再次执行对象权限）：仅任务办理人（含历史办理人）、
         // 超级管理员或持有监控查看权限的运营身份可读，其余身份服务端拒绝
         var loginUser = LoginUserHolder.get();
         boolean allowed = loginUser != null && (
@@ -209,6 +220,7 @@ public class BpmTodoController {
         dto.setTaskName(task.getName());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(task.getProcessDefinitionKey());
+        dto.setTaskStatus(finished ? "FINISHED" : "RUNNING");
 
         // processName 富化
         if (task.getProcessDefinitionKey() != null) {
@@ -222,13 +234,16 @@ public class BpmTodoController {
         // empty = 运行期与历史均无 formKey 变量：不设置（响应中仍为 null，原变量缺省语义）
         bpmTaskFacade.getVariable(task.getProcessInstanceId(), "formKey").ifPresent(dto::setFormKey);
 
-        dto.setBusinessKey(task.getBusinessKey());
+        // 业务键统一经实例查询获取（历史任务 DTO 不携带业务键，该方法已含历史回落）
+        // empty = 运行期与历史均无该实例或无业务键：不设置（响应中仍为 null，原缺省语义）
+        bpmTaskFacade.getBusinessKey(task.getProcessInstanceId()).ifPresent(dto::setBusinessKey);
         dto.setAssignee(task.getAssignee());
 
-        // 发起人
+        // 发起人与流程实例状态
         bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .ifPresent(instance -> {
                     dto.setInitiatorId(instance.getInitiatorId());
+                    dto.setInstanceStatus(instance.getStatus());
                     dto.setInitiatorName(taskActionService.resolveUserNames(
                             instance.getInitiatorId() == null
                                     ? java.util.Set.of()
@@ -242,10 +257,24 @@ public class BpmTodoController {
                     task.getCreateTime().toInstant(), ZoneId.systemDefault()));
         }
 
-        // 流程变量
-        // empty = 实例标识缺失或该实例不存在：不设置（响应中仍为 null，原变量缺省语义）
-        bpmTaskFacade.getVariables(task.getProcessInstanceId()).ifPresent(dto::setProcessVariables);
-        dto.setOpinionForm(taskActionService.resolveOpinionForm(task));
+        // 流程变量：运行期优先；实例已结束（运行期视图被清空）回落历史变量快照（已办详情）
+        // empty = 实例标识缺失或该实例不存在且无历史：不设置（响应中仍为 null，原变量缺省语义）
+        java.util.Optional<Map<String, Object>> variables =
+                bpmTaskFacade.getVariables(task.getProcessInstanceId());
+        if (variables.isEmpty() && task.getProcessInstanceId() != null) {
+            variables = bpmTaskFacade.getHistoricVariables(task.getProcessInstanceId());
+        }
+        variables.ifPresent(dto::setProcessVariables);
+
+        // 已办详情只读：无意见表单、canHandle 恒 false；待办按服务端办理权限判定
+        if (finished) {
+            dto.setCanHandle(false);
+        } else {
+            dto.setOpinionForm(taskActionService.resolveOpinionForm(task));
+            dto.setCanHandle(bpmTaskFacade
+                    .canHandle(taskId, String.valueOf(loginUser.getUserId()))
+                    .orElse(false));
+        }
 
         if (task.getAssignee() != null && task.getAssignee().matches("\\d+")) {
             dto.setAssigneeName(taskActionService.resolveUserNames(

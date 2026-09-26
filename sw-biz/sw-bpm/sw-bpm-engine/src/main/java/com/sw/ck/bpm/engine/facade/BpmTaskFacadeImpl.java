@@ -98,6 +98,20 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
+    public Optional<BpmTaskDTO> getHistoricTask(String taskId) {
+        if (isBlank(taskId)) {
+            // 任务标识缺失：无法确定查询目标
+            return Optional.empty();
+        }
+        // finished：只承认已完成历史（endTime 非空）；运行期任务由 getTask 的运行期查询负责
+        HistoricTaskInstance task = historyService.createHistoricTaskInstanceQuery()
+                .taskId(taskId)
+                .finished()
+                .singleResult();
+        return Optional.ofNullable(task).map(this::toDtoFromHistory);
+    }
+
+    @Override
     public Optional<MutationOutcome> complete(String taskId, Map<String, Object> variables) {
         Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
         String lockKey = snapshot == null ? "task:" + taskId

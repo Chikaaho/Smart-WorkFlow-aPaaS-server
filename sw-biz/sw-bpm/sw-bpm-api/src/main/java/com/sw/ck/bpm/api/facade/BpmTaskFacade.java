@@ -70,6 +70,20 @@ public interface BpmTaskFacade {
     Optional<BpmTaskDTO> getTask(String taskId);
 
     /**
+     * 获取单个已完成历史任务详情（已办视角）。
+     * <p>
+     * 与 {@link #getTask} 的运行期语义隔离：本方法只查已完成历史（endTime 非空），
+     * 供已办任务详情只读展示使用；办理动作与生命周期路径仍只能经 {@link #getTask}
+     * 命中运行期任务，不因历史回落改变"任务不存在或已被处理"的冲突语义。
+     * </p>
+     *
+     * @param taskId 任务 ID
+     * @return present = 该 taskId 的已完成历史任务 DTO；
+     *         empty = 无该任务的已完成历史记录（运行期任务不在本方法范围）
+     */
+    Optional<BpmTaskDTO> getHistoricTask(String taskId);
+
+    /**
      * 完成任务。
      *
      * @param taskId    任务 ID
