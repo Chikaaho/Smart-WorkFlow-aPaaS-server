@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.Objects;
 import java.util.List;
 import java.util.Map;
 
@@ -94,24 +95,32 @@ public class BpmProcessFavoriteService {
     public List<FavoriteItemDTO> frequentlyStarted(int limit) {
         List<Map<String, Object>> rows = instanceMapper.selectMaps(
                 Wrappers.query(BpmInstance.class)
-                        .select("process_def_key as processKey", "count(*) as cnt")
+                        .select('process_def_key as "processKey"', "count(*) as cnt")
                         .groupBy("process_def_key")
                         .orderByDesc("cnt")
                         .orderByAsc("process_def_key")
                         .last("limit " + capped(limit)));
-        return toItems(rows.stream().map(r -> String.valueOf(r.get("processKey"))).toList());
+        return toItems(rows.stream()
+                .map(r -> r.get("processKey"))
+                .filter(Objects::nonNull)
+                .map(String::valueOf)
+                .toList());
     }
 
     /** 最近使用：本人最近发起时间倒序 TopN。 */
     public List<FavoriteItemDTO> recentlyUsed(int limit) {
         List<Map<String, Object>> rows = instanceMapper.selectMaps(
                 Wrappers.query(BpmInstance.class)
-                        .select("process_def_key as processKey", "max(create_time) as lastTime")
+                        .select('process_def_key as "processKey"', "max(create_time) as lastTime")
                         .eq("initiator_id", currentUserId())
                         .groupBy("process_def_key")
                         .orderByDesc("lastTime")
                         .last("limit " + capped(limit)));
-        return toItems(rows.stream().map(r -> String.valueOf(r.get("processKey"))).toList());
+        return toItems(rows.stream()
+                .map(r -> r.get("processKey"))
+                .filter(Objects::nonNull)
+                .map(String::valueOf)
+                .toList());
     }
 
     private int capped(int limit) {
