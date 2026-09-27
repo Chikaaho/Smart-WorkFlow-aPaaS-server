@@ -98,6 +98,7 @@ public class SystemAutoConfiguration {
             com.sw.ck.common.crypto.AesGcmCipher ssoCipher,
             com.sw.ck.system.sso.SsoCallbackPolicy ssoCallbackPolicy,
             com.sw.ck.system.service.TenantValidityService tenantValidityService,
+            com.sw.ck.system.mapper.SysTenantMapper tenantMapper,
             org.springframework.transaction.PlatformTransactionManager transactionManager,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
             com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService,
@@ -109,7 +110,7 @@ public class SystemAutoConfiguration {
                         new com.sw.ck.system.sso.WecomSsoProviderClient(),
                         new com.sw.ck.system.sso.FeishuSsoProviderClient(),
                         new com.sw.ck.system.sso.DingtalkSsoProviderClient()),
-                ssoCipher, ssoCallbackPolicy, tenantValidityService, transactionManager,
+                ssoCipher, ssoCallbackPolicy, tenantValidityService, tenantMapper, transactionManager,
                 loginUserCacheService, refreshTokenService);
     }
 }

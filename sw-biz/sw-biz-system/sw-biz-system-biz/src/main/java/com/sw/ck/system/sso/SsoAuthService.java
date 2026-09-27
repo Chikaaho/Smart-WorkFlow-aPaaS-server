@@ -8,7 +8,9 @@ import com.sw.ck.system.entity.SsoAuthState;
 import com.sw.ck.system.entity.SsoProviderConfig;
 import com.sw.ck.system.entity.SsoUserBinding;
 import com.sw.ck.system.mapper.SsoAuditRecordMapper;
+import com.sw.ck.system.entity.SysTenant;
 import com.sw.ck.system.mapper.SsoAuthStateMapper;
+import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SsoProviderConfigMapper;
 import com.sw.ck.system.mapper.SsoUserBindingMapper;
 import com.sw.ck.system.security.SystemErrorKeys;
@@ -61,6 +63,14 @@ public class SsoAuthService {
     private static final String SSO_TENANT_REQUIRED_MSG =
             "请先选择要登录的企业，再重新发起第三方登录";
 
+    /** 登录前发起按名称解析零命中（V012-BUG-019）。 */
+    private static final String SSO_TENANT_NOT_FOUND_MSG =
+            "未找到名称完全一致的生效企业，请核对租户名称后重试";
+
+    /** 登录前发起按名称解析多行命中：不任意选中，交由管理员处理。 */
+    private static final String SSO_TENANT_AMBIGUOUS_MSG =
+            "该企业名称存在多个匹配，请联系管理员确认后重试";
+
     /** 登录态缺失：需要重新登录。 */
     private static final String SESSION_REQUIRED_MSG =
             "登录状态已失效，请重新登录";
@@ -80,6 +90,7 @@ public class SsoAuthService {
     private final AesGcmCipher cipher;
     private final SsoCallbackPolicy callbackPolicy;
     private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
+    private final SysTenantMapper tenantMapper;
     private final org.springframework.transaction.support.TransactionTemplate consumeTxTemplate;
     private final com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService;
     private final com.sw.ck.system.service.RefreshTokenService refreshTokenService;
@@ -94,6 +105,7 @@ public class SsoAuthService {
                           AesGcmCipher cipher,
                           SsoCallbackPolicy callbackPolicy,
                           com.sw.ck.system.service.TenantValidityService tenantValidityService,
+                          SysTenantMapper tenantMapper,
                           org.springframework.transaction.PlatformTransactionManager transactionManager,
                           @org.springframework.beans.factory.annotation.Autowired(required = false)
                           com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService,
@@ -118,6 +130,7 @@ public class SsoAuthService {
         this.cipher = cipher;
         this.callbackPolicy = callbackPolicy;
         this.tenantValidityService = tenantValidityService;
+        this.tenantMapper = tenantMapper;
         this.loginUserCacheService = loginUserCacheService;
         this.refreshTokenService = refreshTokenService;
     }
@@ -285,6 +298,46 @@ public class SsoAuthService {
      * LoginUser/角色/数据范围。租户无效或 Provider 未启用均 fail closed。
      * </p>
      */
+    /**
+     * 登录前发起按租户名称精确解析（V012-BUG-019）：名称完全一致且唯一才返回租户 ID。
+     * <p>
+     * 零命中 → {@code sso_tenant_not_found}；多行命中 → {@code sso_tenant_ambiguous}
+     * （名称歧义不任意选中）；空白 → {@code sso_tenant_required}。停用/过期等
+     * 有效性仍由 {@link #startAuthorizeLogin(String, Long, String)} 的既有校验承担。
+     * 查询发生在免认证路径，挂起租户拦截器（sys_tenant 为全局表）。
+     * </p>
+     */
+    @Transactional
+    public Long resolveTenantIdByNameExact(String tenantName) {
+        if (tenantName == null || tenantName.isBlank()) {
+            throw new SsoRejectionException(SystemErrorKeys.SSO_TENANT_REQUIRED, SSO_TENANT_REQUIRED_MSG);
+        }
+        String name = tenantName.trim();
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            List<SysTenant> hits = tenantMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<SysTenant>lambdaQuery()
+                            .eq(SysTenant::getName, name));
+            if (hits.isEmpty()) {
+                throw new SsoRejectionException(SystemErrorKeys.SSO_TENANT_NOT_FOUND, SSO_TENANT_NOT_FOUND_MSG);
+            }
+            if (hits.size() > 1) {
+                log.warn("SSO 租户名称解析命中多行: count={}", hits.size());
+                throw new SsoRejectionException(SystemErrorKeys.SSO_TENANT_AMBIGUOUS, SSO_TENANT_AMBIGUOUS_MSG);
+            }
+            return hits.get(0).getId();
+        }
+    }
+
+    /**
+     * 登录前安全发起——租户名称入口（V012-BUG-019）：登录页只提交租户名称，
+     * 服务端按名称精确解析为唯一租户后走既有 ID 发起链。
+     */
+    @Transactional
+    public AuthorizeStart startAuthorizeLogin(String provider, String tenantName, String redirectPath) {
+        return startAuthorizeLogin(provider, resolveTenantIdByNameExact(tenantName), redirectPath);
+    }
+
     @Transactional
     public AuthorizeStart startAuthorizeLogin(String provider, Long tenantId, String redirectPath) {
         requireProvider(provider);

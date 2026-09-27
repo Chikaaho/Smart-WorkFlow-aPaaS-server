@@ -84,15 +84,16 @@ public class SsoAuthController {
 
     /**
      * 登录前安全授权发起（免认证白名单；I5 复验 G5）。
-     * 无既有登录态时以显式 tenant 参数确定租户：服务端校验租户有效性与该租户
-     * Provider 配置启用后才签发 state；不授予任何权限。
+     * V012-BUG-019：登录页只提交租户名称（tenantName），服务端按名称精确解析为
+     * 唯一租户（零命中/多行命中/停用均 fail closed），并校验该租户 Provider 配置
+     * 启用后才签发 state；不授予任何权限。不再接受手填数值租户 ID。
      */
     @GetMapping("/{provider}/authorize-login")
     public R<Map<String, Object>> authorizeLogin(@PathVariable("provider") String provider,
-                                                 @RequestParam(value = "tenant", required = false) Long tenant,
+                                                 @RequestParam(value = "tenantName", required = false) String tenantName,
                                                  @RequestParam(value = "redirect", required = false) String redirect) {
         try {
-            SsoAuthService.AuthorizeStart start = ssoAuthService.startAuthorizeLogin(provider, tenant, redirect);
+            SsoAuthService.AuthorizeStart start = ssoAuthService.startAuthorizeLogin(provider, tenantName, redirect);
             return R.ok(Map.of(
                     "authorizeUrl", start.authorizeUrl(),
                     "state", start.state()));

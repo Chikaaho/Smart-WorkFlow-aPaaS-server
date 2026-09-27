@@ -3,8 +3,10 @@ package com.sw.ck.system.controller;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.impl.UserFacadeImpl;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,7 +28,35 @@ import static org.mockito.Mockito.*;
 class UserControllerTest {
 
     private final SysUserService sysUserService = mock(SysUserService.class);
-    private final UserController controller = new UserController(sysUserService);
+    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
+            mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+    private final UserController controller = new UserController(sysUserService, userQueryFacade);
+
+    // ==================== GET /options — 选择器候选（V012-BUG-019） ====================
+
+    @Test
+    @DisplayName("options → 命中返回最小展示字段列表，limit 封顶 200")
+    void options_shouldReturnMinimalOptions() {
+        UserOptionDTO opt = new UserOptionDTO(1L, "admin", "系统管理员");
+        when(userQueryFacade.searchActiveUsers(eq("系统"), eq(200)))
+                .thenReturn(java.util.Optional.of(List.of(opt)));
+
+        var resp = controller.options("系统", 500);
+
+        assertThat(resp.getData()).hasSize(1);
+        assertThat(resp.getData().get(0).getId()).isEqualTo(1L);
+        assertThat(resp.getData().get(0).getRealName()).isEqualTo("系统管理员");
+    }
+
+    @Test
+    @DisplayName("options → 门面返回 empty（无租户上下文）时回退空列表而非失败")
+    void options_shouldFallBackToEmptyOnEmptyFacade() {
+        when(userQueryFacade.searchActiveUsers(any(), anyInt())).thenReturn(java.util.Optional.empty());
+
+        var resp = controller.options(null, 50);
+
+        assertThat(resp.getData()).isEmpty();
+    }
 
     // ==================== POST /page — 分页 ====================
 

@@ -3,6 +3,8 @@ package com.sw.ck.system.controller;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.system.api.user.UserOptionDTO;
+import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.UserPageQuery;
@@ -25,9 +27,24 @@ import java.util.List;
 public class UserController {
 
     private final SysUserService sysUserService;
+    private final UserQueryFacade userQueryFacade;
 
-    public UserController(SysUserService sysUserService) {
+    public UserController(SysUserService sysUserService, UserQueryFacade userQueryFacade) {
         this.sysUserService = sysUserService;
+        this.userQueryFacade = userQueryFacade;
+    }
+
+    /**
+     * 用户候选选项（V012-BUG-019 选择器数据源）：登录即可调用。
+     * 仅返回当前租户启用用户的最小展示字段（id/username/realName），
+     * 经 {@link UserQueryFacade#searchActiveUsers} 按关键字模糊匹配、租户内解析；
+     * 不暴露角色/部门/联系方式等敏感字段。limit 上限 200。
+     */
+    @GetMapping("/options")
+    public R<List<UserOptionDTO>> options(@RequestParam(value = "keyword", required = false) String keyword,
+                                          @RequestParam(value = "limit", defaultValue = "50") int limit) {
+        int capped = Math.min(Math.max(limit, 1), 200);
+        return R.ok(userQueryFacade.searchActiveUsers(keyword, capped).orElse(List.of()));
     }
 
     /** 内嵌 DTO：用户表单（含明文密码） */

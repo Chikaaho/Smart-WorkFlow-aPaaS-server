@@ -54,7 +54,8 @@ class SsoAuthServiceTest {
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
                 new SsoCallbackPolicy("", List.of()),
-                tenantValidityService, noopTxManager(), null, null);
+                tenantValidityService,
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
         Mockito.when(stateMapper.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any()))
                 .thenAnswer(inv -> {
                     SsoAuthState s = inv.getArgument(0);
@@ -249,13 +250,119 @@ class SsoAuthServiceTest {
                         new DingtalkSsoProviderClient()),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                policy, validity, noopTxManager(), null, null);
+                policy, validity,
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+    }
+
+    private SsoAuthService serviceWithTenantMapper(com.sw.ck.system.mapper.SysTenantMapper tenantMapper) {
+        return new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
+                Mockito.mock(SysUserService.class),
+                List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
+                        new DingtalkSsoProviderClient()),
+                new com.sw.ck.common.crypto.AesGcmCipher(
+                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCallbackPolicy("", List.of()), validService(),
+                tenantMapper, noopTxManager(), null, null);
+    }
+
+    private com.sw.ck.system.service.TenantValidityService validService() {
+        com.sw.ck.system.service.TenantValidityService v =
+                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doNothing().when(v).requireValid(org.mockito.ArgumentMatchers.any());
+        return v;
+    }
+
+    @Test
+    @DisplayName("V012-BUG-019 名称解析：空白 → sso_tenant_required")
+    void resolveTenantName_blank_shouldReject() {
+        assertThatThrownBy(() -> service.startAuthorizeLogin("WECOM", "   ", null))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_REQUIRED);
+    }
+
+    @Test
+    @DisplayName("V012-BUG-019 名称解析：唯一命中 → 解析为该租户并按既有链发起（trim 生效）")
+    void resolveTenantName_uniqueHit_shouldStartWithResolvedTenant() {
+        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
+        com.sw.ck.system.entity.SysTenant t = new com.sw.ck.system.entity.SysTenant();
+        t.setId(100L);
+        t.setName("演示企业");
+        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(t));
+        SsoAuthService svc = serviceWithTenantMapper(tenantMapper);
+
+        SsoAuthService.AuthorizeStart start = svc.startAuthorizeLogin("WECOM", " 演示企业 ", "/workspace");
+
+        assertThat(start.authorizeUrl()).contains("appid=ww-test-corp");
+        Mockito.verify(stateMapper).insert(org.mockito.ArgumentMatchers.<SsoAuthState>argThat(s ->
+                s.getTenantId() != null && s.getTenantId() == 100L && s.getConsumed() == 0));
+    }
+
+    @Test
+    @DisplayName("V012-BUG-019 名称解析：零命中 → sso_tenant_not_found，不签发 state")
+    void resolveTenantName_noHit_shouldReject() {
+        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
+        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+        SsoAuthService svc = serviceWithTenantMapper(tenantMapper);
+
+        assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "不存在企业", null))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_NOT_FOUND);
+        Mockito.verify(stateMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+    }
+
+    @Test
+    @DisplayName("V012-BUG-019 名称解析：多行命中 → sso_tenant_ambiguous，不任意选中")
+    void resolveTenantName_ambiguous_shouldReject() {
+        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
+        com.sw.ck.system.entity.SysTenant a = new com.sw.ck.system.entity.SysTenant();
+        a.setId(1L); a.setName("同名企业");
+        com.sw.ck.system.entity.SysTenant b = new com.sw.ck.system.entity.SysTenant();
+        b.setId(2L); b.setName("同名企业");
+        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(a, b));
+        SsoAuthService svc = serviceWithTenantMapper(tenantMapper);
+
+        assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "同名企业", null))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_AMBIGUOUS);
+        Mockito.verify(stateMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+    }
+
+    @Test
+    @DisplayName("V012-BUG-019 名称解析：命中但租户停用/无效 → 按既有有效性校验拒绝")
+    void resolveTenantName_invalidTenant_shouldReject() {
+        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
+        com.sw.ck.system.entity.SysTenant t = new com.sw.ck.system.entity.SysTenant();
+        t.setId(777L); t.setName("停用企业");
+        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(t));
+        com.sw.ck.system.service.TenantValidityService invalid =
+                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doThrow(new IllegalStateException("租户无效")).when(invalid).requireValid(777L);
+        SsoAuthService svc = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
+                Mockito.mock(SysUserService.class),
+                List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
+                        new DingtalkSsoProviderClient()),
+                new com.sw.ck.common.crypto.AesGcmCipher(
+                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCallbackPolicy("", List.of()), invalid,
+                tenantMapper, noopTxManager(), null, null);
+
+        assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "停用企业", null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("租户无效");
+        Mockito.verify(stateMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
     @DisplayName("登录前发起：未指定租户 → fail closed")
     void startAuthorizeLogin_withoutTenant_shouldReject() {
-        assertThatThrownBy(() -> service.startAuthorizeLogin("WECOM", null, null))
+        assertThatThrownBy(() -> service.startAuthorizeLogin("WECOM", (Long) null, null))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_REQUIRED);
     }
@@ -377,7 +484,8 @@ class SsoAuthServiceTest {
                 Mockito.mock(SysUserService.class), List.of(failing),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                new SsoCallbackPolicy("", List.of()), mockedValidity(), noopTxManager(), null, null);
+                new SsoCallbackPolicy("", List.of()), mockedValidity(),
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
         SsoAuthState fresh = new SsoAuthState();
         fresh.setId(7L); fresh.setProvider("WECOM"); fresh.setConsumed(0); fresh.setTenantId(1L);
         fresh.setExpireAt(LocalDateTime.now().plusSeconds(60));

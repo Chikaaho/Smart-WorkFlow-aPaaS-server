@@ -30,6 +30,12 @@ public final class SystemErrorKeys {
     /** 登录前发起未显式指定租户（请求参数问题，可自行修正）。 */
     public static final String SSO_TENANT_REQUIRED = "system.sso_tenant_required";
 
+    /** 登录前发起按租户名称精确解析零命中（V012-BUG-019：不再接受手填数值 ID）。 */
+    public static final String SSO_TENANT_NOT_FOUND = "system.sso_tenant_not_found";
+
+    /** 登录前发起按租户名称精确解析命中多行（名称歧义，不任意选中）。 */
+    public static final String SSO_TENANT_AMBIGUOUS = "system.sso_tenant_ambiguous";
+
     /** 登录/绑定票据无效、已过期或已被消费。 */
     public static final String SSO_TICKET_INVALID = "system.sso_ticket_invalid";
 
