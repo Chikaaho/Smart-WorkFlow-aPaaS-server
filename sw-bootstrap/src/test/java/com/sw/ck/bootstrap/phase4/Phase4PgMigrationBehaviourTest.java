@@ -39,7 +39,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
     private static final String SCHEMA = "p4_migration";
 
     @Test
-    @DisplayName("G5-1 全链 clean migrate 到 V96：终点版本、新表、新列与索引齐备")
+    @DisplayName("G5-1 全链 clean migrate 到链尾（V98）：终点版本、V96 新表、新列与索引齐备")
     void cleanMigrateReachesV96WithNewStructures() throws Exception {
         ensureEvidenceDatabase();
         Flyway flyway = flywayTargeting(null, false);
@@ -47,7 +47,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         MigrateResult result = flyway.migrate();
         assertThat(result.success).isTrue();
         String version = latestVersion();
-        assertThat(version).isEqualTo("96");
+        assertThat(version).isEqualTo("101");
         assertThat(tableExists("sw_openapi_callback_task")).isTrue();
         assertThat(indexExists("uk_sw_openapi_cb_task")).isTrue();
         assertThat(indexExists("idx_sw_openapi_cb_task_due")).isTrue();
@@ -61,7 +61,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
     }
 
     @Test
-    @DisplayName("G5-2 V95 → V96 升级：既有记录保留、新列按默认值落地、唯一索引真实生效")
+    @DisplayName("G5-2 V95 → 链尾（V98）升级：既有记录保留、V96 新列按默认值落地、唯一索引真实生效")
     void upgradeFromV95KeepsExistingRowsAndAppliesNewDefaults() throws Exception {
         Flyway v95 = flywayTargeting("95", false);
         v95.clean();
@@ -84,7 +84,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
 
         MigrateResult upgrade = flywayTargeting(null, false).migrate();
         assertThat(upgrade.success).isTrue();
-        assertThat(latestVersion()).isEqualTo("96");
+        assertThat(latestVersion()).isEqualTo("101");
 
         assertThat(countRows("select count(*) from sw_iot_process_trigger where id in (96001, 96002)"))
                 .as("升级不得丢弃既有记录").isEqualTo(2L);
@@ -121,7 +121,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
     @Test
     @DisplayName("G5-3 迁移失败边界：失败被记录、repair 后可继续到终点，既有数据不丢")
     void failedMigrationIsRecordedAndRepairableWithoutDataLoss() throws Exception {
-        Flyway base = flywayTargeting("95", false);
+        Flyway base = flywayTargeting("100", false);
         base.clean();
         base.migrate();
         try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
@@ -131,7 +131,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         }
 
         Path brokenLocation = Files.createTempDirectory("p4-broken-migration");
-        Files.writeString(brokenLocation.resolve("V97__p4_evidence_broken.sql"),
+        Files.writeString(brokenLocation.resolve("V1001__p4_evidence_broken.sql"),
                 "insert into p4_table_that_does_not_exist (id) values (1);\n", StandardCharsets.UTF_8);
         String[] withBroken = concat(APP_LOCATIONS, "filesystem:" + brokenLocation.toAbsolutePath());
 
@@ -146,10 +146,10 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         // 因此失败迁移被整体回滚（Flyway 原始日志为 "Changes successfully rolled back"），
         // 既不留 failed 历史行，也不推进版本号——与非事务型 DDL 方言需要 repair 的边界不同。
         long failedRecords = countRows("select count(*) from flyway_schema_history where success = false");
-        // 失败点之前已就绪的 V96 正常应用；失败点 V97 整体回滚，版本停在最后一个成功迁移
-        assertThat(latestVersion()).as("失败迁移不得推进到失败版本").isEqualTo("96");
-        assertThat(countRows("select count(*) from flyway_schema_history where version = '97'"))
-                .as("事务型方言失败后不留下 97 号历史行").isZero();
+        // 失败点之前已就绪的 V97—V101 正常应用；失败点 V1001 整体回滚，版本停在最后一个成功迁移
+        assertThat(latestVersion()).as("失败迁移不得推进到失败版本").isEqualTo("101");
+        assertThat(countRows("select count(*) from flyway_schema_history where version = '1001'"))
+                .as("事务型方言失败后不留下 1001 号历史行").isZero();
         assertThat(failedRecords).as("事务型 DDL 下失败迁移整体回滚，无残留失败行").isZero();
         assertThat(countRows("select count(*) from sw_iot_process_trigger where id = 96201"))
                 .as("失败迁移不得清除既有数据").isEqualTo(1L);
@@ -162,7 +162,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         recovered.repair();
         MigrateResult afterRepair = recovered.migrate();
         assertThat(afterRepair.success).isTrue();
-        assertThat(latestVersion()).isEqualTo("96");
+        assertThat(latestVersion()).isEqualTo("101");
         assertThat(countRows("select count(*) from sw_iot_process_trigger where id = 96201"))
                 .as("恢复后既有数据仍必须存在").isEqualTo(1L);
         assertThat(tableExists("sw_openapi_callback_task")).isTrue();

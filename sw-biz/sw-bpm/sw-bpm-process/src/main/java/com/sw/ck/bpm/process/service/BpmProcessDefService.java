@@ -74,6 +74,15 @@ public interface BpmProcessDefService {
     void saveDraftGraph(Long id, String graphJson);
 
     /**
+     * 更新主题生成规则（V012-BUG-010，管理流程系统级设置，必填）。
+     * 规则合法性（非空、占位符白名单）由调用方校验后传入；id 不存在抛出业务异常。
+     */
+    void updateThemeRule(Long id, String themeRule);
+
+    /** 读取主题生成规则；定义不存在返回 null。 */
+    String getThemeRule(Long id);
+
+    /**
      * 登记模板溯源关系（I4 §3.2）：仅 DRAFT 且未登记过时写入，历史与已发布定义不改写。
      *
      * @param id             流程定义 ID

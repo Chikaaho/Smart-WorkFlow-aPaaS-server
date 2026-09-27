@@ -43,6 +43,7 @@ public class BpmProcessDefController {
     private final ObjectMapper objectMapper;
     private final UserQueryFacade userQueryFacade;
     private final BpmNodeRegistry nodeRegistry;
+    private final com.sw.ck.bpm.process.service.ProcessThemeService processThemeService;
 
     public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
                                    ObjectMapper objectMapper,
@@ -54,11 +55,13 @@ public class BpmProcessDefController {
     public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
                                    ObjectMapper objectMapper,
                                    UserQueryFacade userQueryFacade,
-                                   BpmNodeRegistry nodeRegistry) {
+                                   BpmNodeRegistry nodeRegistry,
+                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService) {
         this.bpmProcessDefService = bpmProcessDefService;
         this.objectMapper = objectMapper;
         this.userQueryFacade = userQueryFacade;
         this.nodeRegistry = nodeRegistry;
+        this.processThemeService = processThemeService;
     }
 
     /**
@@ -115,6 +118,31 @@ public class BpmProcessDefController {
      */
     @Transactional
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
+    /** 读取主题生成规则（V012-BUG-010）。 */
+    @GetMapping("/{id}/theme-rule")
+    public R<String> getThemeRule(@PathVariable Long id) {
+        return R.ok(bpmProcessDefService.getThemeRule(id));
+    }
+
+    /**
+     * 更新主题生成规则（管理流程系统级设置，必填）。
+     * 合法性：非空 + 占位符白名单 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}；
+     * 非法返回 400 可读消息，不落库。
+     */
+    @PutMapping("/{id}/theme-rule")
+    @PreAuthorize("@ss.hasPermi('workflow:catalog:manage')")
+    public R<Void> updateThemeRule(@PathVariable Long id,
+                                   @RequestBody ThemeRuleRequest request) {
+        String rule = request == null ? null : request.getThemeRule();
+        try {
+            processThemeService.validateRule(rule);
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        }
+        bpmProcessDefService.updateThemeRule(id, rule);
+        return R.ok(null);
+    }
+
     @PutMapping("/{id}/graph")
     public R<Void> saveDraftGraph(@PathVariable Long id,
                                   @RequestBody ProcessGraph graph) {
@@ -365,4 +393,11 @@ public class BpmProcessDefController {
             throw new RuntimeException("Failed to serialize graph", e);
         }
     }
+}
+
+/** 主题规则更新请求体（V012-BUG-010）。 */
+@Data
+class ThemeRuleRequest {
+    /** 主题生成规则（必填，占位符白名单校验） */
+    private String themeRule;
 }

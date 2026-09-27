@@ -64,8 +64,8 @@ class I6G7UpgradeDrillH2Test {
                 .load();
         var r90 = chain.migrate();
         assertTrue(r90.success, "基线 → V95 升级应成功");
-        assertEquals("96", chain.info().current().getVersion().getVersion(),
-                "升级终点须为 V95");
+        assertEquals("101", chain.info().current().getVersion().getVersion(),
+                "升级终点须为 V101（V012-BUG-010 主题规则 bpm 目录迁移）");
 
         // ---------- 4. 同一 ID 回读：行数与语义一致，增量列可解释 ----------
         try (Connection conn = DriverManager.getConnection(DB, USER, PASSWORD)) {

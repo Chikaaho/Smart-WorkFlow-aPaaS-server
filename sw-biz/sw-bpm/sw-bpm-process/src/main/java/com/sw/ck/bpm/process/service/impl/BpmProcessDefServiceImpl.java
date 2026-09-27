@@ -626,6 +626,24 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
 
     @Override
     @Transactional
+    public void updateThemeRule(Long id, String themeRule) {
+        BpmProcessDef def = mapper.selectById(id);
+        if (def == null) {
+            throw new IllegalArgumentException("流程定义不存在: id=" + id);
+        }
+        def.setThemeRule(themeRule);
+        def.setUpdateTime(java.time.LocalDateTime.now());
+        mapper.updateById(def);
+    }
+
+    @Override
+    public String getThemeRule(Long id) {
+        BpmProcessDef def = mapper.selectById(id);
+        return def == null ? null : def.getThemeRule();
+    }
+
+    @Override
+    @Transactional
     public BpmProcessDef changeIotAccess(Long id, boolean flag) {
         BpmProcessDef def = mapper.selectById(id);
         if (def == null) {

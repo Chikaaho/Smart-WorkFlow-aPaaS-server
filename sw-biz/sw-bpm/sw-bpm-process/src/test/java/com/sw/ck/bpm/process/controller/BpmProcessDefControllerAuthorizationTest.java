@@ -154,7 +154,8 @@ class BpmProcessDefControllerAuthorizationTest {
             org.mockito.Mockito.when(registry.capabilities())
                     .thenReturn(java.util.Optional.of(List.of()));
             return new BpmProcessDefController(mock(BpmProcessDefService.class),
-                    new ObjectMapper(), mock(UserQueryFacade.class), registry);
+                    new ObjectMapper(), mock(UserQueryFacade.class), registry,
+                    mock(com.sw.ck.bpm.process.service.ProcessThemeService.class));
         }
 
         @Bean("ss")
