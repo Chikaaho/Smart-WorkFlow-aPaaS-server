@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -48,7 +49,7 @@ public class BpmProcessDefController {
     public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
                                    ObjectMapper objectMapper,
                                    UserQueryFacade userQueryFacade) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, null);
+        this(bpmProcessDefService, objectMapper, userQueryFacade, null, null);
     }
 
     @Autowired
