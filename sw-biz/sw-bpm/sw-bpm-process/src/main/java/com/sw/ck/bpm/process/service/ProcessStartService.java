@@ -71,6 +71,9 @@ public class ProcessStartService {
     /** 可选：发起前置校验发起人在本租户有效且启用（I1）。 */
     private final UserQueryFacade userQueryFacade;
 
+    /** 可选：主题生成规则服务（V012-BUG-010；缺省时不生成主题）。 */
+    private final ProcessThemeService processThemeService;
+
     public ProcessStartService(BpmFormBindingService bindingService,
                                 ApproverResolver approverResolver,
                                 BpmRuntimeFacade bpmRuntimeFacade,
@@ -78,7 +81,7 @@ public class ProcessStartService {
                                 BpmInstanceService bpmInstanceService,
                                 DomainEventPublisher domainEventPublisher) {
         this(bindingService, approverResolver, bpmRuntimeFacade, bpmTaskFacade,
-                bpmInstanceService, domainEventPublisher, null);
+                bpmInstanceService, domainEventPublisher, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -88,7 +91,8 @@ public class ProcessStartService {
                                 BpmTaskFacade bpmTaskFacade,
                                 BpmInstanceService bpmInstanceService,
                                 DomainEventPublisher domainEventPublisher,
-                                ObjectProvider<UserQueryFacade> userQueryFacade) {
+                                ObjectProvider<UserQueryFacade> userQueryFacade,
+                                ProcessThemeService processThemeService) {
         this.bindingService = bindingService;
         this.approverResolver = approverResolver;
         this.bpmRuntimeFacade = bpmRuntimeFacade;
@@ -96,6 +100,7 @@ public class ProcessStartService {
         this.bpmInstanceService = bpmInstanceService;
         this.domainEventPublisher = domainEventPublisher;
         this.userQueryFacade = userQueryFacade == null ? null : userQueryFacade.getIfAvailable();
+        this.processThemeService = processThemeService;
     }
 
     /**
@@ -197,6 +202,12 @@ public class ProcessStartService {
         BpmProcessDef startedDef = bpmProcessDefServiceByName(binding);
         if (startedDef != null && startedDef.getPublishedVersion() != null) {
             instance.setDefVersion(startedDef.getPublishedVersion());
+        }
+        // V012-BUG-010：按流程主题生成规则生成实例主题（无规则回退定义名，历史兼容）
+        if (processThemeService != null) {
+            instance.setTheme(processThemeService.generate(binding.getProcessDefKey(),
+                    startedDef == null ? null : startedDef.getThemeRule(),
+                    startedDef == null ? binding.getProcessDefKey() : startedDef.getName()));
         }
         // Flowable 可能在 startProcess 返回前就完成无人工节点的流程。此时若无条件写
         // RUNNING，会产生“引擎已到 End、业务记录仍运行中”的假终态；沿用审批完成路径

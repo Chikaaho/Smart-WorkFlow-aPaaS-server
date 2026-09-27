@@ -62,4 +62,8 @@ public class BpmInstance extends BaseEntity {
      */
     @TableField("def_version")
     private Integer defVersion;
+
+    /** 实例主题（V012-BUG-010）：发起时按流程主题规则生成；历史实例为空。 */
+    @TableField("theme")
+    private String theme;
 }

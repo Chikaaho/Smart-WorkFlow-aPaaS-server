@@ -67,6 +67,14 @@ public class BpmProcessDef extends BaseEntity {
     private String graphJson;
 
     /**
+     * 主题生成规则（V012-BUG-010，流程系统级设置，管理流程必填）：
+     * 字面量 + 占位符 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}；
+     * 发起时生成实例主题，{SEQ} 为每流程自增序号（事务内行锁，失败回滚不跳号）。
+     */
+    @TableField("theme_rule")
+    private String themeRule;
+
+    /**
      * 事项归属分类（v0.0.2 流程中心；NULL=未分类兜底）。
      */
     @TableField("category_id")

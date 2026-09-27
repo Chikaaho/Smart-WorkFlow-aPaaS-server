@@ -64,6 +64,9 @@ public class TaskDetailRespDTO {
     /** 当前人工节点配置的低代码审批意见表单；无配置时为空对象。 */
     private Map<String, Object> opinionForm;
 
+    /** 实例主题（V012-BUG-010） */
+    private String theme;
+
     /** 该流程实例的审批历史（按完成时间倒序） */
     private List<ApprovalHistoryItemDTO> approvalHistory;
 }

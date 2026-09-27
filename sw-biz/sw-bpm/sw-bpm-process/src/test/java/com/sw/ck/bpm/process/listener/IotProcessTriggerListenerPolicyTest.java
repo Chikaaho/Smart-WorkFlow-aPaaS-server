@@ -71,8 +71,10 @@ class IotProcessTriggerListenerPolicyTest {
         when(txManager.getTransaction(any(org.springframework.transaction.TransactionDefinition.class)))
                 .thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
         ObjectProvider<org.springframework.transaction.PlatformTransactionManager> txProvider = provider(txManager);
+        ObjectProvider<com.sw.ck.bpm.process.service.ProcessThemeService> themeProvider =
+                provider(null);
         new IotProcessTriggerListener(runtimeProvider, processProvider, triggerProvider,
-                instanceProvider, taskProvider, deviceProvider, deviceQueryProvider, txProvider)
+                instanceProvider, themeProvider, taskProvider, deviceProvider, deviceQueryProvider, txProvider)
                 .onIotTrigger(event);
 
         if (expectedProcessId != null || expectedError != null) {

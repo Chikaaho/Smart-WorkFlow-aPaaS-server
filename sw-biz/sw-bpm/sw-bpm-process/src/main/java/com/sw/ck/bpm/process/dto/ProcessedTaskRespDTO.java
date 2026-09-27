@@ -36,4 +36,7 @@ public class ProcessedTaskRespDTO {
 
     /** 任务完成时间 */
     private LocalDateTime endTime;
+
+    /** 实例主题（V012-BUG-010） */
+    private String theme;
 }

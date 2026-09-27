@@ -6,6 +6,7 @@ import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
@@ -45,6 +46,7 @@ public class IotProcessTriggerListener {
     private final ObjectProvider<com.sw.ck.iot.api.IotDeviceFacade> deviceFacadeProvider;
     private final ObjectProvider<com.sw.ck.iot.api.IotDeviceQueryFacade> deviceQueryFacadeProvider;
     private final ObjectProvider<BpmInstanceService> instanceServiceProvider;
+    private final ObjectProvider<ProcessThemeService> themeServiceProvider;
     private final ObjectProvider<BpmTaskFacade> taskFacadeProvider;
     /** G3b：流程发起与业务实例记录必须落在同一提交边界（引擎命令按 REQUIRED 加入本事务）。 */
     private final ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactionManagerProvider;
@@ -53,6 +55,7 @@ public class IotProcessTriggerListener {
                                      ObjectProvider<BpmProcessDefService> processDefServiceProvider,
                                      ObjectProvider<IotProcessTriggerFacade> triggerFacadeProvider,
                                      ObjectProvider<BpmInstanceService> instanceServiceProvider,
+                                     ObjectProvider<com.sw.ck.bpm.process.service.ProcessThemeService> themeServiceProvider,
                                      ObjectProvider<BpmTaskFacade> taskFacadeProvider,
                                      ObjectProvider<com.sw.ck.iot.api.IotDeviceFacade> deviceFacadeProvider,
                                      ObjectProvider<com.sw.ck.iot.api.IotDeviceQueryFacade> deviceQueryFacadeProvider,
@@ -62,6 +65,7 @@ public class IotProcessTriggerListener {
         this.processDefServiceProvider = processDefServiceProvider;
         this.triggerFacadeProvider = triggerFacadeProvider;
         this.instanceServiceProvider = instanceServiceProvider;
+        this.themeServiceProvider = themeServiceProvider;
         this.taskFacadeProvider = taskFacadeProvider;
         this.deviceFacadeProvider = deviceFacadeProvider;
         this.deviceQueryFacadeProvider = deviceQueryFacadeProvider;
@@ -292,6 +296,11 @@ public class IotProcessTriggerListener {
                 instance.setProcessDefKey(event.getProcessTemplateKey());
                 instance.setBusinessKey("iot-" + event.getTriggerId());
                 instance.setFormKey(def.getFormKey());
+                // V012-BUG-010：IoT 发起同样按主题规则生成实例主题
+                if (themeServiceProvider.getIfAvailable() != null) {
+                    instance.setTheme(themeServiceProvider.getIfAvailable()
+                            .generate(event.getProcessTemplateKey(), def.getThemeRule(), def.getName()));
+                }
                 // 受控租户系统身份：IoT 自动发起不伪装自然人
                 instance.setInitiatorId(0L);
                 instance.setStatus(processActive

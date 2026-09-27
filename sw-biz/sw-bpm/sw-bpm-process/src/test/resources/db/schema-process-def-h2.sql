@@ -15,6 +15,7 @@ create table sw_bpm_process_def (
     deployment_id         varchar(64),
     process_definition_id varchar(64),
     graph_json            clob,
+    theme_rule            varchar(200),
     category_id           bigint,
     iot_access_enabled    boolean not null default false,
     iot_device_action_json text,

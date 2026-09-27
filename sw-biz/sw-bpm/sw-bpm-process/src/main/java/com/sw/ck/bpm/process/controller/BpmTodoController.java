@@ -239,6 +239,10 @@ public class BpmTodoController {
         bpmTaskFacade.getBusinessKey(task.getProcessInstanceId()).ifPresent(dto::setBusinessKey);
         dto.setAssignee(task.getAssignee());
 
+        // V012-BUG-010：详情回源实例主题
+        bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
+                .ifPresent(instance -> dto.setTheme(instance.getTheme()));
+
         // 发起人与流程实例状态
         bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .ifPresent(instance -> {
@@ -405,7 +409,20 @@ public class BpmTodoController {
             if (processDef != null) {
                 dto.setProcessName(processDef.getName());
             }
+            dto.setProcessDefKey(task.getProcessDefinitionKey());
         }
+
+        // V012-BUG-010：主题 + 申请人展示名（按实例回源；缺失降级为空，不阻断列表）
+        bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
+                .ifPresent(instance -> {
+                    dto.setTheme(instance.getTheme());
+                    if (instance.getInitiatorId() != null) {
+                        dto.setInitiatorName(taskActionService.resolveUserNames(
+                                java.util.Set.of(instance.getInitiatorId()))
+                                .get(instance.getInitiatorId()));
+                    }
+                });
+        dto.setFlowStatus("待审");
 
         return dto;
     }
@@ -436,6 +453,10 @@ public class BpmTodoController {
                 dto.setProcessName(processDef.getName());
             }
         }
+
+        // V012-BUG-010：已办列表回源实例主题
+        bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
+                .ifPresent(instance -> dto.setTheme(instance.getTheme()));
 
         return dto;
     }

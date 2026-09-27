@@ -55,7 +55,8 @@ class ProcessStartInitiatorValidationTest {
     private ProcessStartService serviceWithFacade() {
         when(userQueryFacadeProvider.getIfAvailable()).thenReturn(userQueryFacade);
         return new ProcessStartService(bindingService, approverResolver, bpmRuntimeFacade,
-                bpmTaskFacade, bpmInstanceService, domainEventPublisher, userQueryFacadeProvider);
+                bpmTaskFacade, bpmInstanceService, domainEventPublisher, userQueryFacadeProvider,
+                null);
     }
 
     @Test

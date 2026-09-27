@@ -31,4 +31,16 @@ public class TodoTaskRespDTO {
 
     /** 任务创建时间 */
     private LocalDateTime createTime;
+
+    /** 实例主题（V012-BUG-010：发起时按主题规则生成） */
+    private String theme;
+
+    /** 申请人展示名（V012-BUG-010 待办改版） */
+    private String initiatorName;
+
+    /** 流程状态（待办固定「待审」语义；供列表列展示） */
+    private String flowStatus;
+
+    /** 流程定义键（V012-BUG-010 定位分类用） */
+    private String processDefKey;
 }
