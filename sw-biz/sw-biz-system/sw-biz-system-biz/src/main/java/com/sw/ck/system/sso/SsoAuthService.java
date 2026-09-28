@@ -439,7 +439,8 @@ public class SsoAuthService {
         }
         String externalId;
         try {
-            externalId = clients.get(provider).exchangeExternalId(decryptConfig(config), code);
+            externalId = clients.get(provider).exchangeExternalId(decryptConfig(config), code,
+                    callbackPolicy.resolveCallbackUrl(provider));
         } catch (SsoProviderClient.SsoProviderException e) {
             auditDenial(provider, "LOGIN_FAILED", "FAILED", null, null, sha256(externalFingerprint(e)),
                     "provider exchange failed", stateRow.getTenantId());

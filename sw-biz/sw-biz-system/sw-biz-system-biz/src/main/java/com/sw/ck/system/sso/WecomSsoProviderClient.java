@@ -50,7 +50,7 @@ public class WecomSsoProviderClient implements SsoProviderClient {
     }
 
     @Override
-    public String exchangeExternalId(SsoProviderConfigView config, String code) {
+    public String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
         String accessToken = corpAccessToken(config);
         String url = USERINFO_URL + "?access_token=" + urlEncode(accessToken)
                 + "&code=" + urlEncode(code);

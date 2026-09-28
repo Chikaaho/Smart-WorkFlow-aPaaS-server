@@ -46,7 +46,7 @@ public class DingtalkSsoProviderClient implements SsoProviderClient {
     }
 
     @Override
-    public String exchangeExternalId(SsoProviderConfigView config, String code) {
+    public String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
         String userAccessToken;
         try (HttpResponse response = HttpRequest.post(USER_TOKEN_URL)
                 .header("Content-Type", "application/json; charset=utf-8")
