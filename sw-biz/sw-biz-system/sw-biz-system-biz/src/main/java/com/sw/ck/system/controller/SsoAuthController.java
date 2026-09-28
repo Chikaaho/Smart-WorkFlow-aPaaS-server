@@ -126,10 +126,11 @@ public class SsoAuthController {
             SsoAuthService.CallbackResult result = ssoAuthService.handleCallback(provider, code, state);
             if (result.bound()) {
                 String ticket = ticketStore.issue(result.userId(), result.tenantId());
-                String target = safeRedirect(result.redirectPath())
-                        + (safeRedirect(result.redirectPath()).contains("?") ? "&" : "?")
-                        + "sso_ticket=" + urlEncode(ticket);
-                return seeOther(callbackPolicy.resolveFrontendPath(target, "/workspace"));
+                // 统一经同源回跳页兑换票据（工作台等目标页不消费票据）；
+                // state.redirect_path 仅作为兑换后的最终去向（redirect 参数）
+                String target = "/sso/return?sso_ticket=" + urlEncode(ticket)
+                        + "&redirect=" + urlEncode(safeRedirect(result.redirectPath()));
+                return seeOther(callbackPolicy.resolveFrontendPath(target, "/sso/return"));
             }
             String ticket = ticketStore.issueCandidate(result.externalId(), result.tenantId(), result.provider());
             return seeOther(callbackPolicy.resolveFrontendPath("/sso/bind?ticket=" + urlEncode(ticket), "/sso/bind"));
