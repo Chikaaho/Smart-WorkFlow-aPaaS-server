@@ -46,15 +46,26 @@ public class BpmMyProcessedController {
     private final BpmInstanceService bpmInstanceService;
     private final BpmProcessDefService bpmProcessDefService;
     private final BpmTaskFacade bpmTaskFacade;
+    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade;
 
     public BpmMyProcessedController(ApprovalActionService approvalActionService,
                                     BpmInstanceService bpmInstanceService,
                                     BpmProcessDefService bpmProcessDefService,
                                     BpmTaskFacade bpmTaskFacade) {
+        this(approvalActionService, bpmInstanceService, bpmProcessDefService, bpmTaskFacade, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BpmMyProcessedController(ApprovalActionService approvalActionService,
+                                    BpmInstanceService bpmInstanceService,
+                                    BpmProcessDefService bpmProcessDefService,
+                                    BpmTaskFacade bpmTaskFacade,
+                                    com.sw.ck.system.api.user.UserQueryFacade userQueryFacade) {
         this.approvalActionService = approvalActionService;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
         this.bpmTaskFacade = bpmTaskFacade;
+        this.userQueryFacade = userQueryFacade;
     }
 
     @GetMapping
@@ -186,16 +197,30 @@ public class BpmMyProcessedController {
         item.setProcessInstanceId(record.getProcessInstanceId());
         BpmInstance instance = bpmInstanceService
                 .findByProcessInstanceId(record.getProcessInstanceId()).orElse(null);
-        if (instance != null) {
-            item.setInstanceStatus(instance.getStatus());
-            item.setFormKey(instance.getFormKey());
-            item.setBusinessKey(instance.getBusinessKey());
-            if (instance.getProcessDefKey() != null) {
-                BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(instance.getProcessDefKey());
-                item.setProcessName(processDef == null ? null : processDef.getName());
-            }
-        }
+        fillInstanceInfo(item, instance);
         return item;
+    }
+
+    /** 实例公共信息填充（V012-BUG-021）：状态/表单/流程名/主题/发起时间/发起人展示名。 */
+    private void fillInstanceInfo(MyProcessedItemDTO item, BpmInstance instance) {
+        if (instance == null) {
+            return;
+        }
+        item.setInstanceStatus(instance.getStatus());
+        item.setFormKey(instance.getFormKey());
+        item.setBusinessKey(instance.getBusinessKey());
+        item.setTheme(instance.getTheme());
+        item.setCreateTime(instance.getCreateTime());
+        if (instance.getInitiatorId() != null && userQueryFacade != null) {
+            item.setInitiatorName(userQueryFacade
+                    .getUserDisplayNames(List.of(instance.getInitiatorId()))
+                    .map(names -> names.get(instance.getInitiatorId()))
+                    .orElse(null));
+        }
+        if (instance.getProcessDefKey() != null) {
+            BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(instance.getProcessDefKey());
+            item.setProcessName(processDef == null ? null : processDef.getName());
+        }
     }
 
     private void fillFromTask(MyProcessedItemDTO item, BpmTaskDTO task) {
@@ -208,14 +233,6 @@ public class BpmMyProcessedController {
         }
         BpmInstance instance = bpmInstanceService
                 .findByProcessInstanceId(task.getProcessInstanceId()).orElse(null);
-        if (instance != null) {
-            item.setInstanceStatus(instance.getStatus());
-            item.setFormKey(instance.getFormKey());
-            item.setBusinessKey(instance.getBusinessKey());
-            if (instance.getProcessDefKey() != null) {
-                BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(instance.getProcessDefKey());
-                item.setProcessName(processDef == null ? null : processDef.getName());
-            }
-        }
+        fillInstanceInfo(item, instance);
     }
 }

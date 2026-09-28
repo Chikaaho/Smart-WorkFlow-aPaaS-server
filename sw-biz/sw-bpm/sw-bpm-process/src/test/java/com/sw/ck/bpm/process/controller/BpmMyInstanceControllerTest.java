@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,7 +47,7 @@ class BpmMyInstanceControllerTest {
 
     private final BpmMyInstanceController controller = new BpmMyInstanceController(
             bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
-            null, null, null);
+            null, null, null, null);
 
     @BeforeEach
     void setUp() {
@@ -86,6 +87,30 @@ class BpmMyInstanceControllerTest {
             task.setEndTime(new Date());
         }
         return task;
+    }
+
+    @Test
+    @DisplayName("V012-BUG-022：我发起的列表富化流程名称与发起人展示名（解析失败降级 null）")
+    void enrichInstanceItems_shouldFillProcessAndInitiatorNames() {
+        com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
+                mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+        BpmMyInstanceController enriched = new BpmMyInstanceController(
+                bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
+                null, null, null, userQueryFacade);
+        BpmInstance row = instance(2L);
+        row.setTheme("测试1-20260928-1");
+        BpmProcessDef def = new BpmProcessDef();
+        def.setName("测试1");
+        when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(def);
+        when(userQueryFacade.getUserDisplayNames(any()))
+                .thenReturn(Optional.of(Map.of(2L, "系统管理员")));
+
+        var items = enriched.enrichInstanceItems(List.of(row));
+
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).getProcessName()).isEqualTo("测试1");
+        assertThat(items.get(0).getInitiatorName()).isEqualTo("系统管理员");
+        assertThat(items.get(0).getTheme()).isEqualTo("测试1-20260928-1");
     }
 
     @Test
@@ -148,7 +173,7 @@ class BpmMyInstanceControllerTest {
     void myInstanceDetail_shouldMergeActionRecordsIntoHistory() {
         BpmMyInstanceController enriched = new BpmMyInstanceController(
                 bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
-                approvalActionService, new com.fasterxml.jackson.databind.ObjectMapper(), null);
+                approvalActionService, new com.fasterxml.jackson.databind.ObjectMapper(), null, null);
 
         when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);

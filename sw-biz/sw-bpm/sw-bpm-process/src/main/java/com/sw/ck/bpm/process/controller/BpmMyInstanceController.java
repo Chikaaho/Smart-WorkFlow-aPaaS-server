@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.controller;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
+import com.sw.ck.bpm.process.dto.MyInstanceItemDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
@@ -49,12 +50,13 @@ public class BpmMyInstanceController {
     private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
+    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade;
 
     public BpmMyInstanceController(BpmInstanceService bpmInstanceService,
                                    BpmProcessDefService bpmProcessDefService,
                                    BpmTaskFacade bpmTaskFacade,
                                    TaskActionService taskActionService) {
-        this(bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService, null, null, null);
+        this(bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService, null, null, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -64,7 +66,8 @@ public class BpmMyInstanceController {
                                    TaskActionService taskActionService,
                                    com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                                    com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                                   com.sw.ck.bpm.process.service.ParticipantNameService participantNameService) {
+                                   com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
+                                   com.sw.ck.system.api.user.UserQueryFacade userQueryFacade) {
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
         this.bpmTaskFacade = bpmTaskFacade;
@@ -72,6 +75,7 @@ public class BpmMyInstanceController {
         this.approvalActionService = approvalActionService;
         this.objectMapper = objectMapper;
         this.participantNameService = participantNameService;
+        this.userQueryFacade = userQueryFacade;
     }
 
     /**
@@ -80,7 +84,7 @@ public class BpmMyInstanceController {
      * @param keyword 匹配 businessKey 或 formKey（可选）
      */
     @GetMapping
-    public R<PageResult<BpmInstance>> myInstances(PageParam pageParam,
+    public R<PageResult<MyInstanceItemDTO>> myInstances(PageParam pageParam,
                                                   @RequestParam(required = false) String status,
                                                   @RequestParam(required = false) String keyword) {
         LoginUser loginUser = LoginUserHolder.get();
@@ -105,7 +109,53 @@ public class BpmMyInstanceController {
         page.setPageNum(pageParam.getPageNum());
         page.setPageSize(pageParam.getPageSize());
         log.debug("我发起的查询: userId={}, total={}", loginUser.getUserId(), total);
-        return R.ok(page);
+        java.util.List<MyInstanceItemDTO> items = enrichInstanceItems(records);
+        PageResult<MyInstanceItemDTO> enrichedPage = new PageResult<>();
+        enrichedPage.setRecords(items);
+        enrichedPage.setTotal(total);
+        enrichedPage.setPageNum(pageParam.getPageNum());
+        enrichedPage.setPageSize(pageParam.getPageSize());
+        return R.ok(enrichedPage);
+    }
+
+    /**
+     * 实例条目富化（V012-BUG-022）：流程名称（按定义键去重解析）与发起人展示名
+     * （批量解析）；解析失败降级 null，不阻断列表。
+     */
+    java.util.List<MyInstanceItemDTO> enrichInstanceItems(java.util.List<BpmInstance> records) {
+        java.util.Map<String, String> defNames = new java.util.HashMap<>();
+        java.util.Set<Long> initiatorIds = new java.util.HashSet<>();
+        for (BpmInstance record : records) {
+            if (record.getProcessDefKey() != null) {
+                defNames.computeIfAbsent(record.getProcessDefKey(), key -> {
+                    BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(key);
+                    return processDef == null ? null : processDef.getName();
+                });
+            }
+            if (record.getInitiatorId() != null) {
+                initiatorIds.add(record.getInitiatorId());
+            }
+        }
+        java.util.Map<Long, String> initiatorNames = userQueryFacade == null || initiatorIds.isEmpty()
+                ? java.util.Map.of()
+                : userQueryFacade.getUserDisplayNames(initiatorIds).orElse(java.util.Map.of());
+        return records.stream().map(record -> {
+            MyInstanceItemDTO item = new MyInstanceItemDTO();
+            item.setId(record.getId());
+            item.setProcessInstanceId(record.getProcessInstanceId());
+            item.setProcessDefKey(record.getProcessDefKey());
+            item.setProcessName(record.getProcessDefKey() == null ? null
+                    : defNames.get(record.getProcessDefKey()));
+            item.setTheme(record.getTheme());
+            item.setBusinessKey(record.getBusinessKey());
+            item.setFormKey(record.getFormKey());
+            item.setInitiatorId(record.getInitiatorId());
+            item.setInitiatorName(record.getInitiatorId() == null ? null
+                    : initiatorNames.get(record.getInitiatorId()));
+            item.setStatus(record.getStatus());
+            item.setCreateTime(record.getCreateTime());
+            return item;
+        }).collect(Collectors.toList());
     }
 
     /**

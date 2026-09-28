@@ -39,6 +39,15 @@ public class MyProcessedItemDTO {
     /** 实例后续状态（RUNNING/APPROVED/REJECTED/FAILED）。 */
     private String instanceStatus;
 
+    /** 实例主题（V012-BUG-021：发起时按主题规则生成；历史实例为空）。 */
+    private String theme;
+
+    /** 实例发起时间（V012-BUG-021：区别于本人办理时间 handleTime）。 */
+    private LocalDateTime createTime;
+
+    /** 发起人展示名（V012-BUG-021；解析失败为 null）。 */
+    private String initiatorName;
+
     /** 来源：ACTION / HISTORY_COMPAT。 */
     private String source;
 }

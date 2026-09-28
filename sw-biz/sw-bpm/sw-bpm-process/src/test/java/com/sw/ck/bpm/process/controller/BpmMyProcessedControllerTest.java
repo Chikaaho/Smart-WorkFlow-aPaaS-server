@@ -103,6 +103,41 @@ class BpmMyProcessedControllerTest {
     }
 
     @Test
+    @DisplayName("V012-BUG-021：ACTION 条目富化实例主题/发起时间/发起人展示名（解析失败降级 null）")
+    void myProcessed_actionSource_shouldEnrichThemeLaunchTimeAndInitiatorName() {
+        com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
+                mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+        BpmMyProcessedController enriched = new BpmMyProcessedController(
+                approvalActionService, bpmInstanceService, bpmProcessDefService, bpmTaskFacade,
+                userQueryFacade);
+        ApprovalActionRecord record = new ApprovalActionRecord();
+        record.setTaskId("t1");
+        record.setAction("APPROVE");
+        record.setProcessInstanceId("pi-001");
+        record.setCreateTime(LocalDateTime.of(2026, 9, 1, 10, 0));
+        when(approvalActionService.countByActor(2L)).thenReturn(1L);
+        when(approvalActionService.pageByActor(2L, 0, 10)).thenReturn(List.of(record));
+        BpmInstance instance = instance();
+        instance.setTheme("测试1-20260928-1");
+        instance.setInitiatorId(9L);
+        instance.setCreateTime(LocalDateTime.of(2026, 9, 1, 9, 0));
+        when(bpmInstanceService.findByProcessInstanceId("pi-001")).thenReturn(Optional.of(instance));
+        BpmProcessDef def = new BpmProcessDef();
+        def.setName("请假流程");
+        when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(def);
+        when(userQueryFacade.getUserDisplayNames(java.util.List.of(9L)))
+                .thenReturn(Optional.of(java.util.Map.of(9L, "系统管理员")));
+
+        R<com.sw.ck.common.page.PageResult<MyProcessedItemDTO>> resp =
+                enriched.myProcessed(new PageParam(), MyProcessedItemDTO.SOURCE_ACTION);
+
+        MyProcessedItemDTO item = resp.getData().getRecords().get(0);
+        assertThat(item.getTheme()).isEqualTo("测试1-20260928-1");
+        assertThat(item.getCreateTime()).isEqualTo(LocalDateTime.of(2026, 9, 1, 9, 0));
+        assertThat(item.getInitiatorName()).isEqualTo("系统管理员");
+    }
+
+    @Test
     @DisplayName("source=HISTORY_COMPAT：调 queryProcessedPage/countProcessed 映射并标记来源")
     void myProcessed_historyCompatSource_shouldMapFinishedTasks() {
         BpmTaskDTO task = new BpmTaskDTO();
