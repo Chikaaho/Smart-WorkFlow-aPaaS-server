@@ -26,22 +26,32 @@ public interface SsoProviderClient {
     String buildAuthorizeUrl(SsoProviderConfigView config, String redirectUri, String state);
 
     /**
-     * 用一次性授权 code 换取外部稳定主体标识。
+     * 用一次性授权 code 换取外部稳定主体标识与厂商可信企业标识。
      *
      * @param redirectUri 发起授权时使用的回调 URL（OAuth 规范：authorize 带了
      *                    redirect_uri 时换票必须原样携带；不需要的 Provider 可忽略）
+     * @return externalId=稳定主体标识；enterpriseId=厂商可信企业标识
+     *         （钉钉=换票响应 corpId、飞书=tenant_key、企微=应用归属 corpId；可空=该
+     *         Provider 响应不含企业字段）
      *
      * @param config 已解密的配置视图
      * @param code   Provider 回调的一次性 code
      * @return 外部主体标识（Provider 官方稳定 userid）
      * @throws SsoProviderException 换票失败（网络/凭据/无效 code）
      */
-    String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri);
+    ExchangeResult exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri);
 
     /**
      * 已解密配置视图：secret 仅在服务端换票时使用，不序列化、不进日志。
      */
     record SsoProviderConfigView(String appId, String appSecret, Map<String, String> extra) {
+    }
+
+    /**
+     * 换票结果：externalId=稳定主体标识；enterpriseId=厂商可信企业标识
+     * （取自换票/用户信息响应的官方字段，仅服务端内存使用，不进日志）。
+     */
+    record ExchangeResult(String externalId, String enterpriseId) {
     }
 
     /** Provider 交互失败（网络/凭据/拒绝），message 不得包含 secret/code 原文。 */

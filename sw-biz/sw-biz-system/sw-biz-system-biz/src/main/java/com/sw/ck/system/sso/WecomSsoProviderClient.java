@@ -50,7 +50,7 @@ public class WecomSsoProviderClient implements SsoProviderClient {
     }
 
     @Override
-    public String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
+    public SsoProviderClient.ExchangeResult exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
         String accessToken = corpAccessToken(config);
         String url = USERINFO_URL + "?access_token=" + urlEncode(accessToken)
                 + "&code=" + urlEncode(code);
@@ -64,7 +64,8 @@ public class WecomSsoProviderClient implements SsoProviderClient {
         if (userId == null || userId.isBlank()) {
             throw new SsoProviderException("企业微信未返回稳定成员标识");
         }
-        return userId;
+        // 企微归属可信来源：access_token 即应用归属 corpId 作用域（config.appId()=corpId）
+        return new SsoProviderClient.ExchangeResult(userId, config.appId());
     }
 
     private String corpAccessToken(SsoProviderConfigView config) {

@@ -46,8 +46,9 @@ public class DingtalkSsoProviderClient implements SsoProviderClient {
     }
 
     @Override
-    public String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
+    public SsoProviderClient.ExchangeResult exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
         String userAccessToken;
+        String tokenCorpId = null;
         try (HttpResponse response = HttpRequest.post(USER_TOKEN_URL)
                 .header("Content-Type", "application/json; charset=utf-8")
                 .body(objectMapper.writeValueAsString(Map.of(
@@ -62,6 +63,8 @@ public class DingtalkSsoProviderClient implements SsoProviderClient {
             }
             JsonNode root = objectMapper.readTree(response.body());
             userAccessToken = root.path("accessToken").asText(null);
+            // 官方换票响应字段：corpId=用户所选企业（G3b 企业归属可信来源）
+            tokenCorpId = root.path("corpId").asText(null);
         } catch (SsoProviderException e) {
             throw e;
         } catch (Exception e) {
@@ -84,7 +87,7 @@ public class DingtalkSsoProviderClient implements SsoProviderClient {
             if (unionId == null || unionId.isBlank()) {
                 throw new SsoProviderException("钉钉未返回稳定主体标识 unionId");
             }
-            return unionId;
+            return new SsoProviderClient.ExchangeResult(unionId, tokenCorpId);
         } catch (SsoProviderException e) {
             throw e;
         } catch (Exception e) {

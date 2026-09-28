@@ -108,7 +108,84 @@ class SsoAuthServiceTest {
                 "AUTH_START".equals(a.getEventType()) && "WECOM".equals(a.getProvider())));
     }
 
+    private SsoAuthService serviceWith(SsoProviderClient client, String extraConfig) {
+        var cm = Mockito.mock(SsoProviderConfigMapper.class);
+        var bm = Mockito.mock(SsoUserBindingMapper.class);
+        var sm = Mockito.mock(SsoAuthStateMapper.class);
+        var am = Mockito.mock(SsoAuditRecordMapper.class);
+        var users = Mockito.mock(SysUserService.class);
+        var tvs = Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doNothing().when(tvs).requireValid(org.mockito.ArgumentMatchers.any());
+        var cipher = new com.sw.ck.common.crypto.AesGcmCipher(
+                java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        SsoProviderConfig config = new SsoProviderConfig();
+        config.setId(9L);
+        config.setTenantId(1L);
+        config.setProvider("WECOM");
+        config.setEnabled(1);
+        config.setAppId("ww-test-corp");
+        config.setAppSecretEnc(cipher.encrypt("secret-value"));
+        config.setExtraConfig(extraConfig);
+        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(config);
+        Mockito.when(sm.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any())).thenAnswer(inv -> {
+            SsoAuthState st = inv.getArgument(0);
+            st.setId(2L);
+            return 1;
+        });
+        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(freshState());
+        Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        return new SsoAuthService(cm, bm, sm, am, users, List.of(client), cipher,
+                new SsoCallbackPolicy("", List.of(), ""), tvs,
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+    }
+
+    private SsoAuthState freshState() {
+        SsoAuthState st = new SsoAuthState();
+        st.setProvider("WECOM");
+        st.setTenantId(1L);
+        st.setConsumed(0);
+        st.setExpireAt(java.time.LocalDateTime.now().plusMinutes(5));
+        return st;
+    }
+
+    private SsoProviderClient fixedClient(String externalId, String enterpriseId) {
+        return new SsoProviderClient() {
+            @Override public String provider() { return "WECOM"; }
+            @Override public String buildAuthorizeUrl(SsoProviderConfigView c, String r, String st) { return "u"; }
+            @Override public ExchangeResult exchangeExternalId(SsoProviderConfigView c, String code, String redirectUri) {
+                return new ExchangeResult(externalId, enterpriseId);
+            }
+        };
+    }
+
     @Test
+    @DisplayName("G3b 企业归属：配置 enterpriseId 且厂商字段一致 → 放行进入绑定链")
+    void callback_enterpriseMatch_shouldProceed() {
+        SsoAuthService svc = serviceWith(fixedClient("ext-ok", "corp-ok"), "{\"enterpriseId\":\"corp-ok\"}");
+        var res = svc.handleCallback("WECOM", "code-ok", "state-ok");
+        assertThat(res.bound()).isFalse();
+        assertThat(res.externalId()).isEqualTo("ext-ok");
+    }
+
+    @Test
+    @DisplayName("G3b 企业归属：厂商字段与配置不一致 → 拒绝且审计 ENTERPRISE_MISMATCH")
+    void callback_enterpriseMismatch_shouldReject() {
+        SsoAuthService svc = serviceWith(fixedClient("ext-x", "corp-other"), "{\"enterpriseId\":\"corp-expected\"}");
+        SsoAuthService svcF = svc;
+        assertThatThrownBy(() -> svcF.handleCallback("WECOM", "code-ok", "state-ok"))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
+    }
+
+    @Test
+    @DisplayName("G3b 个人模式：extra_config 无 enterpriseId → 显式放行（scope=personal 审计）")
+    void callback_personalMode_shouldProceed() {
+        SsoAuthService svc = serviceWith(fixedClient("ext-p", "corp-any"), "{}");
+        var res = svc.handleCallback("WECOM", "code-ok", "state-ok");
+        assertThat(res.bound()).isFalse();
+    }
+
+        @Test
     @DisplayName("回调：Provider 大小写归一化——小写回跳路径走 state 校验而非 provider 拒绝")
     void handleCallback_providerCaseNormalized() {
         // resolveCallbackUrl 生成小写路径（/auth/sso/wecom/callback）；小写 provider
@@ -506,7 +583,7 @@ class SsoAuthServiceTest {
         SsoProviderClient failing = new SsoProviderClient() {
             @Override public String provider() { return "WECOM"; }
             @Override public String buildAuthorizeUrl(SsoProviderConfigView config, String redirectUri, String state) { return "https://provider.example?state=" + state; }
-            @Override public String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) { throw new SsoProviderClient.SsoProviderException("exchange failed"); }
+            @Override public SsoProviderClient.ExchangeResult exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) { throw new SsoProviderClient.SsoProviderException("exchange failed"); }
         };
         SsoAuthService svc = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 Mockito.mock(SysUserService.class), List.of(failing),

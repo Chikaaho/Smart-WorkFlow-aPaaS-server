@@ -45,7 +45,7 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
     }
 
     @Override
-    public String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
+    public SsoProviderClient.ExchangeResult exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) {
         // v3 oauth/token（官方现行）：POST application/x-www-form-urlencoded，
         // grant_type=authorization_code；authorize 带 redirect_uri 时换票必须原样携带
         String userAccessToken;
@@ -97,7 +97,9 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
             if (openId == null || openId.isBlank()) {
                 throw new SsoProviderException("飞书未返回稳定主体标识 open_id");
             }
-            return openId;
+            // 官方 user_info 字段：tenant_key=用户所属租户（G3b 企业归属可信来源）
+            String tenantKey = root.path("data").path("tenant_key").asText(null);
+            return new SsoProviderClient.ExchangeResult(openId, tenantKey);
         } catch (SsoProviderException e) {
             throw e;
         } catch (Exception e) {

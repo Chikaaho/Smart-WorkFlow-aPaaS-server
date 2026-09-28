@@ -438,14 +438,34 @@ public class SsoAuthService {
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         String externalId;
+        String vendorEnterpriseId;
         try {
-            externalId = clients.get(provider).exchangeExternalId(decryptConfig(config), code,
+            SsoProviderClient.ExchangeResult er = clients.get(provider).exchangeExternalId(decryptConfig(config), code,
                     callbackPolicy.resolveCallbackUrl(provider));
+            externalId = er.externalId();
+            vendorEnterpriseId = er.enterpriseId();
         } catch (SsoProviderClient.SsoProviderException e) {
             auditDenial(provider, "LOGIN_FAILED", "FAILED", null, null, sha256(externalFingerprint(e)),
                     "provider exchange failed", stateRow.getTenantId());
             throw e;
         }
+        // G3b 裁决：租户级 Provider 配置（extra_config.enterpriseId）承载允许企业标识；
+        // 厂商可信企业字段与配置不一致 → 拒绝（企业成员模式错配）。配置缺省=个人模式（显式审计）。
+        String configuredEnterprise = configuredEnterpriseId(config);
+        String scopeMarker;
+        if (configuredEnterprise != null && !configuredEnterprise.isBlank()) {
+            if (vendorEnterpriseId == null || vendorEnterpriseId.isBlank()
+                    || !configuredEnterprise.equals(vendorEnterpriseId)) {
+                auditDenial(provider, "LOGIN_FAILED", "ENTERPRISE_MISMATCH", null, null, null,
+                        "enterprise mismatch (vendor field vs configured)", stateRow.getTenantId());
+                throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT, SSO_LOGIN_FAILED_MSG);
+            }
+            scopeMarker = "enterprise";
+        } else {
+            scopeMarker = "personal";
+        }
+        audit(provider, "EXCHANGE", "SUCCESS", null, null, sha256(externalId),
+                "scope=" + scopeMarker, stateRow.getTenantId());
         String externalDigest = sha256(externalId);
         // 摘要即权威：external_id 列存摘要（明文不落 SQL/日志，I5 复验 G7b）
         SsoUserBinding binding = bindingMapper.selectActiveByExternal(provider, stateRow.getTenantId(), externalDigest);
@@ -726,6 +746,21 @@ public class SsoAuthService {
             }
         } else {
             auditMapper.insert(record);
+        }
+    }
+
+
+    /** G3b：extra_config JSON 的 enterpriseId=租户允许的企业标识；缺省=个人模式。 */
+    private String configuredEnterpriseId(SsoProviderConfig config) {
+        String extra = config.getExtraConfig();
+        if (extra == null || extra.isBlank()) {
+            return null;
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(extra).path("enterpriseId").asText(null);
+        } catch (Exception e) {
+            return null;
         }
     }
 
