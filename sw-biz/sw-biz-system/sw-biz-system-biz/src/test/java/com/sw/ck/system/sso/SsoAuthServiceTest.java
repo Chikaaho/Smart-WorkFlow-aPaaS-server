@@ -109,6 +109,17 @@ class SsoAuthServiceTest {
     }
 
     @Test
+    @DisplayName("回调：Provider 大小写归一化——小写回跳路径走 state 校验而非 provider 拒绝")
+    void handleCallback_providerCaseNormalized() {
+        // resolveCallbackUrl 生成小写路径（/auth/sso/wecom/callback）；小写 provider
+        // 归一化后应进入 state 校验链（state 未命中 → SSO_LOGIN_NOT_COMPLETED），
+        // 而非 SSO_BINDING_INVALID 的 provider 拒绝。
+        assertThatThrownBy(() -> service.handleCallback("wecom", "code-x", "state-x"))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
+    }
+
+    @Test
     @DisplayName("回调：state 不存在 → 拒绝且不换票")
     void handleCallback_unknownState_shouldReject() {
         Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))

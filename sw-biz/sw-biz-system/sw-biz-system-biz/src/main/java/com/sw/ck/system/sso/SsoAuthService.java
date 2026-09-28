@@ -381,11 +381,15 @@ public class SsoAuthService {
      */
     @Transactional
     public CallbackResult handleCallback(String provider, String code, String state) {
-        requireProvider(provider);
+        // Provider 回跳路径由 resolveCallbackUrl 小写生成（/api/auth/sso/dingtalk/callback），
+        // 而 PROVIDERS 注册与 state.provider 存储为大写：回调入口必须先归一化，
+        // 否则真实 Provider 回跳永远命中 provider 拒绝（真实链未执行过的断链缺陷）。
+        String normalized = provider == null ? "" : provider.trim().toUpperCase();
+        requireProvider(normalized);
         // 免认证回调：与 startAuthorizeLogin 同口径挂起租户拦截器（显式谓词承担租户语义）
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
-            return doHandleCallback(provider, code, state);
+            return doHandleCallback(normalized, code, state);
         }
     }
 
