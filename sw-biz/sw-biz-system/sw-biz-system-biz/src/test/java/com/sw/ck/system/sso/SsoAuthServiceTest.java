@@ -506,7 +506,7 @@ class SsoAuthServiceTest {
         SsoProviderClient failing = new SsoProviderClient() {
             @Override public String provider() { return "WECOM"; }
             @Override public String buildAuthorizeUrl(SsoProviderConfigView config, String redirectUri, String state) { return "https://provider.example?state=" + state; }
-            @Override public String exchangeExternalId(SsoProviderConfigView config, String code) { throw new SsoProviderClient.SsoProviderException("exchange failed"); }
+            @Override public String exchangeExternalId(SsoProviderConfigView config, String code, String redirectUri) { throw new SsoProviderClient.SsoProviderException("exchange failed"); }
         };
         SsoAuthService svc = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 Mockito.mock(SysUserService.class), List.of(failing),
