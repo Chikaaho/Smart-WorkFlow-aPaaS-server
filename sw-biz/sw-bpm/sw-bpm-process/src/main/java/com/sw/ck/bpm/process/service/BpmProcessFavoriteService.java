@@ -69,6 +69,8 @@ public class BpmProcessFavoriteService {
                         .eq(BpmProcessFavorite::getUserId, currentUserId())
                         .eq(BpmProcessFavorite::getProcessKey, processKey));
         if (existing == null) {
+            // 物理唯一键不含 deleted：清掉历史软删残留键位，保证取消后重新收藏可插入
+            favoriteMapper.deletePhysically(currentUserId(), processKey);
             BpmProcessFavorite row = new BpmProcessFavorite();
             row.setUserId(currentUserId());
             row.setProcessKey(processKey);
@@ -83,19 +85,17 @@ public class BpmProcessFavoriteService {
         }
     }
 
-    /** 取消收藏（幂等：不存在视为已取消）。 */
+    /** 取消收藏（幂等：不存在视为已取消；物理删除以释放唯一键位）。 */
     @Transactional(rollbackFor = Exception.class)
     public void unfavorite(String processKey) {
-        favoriteMapper.delete(Wrappers.lambdaQuery(BpmProcessFavorite.class)
-                .eq(BpmProcessFavorite::getUserId, currentUserId())
-                .eq(BpmProcessFavorite::getProcessKey, processKey));
+        favoriteMapper.deletePhysically(currentUserId(), processKey);
     }
 
     /** 常用流程：租户内发起次数总量 TopN。 */
     public List<FavoriteItemDTO> frequentlyStarted(int limit) {
         List<Map<String, Object>> rows = instanceMapper.selectMaps(
                 Wrappers.query(BpmInstance.class)
-                        .select('process_def_key as "processKey"', "count(*) as cnt")
+                        .select("process_def_key as \"processKey\"", "count(*) as cnt")
                         .groupBy("process_def_key")
                         .orderByDesc("cnt")
                         .orderByAsc("process_def_key")
@@ -111,7 +111,7 @@ public class BpmProcessFavoriteService {
     public List<FavoriteItemDTO> recentlyUsed(int limit) {
         List<Map<String, Object>> rows = instanceMapper.selectMaps(
                 Wrappers.query(BpmInstance.class)
-                        .select('process_def_key as "processKey"', "max(create_time) as lastTime")
+                        .select("process_def_key as \"processKey\"", "max(create_time) as lastTime")
                         .eq("initiator_id", currentUserId())
                         .groupBy("process_def_key")
                         .orderByDesc("lastTime")
