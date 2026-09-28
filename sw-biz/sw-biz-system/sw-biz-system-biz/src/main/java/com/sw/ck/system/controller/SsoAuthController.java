@@ -43,6 +43,7 @@ public class SsoAuthController {
 
     private final SsoAuthService ssoAuthService;
     private final SsoTicketStore ticketStore;
+    private final com.sw.ck.system.sso.SsoCallbackPolicy callbackPolicy;
     private final com.sw.ck.system.service.SysUserService sysUserService;
     private final com.sw.ck.security.jwt.JwtTokenProvider jwtTokenProvider;
     private final com.sw.ck.security.jwt.JwtProperties jwtProperties;
@@ -55,6 +56,7 @@ public class SsoAuthController {
 
     public SsoAuthController(SsoAuthService ssoAuthService,
                              SsoTicketStore ticketStore,
+                             com.sw.ck.system.sso.SsoCallbackPolicy callbackPolicy,
                              com.sw.ck.system.service.SysUserService sysUserService,
                              com.sw.ck.security.jwt.JwtTokenProvider jwtTokenProvider,
                              com.sw.ck.security.jwt.JwtProperties jwtProperties,
@@ -62,6 +64,7 @@ public class SsoAuthController {
                              com.sw.ck.system.service.TenantValidityService tenantValidityService) {
         this.ssoAuthService = ssoAuthService;
         this.ticketStore = ticketStore;
+        this.callbackPolicy = callbackPolicy;
         this.sysUserService = sysUserService;
         this.jwtTokenProvider = jwtTokenProvider;
         this.jwtProperties = jwtProperties;
@@ -111,11 +114,12 @@ public class SsoAuthController {
 
     /**
      * 服务端回调/换票（免认证白名单）。校验一次性 state → code 换外部身份 →
-     * 定位绑定。已绑定：302 回跳（携带一次性 ticket）；未绑定：302 到同源绑定
-     * 确认页（携带一次性候选 ticket，不携带 code/state）。
+     * 定位绑定。已绑定：302 回跳同源前端（携带一次性 ticket）；未绑定：302 到
+     * 同源绑定确认页（携带一次性候选 ticket，不携带 code/state）；任一拒绝：
+     * 302 到回跳页并携带脱敏 errorKey（不携带 code/state 原文）。
      */
     @GetMapping("/{provider}/callback")
-    public Object callback(@PathVariable("provider") String provider,
+    public org.springframework.http.ResponseEntity<Void> callback(@PathVariable("provider") String provider,
                            @RequestParam(value = "code", required = false) String code,
                            @RequestParam(value = "state", required = false) String state) {
         try {
@@ -125,28 +129,37 @@ public class SsoAuthController {
                 String target = safeRedirect(result.redirectPath())
                         + (safeRedirect(result.redirectPath()).contains("?") ? "&" : "?")
                         + "sso_ticket=" + urlEncode(ticket);
-                return java.util.Map.of("redirect", target);
+                return seeOther(callbackPolicy.resolveFrontendPath(target, "/workspace"));
             }
             String ticket = ticketStore.issueCandidate(result.externalId(), result.tenantId(), result.provider());
-            return java.util.Map.of("redirect", "/sso/bind?ticket=" + urlEncode(ticket));
+            return seeOther(callbackPolicy.resolveFrontendPath("/sso/bind?ticket=" + urlEncode(ticket), "/sso/bind"));
         } catch (SsoRejectionException | IllegalStateException | IllegalArgumentException
                  | com.sw.ck.system.sso.SsoProviderClient.SsoProviderException e) {
             return deny(provider, e);
         }
     }
 
-    private R<Void> deny(String provider, Exception e) {
-        // 回调拒绝返回可判定结果：不回显 code/state 原文，不泄漏 Provider 配置、
-        // 三方响应、租户标识或回调白名单，也不泄漏栈。
+    private org.springframework.http.ResponseEntity<Void> deny(String provider, Exception e) {
+        // 回调拒绝 302 到同源前端回跳页并携带脱敏 errorKey：不回显 code/state 原文，
+        // 不泄漏 Provider 配置、三方响应、租户标识或回调白名单，也不泄漏栈。
+        String errorKey;
         if (e instanceof SsoRejectionException rejection) {
+            errorKey = rejection.getErrorKey();
             log.warn("SSO 回调被拒: eventRef={} provider={} errorKey={} detail={}",
                     EventRef.current(), provider, rejection.getErrorKey(), rejection.getMessage());
-            return R.failResolved(400, rejection.getErrorKey(), rejection.getMessage(), EventRef.current());
+        } else {
+            errorKey = SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED;
+            log.warn("SSO 回调失败: eventRef={} provider={} detail={}",
+                    EventRef.current(), provider, e.getMessage(), e);
         }
-        log.warn("SSO 回调失败: eventRef={} provider={} detail={}",
-                EventRef.current(), provider, e.getMessage(), e);
-        return R.failResolved(400, SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG,
-                EventRef.current());
+        return seeOther(callbackPolicy.resolveFrontendPath("/sso/return?sso_error=" + urlEncode(errorKey), "/sso/return"));
+    }
+
+    /** 302 回跳（Location 为站内相对路径，浏览器按回调同源解析，票据不出站）。 */
+    private org.springframework.http.ResponseEntity<Void> seeOther(String path) {
+        return org.springframework.http.ResponseEntity.status(org.springframework.http.HttpStatus.FOUND)
+                .location(java.net.URI.create(path))
+                .build();
     }
 
     /**

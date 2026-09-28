@@ -221,6 +221,8 @@ sw:
     # I5：SSO Provider 凭据 AES-256-GCM 加密密钥（Base64）；缺失/空白时启动失败
     sso:
       cipher-key: ${SW_SSO_CIPHER_KEY:}
+      # 前端 SPA 基路径（如 /sw）：回调 302 回跳目标合成前缀；空=前端同根部署
+      frontend-base-path: ${SW_SSO_FRONTEND_BASE_PATH:}
     jwt:
       secret: ${JWT_SECRET:smart-workflow-jwt-secret-CHANGE-ME-IN-PRODUCTION-please}
       expire-seconds: 7200

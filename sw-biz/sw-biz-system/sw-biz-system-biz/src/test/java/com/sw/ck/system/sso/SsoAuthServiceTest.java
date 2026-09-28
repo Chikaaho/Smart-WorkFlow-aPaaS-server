@@ -53,7 +53,7 @@ class SsoAuthServiceTest {
                 new DingtalkSsoProviderClient()),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                new SsoCallbackPolicy("", List.of()),
+                new SsoCallbackPolicy("", List.of(), ""),
                 tenantValidityService,
                 Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
         Mockito.when(stateMapper.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any()))
@@ -261,7 +261,7 @@ class SsoAuthServiceTest {
                         new DingtalkSsoProviderClient()),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                new SsoCallbackPolicy("", List.of()), validService(),
+                new SsoCallbackPolicy("", List.of(), ""), validService(),
                 tenantMapper, noopTxManager(), null, null);
     }
 
@@ -349,7 +349,7 @@ class SsoAuthServiceTest {
                         new DingtalkSsoProviderClient()),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                new SsoCallbackPolicy("", List.of()), invalid,
+                new SsoCallbackPolicy("", List.of(), ""), invalid,
                 tenantMapper, noopTxManager(), null, null);
 
         assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "停用企业", null))
@@ -374,7 +374,7 @@ class SsoAuthServiceTest {
                 Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
         Mockito.doThrow(new IllegalStateException("租户无效"))
                 .when(invalid).requireValid(777L);
-        SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of()), invalid);
+        SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of(), ""), invalid);
         assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", 777L, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("租户无效");
@@ -394,20 +394,37 @@ class SsoAuthServiceTest {
     @Test
     @DisplayName("回调白名单：默认相对路径模式可用；显式白名单外 fail closed")
     void callbackPolicy_allowlistSeparation() {
-        SsoCallbackPolicy relative = new SsoCallbackPolicy("", List.of());
+        SsoCallbackPolicy relative = new SsoCallbackPolicy("", List.of(), "");
         assertThat(relative.isRelativeMode()).isTrue();
         assertThat(relative.resolveCallbackUrl("WECOM")).isEqualTo("/api/auth/sso/wecom/callback");
 
         SsoCallbackPolicy allowlisted = new SsoCallbackPolicy(
-                "https://oa.example.com", List.of("https://oa.example.com/api/auth/sso/"));
+                "https://oa.example.com", List.of("https://oa.example.com/api/auth/sso/"), "");
         assertThat(allowlisted.resolveCallbackUrl("WECOM"))
                 .isEqualTo("https://oa.example.com/api/auth/sso/wecom/callback");
 
         SsoCallbackPolicy hostile = new SsoCallbackPolicy(
-                "https://evil.example.com", List.of("https://oa.example.com/api/auth/sso/"));
+                "https://evil.example.com", List.of("https://oa.example.com/api/auth/sso/"), "");
         assertThatThrownBy(() -> hostile.resolveCallbackUrl("WECOM"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("白名单");
+    }
+
+    @Test
+    @DisplayName("前端回跳路径：合法 path 前置基路径；非法 path 取 fallback；协议相对与外部 URL 不放大")
+    void callbackPolicy_frontendPathComposition() {
+        SsoCallbackPolicy withBase = new SsoCallbackPolicy("", List.of(), "/sw");
+        assertThat(withBase.resolveFrontendPath("/sso/return", "/sso/return")).isEqualTo("/sw/sso/return");
+        assertThat(withBase.resolveFrontendPath("/sso/bind?ticket=x", "/sso/bind")).isEqualTo("/sw/sso/bind?ticket=x");
+        assertThat(withBase.resolveFrontendPath(null, "/workspace")).isEqualTo("/sw/workspace");
+        assertThat(withBase.resolveFrontendPath("//evil.example.com", "/workspace")).isEqualTo("/sw/workspace");
+        assertThat(withBase.resolveFrontendPath("https://evil.example.com", "/workspace")).isEqualTo("/sw/workspace");
+
+        SsoCallbackPolicy noBase = new SsoCallbackPolicy("", List.of(), "");
+        assertThat(noBase.resolveFrontendPath("/sso/return", "/sso/return")).isEqualTo("/sso/return");
+
+        SsoCallbackPolicy hostileBase = new SsoCallbackPolicy("", List.of(), "//evil.example.com");
+        assertThat(hostileBase.resolveFrontendPath("/sso/return", "/sso/return")).isEqualTo("/sso/return");
     }
 
     @Test
@@ -484,7 +501,7 @@ class SsoAuthServiceTest {
                 Mockito.mock(SysUserService.class), List.of(failing),
                 new com.sw.ck.common.crypto.AesGcmCipher(
                         java.util.Base64.getEncoder().encodeToString(new byte[32])),
-                new SsoCallbackPolicy("", List.of()), mockedValidity(),
+                new SsoCallbackPolicy("", List.of(), ""), mockedValidity(),
                 Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
         SsoAuthState fresh = new SsoAuthState();
         fresh.setId(7L); fresh.setProvider("WECOM"); fresh.setConsumed(0); fresh.setTenantId(1L);
@@ -511,7 +528,7 @@ class SsoAuthServiceTest {
                 Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
         Mockito.doThrow(new IllegalStateException("租户无效"))
                 .when(invalid).requireValid(100L);
-        SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of()), invalid);
+        SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of(), ""), invalid);
         SsoAuthState fresh = new SsoAuthState();
         fresh.setId(17L);
         fresh.setProvider("WECOM");

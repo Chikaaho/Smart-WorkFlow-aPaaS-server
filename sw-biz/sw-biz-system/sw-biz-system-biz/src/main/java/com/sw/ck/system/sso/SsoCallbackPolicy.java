@@ -24,12 +24,35 @@ public class SsoCallbackPolicy {
     /** 允许的回调 URL 前缀白名单（配置为空时仅允许相对路径模式） */
     private final List<String> callbackAllowlist;
 
+    /** 前端 SPA 基路径（如 /sw）；空 = 前端与回调同根部署 */
+    private final String frontendBasePath;
+
     public SsoCallbackPolicy(
             @Value("${sw.security.sso.callback-base-url:}") String callbackBaseUrl,
-            @Value("${sw.security.sso.callback-allowlist:}") List<String> callbackAllowlist) {
+            @Value("${sw.security.sso.callback-allowlist:}") List<String> callbackAllowlist,
+            @Value("${sw.security.sso.frontend-base-path:}") String frontendBasePath) {
         this.callbackBaseUrl = callbackBaseUrl == null ? "" : callbackBaseUrl.trim();
         this.callbackAllowlist = callbackAllowlist == null ? List.of()
                 : callbackAllowlist.stream().filter(v -> v != null && !v.isBlank()).map(String::trim).toList();
+        this.frontendBasePath = frontendBasePath == null ? "" : frontendBasePath.trim();
+    }
+
+    /**
+     * 合成同源前端回跳路径：先按安全规则校正 path（必须以 / 开头且非 //，否则取
+     * fallback），再前置前端基路径（基路径非法时忽略，不放大为可绕过形态）。
+     * 返回值始终是以 / 开头、无协议跳转歧义的站内路径，供 302 Location 使用。
+     */
+    public String resolveFrontendPath(String path, String fallback) {
+        String safe = (path == null || path.isBlank() || !path.startsWith("/") || path.startsWith("//"))
+                ? fallback
+                : path;
+        if (frontendBasePath.isEmpty() || !frontendBasePath.startsWith("/") || frontendBasePath.startsWith("//")) {
+            return safe;
+        }
+        String base = frontendBasePath.endsWith("/")
+                ? frontendBasePath.substring(0, frontendBasePath.length() - 1)
+                : frontendBasePath;
+        return base + safe;
     }
 
     /**
