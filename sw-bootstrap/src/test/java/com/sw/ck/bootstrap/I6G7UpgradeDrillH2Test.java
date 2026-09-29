@@ -64,8 +64,8 @@ class I6G7UpgradeDrillH2Test {
                 .load();
         var r90 = chain.migrate();
         assertTrue(r90.success, "基线 → V95 升级应成功");
-        assertEquals("103", chain.info().current().getVersion().getVersion(),
-                "升级终点须为 V103（SSO 配置管理菜单迁移）");
+        assertEquals("104", chain.info().current().getVersion().getVersion(),
+                "升级终点须为 V104（在途授权配置指纹迁移）");
 
         // ---------- 4. 同一 ID 回读：行数与语义一致，增量列可解释 ----------
         try (Connection conn = DriverManager.getConnection(DB, USER, PASSWORD)) {

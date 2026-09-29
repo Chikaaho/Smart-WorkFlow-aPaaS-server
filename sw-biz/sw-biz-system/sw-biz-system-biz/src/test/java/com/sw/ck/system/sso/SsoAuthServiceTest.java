@@ -109,6 +109,10 @@ class SsoAuthServiceTest {
     }
 
     private SsoAuthService serviceWith(SsoProviderClient client, String extraConfig) {
+        return serviceWith(client, extraConfig, "");
+    }
+
+    private SsoAuthService serviceWith(SsoProviderClient client, String extraConfig, String stateEnterpriseId) {
         var cm = Mockito.mock(SsoProviderConfigMapper.class);
         var bm = Mockito.mock(SsoUserBindingMapper.class);
         var sm = Mockito.mock(SsoAuthStateMapper.class);
@@ -135,7 +139,8 @@ class SsoAuthServiceTest {
             st.setId(2L);
             return 1;
         });
-        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(freshState());
+        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(freshState(stateEnterpriseId));
         Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
         // B 端准入链默认无候选用户（个别用例显式覆盖）
         Mockito.when(users.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<com.sw.ck.system.entity.SysUser>>any()))
@@ -146,11 +151,17 @@ class SsoAuthServiceTest {
     }
 
     private SsoAuthState freshState() {
+        return freshState("");
+    }
+
+    /** state 指纹与指定企业标识的默认配置桩（ww-test-corp/secret-value/启用）同源——A4 配置生命周期绑定。 */
+    private SsoAuthState freshState(String enterpriseId) {
         SsoAuthState st = new SsoAuthState();
         st.setProvider("WECOM");
         st.setTenantId(1L);
         st.setConsumed(0);
         st.setExpireAt(java.time.LocalDateTime.now().plusMinutes(5));
+        st.setConfigDigest(SsoAuthService.fingerprintOf("WECOM", "ww-test-corp", "secret-value", enterpriseId, 1));
         return st;
     }
 
@@ -171,7 +182,7 @@ class SsoAuthServiceTest {
     @Test
     @DisplayName("G3b 企业归属：配置 enterpriseId 且厂商字段一致 → 准入链（缺可信手机号统一拒绝）")
     void callback_enterpriseMatch_shouldProceedToAdmission() {
-        SsoAuthService svc = serviceWith(fixedClient("ext-ok", "corp-ok"), "{\"enterpriseId\":\"corp-ok\"}");
+        SsoAuthService svc = serviceWith(fixedClient("ext-ok", "corp-ok"), "{\"enterpriseId\":\"corp-ok\"}", "corp-ok");
         // B 端准入：无绑定且厂商未返回可信手机号 → 统一拒绝（不再进入候选绑定页）
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
@@ -305,7 +316,7 @@ class SsoAuthServiceTest {
     /** 在 serviceWithUsers 基础上让 dormant 查询命中指定 UNBOUND 行（重绑用例）。 */
     private SsoAuthService serviceWithUsersRebind(SsoProviderClient client, String extraConfig, SysUserService users,
                                                   SsoUserBinding dormant) {
-        SsoAuthService svc = serviceWithUsers(client, extraConfig, users, null);
+        SsoAuthService svc = serviceWithUsers(client, extraConfig, users, (SsoUserBinding) null);
         Mockito.when(bindingMapper.selectOne(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(dormant);
         Mockito.when(bindingMapper.deleteDormantUnboundRows(
@@ -315,9 +326,13 @@ class SsoAuthServiceTest {
         return svc;
     }
 
-    @Test
-    @DisplayName("A4 配置期间授权：appId/secret 变更后在途回调使用当前配置（不串用旧配置）")
-    void callback_inFlightConfigChange_usesCurrentConfig() {
+    /** A4 在途授权夹具：捕获式 client + 独立 mock 集（不出站、可验证绑定/审计增量）。 */
+    private record InFlightHarness(SsoAuthService svc, SsoUserBindingMapper bm, SsoAuditRecordMapper am,
+                                   java.util.List<SsoProviderClient.SsoProviderConfigView> captured) {
+    }
+
+    private InFlightHarness inFlightHarness(SsoProviderConfig currentConfig, SsoAuthState state,
+                                            List<com.sw.ck.system.entity.SysUser> tenantUsers) {
         var captured = new java.util.ArrayList<SsoProviderClient.SsoProviderConfigView>();
         SsoProviderClient capturingClient = new SsoProviderClient() {
             @Override public String provider() { return "WECOM"; }
@@ -333,7 +348,9 @@ class SsoAuthServiceTest {
         var am = Mockito.mock(SsoAuditRecordMapper.class);
         var users = Mockito.mock(SysUserService.class);
         Mockito.when(users.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<com.sw.ck.system.entity.SysUser>>any()))
-                .thenReturn(java.util.List.of());
+                .thenReturn(tenantUsers);
+        Mockito.doAnswer(inv -> tenantUsers.isEmpty() ? null : tenantUsers.get(0))
+                .when(users).getById(org.mockito.ArgumentMatchers.any());
         var tvs = Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
         Mockito.doNothing().when(tvs).requireValid(org.mockito.ArgumentMatchers.any());
         var cipher = new com.sw.ck.system.sso.SsoCredentialCipher(
@@ -348,49 +365,119 @@ class SsoAuthServiceTest {
         Mockito.when(bm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
         Mockito.when(bm.deleteDormantUnboundRows(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(0);
-        SsoAuthService svc = new SsoAuthService(cm, bm, sm, am, users, java.util.List.of(capturingClient),
-                cipher, new SsoCallbackPolicy("", java.util.List.of(), ""), tvs,
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
-
-        // 在途 state #1：配置 = 旧 appId/secret → 回调按当时配置换票
-        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(configRow("ww-test-corp", "secret-value"));
-        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(freshState());
+        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(currentConfig);
+        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(state);
         Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
-        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-old", "state-old"))
-                .isInstanceOf(SsoRejectionException.class);
-        assertThat(captured).hasSize(1);
-        assertThat(captured.get(0).appId()).isEqualTo("ww-test-corp");
-        assertThat(captured.get(0).appSecret()).isEqualTo("secret-value");
-
-        // 配置变更（新 appId/secret）后，另一在途 state 的回调按当前（新）配置换票——不串用旧配置
-        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(configRow("new-app-id", "new-secret-value"));
-        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(freshState());
-        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-new", "state-new"))
-                .isInstanceOf(SsoRejectionException.class);
-        assertThat(captured).hasSize(2);
-        assertThat(captured.get(1).appId()).isEqualTo("new-app-id");
-        assertThat(captured.get(1).appSecret()).isEqualTo("new-secret-value");
+        SsoAuthService svc = new SsoAuthService(cm, bm, sm, am, users, List.of(capturingClient),
+                cipher, new SsoCallbackPolicy("", List.of(), ""), tvs,
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+        return new InFlightHarness(svc, bm, am, captured);
     }
 
-    private SsoProviderConfig configRow(String appId, String secret) {
+    private SsoProviderConfig configRow(String appId, String secret, String extraConfig, int enabled) {
         SsoProviderConfig config = new SsoProviderConfig();
         config.setId(9L);
         config.setTenantId(1L);
         config.setProvider("WECOM");
-        config.setEnabled(1);
+        config.setEnabled(enabled);
         config.setAppId(appId);
         config.setAppSecretEnc(new com.sw.ck.system.sso.SsoCredentialCipher(
                 java.util.Base64.getEncoder().encodeToString(new byte[32])).encrypt(secret));
-        config.setExtraConfig("{}");
+        config.setExtraConfig(extraConfig);
         return config;
     }
 
+    /** A4 在途拒绝统一断言：拒绝、不出站换票、零绑定插入、拒绝审计原因精确。 */
+    private void assertInFlightRejected(InFlightHarness h, String expectedAuditDetail) {
+        assertThatThrownBy(() -> h.svc().handleCallback("WECOM", "code-any", "state-any"))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
+        assertThat(h.captured()).isEmpty();
+        Mockito.verify(h.bm(), Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any());
+        Mockito.verify(h.am()).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                "LOGIN_FAILED".equals(a.getEventType()) && expectedAuditDetail.equals(a.getDetail())));
+    }
+
     @Test
-    @DisplayName("A4 配置期间授权：身份模式变更（企业+错标识）后在途回调安全失败")
-    void callback_inFlightModeChanged_mismatchRejected() {
+    @DisplayName("A4 生命周期：appId 变更 → 在途回调安全失败（不出站/零绑定/审计原因）")
+    void callback_appIdChangedAfterAuthorizeStart_rejected() {
+        assertInFlightRejected(
+                inFlightHarness(configRow("new-app-id", "secret-value", "{}", 1), freshState(), List.of()),
+                "config changed since authorize start");
+    }
+
+    @Test
+    @DisplayName("A4 生命周期：secret 变更 → 在途回调安全失败")
+    void callback_secretChangedAfterAuthorizeStart_rejected() {
+        assertInFlightRejected(
+                inFlightHarness(configRow("ww-test-corp", "new-secret-value", "{}", 1), freshState(), List.of()),
+                "config changed since authorize start");
+    }
+
+    @Test
+    @DisplayName("A4 生命周期：身份模式变更（个人→企业）→ 在途回调安全失败")
+    void callback_identityModeChangedAfterAuthorizeStart_rejected() {
+        assertInFlightRejected(
+                inFlightHarness(configRow("ww-test-corp", "secret-value", "{\"enterpriseId\":\"corp-ok\"}", 1),
+                        freshState(""), List.of()),
+                "config changed since authorize start");
+    }
+
+    @Test
+    @DisplayName("A4 生命周期：企业标识变更（corp-a→corp-b）→ 在途回调安全失败")
+    void callback_enterpriseIdentityChangedAfterAuthorizeStart_rejected() {
+        assertInFlightRejected(
+                inFlightHarness(configRow("ww-test-corp", "secret-value", "{\"enterpriseId\":\"corp-b\"}", 1),
+                        freshState("corp-a"), List.of()),
+                "config changed since authorize start");
+    }
+
+    @Test
+    @DisplayName("A4 生命周期：Provider 停用 → 在途回调拒绝（既有启停语义保持）")
+    void callback_disabledAfterAuthorizeStart_rejected() {
+        assertInFlightRejected(
+                inFlightHarness(configRow("ww-test-corp", "secret-value", "{}", 0), freshState(), List.of()),
+                "provider disabled");
+    }
+
+    @Test
+    @DisplayName("A4 生命周期：历史 state 无配置指纹（V104 前）→ fail closed 拒绝")
+    void callback_legacyStateWithoutDigest_failClosed() {
+        SsoAuthState legacy = freshState();
+        legacy.setConfigDigest(null);
+        assertInFlightRejected(
+                inFlightHarness(configRow("ww-test-corp", "secret-value", "{}", 1), legacy, List.of()),
+                "config changed since authorize start");
+    }
+
+    @Test
+    @DisplayName("A4 生命周期：配置变更后重新发起 → 按新配置换票并正常准入绑定登录")
+    void callback_afterConfigChange_reinitiateSucceedsWithNewConfig() {
+        // 重新发起：state 指纹取自变更后的当前配置（新 appId/secret）
+        SsoAuthState reinitiated = freshState();
+        reinitiated.setConfigDigest(SsoAuthService.fingerprintOf("WECOM", "new-app-id", "new-secret-value", "", 1));
+        InFlightHarness h = inFlightHarness(
+                configRow("new-app-id", "new-secret-value", "{}", 1), reinitiated,
+                List.of(newLocalUser(7L, "17800000001")));
+        var res = h.svc().handleCallback("WECOM", "code-new", "state-new");
+        assertThat(res.bound()).isTrue();
+        assertThat(res.userId()).isEqualTo(7L);
+        assertThat(h.captured()).hasSize(1);
+        assertThat(h.captured().get(0).appId()).isEqualTo("new-app-id");
+        assertThat(h.captured().get(0).appSecret()).isEqualTo("new-secret-value");
+        Mockito.verify(h.am()).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                "BIND".equals(a.getEventType()) && "phone-admission auto-bind".equals(a.getDetail())));
+    }
+
+    @Test
+    @DisplayName("A4 生命周期：企业模式错标识（厂商字段与配置不一致）→ 换票后安全失败零绑定")
+    void callback_enterpriseVendorFieldMismatch_rejectedAfterExchange() {
+        // 指纹一致（企业标识 corp-expected 与发起时相同）→ 进入换票；厂商可信企业
+        // 字段 corp-other 与配置不一致 → ENTERPRISE_MISMATCH 拒绝（G3b 语义保持）
         var users = userServiceReturning(java.util.List.of());
-        SsoAuthService svc = serviceWithUsers(fixedClient("ext-ok", "corp-ok", "17800000001"),
-                "{\"enterpriseId\":\"other-corp\"}", users);
+        SsoAuthService svc = serviceWithUsers(fixedClient("ext-ok", "corp-other", "17800000001"),
+                "{\"enterpriseId\":\"corp-expected\"}", users, "corp-expected");
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
@@ -433,11 +520,21 @@ class SsoAuthServiceTest {
 
     /** 在 serviceWith 基础上替换 SysUserService 桩与既有绑定（准入链用例）。 */
     private SsoAuthService serviceWithUsers(SsoProviderClient client, String extraConfig, SysUserService users) {
-        return serviceWithUsers(client, extraConfig, users, null);
+        return serviceWithUsers(client, extraConfig, users, null, "");
+    }
+
+    private SsoAuthService serviceWithUsers(SsoProviderClient client, String extraConfig, SysUserService users,
+                                            String stateEnterpriseId) {
+        return serviceWithUsers(client, extraConfig, users, null, stateEnterpriseId);
     }
 
     private SsoAuthService serviceWithUsers(SsoProviderClient client, String extraConfig, SysUserService users,
                                             SsoUserBinding existingExternal) {
+        return serviceWithUsers(client, extraConfig, users, existingExternal, "");
+    }
+
+    private SsoAuthService serviceWithUsers(SsoProviderClient client, String extraConfig, SysUserService users,
+                                            SsoUserBinding existingExternal, String stateEnterpriseId) {
         var cm = Mockito.mock(SsoProviderConfigMapper.class);
         var bm = Mockito.mock(SsoUserBindingMapper.class);
         var sm = Mockito.mock(SsoAuthStateMapper.class);
@@ -463,7 +560,8 @@ class SsoAuthServiceTest {
             st.setId(2L);
             return 1;
         });
-        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(freshState());
+        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(freshState(stateEnterpriseId));
         Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
         Mockito.when(bm.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
                 org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyString()))
@@ -481,7 +579,8 @@ class SsoAuthServiceTest {
     @Test
     @DisplayName("G3b 企业归属：厂商字段与配置不一致 → 拒绝且审计 ENTERPRISE_MISMATCH")
     void callback_enterpriseMismatch_shouldReject() {
-        SsoAuthService svc = serviceWith(fixedClient("ext-x", "corp-other"), "{\"enterpriseId\":\"corp-expected\"}");
+        SsoAuthService svc = serviceWith(fixedClient("ext-x", "corp-other"), "{\"enterpriseId\":\"corp-expected\"}",
+                "corp-expected");
         SsoAuthService svcF = svc;
         assertThatThrownBy(() -> svcF.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
@@ -911,6 +1010,8 @@ class SsoAuthServiceTest {
         SsoAuthState fresh = new SsoAuthState();
         fresh.setId(7L); fresh.setProvider("WECOM"); fresh.setConsumed(0); fresh.setTenantId(1L);
         fresh.setExpireAt(LocalDateTime.now().plusSeconds(60));
+        // A4：state 指纹与 setUp 默认配置桩同源，使换票失败发生在出站调用内（保持本用例语义）
+        fresh.setConfigDigest(SsoAuthService.fingerprintOf("WECOM", "ww-test-corp", "secret-value", "", 1));
         Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(fresh);
         Mockito.when(stateMapper.update(org.mockito.ArgumentMatchers.eq(null), org.mockito.ArgumentMatchers.any())).thenReturn(1);
         Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),

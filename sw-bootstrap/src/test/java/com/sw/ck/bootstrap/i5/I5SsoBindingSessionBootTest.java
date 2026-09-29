@@ -101,7 +101,11 @@ class I5SsoBindingSessionBootTest {
     }
 
     private String issueTicket(long userId, long tenantId, String provider) {
-        return app.getBean(SsoTicketStore.class).issue(userId, tenantId, provider);
+        // A4：票据绑定签发时刻配置指纹——与兑换时服务端计算的当前指纹同源
+        // （夹具配置行 app_secret_enc='x' 不可解密，指纹以占位标记参与，签发/兑换两侧一致）
+        String digest = app.getBean(com.sw.ck.system.sso.SsoAuthService.class)
+                .currentConfigDigestFor(provider, tenantId);
+        return app.getBean(SsoTicketStore.class).issue(userId, tenantId, provider, digest);
     }
 
     private HttpResponse<String> post(String path, String body) throws Exception {

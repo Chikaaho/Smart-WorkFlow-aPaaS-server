@@ -129,7 +129,8 @@ public class SsoAuthController {
                 return deny(provider, new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED,
                         "暂时无法使用第三方登录，请联系管理员核对账号信息"));
             }
-            String ticket = ticketStore.issue(result.userId(), result.tenantId(), result.provider());
+            String ticket = ticketStore.issue(result.userId(), result.tenantId(), result.provider(),
+                    result.configDigest());
             // 统一经同源回跳页兑换票据（工作台等目标页不消费票据）；
             // state.redirect_path 仅作为兑换后的最终去向（redirect 参数）
             String target = "/sso/return?sso_ticket=" + urlEncode(ticket)
@@ -182,10 +183,14 @@ public class SsoAuthController {
             return R.failResolved(401, SystemErrorKeys.SSO_TENANT_INVALID,
                 LocalizedMessages.text(SystemErrorKeys.SSO_TENANT_INVALID, "租户无效或已停用/过期"), EventRef.current());
         }
-        // A4 配置期间授权语义：票据签发后 Provider 被停用 → 未兑换票据不得再签发新会话
+        // A4 配置期间授权语义：票据绑定签发时刻配置指纹——Provider 停用或
+        // appId/secret/身份模式/企业标识变化后，未兑换票据不得再签发新会话
         // （配置变更期间不以旧配置建立会话；重新发起授权即可恢复）
-        if (!ssoAuthService.isProviderEnabledFor(session.provider(), session.tenantId())) {
-            ssoAuthService.auditRejection(session.provider(), "LOGIN_FAILED", "provider disabled at ticket exchange");
+        String currentDigest = ssoAuthService.currentConfigDigestFor(session.provider(), session.tenantId());
+        if (currentDigest == null || !currentDigest.equals(session.configDigest())) {
+            ssoAuthService.auditRejection(session.provider(), "LOGIN_FAILED",
+                    currentDigest == null ? "provider disabled at ticket exchange"
+                            : "config changed at ticket exchange");
             return R.failResolved(401, SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED,
                 LocalizedMessages.text(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG), EventRef.current());
         }

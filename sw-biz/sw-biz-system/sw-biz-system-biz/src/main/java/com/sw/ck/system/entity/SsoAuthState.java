@@ -43,4 +43,12 @@ public class SsoAuthState extends BaseEntity {
     /** 过期时间 */
     @TableField("expire_at")
     private LocalDateTime expireAt;
+
+    /**
+     * 授权发起时刻的 Provider 配置指纹（A4 配置生命周期绑定；V104）。
+     * 回调/票据兑换时与当前配置指纹比对：appId、secret、企业标识、启停任一变化
+     * 即安全失败，不串用新旧配置。历史行 NULL 一律 fail closed。
+     */
+    @TableField("config_digest")
+    private String configDigest;
 }

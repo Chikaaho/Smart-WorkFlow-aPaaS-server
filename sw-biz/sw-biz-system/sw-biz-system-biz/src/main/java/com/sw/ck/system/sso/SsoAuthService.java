@@ -536,6 +536,7 @@ public class SsoAuthService {
         stateRow.setConsumed(0);
         stateRow.setExpireAt(LocalDateTime.now().plusSeconds(STATE_TTL_SECONDS));
         stateRow.setTenantId(tenantId);
+        stateRow.setConfigDigest(configFingerprint(provider, config));
         stateMapper.insert(stateRow);
 
         SsoProviderClient client = clients.get(provider);
@@ -618,6 +619,7 @@ public class SsoAuthService {
             stateRow.setConsumed(0);
             stateRow.setExpireAt(LocalDateTime.now().plusSeconds(STATE_TTL_SECONDS));
             stateRow.setTenantId(tenantId);
+            stateRow.setConfigDigest(configFingerprint(provider, config));
             stateMapper.insert(stateRow);
 
             SsoProviderClient client = clients.get(provider);
@@ -694,6 +696,15 @@ public class SsoAuthService {
             auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider disabled", stateRow.getTenantId());
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
+        // A4 配置生命周期绑定：在途授权按发起时刻配置指纹校验——appId/secret/
+        // 身份模式/企业标识/启停任一变化（或历史行无指纹）一律安全失败并可重新
+        // 发起，不串用新旧配置（方向 §三）。
+        String configDigest = configFingerprint(provider, config);
+        if (stateRow.getConfigDigest() == null || !stateRow.getConfigDigest().equals(configDigest)) {
+            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null,
+                    "config changed since authorize start", stateRow.getTenantId());
+            throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
+        }
         String externalId;
         String vendorEnterpriseId;
         String vendorMobile;
@@ -725,7 +736,7 @@ public class SsoAuthService {
         }
         audit(provider, "EXCHANGE", "SUCCESS", null, null, sha256(externalId),
                 "scope=" + scopeMarker, stateRow.getTenantId());
-        return admitCallback(provider, stateRow, externalId, vendorMobile);
+        return admitCallback(provider, stateRow, externalId, vendorMobile, configDigest);
     }
 
     /**
@@ -742,7 +753,7 @@ public class SsoAuthService {
      * 手机号原文与规范化值不进审计/日志/响应；审计 detail 仅记脱敏原因类别。
      */
     private CallbackResult admitCallback(String provider, SsoAuthState stateRow,
-                                         String externalId, String vendorMobile) {
+                                         String externalId, String vendorMobile, String configDigest) {
         Long tenantId = stateRow.getTenantId();
         String externalDigest = sha256(externalId);
         String normalizedPhone = SsoPhoneNormalizer.normalize(vendorMobile);
@@ -766,7 +777,7 @@ public class SsoAuthService {
             audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, binding.getUserId(), externalDigest,
                     null, tenantId);
             return new CallbackResult(provider, tenantId, externalId, externalDigest,
-                    binding.getUserId(), stateRow.getRedirectPath(), true);
+                    binding.getUserId(), stateRow.getRedirectPath(), true, configDigest);
         }
         // 未绑定：按可信手机号在当前租户准入唯一有效用户
         if (normalizedPhone == null) {
@@ -845,7 +856,7 @@ public class SsoAuthService {
                 "phone-admission auto-bind", tenantId);
         audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, target.userId(), externalDigest, null, tenantId);
         return new CallbackResult(provider, tenantId, externalId, externalDigest,
-                target.userId(), stateRow.getRedirectPath(), true);
+                target.userId(), stateRow.getRedirectPath(), true, configDigest);
     }
 
     /** 本地用户最小视图（准入链专用；phone 仅服务端内存使用，不进日志）。 */
@@ -1020,18 +1031,52 @@ public class SsoAuthService {
     }
 
     /**
-     * A4 配置期间授权语义：未兑换票据的新会话签发也受 Provider 启停约束——
-     * 停用/配置变更后，票据兑换一律拒绝（新会话不得以旧配置建立）。
-     * 供票据兑换端点在消费票据后调用；调用方负责拒绝审计。
+     * A4 配置期间授权语义：未兑换票据的新会话签发受签发时刻配置指纹约束——
+     * 停用或 appId/secret/身份模式/企业标识变化后，票据兑换一律拒绝（新会话
+     * 不得以旧配置建立；重新发起授权即可恢复）。返回当前配置指纹；配置缺失、
+     * 停用或解密失败返回 null，由调用方拒绝并审计。
      */
-    public boolean isProviderEnabledFor(String provider, Long tenantId) {
+    public String currentConfigDigestFor(String provider, Long tenantId) {
         requireProvider(provider);
         SsoProviderConfig config;
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
             config = loadEnabledConfigGlobal(provider, tenantId);
         }
-        return config != null && config.getEnabled() == 1;
+        if (config == null || config.getEnabled() != 1) {
+            return null;
+        }
+        return configFingerprint(provider, config);
+    }
+
+    /**
+     * A4 配置生命周期绑定：当前配置指纹（SHA-256）。材料=provider|appId|解密
+     * secret|企业标识（个人模式空串）|启停；secret 以解密值参与摘要（密文含随机
+     * IV，不可作指纹材料）。解密失败按占位标记参与摘要——与换票必然失败同口径
+     * fail closed（旧指纹必不匹配）。摘要不进日志/审计/响应。
+     */
+    private String configFingerprint(String provider, SsoProviderConfig config) {
+        String secret;
+        try {
+            secret = cipher.decrypt(config.getAppSecretEnc());
+        } catch (RuntimeException e) {
+            secret = "<undecryptable>";
+        }
+        return fingerprintOf(provider, config.getAppId(), secret,
+                configuredEnterpriseId(config), config.getEnabled());
+    }
+
+    /** 指纹材料单一来源（测试同源引用）；材料构成变更即等价于全量配置变更语义。 */
+    static String fingerprintOf(String provider, String appId, String secret,
+                                String enterpriseId, Integer enabled) {
+        String material = provider + "|" + appId + "|" + secret + "|"
+                + (enterpriseId == null ? "" : enterpriseId) + "|" + enabled;
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(material.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     private SsoProviderClient.SsoProviderConfigView decryptConfig(SsoProviderConfig config) {
@@ -1294,9 +1339,9 @@ public class SsoAuthService {
     public record AuthorizeStart(String authorizeUrl, String state) {
     }
 
-    /** 回调处理结果：bound=true 时 userId 为本地账号 */
+    /** 回调处理结果：bound=true 时 userId 为本地账号；configDigest 供票据绑定配置指纹（A4） */
     public record CallbackResult(String provider, Long tenantId, String externalId,
                                  String externalDigest, Long userId, String redirectPath,
-                                 boolean bound) {
+                                 boolean bound, String configDigest) {
     }
 }
