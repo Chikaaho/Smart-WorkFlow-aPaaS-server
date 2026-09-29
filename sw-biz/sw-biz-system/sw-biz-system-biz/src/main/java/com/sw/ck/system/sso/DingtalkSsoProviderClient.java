@@ -37,10 +37,14 @@ public class DingtalkSsoProviderClient implements SsoProviderClient {
 
     @Override
     public String buildAuthorizeUrl(SsoProviderConfigView config, String redirectUri, String state) {
+        // G3b：企业模式（extra.enterpriseId 已配置）需请求 corpid scope，否则换票
+        // 响应不含 corpId、企业归属无法校验（实测：scope=openid 时 corpId 缺失被拒）
+        String scope = config.extra() != null && config.extra().containsKey("enterpriseId")
+                ? "openid+corpid" : "openid";
         return AUTHORIZE_URL + "?clientId=" + urlEncode(config.appId())
                 + "&redirect_uri=" + urlEncode(redirectUri)
                 + "&response_type=code"
-                + "&scope=openid"
+                + "&scope=" + urlEncode(scope)
                 + "&state=" + urlEncode(state)
                 + "&prompt=consent";
     }
