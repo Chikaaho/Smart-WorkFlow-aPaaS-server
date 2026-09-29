@@ -315,6 +315,89 @@ class SsoAuthServiceTest {
         return svc;
     }
 
+    @Test
+    @DisplayName("A4 配置期间授权：appId/secret 变更后在途回调使用当前配置（不串用旧配置）")
+    void callback_inFlightConfigChange_usesCurrentConfig() {
+        var captured = new java.util.ArrayList<SsoProviderClient.SsoProviderConfigView>();
+        SsoProviderClient capturingClient = new SsoProviderClient() {
+            @Override public String provider() { return "WECOM"; }
+            @Override public String buildAuthorizeUrl(SsoProviderConfigView c, String r, String st) { return "u"; }
+            @Override public ExchangeResult exchangeExternalId(SsoProviderConfigView c, String code, String redirectUri) {
+                captured.add(c);
+                return new ExchangeResult("ext-" + captured.size(), "corp-ok", "17800000001");
+            }
+        };
+        var cm = Mockito.mock(SsoProviderConfigMapper.class);
+        var bm = Mockito.mock(SsoUserBindingMapper.class);
+        var sm = Mockito.mock(SsoAuthStateMapper.class);
+        var am = Mockito.mock(SsoAuditRecordMapper.class);
+        var users = Mockito.mock(SysUserService.class);
+        Mockito.when(users.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<com.sw.ck.system.entity.SysUser>>any()))
+                .thenReturn(java.util.List.of());
+        var tvs = Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.doNothing().when(tvs).requireValid(org.mockito.ArgumentMatchers.any());
+        var cipher = new com.sw.ck.system.sso.SsoCredentialCipher(
+                java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        Mockito.when(am.insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>any())).thenReturn(1);
+        Mockito.when(bm.insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any())).thenReturn(1);
+        Mockito.when(bm.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
+                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
+        Mockito.when(bm.selectActiveByUser(org.mockito.ArgumentMatchers.eq("WECOM"),
+                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(7L))).thenReturn(null);
+        Mockito.when(bm.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(bm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(bm.deleteDormantUnboundRows(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(0);
+        SsoAuthService svc = new SsoAuthService(cm, bm, sm, am, users, java.util.List.of(capturingClient),
+                cipher, new SsoCallbackPolicy("", java.util.List.of(), ""), tvs,
+                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+
+        // 在途 state #1：配置 = 旧 appId/secret → 回调按当时配置换票
+        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(configRow("ww-test-corp", "secret-value"));
+        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(freshState());
+        Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-old", "state-old"))
+                .isInstanceOf(SsoRejectionException.class);
+        assertThat(captured).hasSize(1);
+        assertThat(captured.get(0).appId()).isEqualTo("ww-test-corp");
+        assertThat(captured.get(0).appSecret()).isEqualTo("secret-value");
+
+        // 配置变更（新 appId/secret）后，另一在途 state 的回调按当前（新）配置换票——不串用旧配置
+        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(configRow("new-app-id", "new-secret-value"));
+        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(freshState());
+        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-new", "state-new"))
+                .isInstanceOf(SsoRejectionException.class);
+        assertThat(captured).hasSize(2);
+        assertThat(captured.get(1).appId()).isEqualTo("new-app-id");
+        assertThat(captured.get(1).appSecret()).isEqualTo("new-secret-value");
+    }
+
+    private SsoProviderConfig configRow(String appId, String secret) {
+        SsoProviderConfig config = new SsoProviderConfig();
+        config.setId(9L);
+        config.setTenantId(1L);
+        config.setProvider("WECOM");
+        config.setEnabled(1);
+        config.setAppId(appId);
+        config.setAppSecretEnc(new com.sw.ck.system.sso.SsoCredentialCipher(
+                java.util.Base64.getEncoder().encodeToString(new byte[32])).encrypt(secret));
+        config.setExtraConfig("{}");
+        return config;
+    }
+
+    @Test
+    @DisplayName("A4 配置期间授权：身份模式变更（企业+错标识）后在途回调安全失败")
+    void callback_inFlightModeChanged_mismatchRejected() {
+        var users = userServiceReturning(java.util.List.of());
+        SsoAuthService svc = serviceWithUsers(fixedClient("ext-ok", "corp-ok", "17800000001"),
+                "{\"enterpriseId\":\"other-corp\"}", users);
+        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
+        Mockito.verify(bindingMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any());
+    }
+
     private com.sw.ck.system.entity.SysUser newLocalUser(Long id, String phone) {
         com.sw.ck.system.entity.SysUser user = new com.sw.ck.system.entity.SysUser();
         user.setId(id);
