@@ -280,7 +280,9 @@ class SsoAuthServiceTest {
         var res = svc.handleCallback("WECOM", "code-ok", "state-ok");
         assertThat(res.bound()).isTrue();
         assertThat(res.userId()).isEqualTo(7L);
-        Mockito.verify(bindingMapper).delete(org.mockito.ArgumentMatchers.any());
+        Mockito.verify(bindingMapper).deleteDormantUnboundRows(
+                org.mockito.ArgumentMatchers.eq("WECOM"), org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(7L));
         Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "BIND".equals(a.getEventType()) && "phone-admission auto-bind".equals(a.getDetail())));
     }
@@ -306,10 +308,10 @@ class SsoAuthServiceTest {
         SsoAuthService svc = serviceWithUsers(client, extraConfig, users, null);
         Mockito.when(bindingMapper.selectOne(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(dormant);
-        Mockito.when(bindingMapper.selectList(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(java.util.List.of(dormant));
-        Mockito.when(bindingMapper.deleteById(org.mockito.ArgumentMatchers.any())).thenReturn(1);
-        Mockito.when(bindingMapper.delete(org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        Mockito.when(bindingMapper.deleteDormantUnboundRows(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(1);
         return svc;
     }
 

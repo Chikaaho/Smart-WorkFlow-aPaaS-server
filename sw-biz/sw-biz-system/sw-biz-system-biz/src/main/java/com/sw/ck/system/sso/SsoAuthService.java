@@ -805,10 +805,10 @@ public class SsoAuthService {
                 throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
             }
         }
-        // 解绑（UNBOUND）行 deleted=0 仍占用 (provider,tenant,external)/(provider,tenant,user)
-        // 两个唯一键——同一外部主体或同一用户解绑后重新准入会被唯一键拒绝。重绑前逻辑
-        // 删除占位行（@TableLogic，历史保留）；外部主体曾绑定其他本地账号的仍拒绝（不自动
-        // 迁移，交管理员核对）。
+        // 解绑（UNBOUND）行仍占用 (provider,tenant,external)/(provider,tenant,user) 两个唯一键
+        // （V84 唯一索引含 deleted，仅 0/1 两值——逻辑删除第二个循环必撞键）。重绑前物理删除
+        // 占位行（绑定行历史在 sys_sso_audit_record；@TableLogic 逻辑删除不可用于此）。
+        // 外部主体的占位行属于其他本地账号时仍拒绝（不自动迁移，交管理员核对）。
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
             SsoUserBinding dormantBySubject = bindingMapper.selectOne(
@@ -824,14 +824,7 @@ public class SsoAuthService {
                         externalDigest, "dormant binding belongs to another local user", tenantId);
                 throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
             }
-            if (dormantBySubject != null) {
-                bindingMapper.deleteById(dormantBySubject.getId());
-            }
-            bindingMapper.delete(com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoUserBinding>lambdaQuery()
-                    .eq(SsoUserBinding::getProvider, provider)
-                    .eq(SsoUserBinding::getTenantId, tenantId)
-                    .eq(SsoUserBinding::getUserId, target.userId())
-                    .eq(SsoUserBinding::getBindStatus, "UNBOUND"));
+            bindingMapper.deleteDormantUnboundRows(provider, tenantId, externalDigest, target.userId());
         }
         SsoUserBinding created = new SsoUserBinding();
         created.setProvider(provider);

@@ -2,6 +2,7 @@ package com.sw.ck.system.mapper;
 
 import com.sw.ck.common.mapper.BaseMapperX;
 import com.sw.ck.system.entity.SsoUserBinding;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -31,4 +32,20 @@ public interface SsoUserBindingMapper extends BaseMapperX<SsoUserBinding> {
     SsoUserBinding selectActiveByUser(@Param("provider") String provider,
                                       @Param("tenantId") Long tenantId,
                                       @Param("userId") Long userId);
+
+    /**
+     * 物理删除解绑占位行（sso-admin-config A2-b）：V84 唯一索引含 deleted 列，逻辑
+     * 删除的 UNBOUND 行会占用 (provider,tenant,external) 与 (provider,tenant,user) 两个
+     * 唯一键，且 deleted 仅 0/1 两值——解绑/重绑第二个循环必撞键。绑定行的历史在
+     * sys_sso_audit_record（BIND/UNBIND 审计），占位行本身可物理删除。
+     *
+     * @return 删除的占位行数
+     */
+    @Delete("DELETE FROM sys_sso_user_binding WHERE provider = #{provider} "
+            + "AND tenant_id = #{tenantId} AND deleted = 0 AND bind_status = 'UNBOUND' "
+            + "AND (external_digest = #{externalDigest} OR user_id = #{userId})")
+    int deleteDormantUnboundRows(@Param("provider") String provider,
+                                 @Param("tenantId") Long tenantId,
+                                 @Param("externalDigest") String externalDigest,
+                                 @Param("userId") Long userId);
 }
