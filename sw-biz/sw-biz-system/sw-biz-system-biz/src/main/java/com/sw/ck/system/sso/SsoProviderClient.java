@@ -49,9 +49,12 @@ public interface SsoProviderClient {
 
     /**
      * 换票结果：externalId=稳定主体标识；enterpriseId=厂商可信企业标识
-     * （取自换票/用户信息响应的官方字段，仅服务端内存使用，不进日志）。
+     * （取自换票/用户信息响应的官方字段，仅服务端内存使用，不进日志）；
+     * mobile=厂商可信接口返回的手机号原文（B 端准入，sso-admin-config）——
+     * 必须来自当前已认证主体的厂商服务端响应，不接受回调参数/前端输入；
+     * 厂商未返回（权限未开通或字段缺失）时为 {@code null}，由服务端 fail closed。
      */
-    record ExchangeResult(String externalId, String enterpriseId) {
+    record ExchangeResult(String externalId, String enterpriseId, String mobile) {
     }
 
     /** Provider 交互失败（网络/凭据/拒绝），message 不得包含 secret/code 原文。 */

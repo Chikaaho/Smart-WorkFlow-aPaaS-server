@@ -114,9 +114,9 @@ public class SsoAuthController {
 
     /**
      * 服务端回调/换票（免认证白名单）。校验一次性 state → code 换外部身份 →
-     * 定位绑定。已绑定：302 回跳同源前端（携带一次性 ticket）；未绑定：302 到
-     * 同源绑定确认页（携带一次性候选 ticket，不携带 code/state）；任一拒绝：
-     * 302 到回跳页并携带脱敏 errorKey（不携带 code/state 原文）。
+     * B 端手机号准入（sso-admin-config §一）：已有绑定经本地有效性+手机号一致性
+     * 校验登录；无绑定按可信手机号在当前租户唯一准入用户并自动绑定登录；准入
+     * 拒绝统一 302 到回跳页携带脱敏 errorKey（不携带 code/state 原文）。
      */
     @GetMapping("/{provider}/callback")
     public org.springframework.http.ResponseEntity<Void> callback(@PathVariable("provider") String provider,
@@ -124,16 +124,17 @@ public class SsoAuthController {
                            @RequestParam(value = "state", required = false) String state) {
         try {
             SsoAuthService.CallbackResult result = ssoAuthService.handleCallback(provider, code, state);
-            if (result.bound()) {
-                String ticket = ticketStore.issue(result.userId(), result.tenantId());
-                // 统一经同源回跳页兑换票据（工作台等目标页不消费票据）；
-                // state.redirect_path 仅作为兑换后的最终去向（redirect 参数）
-                String target = "/sso/return?sso_ticket=" + urlEncode(ticket)
-                        + "&redirect=" + urlEncode(safeRedirect(result.redirectPath()));
-                return seeOther(callbackPolicy.resolveFrontendPath(target, "/sso/return"));
+            if (!result.bound()) {
+                // 防御分支：准入链未绑定即拒绝，不再签发候选票据（旧候选绑定页已移除）
+                return deny(provider, new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED,
+                        "暂时无法使用第三方登录，请联系管理员核对账号信息"));
             }
-            String ticket = ticketStore.issueCandidate(result.externalId(), result.tenantId(), result.provider());
-            return seeOther(callbackPolicy.resolveFrontendPath("/sso/bind?ticket=" + urlEncode(ticket), "/sso/bind"));
+            String ticket = ticketStore.issue(result.userId(), result.tenantId());
+            // 统一经同源回跳页兑换票据（工作台等目标页不消费票据）；
+            // state.redirect_path 仅作为兑换后的最终去向（redirect 参数）
+            String target = "/sso/return?sso_ticket=" + urlEncode(ticket)
+                    + "&redirect=" + urlEncode(safeRedirect(result.redirectPath()));
+            return seeOther(callbackPolicy.resolveFrontendPath(target, "/sso/return"));
         } catch (SsoRejectionException | IllegalStateException | IllegalArgumentException
                  | com.sw.ck.system.sso.SsoProviderClient.SsoProviderException e) {
             return deny(provider, e);
@@ -203,61 +204,10 @@ public class SsoAuthController {
     }
 
     /**
-     * 绑定候选票据兑换（免认证白名单）：返回 Provider 与外部标识摘要前 8 位；
-     * 原文 externalId 不出服务端（绑定动作仍用同一候选票据原子消费）。
+     * 绑定候选票据兑换、候选确认与直连绑定端点已随 B 端手机号准入收敛移除
+     * （sso-admin-config §一）：绑定只在回调准入链内按可信手机号完成，历史
+     * 绑定数据与审计保留；旧候选/手动绑定路径不得绕过准入规则。
      */
-    @PostMapping("/candidate")
-    public R<Map<String, Object>> candidate(@RequestBody Map<String, String> body) {
-        SsoTicketStore.ConsumedCandidate candidate = ticketStore.peekCandidate(body.get("ticket"));
-        if (candidate == null) {
-            return R.failResolved(401, SystemErrorKeys.SSO_TICKET_INVALID,
-                LocalizedMessages.text(SystemErrorKeys.SSO_TICKET_INVALID, "绑定票据无效或已过期"), EventRef.current());
-        }
-        try {
-            tenantValidityService.requireValid(candidate.tenantId());
-        } catch (IllegalStateException e) {
-            return R.failResolved(401, SystemErrorKeys.SSO_TENANT_INVALID,
-                LocalizedMessages.text(SystemErrorKeys.SSO_TENANT_INVALID, "租户无效或已停用/过期"), EventRef.current());
-        }
-        return R.ok(Map.of(
-                "provider", candidate.provider(),
-                "externalDigestPrefix", com.sw.ck.system.sso.SsoAuthService.digestPrefix(candidate.externalId())));
-    }
-
-    /**
-     * 绑定候选确认（需认证）：消费候选票据并完成绑定（冲突/重复显式拒绝）。
-     */
-    @PostMapping("/bind-candidate")
-    public R<Void> bindCandidate(@RequestBody Map<String, String> body) {
-        LoginUser current = LoginUserHolder.get();
-        if (current == null) {
-            return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
-                LocalizedMessages.text(SystemErrorKeys.SESSION_REQUIRED, "未登录"), EventRef.current());
-        }
-        SsoTicketStore.ConsumedCandidate candidate = ticketStore.consumeCandidate(body.get("ticket"));
-        if (candidate == null) {
-            return R.failResolved(401, SystemErrorKeys.SSO_TICKET_INVALID,
-                LocalizedMessages.text(SystemErrorKeys.SSO_TICKET_INVALID, "绑定票据无效或已过期"), EventRef.current());
-        }
-        if (!current.getTenantId().equals(candidate.tenantId())) {
-            ssoAuthService.auditRejection(candidate.provider(), "CROSS_TENANT_REJECTED",
-                    "bind candidate tenant mismatch");
-            return R.failResolved(403, SystemErrorKeys.SSO_BINDING_TENANT_MISMATCH,
-                LocalizedMessages.text(SystemErrorKeys.SSO_BINDING_TENANT_MISMATCH, "绑定候选与当前租户不匹配"), EventRef.current());
-        }
-        try {
-            ssoAuthService.bind(candidate.provider(), current.getUserId(), candidate.externalId());
-        } catch (SsoRejectionException e) {
-            log.warn("SSO 候选绑定被拒: eventRef={} errorKey={} detail={}",
-                    EventRef.current(), e.getErrorKey(), e.getMessage());
-            return R.failResolved(400, e.getErrorKey(), e.getMessage(), EventRef.current());
-        } catch (RuntimeException e) {
-            log.warn("SSO 候选绑定失败: eventRef={} detail={}", EventRef.current(), e.getMessage(), e);
-            return R.failResolved(400, SystemErrorKeys.SSO_BINDING_CONFLICT,
-                    "绑定未能完成，请稍后重试或联系管理员处理", EventRef.current());
-        }
-        return R.ok();
-    }
 
     /** SSO 审计查询（I5 复验 G7）：权限守卫 + 租户隔离；无权与跨租户查询被拒绝。 */
     @org.springframework.security.access.prepost.PreAuthorize("@ss.hasPermi('system:sso:audit:query')")
@@ -280,28 +230,6 @@ public class SsoAuthController {
                 LocalizedMessages.text(SystemErrorKeys.SESSION_REQUIRED, "未登录"), EventRef.current());
         }
         return R.ok(ssoAuthService.listBindings(current.getUserId()));
-    }
-
-    /** 绑定（请求体携带外部身份候选 ticket 换取的外部标识；服务端校验冲突）。 */
-    @PostMapping("/bind")
-    public R<Void> bind(@RequestBody BindRequest request) {
-        LoginUser current = LoginUserHolder.get();
-        if (current == null) {
-            return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
-                LocalizedMessages.text(SystemErrorKeys.SESSION_REQUIRED, "未登录"), EventRef.current());
-        }
-        try {
-            ssoAuthService.bind(request.provider(), current.getUserId(), request.externalId());
-        } catch (SsoRejectionException e) {
-            log.warn("SSO 绑定被拒: eventRef={} errorKey={} detail={}",
-                    EventRef.current(), e.getErrorKey(), e.getMessage());
-            return R.failResolved(400, e.getErrorKey(), e.getMessage(), EventRef.current());
-        } catch (RuntimeException e) {
-            log.warn("SSO 绑定失败: eventRef={} detail={}", EventRef.current(), e.getMessage(), e);
-            return R.failResolved(400, SystemErrorKeys.SSO_BINDING_CONFLICT,
-                    "绑定未能完成，请稍后重试或联系管理员处理", EventRef.current());
-        }
-        return R.ok();
     }
 
     /** 解绑（携带当前 access token：解绑触发该 token 的会话撤销——I5 §3.2）。 */

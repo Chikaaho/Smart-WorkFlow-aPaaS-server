@@ -11,18 +11,19 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * G4-S 三级补证：SSO 加密器运行时诊断（非秘密）。
+ * G4-S / sso-admin-config §二：SSO 加密器显式依赖绑定运行时验证（非秘密）。
  * <p>
- * 真实完整启动（dev profile）后断言：容器内 AesGcmCipher bean 的注册名与数量
- * （运行时类型/来源确定），并用运行容器内的加密器对已知样例做加解密往返
- * （凭据解密成功检查）。只输出 bean 名、数量与布尔结果，不输出任何密钥值。
- * 区分：本测试=dev 实际链运行诊断；生产契约（SW_SSO_CIPHER_KEY 占位与运维
- * 口径）由回执文字另行描述，不混用。
+ * 真实完整启动（dev profile）后断言显式化改造后的容器事实：共享
+ * {@code AesGcmCipher} bean 仅剩 agent 模块实例（SSO 侧不再参与同型条件竞争、
+ * 不再被 bean 注册顺序隐式顶替）；SSO 凭据加密经 {@code SsoCredentialCipher}
+ * 以专属密钥源 {@code sw.security.sso.cipher-key} 显式构造（加解密往返成功，
+ * 密钥缺失 fail-fast）。只输出 bean 名、数量与布尔结果，不输出任何密钥值。
  * </p>
  */
-@DisplayName("G4-S SSO 加密器运行时诊断（bean 类型/来源/解密成功，非秘密）")
+@DisplayName("G4-S SSO 加密器显式绑定（agent bean 不受影响；SSO 专属密钥源往返/fail-fast）")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class I5SsoCipherRuntimeDiagTest {
 
@@ -79,29 +80,34 @@ class I5SsoCipherRuntimeDiagTest {
     }
 
     @Test
-    @DisplayName("运行容器：AesGcmCipher bean 注册名/数量确定；SSO 注入实例加解密往返成功")
-    void cipherBeanRuntimeDiagnostic() {
+    @DisplayName("运行容器：共享 AesGcmCipher bean 仅 agent 实例；SSO 专属密钥显式构造往返成功且缺失 fail-fast")
+    void cipherExplicitBindingDiagnostic() {
         Map<String, com.sw.ck.common.crypto.AesGcmCipher> beans =
                 app.getBeansOfType(com.sw.ck.common.crypto.AesGcmCipher.class);
         System.out.println("[G4S-DIAG] AesGcmCipher beans=" + beans.keySet()
                 + " count=" + beans.size());
-        // 非秘密运行事实：记录注册名与数量（不输出密钥）
-        assertThat(beans).isNotEmpty();
-        boolean ssoCipherPresent = beans.keySet().stream().anyMatch(n -> n.contains("ssoCipher"));
-        boolean agentCipherPresent = beans.keySet().stream().anyMatch(n -> n.contains("agent"));
-        System.out.println("[G4S-DIAG] ssoCipherPresent=" + ssoCipherPresent
-                + " agentCipherPresent=" + agentCipherPresent);
-        // SSO 注入路径实际拿到哪个实例：按类型取唯一 bean（与 @ConditionalOnMissingBean
-        // 顶替顺序一致——同类型多实例时容器按注册名注入 primary/唯一者）
-        var injected = app.getBean(com.sw.ck.common.crypto.AesGcmCipher.class);
-        // 凭据解密成功检查：注入实例加解密往返
+        // 共享 bean 只剩 agent 实例：SSO 不再注册同型 bean，密钥来源不随注册顺序漂移
+        assertThat(beans).hasSize(1);
+        String agentBeanName = beans.keySet().iterator().next();
+        assertThat(agentBeanName).contains("agent");
+        boolean ssoSharedCipherPresent = beans.keySet().stream().anyMatch(n -> n.contains("ssoCipher"));
+        System.out.println("[G4S-DIAG] ssoSharedCipherPresent=" + ssoSharedCipherPresent
+                + " agentCipherPresent=true");
+        assertThat(ssoSharedCipherPresent).isFalse();
+
+        // SSO 专属密钥源：与装配工厂同源（sw.security.sso.cipher-key）显式构造，
+        // 加解密往返成功；密钥缺失 fail-fast
+        String ssoKey = app.getEnvironment().getProperty("sw.security.sso.cipher-key");
+        com.sw.ck.system.sso.SsoCredentialCipher ssoCipher =
+                new com.sw.ck.system.sso.SsoCredentialCipher(ssoKey);
         String plain = "g4s-roundtrip-sample";
-        String enc = injected.encrypt(plain);
-        assertThat(injected.decrypt(enc)).isEqualTo(plain);
-        System.out.println("[G4S-DIAG] roundtrip via bean="
-                + (beans.entrySet().stream().anyMatch(e -> e.getValue() == injected)
-                    ? beans.entrySet().stream().filter(e -> e.getValue() == injected).findFirst().get().getKey()
-                    : "primary-instance")
-                + " result=OK");
+        String enc = ssoCipher.encrypt(plain);
+        assertThat(ssoCipher.decrypt(enc)).isEqualTo(plain);
+        assertThat(ssoCipher.decryptable(enc)).isTrue();
+        System.out.println("[G4S-DIAG] ssoCredentialCipher roundtrip=OK (explicit sw.security.sso.cipher-key)");
+        assertThatThrownBy(() -> new com.sw.ck.system.sso.SsoCredentialCipher(" "))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("sw.security.sso.cipher-key");
+        System.out.println("[G4S-DIAG] blank-key fail-fast=OK");
     }
 }

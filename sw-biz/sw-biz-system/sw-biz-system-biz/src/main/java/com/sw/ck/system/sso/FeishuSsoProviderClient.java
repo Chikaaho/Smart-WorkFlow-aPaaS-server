@@ -27,6 +27,8 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
     private static final String AUTHORIZE_URL = "https://open.feishu.cn/open-apis/authen/v1/authorize";
     private static final String TOKEN_URL = "https://accounts.feishu.cn/oauth/v3/token";
     private static final String USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info";
+    private static final String APP_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal";
+    private static final String CONTACT_USER_URL = "https://open.feishu.cn/open-apis/contact/v3/users/";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -99,12 +101,67 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
             }
             // 官方 user_info 字段：tenant_key=用户所属租户（G3b 企业归属可信来源）
             String tenantKey = root.path("data").path("tenant_key").asText(null);
-            return new SsoProviderClient.ExchangeResult(openId, tenantKey);
+            // 可信手机号（B 端准入）：authen/user_info 不含手机号，需以应用身份调
+            // contact/v3/users/{open_id}（scope contact:user.base:readonly）；权限未开通
+            // 或调用失败时返回 null，由服务端准入链 fail closed，不在本层放大为换票失败
+            String mobile = fetchMobileQuietly(config, openId);
+            return new SsoProviderClient.ExchangeResult(openId, tenantKey, mobile);
         } catch (SsoProviderException e) {
             throw e;
         } catch (Exception e) {
             log.warn("飞书用户信息异常: {}", e.getClass().getSimpleName());
             throw new SsoProviderException("飞书获取用户信息失败", e);
+        }
+    }
+
+    /**
+     * 以应用身份读取联系人手机号；任何失败（权限缺失/网络/解析）都静默降级为
+     * {@code null}——准入链据此拒绝并记录脱敏审计，不回传失败原因细节给用户。
+     */
+    private String fetchMobileQuietly(SsoProviderConfigView config, String openId) {
+        try {
+            String appToken;
+            try (HttpResponse response = HttpRequest.post(APP_TOKEN_URL)
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .body(objectMapper.writeValueAsString(Map.of(
+                            "app_id", config.appId(),
+                            "app_secret", config.appSecret())))
+                    .timeout(8000)
+                    .execute()) {
+                if (response.getStatus() != 200) {
+                    log.info("飞书应用凭据获取失败: HTTP {}", response.getStatus());
+                    return null;
+                }
+                JsonNode root = objectMapper.readTree(response.body());
+                if (root.path("code").asInt(-1) != 0) {
+                    log.info("飞书应用凭据被拒绝: code={}", root.path("code").asInt(-1));
+                    return null;
+                }
+                appToken = root.path("app_access_token").asText(null);
+            }
+            if (appToken == null || appToken.isBlank()) {
+                return null;
+            }
+            try (HttpResponse response = HttpRequest.get(CONTACT_USER_URL + urlEncode(openId)
+                            + "?user_id_type=open_id")
+                    .header("Authorization", "Bearer " + appToken)
+                    .timeout(8000)
+                    .execute()) {
+                if (response.getStatus() != 200) {
+                    log.info("飞书联系人读取失败: HTTP {}", response.getStatus());
+                    return null;
+                }
+                JsonNode root = objectMapper.readTree(response.body());
+                if (root.path("code").asInt(-1) != 0) {
+                    log.info("飞书联系人读取被拒绝: code={}", root.path("code").asInt(-1));
+                    return null;
+                }
+                String mobile = root.path("data").path("user").path("mobile").asText(null);
+                return mobile == null || mobile.isBlank() ? null : mobile;
+            }
+        } catch (Exception e) {
+            log.info("飞书手机号读取异常: {}", e.getClass().getSimpleName());
+            return null;
         }
     }
 

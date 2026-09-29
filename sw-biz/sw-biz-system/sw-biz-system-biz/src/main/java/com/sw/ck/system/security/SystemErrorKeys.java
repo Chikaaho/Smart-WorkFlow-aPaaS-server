@@ -57,6 +57,9 @@ public final class SystemErrorKeys {
     /** 未找到有效绑定（解绑场景）。 */
     public static final String SSO_BINDING_NOT_FOUND = "system.sso_binding_not_found";
 
+    /** B 端准入拒绝（sso-admin-config）：统一对外结论，精确原因只进审计（无预建用户/重复手机号/缺可信手机号/账号失效/冲突）。 */
+    public static final String SSO_ADMISSION_REJECTED = "system.sso_admission_rejected";
+
     // ==================== 会话与身份 ====================
 
     /** 未登录或登录态已失效，需要重新登录。 */

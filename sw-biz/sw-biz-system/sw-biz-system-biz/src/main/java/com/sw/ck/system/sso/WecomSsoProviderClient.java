@@ -64,8 +64,9 @@ public class WecomSsoProviderClient implements SsoProviderClient {
         if (userId == null || userId.isBlank()) {
             throw new SsoProviderException("企业微信未返回稳定成员标识");
         }
-        // 企微归属可信来源：access_token 即应用归属 corpId 作用域（config.appId()=corpId）
-        return new SsoProviderClient.ExchangeResult(userId, config.appId());
+        // 企微归属可信来源：access_token 即应用归属 corpId 作用域（config.appId()=corpId）；
+        // 手机号（B 端准入）需额外通讯录读取权限，企业微信本期 Owner 延期，返回 null fail closed
+        return new SsoProviderClient.ExchangeResult(userId, config.appId(), null);
     }
 
     private String corpAccessToken(SsoProviderConfigView config) {

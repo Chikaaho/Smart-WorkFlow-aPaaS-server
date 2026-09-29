@@ -1,6 +1,5 @@
 package com.sw.ck.system.sso;
 
-import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SsoAuditRecord;
@@ -59,6 +58,10 @@ public class SsoAuthService {
     private static final String SSO_LOGIN_FAILED_MSG =
             "第三方登录未能完成，请返回登录页重新发起，或改用账号密码登录";
 
+    /** B 端准入统一对外结论（sso-admin-config §一.4）：不区分具体原因，精确原因只进审计。 */
+    private static final String SSO_ADMISSION_REJECTED_MSG =
+            "暂时无法使用第三方登录，请联系管理员核对账号信息";
+
     /** 登录前发起缺少企业标识：请求参数问题，可自行修正。 */
     private static final String SSO_TENANT_REQUIRED_MSG =
             "请先选择要登录的企业，再重新发起第三方登录";
@@ -87,7 +90,7 @@ public class SsoAuthService {
     private final SsoAuditRecordMapper auditMapper;
     private final SysUserService sysUserService;
     private final Map<String, SsoProviderClient> clients;
-    private final AesGcmCipher cipher;
+    private final SsoCredentialCipher cipher;
     private final SsoCallbackPolicy callbackPolicy;
     private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
     private final SysTenantMapper tenantMapper;
@@ -102,7 +105,7 @@ public class SsoAuthService {
                           SsoAuditRecordMapper auditMapper,
                           SysUserService sysUserService,
                           List<SsoProviderClient> clientList,
-                          AesGcmCipher cipher,
+                          SsoCredentialCipher cipher,
                           SsoCallbackPolicy callbackPolicy,
                           com.sw.ck.system.service.TenantValidityService tenantValidityService,
                           SysTenantMapper tenantMapper,
@@ -229,6 +232,260 @@ public class SsoAuthService {
                 "appId", config == null ? "" : config.getAppId(),
                 "secretConfigured", config != null && config.getAppSecretEnc() != null
                         && !config.getAppSecretEnc().isBlank());
+    }
+
+    // ==================== 后台配置管理（sso-admin-config；粒度权限由控制器守卫） ====================
+
+    /** 企业微信 Owner 延期（sso-admin-config §二）：保留既有配置记录只读，不提供变更入口。 */
+    private void requireMutableProvider(String provider) {
+        if ("WECOM".equals(provider)) {
+            auditDenial(provider, "CONFIG_REJECTED", "DENIED", currentUserId(), null, null,
+                    "wecom deferred read-only", currentTenantId());
+            throw new IllegalStateException("企业微信配置维护已延期，当前只读");
+        }
+    }
+
+    /**
+     * 租户级配置列表（管理端）：平台/启用/应用标识/身份模式/允许企业标识/凭据是否
+     * 已配置/服务端推导只读回调地址/更新时间。secret 原文与密文不回传。
+     */
+    public List<Map<String, Object>> listConfigs() {
+        Long tenantId = requireTenantContext();
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (String provider : PROVIDERS.stream().sorted().toList()) {
+            SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
+            String enterpriseId = config == null ? null : configuredEnterpriseId(config);
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("provider", provider);
+            row.put("enabled", config != null && config.getEnabled() == 1);
+            row.put("appId", config == null ? "" : nullToEmpty(config.getAppId()));
+            row.put("secretConfigured", config != null && config.getAppSecretEnc() != null
+                    && !config.getAppSecretEnc().isBlank());
+            row.put("identityMode", enterpriseId == null || enterpriseId.isBlank()
+                    ? "personal" : "enterprise");
+            row.put("configuredEnterpriseId", enterpriseId == null ? "" : enterpriseId);
+            row.put("callbackUrl", callbackPolicy.resolveCallbackUrl(provider));
+            row.put("updateTime", config == null ? "" : String.valueOf(config.getUpdateTime()));
+            row.put("deferred", "WECOM".equals(provider));
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /**
+     * 更新基本信息（应用标识＋身份模式/允许企业标识）；启用状态下校验凭据完整性。
+     * secret 不在本入口（凭据更新单独权限）。
+     */
+    @Transactional
+    public void updateConfigBasic(String provider, String appId, String extraConfig) {
+        requireProvider(provider);
+        requireMutableProvider(provider);
+        LoginUser current = requireLoginContext();
+        Long tenantId = current.getTenantId();
+        SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
+        checkAppIdConflict(provider, appId, tenantId,
+                config != null && tenantId.equals(config.getTenantId()));
+        // 已启用行的基本信息变更必须保持凭据完整（防止改坏 appId 后重启 fail-fast）；
+        // 新建/停用行允许先落基本信息，凭据经独立入口更新、启用时再校验
+        if (config != null && config.getEnabled() == 1) {
+            validateEnabledConfig(appId, null, config);
+        }
+        validateEnterpriseConfig(extraConfig);
+        if (config == null) {
+            config = new SsoProviderConfig();
+            config.setProvider(provider);
+            config.setTenantId(tenantId);
+            config.setEnabled(0);
+        }
+        config.setAppId(appId);
+        config.setExtraConfig(extraConfig);
+        if (config.getId() == null) {
+            configMapper.insert(config);
+        } else {
+            configMapper.updateById(config);
+        }
+        audit(provider, "CONFIG_SAVE", "SUCCESS", current.getUserId(), null, null,
+                "basic fields updated", tenantId);
+    }
+
+    /**
+     * 启停：保存后对后续授权生效（配置每次直查库）；启用复用启动期完整性校验，
+     * 避免保存成功但重启 fail-fast。企业微信不允许启用（延期只读），停用允许。
+     */
+    @Transactional
+    public void updateEnabled(String provider, boolean enabled) {
+        requireProvider(provider);
+        if (enabled) {
+            requireMutableProvider(provider);
+        }
+        LoginUser current = requireLoginContext();
+        Long tenantId = current.getTenantId();
+        SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
+        if (config == null) {
+            auditDenial(provider, enabled ? "CONFIG_ENABLE" : "CONFIG_DISABLE", "DENIED",
+                    current.getUserId(), null, null, "config not found", tenantId);
+            throw new IllegalStateException("该平台尚未登记配置");
+        }
+        if (enabled) {
+            validateEnabledConfig(config.getAppId(), null, config);
+        }
+        config.setEnabled(enabled ? 1 : 0);
+        configMapper.updateById(config);
+        audit(provider, enabled ? "CONFIG_ENABLE" : "CONFIG_DISABLE", "SUCCESS",
+                current.getUserId(), null, null, null, tenantId);
+    }
+
+    /**
+     * 应用凭据更新（secret 只写）：仅显式提供的新 secret；明文只在当前调用栈内
+     * 加密，不落日志/审计/响应；掩码或占位值拒绝。与系统加密主密钥轮换无关。
+     */
+    @Transactional
+    public void updateSecret(String provider, String appSecret) {
+        requireProvider(provider);
+        requireMutableProvider(provider);
+        LoginUser current = requireLoginContext();
+        Long tenantId = current.getTenantId();
+        if (appSecret == null || appSecret.isBlank() || isPlaceholder(appSecret)) {
+            auditDenial(provider, "CONFIG_SECRET_UPDATE", "DENIED", current.getUserId(), null, null,
+                    appSecret == null || appSecret.isBlank() ? "empty secret rejected" : "placeholder secret rejected",
+                    tenantId);
+            throw new IllegalStateException("请输入有效的新应用凭据（留空表示不更新）");
+        }
+        SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
+        if (config == null) {
+            auditDenial(provider, "CONFIG_SECRET_UPDATE", "DENIED", current.getUserId(), null, null,
+                    "config not found", tenantId);
+            throw new IllegalStateException("该平台尚未登记配置");
+        }
+        config.setAppSecretEnc(cipher.encrypt(appSecret));
+        configMapper.updateById(config);
+        audit(provider, "CONFIG_SECRET_UPDATE", "SUCCESS", current.getUserId(), null, null,
+                "secret rotated", tenantId);
+    }
+
+    /**
+     * 配置检查（只读）：完整性（appId 非占位）、凭据可解密且非占位、企业标识格式、
+     * 启用状态；不发起用户授权、不修改配置或绑定、不宣称真实登录通过。
+     * 检查失败项名称进审计与响应，secret 值不出现。
+     */
+    public Map<String, Object> checkConfig(String provider) {
+        requireProvider(provider);
+        LoginUser current = requireLoginContext();
+        Long tenantId = current.getTenantId();
+        SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
+        Map<String, Object> checks = new java.util.LinkedHashMap<>();
+        checks.put("configExists", config != null);
+        boolean appIdOk = config != null && config.getAppId() != null && !isPlaceholder(config.getAppId());
+        checks.put("appIdValid", appIdOk);
+        boolean secretOk = false;
+        if (config != null && config.getAppSecretEnc() != null && !config.getAppSecretEnc().isBlank()) {
+            secretOk = cipher.decryptable(config.getAppSecretEnc())
+                    && !isPlaceholder(tryDecrypt(config.getAppSecretEnc()));
+        }
+        checks.put("secretUsable", secretOk);
+        String enterpriseId = config == null ? null : configuredEnterpriseId(config);
+        checks.put("enterpriseIdFormat", enterpriseId == null || !enterpriseId.isBlank());
+        boolean enabled = config != null && config.getEnabled() == 1;
+        checks.put("enabled", enabled);
+        boolean overall = config != null && appIdOk && secretOk && enabled;
+        checks.put("overall", overall);
+        checks.put("summary", overall
+                ? "配置完整且已启用（不等于真实登录已通过）"
+                : "配置不完整或未启用，请核对检查项");
+        java.util.List<String> failed = new java.util.ArrayList<>();
+        checks.forEach((k, v) -> {
+            if ("overall".equals(k) || "summary".equals(k)) {
+                return;
+            }
+            if (!Boolean.TRUE.equals(v)) {
+                failed.add(k);
+            }
+        });
+        if (overall) {
+            audit(provider, "CONFIG_CHECK", "SUCCESS", current.getUserId(), null, null, null, tenantId);
+        } else {
+            auditDenial(provider, "CONFIG_CHECK", "FAILED", current.getUserId(), null, null,
+                    "failed items: " + String.join(",", failed), tenantId);
+        }
+        return checks;
+    }
+
+    private void checkAppIdConflict(String provider, String appId, Long tenantId, boolean updatingSameRow) {
+        if (appId == null || appId.isBlank()) {
+            return;
+        }
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            Long conflicts = configMapper.selectCount(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoProviderConfig>lambdaQuery()
+                            .eq(SsoProviderConfig::getProvider, provider)
+                            .eq(SsoProviderConfig::getAppId, appId)
+                            .ne(updatingSameRow, SsoProviderConfig::getTenantId, tenantId));
+            if (conflicts != null && conflicts > 0) {
+                auditDenial(provider, "CONFLICT_REJECTED", "DENIED", currentUserId(), null, null,
+                        "app already registered by another tenant", tenantId);
+                throw new IllegalStateException("该 Provider 应用已登记在其他租户，不能跨租户重复登记");
+            }
+        }
+    }
+
+    /** 企业模式必填允许企业标识（fail closed）；个人模式 extra 允许为空对象。 */
+    private void validateEnterpriseConfig(String extraConfig) {
+        // 身份模式由 extra_config.enterpriseId 承载：非空即企业模式（值不能为空白）
+        String enterpriseId = parseExtraEnterpriseId(extraConfig);
+        if (enterpriseId != null && enterpriseId.isBlank()) {
+            throw new IllegalStateException("企业成员模式必须填写允许企业标识");
+        }
+    }
+
+    private String parseExtraEnterpriseId(String extraConfig) {
+        if (extraConfig == null || extraConfig.isBlank()) {
+            return null;
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(extraConfig).path("enterpriseId").asText(null);
+        } catch (Exception e) {
+            throw new IllegalStateException("扩展配置必须是合法 JSON");
+        }
+    }
+
+    private String tryDecrypt(String ciphertext) {
+        try {
+            return cipher.decrypt(ciphertext);
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    private Long requireTenantContext() {
+        LoginUser current = LoginUserHolder.get();
+        if (current == null || current.getTenantId() == null) {
+            throw new IllegalStateException("租户上下文缺失");
+        }
+        return current.getTenantId();
+    }
+
+    private LoginUser requireLoginContext() {
+        LoginUser current = LoginUserHolder.get();
+        if (current == null || current.getTenantId() == null) {
+            throw new IllegalStateException("登录状态已失效，请重新登录");
+        }
+        return current;
+    }
+
+    private Long currentUserId() {
+        LoginUser current = LoginUserHolder.get();
+        return current == null ? null : current.getUserId();
+    }
+
+    private Long currentTenantId() {
+        LoginUser current = LoginUserHolder.get();
+        return current == null ? null : current.getTenantId();
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 
     /**
@@ -439,11 +696,13 @@ public class SsoAuthService {
         }
         String externalId;
         String vendorEnterpriseId;
+        String vendorMobile;
         try {
             SsoProviderClient.ExchangeResult er = clients.get(provider).exchangeExternalId(decryptConfig(config), code,
                     callbackPolicy.resolveCallbackUrl(provider));
             externalId = er.externalId();
             vendorEnterpriseId = er.enterpriseId();
+            vendorMobile = er.mobile();
         } catch (SsoProviderClient.SsoProviderException e) {
             auditDenial(provider, "LOGIN_FAILED", "FAILED", null, null, sha256(externalFingerprint(e)),
                     "provider exchange failed", stateRow.getTenantId());
@@ -466,19 +725,153 @@ public class SsoAuthService {
         }
         audit(provider, "EXCHANGE", "SUCCESS", null, null, sha256(externalId),
                 "scope=" + scopeMarker, stateRow.getTenantId());
+        return admitCallback(provider, stateRow, externalId, vendorMobile);
+    }
+
+    /**
+     * B 端手机号准入（sso-admin-config 方向 §一）：SSO 只识别并绑定当前租户组织
+     * 架构中已存在的有效用户，个人/企业身份模式都不能绕过本地用户准入。
+     * <ol>
+     *   <li>已有绑定：装载本地用户并校验有效性（存在/同租户/未停用）；厂商可信
+     *       手机号缺失或与本地账号手机号规范化后不一致 → 拒绝（不自动迁移/合并）；</li>
+     *   <li>无绑定：按规范化可信手机号在当前租户查唯一有效用户；唯一命中且不与
+     *       既有外部绑定冲突 → 安全建立绑定并签发既有本地会话；</li>
+     *   <li>无用户/重复手机号/账号失效/缺可信手机号/冲突 → 统一对外安全结论
+     *       （{@link SystemErrorKeys#SSO_ADMISSION_REJECTED}），脱敏原因进审计。</li>
+     * </ol>
+     * 手机号原文与规范化值不进审计/日志/响应；审计 detail 仅记脱敏原因类别。
+     */
+    private CallbackResult admitCallback(String provider, SsoAuthState stateRow,
+                                         String externalId, String vendorMobile) {
+        Long tenantId = stateRow.getTenantId();
         String externalDigest = sha256(externalId);
+        String normalizedPhone = SsoPhoneNormalizer.normalize(vendorMobile);
         // 摘要即权威：external_id 列存摘要（明文不落 SQL/日志，I5 复验 G7b）
-        SsoUserBinding binding = bindingMapper.selectActiveByExternal(provider, stateRow.getTenantId(), externalDigest);
+        SsoUserBinding binding = bindingMapper.selectActiveByExternal(provider, tenantId, externalDigest);
         if (binding != null) {
+            LocalUserView local = loadLocalUser(binding.getUserId());
+            if (local == null || !tenantId.equals(local.tenantId()) || !local.active()) {
+                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, binding.getUserId(),
+                        externalDigest, "bound local user unavailable", tenantId);
+                throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
+            }
+            String localPhone = SsoPhoneNormalizer.normalize(local.phone());
+            if (normalizedPhone == null || localPhone == null || !localPhone.equals(normalizedPhone)) {
+                // 厂商或本地手机号变化：不自动迁移绑定，交管理员核对
+                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, binding.getUserId(),
+                        externalDigest, normalizedPhone == null ? "trusted phone missing"
+                                : "phone changed (vendor vs local)", tenantId);
+                throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
+            }
             audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, binding.getUserId(), externalDigest,
-                    null, stateRow.getTenantId());
-            return new CallbackResult(provider, stateRow.getTenantId(), externalId, externalDigest,
+                    null, tenantId);
+            return new CallbackResult(provider, tenantId, externalId, externalDigest,
                     binding.getUserId(), stateRow.getRedirectPath(), true);
         }
-        auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, externalDigest,
-                "not bound", stateRow.getTenantId());
-        return new CallbackResult(provider, stateRow.getTenantId(), externalId, externalDigest,
-                null, stateRow.getRedirectPath(), false);
+        // 未绑定：按可信手机号在当前租户准入唯一有效用户
+        if (normalizedPhone == null) {
+            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, null, externalDigest,
+                    "trusted phone missing", tenantId);
+            throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
+        }
+        LocalUserView target = findUniqueTenantUserByPhone(tenantId, normalizedPhone);
+        if (target == null) {
+            // 零命中与多命中在审计中区分；对外同一结论
+            long matches = countTenantUsersByPhone(tenantId, normalizedPhone);
+            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, null, externalDigest,
+                    matches > 1 ? "ambiguous phone in tenant" : "no local user with trusted phone", tenantId);
+            throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
+        }
+        // 目标用户已绑定该 Provider 的其他外部主体：稳定主体与既有手机号绑定冲突，
+        // 禁止仅凭手机号覆盖外部身份
+        SsoUserBinding userBound = bindingMapper.selectActiveByUser(provider, tenantId, target.userId());
+        if (userBound != null) {
+            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+                    externalDigest, "user already bound to another external id", tenantId);
+            throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
+        }
+        // 跨租户稳定主体冲突（V87 全局唯一语义）：同一 (provider, 摘要) 全局仅一个租户可绑定
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            Long crossTenant = bindingMapper.selectCount(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoUserBinding>lambdaQuery()
+                            .eq(SsoUserBinding::getProvider, provider)
+                            .eq(SsoUserBinding::getExternalDigest, externalDigest)
+                            .eq(SsoUserBinding::getBindStatus, "ACTIVE")
+                            .ne(SsoUserBinding::getTenantId, tenantId));
+            if (crossTenant != null && crossTenant > 0) {
+                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+                        externalDigest, "external subject already bound in another tenant", tenantId);
+                throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
+            }
+        }
+        SsoUserBinding created = new SsoUserBinding();
+        created.setProvider(provider);
+        created.setTenantId(tenantId);
+        created.setExternalId(externalDigest);
+        created.setExternalDigest(externalDigest);
+        created.setUserId(target.userId());
+        created.setBindStatus("ACTIVE");
+        try {
+            bindingMapper.insert(created);
+        } catch (DuplicateKeyException e) {
+            // 并发绑定以数据库全局唯一键为最终仲裁（fail closed，无会话签发）
+            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+                    externalDigest, "binding unique constraint rejected", tenantId);
+            throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG, e);
+        }
+        audit(provider, "BIND", "SUCCESS", null, target.userId(), externalDigest,
+                "phone-admission auto-bind", tenantId);
+        audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, target.userId(), externalDigest, null, tenantId);
+        return new CallbackResult(provider, tenantId, externalId, externalDigest,
+                target.userId(), stateRow.getRedirectPath(), true);
+    }
+
+    /** 本地用户最小视图（准入链专用；phone 仅服务端内存使用，不进日志）。 */
+    private record LocalUserView(Long userId, Long tenantId, Integer status, String phone) {
+        boolean active() {
+            return status == null || status == 0;
+        }
+    }
+
+    private LocalUserView loadLocalUser(Long userId) {
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            com.sw.ck.system.entity.SysUser user = sysUserService.getById(userId);
+            if (user == null) {
+                return null;
+            }
+            return new LocalUserView(user.getId(), user.getTenantId(), user.getStatus(), user.getPhone());
+        }
+    }
+
+    /**
+     * 在当前租户组织架构内按规范化手机号唯一匹配有效用户：租户内全量非空手机号
+     * 规范化后比较（组织规模量级；不做任何"截后 N 位"近似）。零/多命中返回 null
+     * 并由调用方经 count 区分审计原因。
+     */
+    private LocalUserView findUniqueTenantUserByPhone(Long tenantId, String normalizedPhone) {
+        List<LocalUserView> hits = tenantUsersByPhone(tenantId, normalizedPhone);
+        return hits.size() == 1 ? hits.get(0) : null;
+    }
+
+    private long countTenantUsersByPhone(Long tenantId, String normalizedPhone) {
+        return tenantUsersByPhone(tenantId, normalizedPhone).size();
+    }
+
+    private List<LocalUserView> tenantUsersByPhone(Long tenantId, String normalizedPhone) {
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            List<com.sw.ck.system.entity.SysUser> users = sysUserService.list(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.system.entity.SysUser>lambdaQuery()
+                            .eq(com.sw.ck.system.entity.SysUser::getTenantId, tenantId)
+                            .isNotNull(com.sw.ck.system.entity.SysUser::getPhone));
+            return users.stream()
+                    .map(u -> new LocalUserView(u.getId(), u.getTenantId(), u.getStatus(), u.getPhone()))
+                    .filter(u -> u.active())
+                    .filter(u -> normalizedPhone.equals(SsoPhoneNormalizer.normalize(u.phone())))
+                    .toList();
+        }
     }
 
     // ==================== 绑定 / 解绑 ====================

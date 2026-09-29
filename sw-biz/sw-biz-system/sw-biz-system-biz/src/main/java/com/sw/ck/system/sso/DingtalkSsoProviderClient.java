@@ -91,7 +91,12 @@ public class DingtalkSsoProviderClient implements SsoProviderClient {
             if (unionId == null || unionId.isBlank()) {
                 throw new SsoProviderException("钉钉未返回稳定主体标识 unionId");
             }
-            return new SsoProviderClient.ExchangeResult(unionId, tokenCorpId);
+            // 可信手机号（B 端准入）：同一官方 users/me 响应的 mobile 字段；应用未开通
+            // Contact.User.Read 或字段缺失时为 null，由服务端准入链 fail closed，
+            // 不在本层把缺失放大为换票失败（保持拒绝原因可区分）
+            String mobile = root.path("mobile").asText(null);
+            return new SsoProviderClient.ExchangeResult(unionId, tokenCorpId,
+                    mobile == null || mobile.isBlank() ? null : mobile);
         } catch (SsoProviderException e) {
             throw e;
         } catch (Exception e) {

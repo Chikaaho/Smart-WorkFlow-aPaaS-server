@@ -70,23 +70,14 @@ public class SystemAutoConfiguration {
     }
 
     /**
-     * SSO Provider 凭据加密器（I5）：AES-256-GCM，密钥经环境变量注入；
-     * 缺失/空白时启动失败（fail-fast，与 RsaLoginKeyManager 同口径）。
-     */
-    @Bean
-    @ConditionalOnMissingBean(com.sw.ck.common.crypto.AesGcmCipher.class)
-    public com.sw.ck.common.crypto.AesGcmCipher ssoCipher(
-            @org.springframework.beans.factory.annotation.Value("${sw.security.sso.cipher-key:}") String cipherKey) {
-        if (cipherKey == null || cipherKey.isBlank()) {
-            throw new IllegalStateException(
-                    "SSO 凭据加密密钥未配置：必须经外部安全配置注入 sw.security.sso.cipher-key"
-                            + "（如环境变量 SW_SSO_CIPHER_KEY），明文凭据不允许落库");
-        }
-        return new com.sw.ck.common.crypto.AesGcmCipher(cipherKey);
-    }
-
-    /**
-     * SSO Provider 客户端注册（I5）：三 Provider 各自独立实现，Map 分发。
+     * SSO Provider 凭据加密器（I5；sso-admin-config 显式化改造）：AES-256-GCM。
+     * <p>
+     * 不再注册共享 {@code AesGcmCipher} bean（历史 {@code @ConditionalOnMissingBean}
+     * 与 agent 模块同型条件竞争，实际密钥源随 bean 注册顺序漂移——G4-S 运行诊断实证），
+     * 改为 SSO 装配时以专属密钥 {@code sw.security.sso.cipher-key}（SW_SSO_CIPHER_KEY）
+     * 显式构造 {@link SsoCredentialCipher}：密钥来源固定、缺失即启动失败；全局 agent
+     * 加密器及其密钥不受影响（不更换全局密钥，其他模块密文不受影响）。
+     * </p>
      */
     @Bean
     public com.sw.ck.system.sso.SsoAuthService ssoAuthService(
@@ -95,7 +86,7 @@ public class SystemAutoConfiguration {
             com.sw.ck.system.mapper.SsoAuthStateMapper stateMapper,
             com.sw.ck.system.mapper.SsoAuditRecordMapper auditMapper,
             com.sw.ck.system.service.SysUserService sysUserService,
-            com.sw.ck.common.crypto.AesGcmCipher ssoCipher,
+            @org.springframework.beans.factory.annotation.Value("${sw.security.sso.cipher-key:}") String ssoCipherKey,
             com.sw.ck.system.sso.SsoCallbackPolicy ssoCallbackPolicy,
             com.sw.ck.system.service.TenantValidityService tenantValidityService,
             com.sw.ck.system.mapper.SysTenantMapper tenantMapper,
@@ -110,7 +101,8 @@ public class SystemAutoConfiguration {
                         new com.sw.ck.system.sso.WecomSsoProviderClient(),
                         new com.sw.ck.system.sso.FeishuSsoProviderClient(),
                         new com.sw.ck.system.sso.DingtalkSsoProviderClient()),
-                ssoCipher, ssoCallbackPolicy, tenantValidityService, tenantMapper, transactionManager,
+                new com.sw.ck.system.sso.SsoCredentialCipher(ssoCipherKey),
+                ssoCallbackPolicy, tenantValidityService, tenantMapper, transactionManager,
                 loginUserCacheService, refreshTokenService);
     }
 }
