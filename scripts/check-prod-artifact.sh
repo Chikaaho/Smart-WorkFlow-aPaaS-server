@@ -86,7 +86,7 @@ done
 n=$(grep -cE '^BOOT-INF/lib/postgresql-[^/]*\.jar$' "${WORK}/outer.txt" || true)
 [[ "${n}" -ge 1 ]] && ok "存在 PostgreSQL 驱动（${n}）" || bad "缺少 PostgreSQL 驱动"
 
-n=$(grep -cE '^BOOT-INF/classes/db/migration/(postgresql|h2)/V[0-9]+__.*\.sql$' "${WORK}/outer.txt" || true)
+n=$(grep -cE '^BOOT-INF/classes/db/migration/(postgresql|h2)/V[0-9]+(\.[0-9]+)*__[^/]*\.sql$' "${WORK}/outer.txt" || true)
 [[ "${n}" -ge 1 ]] && ok "存在生产 Flyway 迁移（${n} 个）" || bad "缺少生产 Flyway 迁移"
 
 n=$(grep -cE "(^|/)TencentCloudProvider\.class$" "${WORK}/classes.txt" || true)
