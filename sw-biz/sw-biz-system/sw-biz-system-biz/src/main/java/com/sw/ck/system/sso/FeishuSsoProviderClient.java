@@ -104,7 +104,7 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
             // 可信手机号（B 端准入）：authen/user_info 不含手机号，需以应用身份调
             // contact/v3/users/{open_id}（scope contact:user.base:readonly）；权限未开通
             // 或调用失败时返回 null，由服务端准入链 fail closed，不在本层放大为换票失败
-            String mobile = fetchMobileQuietly(config, openId);
+            String mobile = fetchMobileQuietly(config, userAccessToken, openId);
             return new SsoProviderClient.ExchangeResult(openId, tenantKey, mobile);
         } catch (SsoProviderException e) {
             throw e;
@@ -115,10 +115,16 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
     }
 
     /**
-     * 以应用身份读取联系人手机号；任何失败（权限缺失/网络/解析）都静默降级为
+     * 读取联系人手机号：优先以刚换得的 user_access_token（contact:user.base:readonly，
+     * 用户身份权限）调用 contact/v3/users/{open_id}；失败回落应用身份
+     * （contact:contact.base:readonly + tenant_access_token）。任一路径失败均静默降级为
      * {@code null}——准入链据此拒绝并记录脱敏审计，不回传失败原因细节给用户。
      */
-    private String fetchMobileQuietly(SsoProviderConfigView config, String openId) {
+    private String fetchMobileQuietly(SsoProviderConfigView config, String userAccessToken, String openId) {
+        String viaUser = contactMobile(userAccessToken, openId, "user-token");
+        if (viaUser != null) {
+            return viaUser;
+        }
         try {
             String appToken;
             try (HttpResponse response = HttpRequest.post(APP_TOKEN_URL)
@@ -142,25 +148,38 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
             if (appToken == null || appToken.isBlank()) {
                 return null;
             }
-            try (HttpResponse response = HttpRequest.get(CONTACT_USER_URL + urlEncode(openId)
-                            + "?user_id_type=open_id")
-                    .header("Authorization", "Bearer " + appToken)
-                    .timeout(8000)
-                    .execute()) {
-                if (response.getStatus() != 200) {
-                    log.info("飞书联系人读取失败: HTTP {}", response.getStatus());
-                    return null;
-                }
-                JsonNode root = objectMapper.readTree(response.body());
-                if (root.path("code").asInt(-1) != 0) {
-                    log.info("飞书联系人读取被拒绝: code={}", root.path("code").asInt(-1));
-                    return null;
-                }
-                String mobile = root.path("data").path("user").path("mobile").asText(null);
-                return mobile == null || mobile.isBlank() ? null : mobile;
-            }
+            return contactMobile(appToken, openId, "app-token");
         } catch (Exception e) {
             log.info("飞书手机号读取异常: {}", e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** 以给定身份读取联系人手机号；失败返回 null 并记录非敏感日志。 */
+    private String contactMobile(String token, String openId, String tokenKind) {
+        try (HttpResponse response = HttpRequest.get(CONTACT_USER_URL + urlEncode(openId)
+                        + "?user_id_type=open_id")
+                .header("Authorization", "Bearer " + token)
+                .timeout(8000)
+                .execute()) {
+            if (response.getStatus() != 200) {
+                log.info("飞书联系人读取失败({}): HTTP {}", tokenKind, response.getStatus());
+                return null;
+            }
+            JsonNode root = objectMapper.readTree(response.body());
+            if (root.path("code").asInt(-1) != 0) {
+                log.info("飞书联系人读取被拒绝({}): code={}", tokenKind, root.path("code").asInt(-1));
+                return null;
+            }
+            String mobile = root.path("data").path("user").path("mobile").asText(null);
+            if (mobile == null || mobile.isBlank()) {
+                log.info("飞书联系人响应无手机号字段({})", tokenKind);
+                return null;
+            }
+            log.info("飞书手机号读取成功({})", tokenKind);
+            return mobile;
+        } catch (Exception e) {
+            log.info("飞书手机号读取异常({}): {}", tokenKind, e.getClass().getSimpleName());
             return null;
         }
     }

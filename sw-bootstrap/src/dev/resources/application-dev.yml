@@ -122,8 +122,10 @@ sw:
       # 本地调试需显式设置 SW_DEBUG_AUTH_ENABLED=true；不设置则保持关闭。
       enabled: ${SW_DEBUG_AUTH_ENABLED:false}
     sso:
-      # devseed 中的 Provider 密文使用同一把开发密钥；prod 仍必须由 SW_SSO_CIPHER_KEY 注入。
-      cipher-key: "c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ=="
+      # SsoCredentialCipher 显式密钥源：SW_SSO_CIPHER_KEY 优先（本地验证环境以独立密钥
+      # 重加密 Provider 密文），缺省回落仓库 dev 开发密钥（V903 devseed 哨兵行同钥）；
+      # prod 仍必须由 SW_SSO_CIPHER_KEY 注入，不允许回落。
+      cipher-key: ${SW_SSO_CIPHER_KEY:c21hcnQtd29ya2Zsb3ctZGV2LWNpcGhlci1rZXkhIQ==}
       # I5 复验：Provider 回调白名单（与 Spring permit-list 分离）。默认相对路径模式；
       # 集成验证经环境注入绝对基址与白名单（逗号分隔）。
       callback-base-url: ${SW_SSO_CALLBACK_BASE_URL:}
