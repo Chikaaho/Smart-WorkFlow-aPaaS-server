@@ -805,6 +805,34 @@ public class SsoAuthService {
                 throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
             }
         }
+        // 解绑（UNBOUND）行 deleted=0 仍占用 (provider,tenant,external)/(provider,tenant,user)
+        // 两个唯一键——同一外部主体或同一用户解绑后重新准入会被唯一键拒绝。重绑前逻辑
+        // 删除占位行（@TableLogic，历史保留）；外部主体曾绑定其他本地账号的仍拒绝（不自动
+        // 迁移，交管理员核对）。
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            SsoUserBinding dormantBySubject = bindingMapper.selectOne(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoUserBinding>lambdaQuery()
+                            .eq(SsoUserBinding::getProvider, provider)
+                            .eq(SsoUserBinding::getTenantId, tenantId)
+                            .eq(SsoUserBinding::getExternalDigest, externalDigest)
+                            .eq(SsoUserBinding::getBindStatus, "UNBOUND")
+                            .orderByDesc(SsoUserBinding::getId)
+                            .last("LIMIT 1"));
+            if (dormantBySubject != null && !target.userId().equals(dormantBySubject.getUserId())) {
+                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+                        externalDigest, "dormant binding belongs to another local user", tenantId);
+                throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
+            }
+            if (dormantBySubject != null) {
+                bindingMapper.deleteById(dormantBySubject.getId());
+            }
+            bindingMapper.delete(com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoUserBinding>lambdaQuery()
+                    .eq(SsoUserBinding::getProvider, provider)
+                    .eq(SsoUserBinding::getTenantId, tenantId)
+                    .eq(SsoUserBinding::getUserId, target.userId())
+                    .eq(SsoUserBinding::getBindStatus, "UNBOUND"));
+        }
         SsoUserBinding created = new SsoUserBinding();
         created.setProvider(provider);
         created.setTenantId(tenantId);

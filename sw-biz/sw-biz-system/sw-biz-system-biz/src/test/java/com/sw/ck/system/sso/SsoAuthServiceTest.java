@@ -270,6 +270,49 @@ class SsoAuthServiceTest {
                         && "bound local user unavailable".equals(a.getDetail())));
     }
 
+    @Test
+    @DisplayName("B 端准入：解绑（UNBOUND）后同一主体重新准入 → 重绑成功（占位行逻辑删除）")
+    void callback_admission_rebindAfterUnbind_success() {
+        SsoUserBinding dormant = existingBinding(7L);
+        dormant.setBindStatus("UNBOUND");
+        var users = userServiceReturning(newLocalUser(7L, "17800000001"));
+        SsoAuthService svc = serviceWithUsersRebind(fixedClient("ext-ok", "corp-ok", "17800000001"), "{}", users, dormant);
+        var res = svc.handleCallback("WECOM", "code-ok", "state-ok");
+        assertThat(res.bound()).isTrue();
+        assertThat(res.userId()).isEqualTo(7L);
+        Mockito.verify(bindingMapper).delete(org.mockito.ArgumentMatchers.any());
+        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                "BIND".equals(a.getEventType()) && "phone-admission auto-bind".equals(a.getDetail())));
+    }
+
+    @Test
+    @DisplayName("B 端准入：解绑行属于其他本地用户 → 拒绝不自动迁移")
+    void callback_admission_dormantBindingOtherUser_rejected() {
+        SsoUserBinding dormant = existingBinding(8L);
+        dormant.setBindStatus("UNBOUND");
+        var users = userServiceReturning(newLocalUser(7L, "17800000001"));
+        SsoAuthService svc = serviceWithUsersRebind(fixedClient("ext-ok", "corp-ok", "17800000001"), "{}", users, dormant);
+        assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
+        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                "ADMISSION_REJECTED".equals(a.getEventType())
+                        && "dormant binding belongs to another local user".equals(a.getDetail())));
+    }
+
+    /** 在 serviceWithUsers 基础上让 dormant 查询命中指定 UNBOUND 行（重绑用例）。 */
+    private SsoAuthService serviceWithUsersRebind(SsoProviderClient client, String extraConfig, SysUserService users,
+                                                  SsoUserBinding dormant) {
+        SsoAuthService svc = serviceWithUsers(client, extraConfig, users, null);
+        Mockito.when(bindingMapper.selectOne(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(dormant);
+        Mockito.when(bindingMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(dormant));
+        Mockito.when(bindingMapper.deleteById(org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        Mockito.when(bindingMapper.delete(org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        return svc;
+    }
+
     private com.sw.ck.system.entity.SysUser newLocalUser(Long id, String phone) {
         com.sw.ck.system.entity.SysUser user = new com.sw.ck.system.entity.SysUser();
         user.setId(id);
