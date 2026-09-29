@@ -998,6 +998,21 @@ public class SsoAuthService {
                         .eq(SsoProviderConfig::getTenantId, tenantId));
     }
 
+    /**
+     * A4 配置期间授权语义：未兑换票据的新会话签发也受 Provider 启停约束——
+     * 停用/配置变更后，票据兑换一律拒绝（新会话不得以旧配置建立）。
+     * 供票据兑换端点在消费票据后调用；调用方负责拒绝审计。
+     */
+    public boolean isProviderEnabledFor(String provider, Long tenantId) {
+        requireProvider(provider);
+        SsoProviderConfig config;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            config = loadEnabledConfigGlobal(provider, tenantId);
+        }
+        return config != null && config.getEnabled() == 1;
+    }
+
     private SsoProviderClient.SsoProviderConfigView decryptConfig(SsoProviderConfig config) {
         String secret = cipher.decrypt(config.getAppSecretEnc());
         return new SsoProviderClient.SsoProviderConfigView(

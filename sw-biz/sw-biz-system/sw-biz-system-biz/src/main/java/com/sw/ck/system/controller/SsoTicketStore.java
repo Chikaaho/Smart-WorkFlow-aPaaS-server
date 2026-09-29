@@ -26,15 +26,15 @@ public class SsoTicketStore {
 
     private final Map<String, Entry> tickets = new ConcurrentHashMap<>();
 
-    /** 签发会话票据（已绑定/准入绑定登录）。 */
-    public String issue(Long userId, Long tenantId) {
-        return put(new Entry(userId, tenantId));
+    /** 签发会话票据（已绑定/准入绑定登录；携带 Provider 供兑换时校验启用状态——A4 在途票据语义）。 */
+    public String issue(Long userId, Long tenantId, String provider) {
+        return put(new Entry(userId, tenantId, provider));
     }
 
     /** 原子消费会话票据：有效返回载荷并删除，否则返回 null。 */
     public ConsumedSession consumeSession(String ticket) {
         Entry entry = consume(ticket);
-        return entry == null ? null : new ConsumedSession(entry.userId, entry.tenantId);
+        return entry == null ? null : new ConsumedSession(entry.userId, entry.tenantId, entry.provider);
     }
 
     private synchronized Entry consume(String ticket) {
@@ -59,17 +59,19 @@ public class SsoTicketStore {
         return ticket;
     }
 
-    public record ConsumedSession(Long userId, Long tenantId) {
+    public record ConsumedSession(Long userId, Long tenantId, String provider) {
     }
 
     private static final class Entry {
         final Long userId;
         final Long tenantId;
+        final String provider;
         LocalDateTime expireAt;
 
-        Entry(Long userId, Long tenantId) {
+        Entry(Long userId, Long tenantId, String provider) {
             this.userId = userId;
             this.tenantId = tenantId;
+            this.provider = provider;
         }
     }
 }

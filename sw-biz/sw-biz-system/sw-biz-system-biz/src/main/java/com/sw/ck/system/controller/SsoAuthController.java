@@ -129,7 +129,7 @@ public class SsoAuthController {
                 return deny(provider, new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED,
                         "暂时无法使用第三方登录，请联系管理员核对账号信息"));
             }
-            String ticket = ticketStore.issue(result.userId(), result.tenantId());
+            String ticket = ticketStore.issue(result.userId(), result.tenantId(), result.provider());
             // 统一经同源回跳页兑换票据（工作台等目标页不消费票据）；
             // state.redirect_path 仅作为兑换后的最终去向（redirect 参数）
             String target = "/sso/return?sso_ticket=" + urlEncode(ticket)
@@ -181,6 +181,13 @@ public class SsoAuthController {
         } catch (IllegalStateException e) {
             return R.failResolved(401, SystemErrorKeys.SSO_TENANT_INVALID,
                 LocalizedMessages.text(SystemErrorKeys.SSO_TENANT_INVALID, "租户无效或已停用/过期"), EventRef.current());
+        }
+        // A4 配置期间授权语义：票据签发后 Provider 被停用 → 未兑换票据不得再签发新会话
+        // （配置变更期间不以旧配置建立会话；重新发起授权即可恢复）
+        if (!ssoAuthService.isProviderEnabledFor(session.provider(), session.tenantId())) {
+            ssoAuthService.auditRejection(session.provider(), "LOGIN_FAILED", "provider disabled at ticket exchange");
+            return R.failResolved(401, SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED,
+                LocalizedMessages.text(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG), EventRef.current());
         }
         // 免认证兑换路径无登录态：租户拦截器 fail-closed 会拒绝生成过滤条件；
         // 租户语义由显式谓词承担（票据载荷 tenantId + 账号行 tenantId 一致性校验）

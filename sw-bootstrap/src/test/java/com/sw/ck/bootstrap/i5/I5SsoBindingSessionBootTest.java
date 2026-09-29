@@ -96,7 +96,12 @@ class I5SsoBindingSessionBootTest {
     }
 
     private String issueTicket(long userId, long tenantId) {
-        return app.getBean(SsoTicketStore.class).issue(userId, tenantId);
+        // A4：测试夹具统一使用租户 100 的 WECOM 配置行（seedTenantFixture 显式建立）
+        return issueTicket(userId, tenantId, "WECOM");
+    }
+
+    private String issueTicket(long userId, long tenantId, String provider) {
+        return app.getBean(SsoTicketStore.class).issue(userId, tenantId, provider);
     }
 
     private HttpResponse<String> post(String path, String body) throws Exception {
@@ -580,6 +585,12 @@ class I5SsoBindingSessionBootTest {
                         "parent_id, name, code, sort, status, description) KEY (id) VALUES " +
                         "(?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?, 0, 0, 'I5G6b1根部门', 'i5-g6b1-root', 0, 0, 'G6b1 controlled fixture')",
                 1001L, TENANT_ID);
+        // A4：本测试不加载 devseed，票据兑换的 Provider 启用校验需要配置行——显式建立
+        // （app_secret_enc 非空约束以占位密文满足；本测试不经由换票出站路径）
+        jdbc.update("MERGE INTO sys_sso_provider_config (id, create_time, update_time, deleted, tenant_id, " +
+                        "version, provider, enabled, app_id, app_secret_enc, extra_config, redirect_path) KEY (id) VALUES " +
+                        "(?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?, 0, 'WECOM', 1, 'ww-i5g6b1-fixture', 'x', '{}', '/workspace')",
+                90001L, TENANT_ID);
     }
 
     private static String generatedRsaPkcs8Base64() {
@@ -623,6 +634,49 @@ class I5SsoBindingSessionBootTest {
             return node.path("data").path(field).asText(null);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    @Test
+    @DisplayName("A4 配置期间授权：Provider 停用后未兑换票据不得签发新会话；重新启用恢复")
+    void ticketExchangeRejectedWhenProviderDisabled() throws Exception {
+        // 夹具：独立用户 9505（租户 100）+ ACTIVE 绑定行（provider=WECOM）
+        jdbc.update("MERGE INTO sys_user (id, create_time, update_time, deleted, tenant_id, version, " +
+                        "username, password, real_name, dept_id, status, is_admin) KEY (id) VALUES " +
+                        "(?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?, 0, 'i5a4user', " +
+                        "'$2a$10$GQx6ILw5jsPhqHxJ6/AcmOzSM8xRVRwqChiH/B9ylh0srY0/NqXiK', 'I5A4用户', 1001, 0, 0)",
+                9505L, TENANT_ID);
+        jdbc.update("MERGE INTO sys_sso_user_binding (id, create_time, update_time, deleted, tenant_id, version, " +
+                        "provider, external_id, external_digest, user_id, bind_status) KEY (id) VALUES " +
+                        "(?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?, 0, 'WECOM', ?, ?, ?, 'ACTIVE')",
+                95051L, TENANT_ID, "a4digest", "a4digest", 9505L);
+        try {
+            // 前置：Provider 启用 → 票据兑换成功
+            String t1 = issueTicket(9505L, TENANT_ID, "WECOM");
+            HttpResponse<String> ok = post("/auth/sso/ticket", "{\"ticket\":\"" + t1 + "\"}");
+            org.junit.jupiter.api.Assertions.assertEquals(200, ok.statusCode(),
+                    "启用态票据兑换应成功: " + snippet(ok.body()));
+            // 停用 → 未兑换票据拒绝
+            String t2 = issueTicket(9505L, TENANT_ID, "WECOM");
+            jdbc.update("UPDATE sys_sso_provider_config SET enabled=0, update_time=CURRENT_TIMESTAMP " +
+                    "WHERE provider='WECOM' AND deleted=0");
+            HttpResponse<String> rejected = post("/auth/sso/ticket", "{\"ticket\":\"" + t2 + "\"}");
+            // R 信封契约：错误业务码以 HTTP 200 信封返回——断言信封 code 而非 HTTP 状态
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    rejected.body().contains("\"code\":401")
+                            && rejected.body().contains("system.sso_login_not_completed"),
+                    "停用后未兑换票据必须拒绝: " + snippet(rejected.body()));
+            // 重新启用 → 新票据兑换恢复
+            jdbc.update("UPDATE sys_sso_provider_config SET enabled=1, update_time=CURRENT_TIMESTAMP " +
+                    "WHERE provider='WECOM' AND deleted=0");
+            String t3 = issueTicket(9505L, TENANT_ID, "WECOM");
+            HttpResponse<String> recovered = post("/auth/sso/ticket", "{\"ticket\":\"" + t3 + "\"}");
+            org.junit.jupiter.api.Assertions.assertEquals(200, recovered.statusCode(),
+                    "重新启用后票据兑换恢复: " + snippet(recovered.body()));
+        } finally {
+            // 无论断言结果如何恢复启用态，避免污染同类其他用例
+            jdbc.update("UPDATE sys_sso_provider_config SET enabled=1, update_time=CURRENT_TIMESTAMP " +
+                    "WHERE provider='WECOM' AND deleted=0");
         }
     }
 
