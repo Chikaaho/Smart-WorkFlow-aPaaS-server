@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * B 端手机号准入零增量与租户隔离集成（sso-admin-config 审查 02 账本 A2）。
  * <p>
- * 真实 DB（H2 + V84/V87/V104 SSO 表结构）、真实 Mapper/租户拦截器/事务链、
+ * 真实 DB（H2 + 冻结的 SSO 表结构夹具，与生产 V0.1.0 基线对应段落逐字节一致）、真实 Mapper/租户拦截器/事务链、
  * 受控厂商桩（不强制厂商扫码）；与已锁定的真实链审计证据
  * （a2-batch7-matrix-audit.json）组合覆盖：
  * <ol>
@@ -65,6 +65,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:testdb_ssoadmission;MODE=PostgreSQL",
+                // 窄夹具：SSO 相关表结构（0.1.3 种子合并后冻结于本模块 test/resources，
+                // 与生产 V0.1.0 基线中对应段落逐字节一致）
                 "spring.sql.init.schema-locations=classpath:db/schema-datascope-h2.sql,"
                         + "classpath:db/migration/system/h2/V84__i5_sso_identity.sql,"
                         + "classpath:db/migration/system/h2/V87__i5_binding_digest_global_unique.sql,"

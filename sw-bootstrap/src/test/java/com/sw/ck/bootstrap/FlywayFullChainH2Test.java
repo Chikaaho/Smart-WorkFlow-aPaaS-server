@@ -19,23 +19,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.fail;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * BPM 迁移链纳入真实 H2 全链 Flyway 验证的永久测试（不启动 Spring 上下文）。
+ * 基线种子全链 H2 Flyway 验证的永久测试（不启动 Spring 上下文）。
  * <p>
- * 使用独立内存库 + 独立 Flyway 实例，8 个 locations 与 {@code application.yml}
- * 完全一致（{vendor} 按 H2 连接解析为 h2）。全链共 67 条迁移
- * （含 V35 Agent Token Usage）。
+ * 使用独立内存库 + 独立 Flyway 实例，10 个 locations 与 {@code application.yml}
+ * 完全一致（{vendor} 按 H2 连接解析为 h2）。0.1.3 种子合并后，versioned 迁移收敛为
+ * 单一基线 {@code V0.1.0__baseline_seed.sql}（原 V1—V104 按版本序逐字节合并），
+ * 加可重复对账 {@code R__i6_notify_menu_reconciliation}，全新库共执行 2 条。
+ * 历史版本升级演练（V32/V33/V36 分阶段、旧基线升级）随 0.1.3「仅支持全新建库」
+ * 的边界一并退役；本测试保留并延续全部终态数据/语义断言。
  * </p>
  * <p>
  * H2 不支持 PG 的 partial unique index，BPM V8 在 H2 侧用生成列
  * {@code active_key} + 唯一索引 {@code uk_sw_bpm_binding_active} 等价实现
- * 「同租户同 form_key 仅一条 active=true」约束。本测试除迁移计数/校验外，
+ * 「同租户同 form_key 仅一条 active=true」约束。本测试除基线计数/校验外，
  * 还用 JDBC 对绑定语义做正反例验证（H2 唯一约束冲突 SQLState=23505）。
  * </p>
  */
-@DisplayName("BPM 全链 H2 Flyway 迁移 + 绑定语义验证")
+@DisplayName("基线种子全链 H2 Flyway 迁移 + 绑定语义验证")
 class FlywayFullChainH2Test {
 
     private static final String URL = "jdbc:h2:mem:flyway_full_chain;DB_CLOSE_DELAY=-1";
@@ -43,12 +45,12 @@ class FlywayFullChainH2Test {
     private static final String PASSWORD = "";
 
     /**
-     * 与 application.yml flyway.locations 完全一致的 9 个位置。
+     * 与 application.yml flyway.locations 完全一致的 10 个位置。
      * <p>
      * 注意：{vendor} 占位符并非由 flyway-core 解析，而是 Spring Boot
      * {@code FlywayAutoConfiguration$LocationResolver} 按 JDBC 驱动替换
      * （flyway-core 11.3.4 实测不识别 {vendor}）。本测试不启动 Spring 上下文，
-     * 故在 {@link #migrateFullChain()} 中按 H2 连接显式解析为 h2，
+     * 故在 {@link #migrateBaseline()} 中按 H2 连接显式解析为 h2，
      * 目录结构与 application.yml 一一对应。
      * </p>
      */
@@ -68,7 +70,7 @@ class FlywayFullChainH2Test {
     private static Flyway flyway;
 
     @BeforeAll
-    static void migrateFullChain() {
+    static void migrateBaseline() {
         String[] locations = Arrays.stream(APP_LOCATIONS)
                 .map(location -> location.replace("{vendor}", "h2"))
                 .toArray(String[]::new);
@@ -77,77 +79,76 @@ class FlywayFullChainH2Test {
                 .locations(locations)
                 .load();
         MigrateResult result = flyway.migrate();
-        assertTrue(result.success, "全链迁移应成功");
-        assertEquals(105, result.migrationsExecuted,
-                "全链迁移计数应为 105（含 V104 在途授权配置指纹迁移），实际: " + result.migrationsExecuted);
+        assertTrue(result.success, "基线迁移应成功");
+        assertEquals(2, result.migrationsExecuted,
+                "全新库应执行 2 条（V0.1.0 基线 + R__ 可重复对账），实际: " + result.migrationsExecuted);
+        assertEquals("0.1.0", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为 0.1.0 基线");
     }
 
     @Test
-    @DisplayName("全链迁移后：info().applied() 共 55 条，包含 P58 通知渠道与流程节点能力迁移")
-    void appliedMigrationCount_shouldBe35() {
+    @DisplayName("基线迁移后：info().applied() 共 2 条（0.1.0 版本 + 可重复对账）")
+    void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(105, applied.length, "已应用迁移数应为 105");
-        boolean v8Seen = false;
-        boolean v14Seen = false;
-        boolean v31Seen = false;
-        boolean v33Seen = false;
-        boolean v34Seen = false;
-        boolean v35Seen = false;
-        boolean v36Seen = false;
-        boolean v37Seen = false;
-        boolean v38Seen = false;
-        boolean v39Seen = false;
+        assertEquals(2, applied.length, "已应用迁移数应为 2（基线 + R__）");
+        boolean baselineSeen = false;
+        boolean repeatableSeen = false;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
             if (info.getVersion() == null) {
-                continue;
-            }
-            if ("8".equals(info.getVersion().getVersion())) {
-                v8Seen = true;
-            }
-            if ("14".equals(info.getVersion().getVersion())) {
-                v14Seen = true;
-            }
-            if ("31".equals(info.getVersion().getVersion())) {
-                v31Seen = true;
-            }
-            if ("33".equals(info.getVersion().getVersion())) {
-                v33Seen = true;
-            }
-            if ("34".equals(info.getVersion().getVersion())) {
-                v34Seen = true;
-            }
-            if ("35".equals(info.getVersion().getVersion())) {
-                v35Seen = true;
-            }
-            if ("36".equals(info.getVersion().getVersion())) {
-                v36Seen = true;
-            }
-            if ("37".equals(info.getVersion().getVersion())) {
-                v37Seen = true;
-            }
-            if ("38".equals(info.getVersion().getVersion())) {
-                v38Seen = true;
-            }
-            if ("39".equals(info.getVersion().getVersion())) {
-                v39Seen = true;
+                repeatableSeen = true;
+            } else if ("0.1.0".equals(info.getVersion().getVersion())) {
+                baselineSeen = true;
             }
         }
-        assertTrue(v8Seen, "BPM V8 应已应用");
-        assertTrue(v14Seen, "BPM V14 应已应用");
-        assertTrue(v31Seen, "P24 V31 应已应用");
-        assertTrue(v33Seen, "V33 大模型菜单 seed 应已应用");
-        assertTrue(v34Seen, "V34 用户组迁移应已应用");
-        assertTrue(v35Seen, "V35 Agent Token Usage 应已应用");
-        assertTrue(v36Seen, "V36 调试会话应已应用");
-        assertTrue(v37Seen, "V37 工具管理菜单 seed 应已应用");
-        assertTrue(v38Seen, "V38 消息模板迁移应已应用");
-        assertTrue(v39Seen, "V39 批量发送权限迁移应已应用");
+        assertTrue(baselineSeen, "V0.1.0 基线应已应用");
+        assertTrue(repeatableSeen, "R__ 菜单可重复对账应已应用");
     }
 
     @Test
-    @DisplayName("全链迁移后：再次 validate() 通过（无校验和/缺失迁移问题）")
+    @DisplayName("基线迁移后：再次 validate() 通过（无校验和/缺失迁移问题）")
     void validate_shouldPass() {
         flyway.validate();
+    }
+
+    @Test
+    @DisplayName("基线迁移后：重复 migrate 幂等（0 条新执行，版本不变）")
+    void reMigrate_shouldBeIdempotent() {
+        MigrateResult again = flyway.migrate();
+        assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
+        assertEquals("0.1.0", flyway.info().current().getVersion().getVersion(), "版本应保持 0.1.0");
+    }
+
+    @Test
+    @DisplayName("基线校验和安全：篡改 0.1.0 登记校验和后必须显式失败（不静默通过、不改写校验和）")
+    void tamperedBaselineChecksum_shouldFailValidateNotSilentlyPass() throws SQLException {
+        String tamperedUrl = "jdbc:h2:mem:flyway_baseline_checksum;DB_CLOSE_DELAY=-1";
+        String[] locations = Arrays.stream(APP_LOCATIONS)
+                .map(location -> location.replace("{vendor}", "h2"))
+                .toArray(String[]::new);
+        Flyway migrate = Flyway.configure()
+                .dataSource(tamperedUrl, USER, PASSWORD)
+                .locations(locations)
+                .load();
+        MigrateResult first = migrate.migrate();
+        assertTrue(first.success, "建立基线库应成功");
+
+        try (Connection conn = DriverManager.getConnection(tamperedUrl, USER, PASSWORD);
+             Statement stmt = conn.createStatement()) {
+            // Flyway 以小写引号名建历史表，H2 未加引号的标识符会折叠为大写而找不到
+            stmt.executeUpdate("UPDATE \"flyway_schema_history\" SET \"checksum\" = \"checksum\" + 1 "
+                    + "WHERE \"version\" = '0.1.0' AND \"success\" = TRUE");
+        }
+
+        Flyway legacy = Flyway.configure()
+                .dataSource(tamperedUrl, USER, PASSWORD)
+                .locations(locations)
+                .load();
+        try {
+            legacy.migrate();
+            fail("篡改基线校验和的库在 validate-on-migrate 下必须显式失败（保护数据，不静默改写）");
+        } catch (FlywayException expected) {
+            // 预期：checksum 不匹配显式失败
+        }
     }
 
     @Test
@@ -182,62 +183,13 @@ class FlywayFullChainH2Test {
     }
 
     @Test
-    @DisplayName("P24 V31：既有 admin/id=2 冲突必须显式失败")
-    void adminSeedConflict_shouldFailExplicitly() throws SQLException {
-        String conflictUrl = "jdbc:h2:mem:flyway_p24_conflict;DB_CLOSE_DELAY=-1";
-        String[] locations = Arrays.stream(APP_LOCATIONS)
-                .map(location -> location.replace("{vendor}", "h2"))
-                .toArray(String[]::new);
-        Flyway beforeV31 = Flyway.configure()
-                .dataSource(conflictUrl, USER, PASSWORD)
-                .locations(locations)
-                .target("30")
-                .load();
-        beforeV31.migrate();
-        try (Connection conn = DriverManager.getConnection(conflictUrl, USER, PASSWORD);
-             Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("INSERT INTO sys_role (id, create_time, update_time, deleted, tenant_id, version, "
-                    + "name, code, sort, status, data_scope, built_in, remark) VALUES "
-                    + "(2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 0, 0, '既有角色', 'admin', 1, 1, 0, FALSE, 'collision')");
-        }
-        Flyway afterV31 = Flyway.configure()
-                .dataSource(conflictUrl, USER, PASSWORD)
-                .locations(locations)
-                .load();
-        assertThrows(FlywayException.class, afterV31::migrate,
-                "既有 admin/id=2 冲突不得静默跳过 V31");
-    }
-
-    @Test
-    @DisplayName("V33/V34/V35/V37/V54：V32→链尾升级链（先至 V32 再全量）执行成功，且大模型菜单/按钮 seed 产物正确")
-    void upgradeChain_V32_to_V35_shouldPass() throws SQLException {
-        String upgradeUrl = "jdbc:h2:mem:flyway_upgrade_v35a;DB_CLOSE_DELAY=-1";
-        String[] locations = Arrays.stream(APP_LOCATIONS)
-                .map(location -> location.replace("{vendor}", "h2"))
-                .toArray(String[]::new);
-        Flyway toV32 = Flyway.configure()
-                .dataSource(upgradeUrl, USER, PASSWORD)
-                .locations(locations)
-                .target("32")
-                .load();
-        MigrateResult first = toV32.migrate();
-        assertTrue(first.success, "先迁移至 V32 应成功");
-        assertEquals(33, first.migrationsExecuted, "V32 阶段应执行 33 条（含 I6 菜单可重复对账迁移），实际: " + first.migrationsExecuted);
-
-        Flyway full = Flyway.configure()
-                .dataSource(upgradeUrl, USER, PASSWORD)
-                .locations(locations)
-                .load();
-        MigrateResult second = full.migrate();
-        assertTrue(second.success, "V32→链尾升级链应成功");
-        assertEquals(72, second.migrationsExecuted, "升级链应执行 V33-V104 七十二条，实际: " + second.migrationsExecuted);
-        full.validate();
-
-        try (Connection conn = DriverManager.getConnection(upgradeUrl, USER, PASSWORD);
+    @DisplayName("V33 产物：大模型管理菜单 209 与按钮 210/211 存在，且不自动 seed sys_role_menu")
+    void agentModelMenuSeed_finalState() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT permission, component, path, menu_type, parent_id, sort FROM sys_menu WHERE id = 209")) {
-                assertTrue(rs.next(), "V33 菜单 id=209（大模型管理）应存在");
+                assertTrue(rs.next(), "菜单 id=209（大模型管理）应存在");
                 assertEquals("agent:model:view", rs.getString("permission"));
                 assertEquals("agent/views/ModelList", rs.getString("component"));
                 assertEquals("agent/model", rs.getString("path"));
@@ -247,11 +199,11 @@ class FlywayFullChainH2Test {
             }
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT permission, menu_type, parent_id FROM sys_menu WHERE id IN (210, 211) ORDER BY id")) {
-                assertTrue(rs.next(), "V33 按钮 id=210 应存在");
+                assertTrue(rs.next(), "按钮 id=210 应存在");
                 assertEquals("agent:model:manage", rs.getString("permission"));
                 assertEquals(2, rs.getInt("menu_type"));
                 assertEquals(209, rs.getInt("parent_id"));
-                assertTrue(rs.next(), "V33 按钮 id=211 应存在");
+                assertTrue(rs.next(), "按钮 id=211 应存在");
                 assertEquals("agent:model:test", rs.getString("permission"));
                 assertEquals(2, rs.getInt("menu_type"));
                 assertEquals(209, rs.getInt("parent_id"));
@@ -260,37 +212,15 @@ class FlywayFullChainH2Test {
                     "SELECT COUNT(*) FROM sys_role_menu rm JOIN sys_menu m ON m.id = rm.menu_id "
                             + "WHERE m.id IN (209, 210, 211)")) {
                 assertTrue(rs.next());
-                assertEquals(0, rs.getInt(1), "V33 不得自动 seed sys_role_menu（V6/V26 决策沿用）");
+                assertEquals(0, rs.getInt(1), "不得自动 seed sys_role_menu（V6/V26 决策沿用）");
             }
         }
     }
 
     @Test
-    @DisplayName("V34/V35/V37/V54：V33→链尾升级链（先至 V33 再全量）执行成功，且用户组表/唯一约束产物正确")
-    void upgradeChain_V33_to_V35_shouldPass() throws SQLException {
-        String upgradeUrl = "jdbc:h2:mem:flyway_upgrade_v35;DB_CLOSE_DELAY=-1";
-        String[] locations = Arrays.stream(APP_LOCATIONS)
-                .map(location -> location.replace("{vendor}", "h2"))
-                .toArray(String[]::new);
-        Flyway toV33 = Flyway.configure()
-                .dataSource(upgradeUrl, USER, PASSWORD)
-                .locations(locations)
-                .target("33")
-                .load();
-        MigrateResult first = toV33.migrate();
-        assertTrue(first.success, "先迁移至 V33 应成功");
-        assertEquals(34, first.migrationsExecuted, "V33 阶段应执行 34 条（含 I6 菜单可重复对账迁移），实际: " + first.migrationsExecuted);
-
-        Flyway full = Flyway.configure()
-                .dataSource(upgradeUrl, USER, PASSWORD)
-                .locations(locations)
-                .load();
-        MigrateResult second = full.migrate();
-        assertTrue(second.success, "V33→V36 升级链应成功");
-        assertEquals(71, second.migrationsExecuted, "升级链应执行 V34-V104 七十一条，实际: " + second.migrationsExecuted);
-        full.validate();
-
-        try (Connection conn = DriverManager.getConnection(upgradeUrl, USER, PASSWORD)) {
+    @DisplayName("V34 产物：sys_user_group / sys_user_group_member 表与 uk_sys_user_group_code 存在")
+    void userGroupTables_finalState() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
             DatabaseMetaData md = conn.getMetaData();
             try (ResultSet rs = md.getTables(null, null, "SYS_USER_GROUP", new String[]{"TABLE"})) {
                 assertTrue(rs.next(), "sys_user_group 表应存在");
@@ -314,13 +244,7 @@ class FlywayFullChainH2Test {
     @Test
     @DisplayName("V34：用户组逻辑删除唯一语义 —— 同租户同标识两条 deleted=0 冲突(23505)，deleted=1 历史可共存")
     void userGroupCode_uniqueSemantics() throws SQLException {
-        String url = "jdbc:h2:mem:flyway_v34_semantics;DB_CLOSE_DELAY=-1";
-        String[] locations = Arrays.stream(APP_LOCATIONS)
-                .map(location -> location.replace("{vendor}", "h2"))
-                .toArray(String[]::new);
-        Flyway.configure().dataSource(url, USER, PASSWORD).locations(locations).load().migrate();
-
-        try (Connection conn = DriverManager.getConnection(url, USER, PASSWORD);
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("INSERT INTO sys_user_group (id, create_time, update_time, deleted, tenant_id, version, "
                     + "group_code, group_name, status, remark) VALUES "
@@ -444,7 +368,7 @@ class FlywayFullChainH2Test {
              Statement stmt = conn.createStatement()) {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT menu_type, component FROM sys_menu WHERE id = 5")) {
-                assertTrue(rs.next(), "V44 后「流程引擎」id=5 应存在");
+                assertTrue(rs.next(), "「流程引擎」id=5 应存在");
                 assertEquals(0, rs.getInt("menu_type"), "id=5 应改为目录(menu_type=0)");
             }
             try (ResultSet rs = stmt.executeQuery(
@@ -456,7 +380,7 @@ class FlywayFullChainH2Test {
                     assertEquals(5, rs.getInt("parent_id"), "子菜单 parent_id 应为 5");
                     assertEquals(1, rs.getInt("menu_type"), "子菜单应为页面(menu_type=1)");
                 }
-                assertEquals(4, count, "V44 应有 4 条流程子菜单 20/21/22/23");
+                assertEquals(4, count, "应有 4 条流程子菜单 20/21/22/23");
             }
         }
     }
@@ -497,48 +421,12 @@ class FlywayFullChainH2Test {
         }
     }
 
-    // ==================== L10：独立 V36 起点 → 仅迁移 V37（D197 审查 L10） ====================
+    // ==================== S3：批量发送权限资源（原 L10 终态断言） ====================
 
     @Test
-    @DisplayName("L10: 独立 V36 现有库 → 迁移至链尾（V37-V61），同一会话查询批量发送页面/按钮权限")
-    void upgrade_V36_to_V37_only_and_query() throws SQLException {
-        String upgradeUrl = "jdbc:h2:mem:flyway_l10_v36;DB_CLOSE_DELAY=-1";
-        String[] locations = Arrays.stream(APP_LOCATIONS)
-                .map(location -> location.replace("{vendor}", "h2"))
-                .toArray(String[]::new);
-
-        // 1. 建立真实 V36 起点：先迁移至 V36（当前版本 V36）
-        long startNanos = System.nanoTime();
-        Flyway toV36 = Flyway.configure()
-                .dataSource(upgradeUrl, USER, PASSWORD)
-                .locations(locations)
-                .target("36")
-                .load();
-        MigrateResult first = toV36.migrate();
-        assertTrue(first.success, "V1→V36 应成功");
-        assertEquals(37, first.migrationsExecuted, "V36 阶段应执行 37 条（含 I6 菜单可重复对账迁移），实际: " + first.migrationsExecuted);
-
-        // 2. 输出起点当前版本 V36（info().current()）
-        org.flywaydb.core.api.MigrationInfoService infoBefore = toV36.info();
-        String beforeVersion = infoBefore.current() == null ? "EMPTY" : infoBefore.current().getVersion().getVersion();
-        assertEquals("36", beforeVersion, "起点当前版本应为 V36，实际: " + beforeVersion);
-
-
-        // 3. 只迁移到链尾（不再 target），应执行 V37-V61 二十五条
-        Flyway toV37 = Flyway.configure()
-                .dataSource(upgradeUrl, USER, PASSWORD)
-                .locations(locations)
-                .load();
-        MigrateResult second = toV37.migrate();
-        assertTrue(second.success, "V36→链尾 应成功");
-        assertEquals(68, second.migrationsExecuted, "V36→链尾 应执行 V37-V104 六十八条，实际: " + second.migrationsExecuted);
-        org.flywaydb.core.api.MigrationInfoService infoAfter = toV37.info();
-        String afterVersion = infoAfter.current() == null ? "EMPTY" : infoAfter.current().getVersion().getVersion();
-        assertEquals("104", afterVersion, "终点当前版本应为 V104（在途授权配置指纹迁移），实际: " + afterVersion);
-        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
-
-        // 4. 同一数据库会话实际查询：页面/按钮行的 id,parent_id,path,component,permission + view/manage
-        try (Connection conn = DriverManager.getConnection(upgradeUrl, USER, PASSWORD);
+    @DisplayName("S3：批量发送页面/按钮权限齐备，普通 admin 角色可绑定（基线终态）")
+    void batchSendPermissionResource_finalState() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT id, parent_id, path, component, permission, menu_type FROM sys_menu WHERE id IN (212, 213) ORDER BY id")) {
@@ -556,18 +444,18 @@ class FlywayFullChainH2Test {
             }
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT menu_type, component FROM sys_menu WHERE id = 6")) {
-                assertTrue(rs.next(), "V38 后「通知」目录 id=6 应存在");
+                assertTrue(rs.next(), "「通知」目录 id=6 应存在");
                 assertEquals(0, rs.getInt("menu_type"), "id=6 应矫正为目录(menu_type=0)");
             }
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT id, parent_id, path, component, permission, menu_type FROM sys_menu WHERE id IN (218, 219) ORDER BY id")) {
-                assertTrue(rs.next(), "V39 批量发送页面菜单 id=218 应存在");
+                assertTrue(rs.next(), "批量发送页面菜单 id=218 应存在");
                 assertEquals(6, rs.getInt("parent_id"));
                 assertEquals("notify/batch-send", rs.getString("path"));
                 assertEquals("notify/views/NotifyBatchSend", rs.getString("component"));
                 assertEquals("notify:batch:send", rs.getString("permission"));
                 assertEquals(1, rs.getInt("menu_type"));
-                assertTrue(rs.next(), "V39 批量发送按钮菜单 id=219 应存在");
+                assertTrue(rs.next(), "批量发送按钮菜单 id=219 应存在");
                 assertEquals(218, rs.getInt("parent_id"));
                 assertEquals("notify:batch:send", rs.getString("permission"));
                 assertEquals(2, rs.getInt("menu_type"));
@@ -583,10 +471,7 @@ class FlywayFullChainH2Test {
                 assertEquals("notify:batch:send", rs.getString("permission"));
                 assertFalse(rs.next(), "普通角色绑定应只有一条有效关系");
             }
-            System.out.println("[S3-production] H2 V39 menu=(218,batch-send,notify/views/NotifyBatchSend,notify:batch:send), button=(219,notify:batch:send), ordinaryRole=(id=2,code=admin,built_in=false) boundMenu=219, queryExit=0");
+            System.out.println("[S3-production] H2 baseline menu=(218,batch-send,notify/views/NotifyBatchSend,notify:batch:send), button=(219,notify:batch:send), ordinaryRole=(id=2,code=admin,built_in=false) boundMenu=219, queryExit=0");
         }
-
-        System.out.println("[L10] V36→链尾 独立升级: 起点=" + beforeVersion + ", 终点=" + afterVersion
-                + ", 执行迁移数=" + second.migrationsExecuted + ", 耗时=" + elapsedMs + "ms, 查询退出=0");
     }
 }

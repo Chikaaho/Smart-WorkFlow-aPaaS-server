@@ -442,7 +442,7 @@ class SsoAuthServiceTest {
     }
 
     @Test
-    @DisplayName("A4 生命周期：历史 state 无配置指纹（V104 前）→ fail closed 拒绝")
+    @DisplayName("A4 生命周期：历史 state 无配置指纹（configDigest 为 null）→ fail closed 拒绝")
     void callback_legacyStateWithoutDigest_failClosed() {
         SsoAuthState legacy = freshState();
         legacy.setConfigDigest(null);

@@ -56,14 +56,9 @@ class Phase5IotApiBoundaryGateTest {
             "/iot/topics",
             "/iot/hook/tencent");
 
-    /** 抽取前已存在的 IoT 迁移文件（Phase 5 不得新增/改名）。 */
-    private static final Set<String> IOT_MIGRATION_FILES = Set.of(
-            "sw-basic/sw-basic-iot/src/main/resources/db/migration/iot/h2/V40__init_iot_device_command.sql",
-            "sw-basic/sw-basic-iot/src/main/resources/db/migration/iot/h2/V59__p21_iot_platform.sql",
-            "sw-basic/sw-basic-iot/src/main/resources/db/migration/iot/h2/V66__p21_iot_audit_and_correlation.sql",
-            "sw-basic/sw-basic-iot/src/main/resources/db/migration/iot/postgresql/V40__init_iot_device_command.sql",
-            "sw-basic/sw-basic-iot/src/main/resources/db/migration/iot/postgresql/V59__p21_iot_platform.sql",
-            "sw-basic/sw-basic-iot/src/main/resources/db/migration/iot/postgresql/V66__p21_iot_audit_and_correlation.sql");
+    /** 0.1.3 种子合并后 IoT 独立迁移目录为空（全部并入 V0.1.0 基线）；守卫保持：
+     *  本目录出现任何新 SQL 文件即失败，新增 schema 必须走基线追加路径。 */
+    private static final Set<String> IOT_MIGRATION_FILES = Set.of();
 
     // ==================== 门禁 1 · 契约模块类型清单与零非 JDK 依赖 ====================
 

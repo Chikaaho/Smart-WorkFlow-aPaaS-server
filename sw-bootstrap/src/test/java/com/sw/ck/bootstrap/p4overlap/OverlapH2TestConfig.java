@@ -62,7 +62,7 @@ public class OverlapH2TestConfig {
         }
         Flyway.configure()
                 .dataSource(dataSource)
-                .locations("classpath:db/migration/bpm/h2")
+                .locations("classpath:db/migration/bpm-fixture/h2") // 0.1.3 种子合并后 BPM H2 迁移冻结为测试夹具（与原主链逐字节一致，非冲突路径避免污染全链锚）
                 .baselineOnMigrate(true)
                 .load()
                 .migrate();

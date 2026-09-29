@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * （服务器版本 + 固定库名 + 迁移终点）。</p>
  *
  * <p>固定验证数据库：{@code sw_p4_evidence}（本阶段专用，不触碰服务器上既有库）。
- * 应用启动前由 Flyway 全链 clean + migrate 到 V96，保证 Phase 4 行为证据运行在
+ * 应用启动前由 Flyway 全链 clean + migrate 到基线（0.1.0，原 V1—V104 合并种子），保证 Phase 4 行为证据运行在
  * 生产语义（PostgreSQL）而不是 H2 代理上。</p>
  */
 abstract class Phase4PgSupport {
