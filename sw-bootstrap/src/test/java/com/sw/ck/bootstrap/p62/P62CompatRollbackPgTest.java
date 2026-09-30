@@ -226,7 +226,7 @@ class P62CompatRollbackPgTest {
         // 模拟升级窗口中断前 item-d 已产生真实业务效果（稳定项幂等键已占用），
         // 但项结果行尚未写终态（中断点）
         asOperator(() -> txnActionPort.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
-                actionId, recordD, "2", "BATCH:compat-batch-02:item-d", null, null)));
+                actionId, recordD, "2", "BATCH:compat-batch-02:item-d", null, null, 1)));
         assertThat(reservedOf(recordD)).isEqualByComparingTo("2");
 
         // 恢复升级：重入消费只处理 PENDING 项（item-c）；item-d 经动作内核幂等重放原结果，不叠加

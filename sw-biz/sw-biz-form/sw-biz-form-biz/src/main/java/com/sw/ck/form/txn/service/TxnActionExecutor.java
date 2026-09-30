@@ -92,7 +92,10 @@ public class TxnActionExecutor {
         boolean settleByReservation = (TxnActionService.TYPE_CONFIRM.equals(type)
                 || TxnActionService.TYPE_RELEASE.equals(type))
                 && req.getReservationId() != null && !req.getReservationId().isBlank();
-        TxnActionVersionEntity version = settleByReservation ? null : actionService.requireCurrentVersion(action);
+        TxnActionVersionEntity version = settleByReservation ? null
+                : (req.getActionVersion() != null
+                        ? actionService.requireFrozenVersion(action, req.getActionVersion())
+                        : actionService.requireCurrentVersion(action));
         TxnActionConfig cfg = version == null ? null : actionService.readConfig(version.getConfigJson());
         if (!settleByReservation && cfg == null) {
             throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID, "动作版本配置为空，请重新发布");
@@ -265,6 +268,7 @@ public class TxnActionExecutor {
         canonical.put("reservationId", req.getReservationId());
         canonical.put("quantity", req.getQuantity());
         canonical.put("expectedVersion", req.getExpectedVersion());
+        canonical.put("actionVersion", req.getActionVersion());
         if (req.getBusinessKeys() != null && !req.getBusinessKeys().isEmpty()) {
             canonical.put("businessKeys", new TreeMap<>(req.getBusinessKeys()));
         }

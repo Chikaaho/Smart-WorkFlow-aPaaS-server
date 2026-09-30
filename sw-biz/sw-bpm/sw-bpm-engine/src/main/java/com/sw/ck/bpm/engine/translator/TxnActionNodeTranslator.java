@@ -9,6 +9,7 @@ import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.form.api.port.FormTxnActionPort;
+import org.flowable.bpmn.model.FlowElement;
 import org.springframework.stereotype.Component;
 
 import java.util.EnumSet;
@@ -65,6 +66,21 @@ public class TxnActionNodeTranslator extends ServiceTaskNodeTranslator {
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
                         BpmNodeCapability.RUNTIME, BpmNodeCapability.CONFIG_VALIDATE),
                 false, false, false, true));
+    }
+
+    /**
+     * 事务动作节点按独立短事务执行（方向 U01 合同：各节点独立短事务，节点效果、
+     * 进度和结果同事务；先前已提交节点不因后续失败自动撤销）。async 使每个节点
+     * 拥有独立 Flowable 事务：效果（REQUIRES_NEW 预占）与变量写回同事务提交，
+     * 后续节点失败只回滚自身，已提交节点保留。
+     */
+    @Override
+    public FlowElement translate(GraphElement node) {
+        FlowElement element = super.translate(node);
+        if (element instanceof org.flowable.bpmn.model.ServiceTask task) {
+            task.setAsynchronous(true);
+        }
+        return element;
     }
 
     @Override

@@ -26,7 +26,13 @@ public interface FormTxnActionPort {
 
     /** 调用输入（字段与 {@code TxnInvokeRequest} 同口径，仅暴露跨模块所需最小集合）。 */
     record TxnActionCommand(String actionId, String recordId, String quantity, String invocationKey,
-                            Long expectedVersion, String reservationId) {
+                            Long expectedVersion, String reservationId, Integer actionVersion) {
+
+        /** 六参兼容构造（未指定发布版本 = 最新版本）。 */
+        public TxnActionCommand(String actionId, String recordId, String quantity, String invocationKey,
+                                Long expectedVersion, String reservationId) {
+            this(actionId, recordId, quantity, invocationKey, expectedVersion, reservationId, null);
+        }
     }
 
     /** 调用结果（状态/错误码/业务对象/冻结版本；重放时 replay=true 且返回原结果）。 */

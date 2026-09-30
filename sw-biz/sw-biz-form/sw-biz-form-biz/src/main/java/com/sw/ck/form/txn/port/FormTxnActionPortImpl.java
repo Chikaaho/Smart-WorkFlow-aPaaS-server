@@ -59,6 +59,7 @@ public class FormTxnActionPortImpl implements FormTxnActionPort {
         request.setInvocationKey(command.invocationKey());
         request.setExpectedVersion(command.expectedVersion());
         request.setReservationId(command.reservationId());
+        request.setActionVersion(command.actionVersion());
         log.info("事务动作受控调用: actionId={}, operator={}, tenant={}, key={}",
                 command.actionId(), operator.getUserId(), operator.getTenantId(), command.invocationKey());
         TxnInvokeResult result = executor.invoke(command.actionId(), request);

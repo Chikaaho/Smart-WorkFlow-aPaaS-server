@@ -26,6 +26,9 @@ public class TxnInvokeRequest {
     /** 期望数据版本（可选；提供时不一致返回版本冲突） */
     private Long expectedVersion;
 
+    /** 目标发布版本（P62 冻结版本结算；null=最新版本）。 */
+    private Integer actionVersion;
+
     /** 业务键取值（可选；须为声明 keyFields 的子集） */
     private Map<String, Object> businessKeys;
 }

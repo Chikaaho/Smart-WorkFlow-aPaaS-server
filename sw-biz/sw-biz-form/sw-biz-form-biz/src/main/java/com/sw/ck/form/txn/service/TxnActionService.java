@@ -220,6 +220,31 @@ public class TxnActionService {
     }
 
     /** 当前已发布版本配置（调用时版本固定语义的唯一配置来源）。 */
+    /**
+     * 按指定发布版本解析动作版本（P62 分级执行：受理时冻结版本，改配置只影响新受理）。
+     * 与 {@link #requireCurrentVersion} 的差异：不校验当前停用/最新状态——已受理对象
+     * 按受理时冻结的版本结算，动作后续停用/改版不影响其在途消费。
+     *
+     * @param action    动作实体
+     * @param versionNo 受理时冻结的发布版本号
+     * @return 对应版本快照
+     */
+    public TxnActionVersionEntity requireFrozenVersion(TxnActionEntity action, Integer versionNo) {
+        if (versionNo == null) {
+            return requireCurrentVersion(action);
+        }
+        TxnActionVersionEntity version = versionMapper.selectOne(
+                Wrappers.<TxnActionVersionEntity>lambdaQuery()
+                        .eq(TxnActionVersionEntity::getActionId, action.getId())
+                        .eq(TxnActionVersionEntity::getVersionNo, versionNo)
+                        .last("LIMIT 1"));
+        if (version == null) {
+            throw new BaseException(FormErrorCode.ACTION_NOT_FOUND,
+                    "受理冻结版本快照缺失: version=" + versionNo);
+        }
+        return version;
+    }
+
     public TxnActionVersionEntity requireCurrentVersion(TxnActionEntity action) {
         if (STATUS_DISABLED.equals(action.getStatus())) {
             throw new BaseException(FormErrorCode.ACTION_DISABLED, "事务动作已停用，不能发起新调用");

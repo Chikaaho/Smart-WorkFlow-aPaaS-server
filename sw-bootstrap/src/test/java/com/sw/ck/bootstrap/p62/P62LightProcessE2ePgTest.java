@@ -335,13 +335,15 @@ class P62LightProcessE2ePgTest {
 
     /** 有界等待命令调度器消费完成并返回流程实例 id（真实异步链，不做无条件空等）。 */
     private String awaitInstanceCompleted(String recordId) {
-        long deadline = System.currentTimeMillis() + 60_000L;
+        long deadline = System.currentTimeMillis() + 180_000L; // async 节点+对账安静期(1min)后的收敛窗口
         while (System.currentTimeMillis() < deadline) {
             List<Map<String, Object>> rows = jdbc.queryForList(
                     "SELECT process_instance_id, status FROM sw_bpm_instance WHERE business_key = ?", recordId);
             if (!rows.isEmpty() && "APPROVED".equals(rows.get(0).get("status"))) {
                 return String.valueOf(rows.get(0).get("process_instance_id"));
             }
+            // TXN_ACTION async 独立短事务：触发实例状态对账收敛（不依赖调度时序）
+            asOperator(() -> app.getBean(com.sw.ck.bpm.process.job.BpmInstanceStateSyncJob.class).sweepOnce());
             try {
                 Thread.sleep(200);
             } catch (InterruptedException e) {
@@ -352,7 +354,7 @@ class P62LightProcessE2ePgTest {
         List<Map<String, Object>> finalRows = jdbc.queryForList(
                 "SELECT process_instance_id, status FROM sw_bpm_instance WHERE business_key = ?", recordId);
         List<Map<String, Object>> commandRows = jdbc.queryForList(
-                "SELECT command_id, status, retry_count, failure_reason FROM sw_bpm_command WHERE command_key = ?",
+                "SELECT id AS command_id, status, retry_count, failure_reason FROM sw_bpm_command WHERE command_key = ?",
                 "FLOW_START:" + recordId);
         throw new AssertionError("60s 内轻流程未收敛到终态: instance=" + finalRows
                 + ", command=" + commandRows);

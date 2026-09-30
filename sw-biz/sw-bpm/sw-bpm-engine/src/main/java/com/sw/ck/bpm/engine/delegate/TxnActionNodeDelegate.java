@@ -30,16 +30,68 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
     private static final Logger log = LoggerFactory.getLogger(TxnActionNodeDelegate.class);
 
     private final org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider;
+    private final org.springframework.transaction.support.TransactionTemplate nodeTxTemplate;
+    private final org.springframework.context.ApplicationContext applicationContext;
+    private final com.sw.ck.security.spi.UserDetailsProvider userDetailsProvider;
 
     public TxnActionNodeDelegate(RepositoryService repositoryService, ObjectMapper objectMapper,
                                  ParticipantResolverRegistry participantResolverRegistry,
-                                 org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider) {
+                                 org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider,
+                                 org.springframework.transaction.PlatformTransactionManager transactionManager,
+                                 org.springframework.context.ApplicationContext applicationContext,
+                                 org.springframework.beans.factory.ObjectProvider<com.sw.ck.security.spi.UserDetailsProvider> userDetailsProvider) {
         super(repositoryService, objectMapper, participantResolverRegistry);
         this.txnActionPortProvider = txnActionPortProvider;
+        this.applicationContext = applicationContext;
+        this.userDetailsProvider = userDetailsProvider == null ? null : userDetailsProvider.getIfAvailable();
+        // 生产轻流程各节点独立短事务（方向 U01 合同）：节点效果独立提交，
+        // 先前已提交节点不因后续节点失败自动撤销
+        org.springframework.transaction.support.TransactionTemplate template =
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.nodeTxTemplate = template;
     }
 
     @Override
     public void execute(DelegateExecution execution) {
+        // async 执行线程无登录态：按流程发起人还原上下文（方向 U01：恢复不得以超级用户兜底；
+        // 动作租户与权限仍由受控 Port 按还原身份校验，发起人无调用权限则节点拒绝）
+        com.sw.ck.security.holder.LoginUser previous = com.sw.ck.security.holder.LoginUserHolder.get();
+        boolean restoreNeeded = previous == null;
+        if (restoreNeeded) {
+            Object submitter = execution.getVariable("submitter");
+            Object tenantId = execution.getVariable("tenantId");
+            if (submitter == null || tenantId == null) {
+                throw new BaseException(BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
+                        "动作节点执行缺少发起人上下文（submitter/tenantId 流程变量缺失）");
+            }
+            long initiatorId = Long.parseLong(String.valueOf(submitter));
+            long initiatorTenant = Long.parseLong(String.valueOf(tenantId));
+            com.sw.ck.security.holder.LoginUser owner;
+            if (userDetailsProvider != null) {
+                // 正式身份回查（含最新 RBAC 权限），不构造无权限的裸身份、不以超级用户兜底
+                owner = userDetailsProvider.loadByUserId(initiatorId);
+                if (owner == null || !Long.valueOf(initiatorTenant).equals(owner.getTenantId())) {
+                    throw new BaseException(BpmErrorCode.INSTANCE_INITIATOR_INVALID);
+                }
+            } else {
+                owner = new com.sw.ck.security.holder.LoginUser();
+                owner.setUserId(initiatorId);
+                owner.setTenantId(initiatorTenant);
+            }
+            com.sw.ck.security.holder.LoginUserHolder.set(owner);
+        }
+        try {
+            doExecute(execution);
+        } finally {
+            if (restoreNeeded) {
+                com.sw.ck.security.holder.LoginUserHolder.clear();
+            }
+        }
+    }
+
+    private void doExecute(DelegateExecution execution) {
         Map<String, Object> config = nodeConfig(execution);
         String actionId = asString(config.get("actionId"));
         if (actionId == null || actionId.isBlank()) {
@@ -58,8 +110,16 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
             throw new BaseException(BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
                     "表单事务动作模块未装配，动作节点无法执行");
         }
-        FormTxnActionPort.TxnActionResult result = txnActionPort.invoke(new FormTxnActionPort.TxnActionCommand(
-                actionId, recordId, quantity, invocationKey, null, null));
+        FormTxnActionPort.TxnActionResult result;
+        try {
+            result = nodeTxTemplate.execute(status ->
+                    txnActionPort.invoke(new FormTxnActionPort.TxnActionCommand(
+                            actionId, recordId, quantity, invocationKey, null, null)));
+        } catch (org.springframework.transaction.UnexpectedRollbackException rollback) {
+            // 业务拒绝（REJECTED）在动作内核"另事务"记录后回滚拒绝事务：独立短事务随之回滚
+            // 属预期语义（拒绝不产生效果），回查已独立提交的拒绝记录恢复结果供 CONTINUE/BLOCK 分支
+            result = loadRejectedResult(invocationKey, rollback);
+        }
 
         execution.setVariable(actionVar(execution, "status"), result.status());
         execution.setVariable(actionVar(execution, "reservationId"), result.reservationId());
@@ -77,6 +137,26 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
         execution.setVariable(actionVar(execution, "error"), reason);
         log.warn("动作节点按 CONTINUE 策略跳过失败: processInstance={}, activity={}, reason={}",
                 execution.getProcessInstanceId(), execution.getCurrentActivityId(), reason);
+    }
+
+    /** 回查拒绝记录（recordRejected 独立事务提交）；无记录则为真实故障原样上抛。 */
+    private FormTxnActionPort.TxnActionResult loadRejectedResult(
+            String invocationKey, RuntimeException rollback) {
+        org.springframework.jdbc.core.JdbcTemplate jdbcTemplate =
+                applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        java.util.List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id, error_code, error_msg FROM sw_form_txn_invocation"
+                        + " WHERE invocation_key = ? AND status = 'REJECTED'"
+                        + " ORDER BY create_time DESC LIMIT 1", invocationKey);
+        if (rows.isEmpty()) {
+            throw rollback;
+        }
+        Map<String, Object> row = rows.get(0);
+        Integer errorCode = row.get("error_code") == null ? null
+                : Integer.valueOf(String.valueOf(row.get("error_code")));
+        String errorMsg = row.get("error_msg") == null ? null : String.valueOf(row.get("error_msg"));
+        return new FormTxnActionPort.TxnActionResult(String.valueOf(row.get("id")), "REJECTED",
+                null, null, null, null, null, errorCode, errorMsg, null, false);
     }
 
     private String resolveRecordId(DelegateExecution execution, Map<String, Object> config) {
