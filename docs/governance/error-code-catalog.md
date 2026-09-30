@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（130 常量 / 5 枚举）
+## 2. 全量登记（144 常量 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -85,6 +85,20 @@
 | form | `DYNAMIC_SQL_CONTRACT_VIOLATION` | 1509 | `form.dynamic_sql_contract_violation` | 动态宽表访问未通过受控 SQL 契约，已拒绝执行 |
 | form | `DYNAMIC_TABLE_METADATA_UNAVAILABLE` | 1510 | `form.dynamic_table_metadata_unavailable` | 动态宽表元数据或引用检查不可用，已拒绝本次操作 |
 | form | `DYNAMIC_ROW_LOCK_TIMEOUT` | 1511 | `form.dynamic_row_lock_timeout` | 该记录正在被其他操作占用，请稍后重试 |
+| form | `ACTION_NOT_FOUND` | 1600 | `form.action_not_found` | 该事务动作不存在或尚未发布 |
+| form | `ACTION_DISABLED` | 1601 | `form.action_disabled` | 该事务动作已停用，暂不能发起新的调用 |
+| form | `ACTION_CONFIG_INVALID` | 1602 | `form.action_config_invalid` | 动作配置未通过发布校验，请修正后重试 |
+| form | `ACTION_FIELD_BINDING_INVALID` | 1603 | `form.action_field_binding_invalid` | 动作绑定的字段无效，请检查后重试 |
+| form | `ACTION_INSUFFICIENT_AVAILABLE` | 1604 | `form.action_insufficient_available` | 可用数量不足，本次操作已被拒绝 |
+| form | `ACTION_VERSION_CONFLICT` | 1605 | `form.action_version_conflict` | 数据版本冲突，请刷新后重试 |
+| form | `ACTION_IDEMPOTENCY_CONFLICT` | 1606 | `form.action_idempotency_conflict` | 相同的调用标识已用于不同的内容，请凭原调用标识查询结果 |
+| form | `ACTION_TARGET_NOT_FOUND` | 1607 | `form.action_target_not_found` | 操作目标不存在或已被删除 |
+| form | `ACTION_RESERVATION_NOT_FOUND` | 1608 | `form.action_reservation_not_found` | 未找到对应的预占记录 |
+| form | `ACTION_RESERVATION_NOT_ACTIVE` | 1609 | `form.action_reservation_not_active` | 该预占已完成结算，不能重复操作 |
+| form | `ACTION_RESERVATION_EXPIRED` | 1610 | `form.action_reservation_expired` | 该预占已过期，不能确认 |
+| form | `ACTION_QUANTITY_INVALID` | 1611 | `form.action_quantity_invalid` | 数量不符合模型声明的精度或范围 |
+| form | `C1_WRITE_PROTECTED` | 1612 | `form.c1_write_protected` | 该数据受关键数据保护，请通过受控事务动作写入 |
+| form | `C1_POLICY_INVALID` | 1613 | `form.c1_policy_invalid` | 现有数据不满足保护约束，暂不能启用 |
 | bpm | `GRAPH_MISSING_START` | 2000 | `bpm.graph_missing_start` | 图缺少开始节点 |
 | bpm | `GRAPH_MULTIPLE_START` | 2001 | `bpm.graph_multiple_start` | 图存在多个开始节点 |
 | bpm | `GRAPH_MISSING_END` | 2002 | `bpm.graph_missing_end` | 图缺少结束节点 |
