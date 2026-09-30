@@ -75,6 +75,14 @@ public class FormDataUpdateService {
         this.enrichment = enrichment;
     }
 
+    /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
+    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setC1PolicyService(com.sw.ck.form.txn.service.C1PolicyService c1PolicyService) {
+        this.c1PolicyService = c1PolicyService;
+    }
+
     public FormDataUpdateService(FormDefService formDefService,
                                   FormDefMapper formDefMapper,
                                   FormConfigMapper formConfigMapper,
@@ -171,6 +179,11 @@ public class FormDataUpdateService {
             fieldDefs = formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
         }
         formFieldValidator.validateFields(fieldDefs, submittedData, dictFacade);
+
+        // P62 C1 保护：受保护字段不能经普通表单更新写入（须走受控事务动作）
+        if (c1PolicyService != null) {
+            c1PolicyService.assertDirectWriteAllowed(formDef.getId(), submittedData.keySet());
+        }
 
         // —— Step 7: 主表整量 UPDATE（WHERE 叠加记录数据范围） ——
         int affected = updateMainRecord(tableName, fieldDefs, submittedData,

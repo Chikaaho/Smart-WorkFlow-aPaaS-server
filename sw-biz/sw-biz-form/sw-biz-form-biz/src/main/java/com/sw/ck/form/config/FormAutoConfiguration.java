@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 低代码表单自动配置。
@@ -18,8 +19,9 @@ import org.springframework.scheduling.annotation.EnableAsync;
  */
 @AutoConfiguration
 @EnableAsync
+@EnableScheduling
 @ConditionalOnProperty(prefix = "sw.form", name = "enabled", havingValue = "true")
-@MapperScan("com.sw.ck.form.mapper")
+@MapperScan({"com.sw.ck.form.mapper", "com.sw.ck.form.txn.mapper"})
 public class FormAutoConfiguration {
 
     /**

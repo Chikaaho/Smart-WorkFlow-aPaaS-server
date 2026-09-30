@@ -69,6 +69,14 @@ public class FormSubmitService {
     /** I2 写路径增补（可选：既有测试构造不注入时跳过增补管线）。 */
     private final FormFieldEnrichmentService enrichment;
 
+    /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
+    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setC1PolicyService(com.sw.ck.form.txn.service.C1PolicyService c1PolicyService) {
+        this.c1PolicyService = c1PolicyService;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired
     public FormSubmitService(FormDefMapper formDefMapper,
                              FormTraceMapper formTraceMapper,
@@ -354,6 +362,11 @@ public class FormSubmitService {
         // Step 4: 校验字段（隐藏字段已被过滤，不参与必填校验）
         // ==========================================================
         formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
+
+        // P62 C1 保护：受保护字段不能经普通表单提交写入（须走受控事务动作）
+        if (c1PolicyService != null) {
+            c1PolicyService.assertDirectWriteAllowed(formDef.getId(), effectiveData.keySet());
+        }
 
         // ==========================================================
         // Step 5: 构建系统列 + 用户列值

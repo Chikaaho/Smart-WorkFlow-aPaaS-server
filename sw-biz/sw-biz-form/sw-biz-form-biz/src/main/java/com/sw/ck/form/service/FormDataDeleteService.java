@@ -72,6 +72,14 @@ public class FormDataDeleteService {
         this.objectMapper = objectMapper;
     }
 
+    /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
+    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setC1PolicyService(com.sw.ck.form.txn.service.C1PolicyService c1PolicyService) {
+        this.c1PolicyService = c1PolicyService;
+    }
+
     // ==================== 主入口 ====================
 
     /**
@@ -116,6 +124,11 @@ public class FormDataDeleteService {
 
         // —— Step 4: RESTRICT 反查（删之前先拦；失败即 fail closed） ——
         checkRestrictReferences(formKey, tableName, recordId, tenantId);
+
+        // P62 C1 保护：受保护模型的记录不能直接删除（须经受控事务动作结算）
+        if (c1PolicyService != null) {
+            c1PolicyService.assertDeleteAllowed(formDef.getId());
+        }
 
         // —— Step 5: CASCADE 软删子表（失败即 fail closed） ——
         cascadeDeleteSubTableRecords(formDef.getId(), tableName, recordId, tenantId);
