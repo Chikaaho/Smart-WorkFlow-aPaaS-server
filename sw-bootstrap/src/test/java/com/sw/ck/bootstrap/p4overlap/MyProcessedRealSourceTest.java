@@ -124,7 +124,7 @@ class MyProcessedRealSourceTest {
             return new BpmProcessDefServiceImpl(mapper,
                     org.mockito.Mockito.mock(com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper.class),
                     org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.NodeFunctionService.class),
-                    null, null, null, null, objectMapper);
+                    null, null, null, null, null, objectMapper);
         }
 
         @Bean
