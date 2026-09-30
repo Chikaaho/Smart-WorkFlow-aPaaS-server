@@ -7,6 +7,7 @@ import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.C1PolicyModel;
+import com.sw.ck.form.txn.model.C1PolicyView;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.model.TxnInvokeRequest;
@@ -694,6 +695,159 @@ class P62TxnActionPgBehaviourTest {
         System.out.println("[P62-EV] lt04.frozen-v2-published confirm=v1-semantics(qty_reserved-deducted/qty_reserved2-untouched)"
                 + " cross-form-credential=rejected disable=new-call-rejected/old-credential-settled/replay-ok");
     }
+
+    // ==================== LT04a：同一旧预占跨重发布与 C1 策略变化 ====================
+
+    @Test
+    @DisplayName("LT04a 单对象证据：同一表单/记录/预占经历合法 C1 变更与动作重发布后，仍按冻结版本结算且普通写入持续受保护")
+    void singleObjectReservationSurvivesRepublishAndC1PolicyChange() {
+        // 单对象证据集：一个表单、一条记录、一笔预占，全程同一身份贯穿
+        String formKey = "p62_stock_single";
+        String formId = asTenant(TENANT, USER, () -> {
+            FormDefDTO draft = formDefService.createDraft(formKey, "P62单对象库存", null, null);
+            formDefService.saveConfig(draft.getId(), multiFieldDefinition());
+            formDefService.publish(draft.getId());
+            return draft.getId();
+        });
+        String table = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(formKey).getPhysicalTableName());
+        String recordId = asTenant(TENANT, USER, () -> submitService.submitForm(formKey,
+                data("material", "LT04A-SINGLE", "qty_available", "100", "qty_reserved", "0", "qty_reserved2", "0"),
+                null, null, null));
+
+        // 变更前：普通写入口未受保护，更新原路径可用（同对象同入口的前后对照）
+        Long version0 = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(table)
+                + " WHERE " + q("id") + " = ?", Long.class, recordId);
+        asTenant(TENANT, USER, () -> {
+            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            req.setVersion(version0);
+            req.setData(data("material", "LT04A-SINGLE", "qty_available", "100", "qty_reserved", "0",
+                    "qty_reserved2", "7"));
+            updateService.updateRecord(formKey, recordId, req);
+            return null;
+        });
+        assertThat(colOf(table, "qty_reserved2", recordId)).as("变更前普通写入可用").isEqualByComparingTo("7");
+
+        // v1 受理：预占 5（冻结版本 v1：balance=qty_available / reserved=qty_reserved）
+        String reserveAction = asTenant(TENANT, USER, () -> {
+            String id = actionService.create(formId, new TxnActionSaveRequest("lt04a_reserve", "LT04a预占", "RESERVE",
+                    null, cfg("qty_available", "qty_reserved", 600L))).id();
+            actionService.publish(id);
+            return id;
+        });
+        TxnInvokeResult reserved = invokeReserve(reserveAction, "LT04A-R1", recordId, "5");
+        assertThat(reserved.status()).isEqualTo("SUCCEEDED");
+        assertThat(reserved.actionVersion()).isEqualTo(1);
+        String reservationId = reserved.reservationId();
+        assertThat(colOf(table, "qty_reserved", recordId)).isEqualByComparingTo("5");
+
+        // 合法 C1 策略变更（同对象）：启用保护并纳入三个数值列；受理成功
+        C1PolicyModel changed = new C1PolicyModel();
+        changed.setEnabled(true);
+        changed.setProtectedFields(List.of("qty_available", "qty_reserved", "qty_reserved2"));
+        changed.setBalanceField("qty_available");
+        changed.setReservedField("qty_reserved");
+        changed.setNonNegativeAvailable(true);
+        assertThat(asTenant(TENANT, USER, () -> c1PolicyService.save(formId, changed).enabled()))
+                .as("合法 C1 变更被受理").isTrue();
+        C1PolicyView appliedPolicy = asTenant(TENANT, USER, () -> c1PolicyService.get(formId));
+        assertThat(appliedPolicy.enabled()).isTrue();
+
+        // 变更后普通写入被拒且旧状态不变（值保持 100/5/7）
+        int protectedCode = FormErrorCode.C1_WRITE_PROTECTED.getCode();
+        Long version1 = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(table)
+                + " WHERE " + q("id") + " = ?", Long.class, recordId);
+        assertRejected(() -> asTenant(TENANT, USER, () -> {
+            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            req.setVersion(version1);
+            req.setData(data("material", "LT04A-SINGLE", "qty_available", "999", "qty_reserved", "0",
+                    "qty_reserved2", "0"));
+            updateService.updateRecord(formKey, recordId, req);
+            return null;
+        }), protectedCode);
+        assertThat(colOf(table, "qty_available", recordId)).isEqualByComparingTo("100");
+        assertThat(colOf(table, "qty_reserved", recordId)).isEqualByComparingTo("5");
+        assertThat(colOf(table, "qty_reserved2", recordId)).isEqualByComparingTo("7");
+
+        // 非法 C1 变更被拒且策略保持合法变更后的值（旧状态不变）
+        C1PolicyModel illegal = new C1PolicyModel();
+        illegal.setEnabled(true);
+        illegal.setProtectedFields(List.of("no_such_field"));
+        illegal.setBalanceField("no_such_field");
+        assertRejected(() -> asTenant(TENANT, USER, () -> c1PolicyService.save(formId, illegal)),
+                FormErrorCode.ACTION_FIELD_BINDING_INVALID.getCode());
+        C1PolicyView afterIllegal = asTenant(TENANT, USER, () -> c1PolicyService.get(formId));
+        assertThat(afterIllegal.policyJson()).as("非法变更不覆盖既有策略").isEqualTo(appliedPolicy.policyJson());
+        assertThat(afterIllegal.appliedAt()).isEqualTo(appliedPolicy.appliedAt());
+
+        // 动作重发布 v2：预占字段改指 qty_reserved2 —— 旧预占语义不得随新版本改变
+        asTenant(TENANT, USER, () -> {
+            actionService.update(reserveAction, new TxnActionSaveRequest(null, "LT04a预占", "RESERVE", null,
+                    cfg("qty_available", "qty_reserved2", 600L)));
+            actionService.publish(reserveAction);
+            return null;
+        });
+        assertThat(asTenant(TENANT, USER, () -> actionService.get(reserveAction).currentVersion())).isEqualTo(2);
+
+        // 同一旧预占结算：CONFIRM 动作自身声明 qty_reserved2，仍必须按受理冻结版本 v1 执行
+        String confirmAction = asTenant(TENANT, USER, () -> {
+            String id = actionService.create(formId, new TxnActionSaveRequest("lt04a_confirm", "LT04a确认", "CONFIRM",
+                    null, cfg("qty_available", "qty_reserved2", null))).id();
+            actionService.publish(id);
+            return id;
+        });
+        TxnInvokeRequest confirmReq = new TxnInvokeRequest();
+        confirmReq.setReservationId(reservationId);
+        confirmReq.setInvocationKey("LT04A-C1");
+        TxnInvokeResult confirmed = asTenant(TENANT, USER, () -> executor.invoke(confirmAction, confirmReq));
+        assertThat(confirmed.status()).as("旧凭据跨变更结算成功").isEqualTo("SUCCEEDED");
+        assertThat(confirmed.actionVersion()).as("按受理冻结版本 v1 结算").isEqualTo(1);
+        assertThat(colOf(table, "qty_available", recordId)).as("余额按冻结语义扣减").isEqualByComparingTo("95");
+        assertThat(colOf(table, "qty_reserved", recordId)).as("冻结版本预占字段归零").isEqualByComparingTo("0");
+        assertThat(colOf(table, "qty_reserved2", recordId)).as("新版本字段未被旧预占改写（保持 7）")
+                .isEqualByComparingTo("7");
+        assertThat(jdbc.queryForObject("SELECT status FROM sw_form_txn_reservation WHERE id = ?",
+                String.class, reservationId)).isEqualTo("CONFIRMED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sw_form_txn_ledger WHERE reservation_id = ?"
+                + " AND entry_type = 'CONFIRM'", Long.class, reservationId)).as("CONFIRM 台账恰一条").isEqualTo(1L);
+        assertThat(jdbc.queryForObject("SELECT action_version FROM sw_form_txn_ledger WHERE reservation_id = ?"
+                + " AND entry_type = 'CONFIRM'", Integer.class, reservationId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT balance_after FROM sw_form_txn_ledger WHERE reservation_id = ?"
+                + " AND entry_type = 'CONFIRM'", BigDecimal.class, reservationId)).isEqualByComparingTo("95");
+        assertThat(jdbc.queryForObject("SELECT reserved_after FROM sw_form_txn_ledger WHERE reservation_id = ?"
+                + " AND entry_type = 'CONFIRM'", BigDecimal.class, reservationId)).isEqualByComparingTo("0");
+
+        // 不能重复结算：同凭据再次确认被拒，台账仍一条
+        TxnInvokeRequest again = new TxnInvokeRequest();
+        again.setReservationId(reservationId);
+        again.setInvocationKey("LT04A-C2");
+        TxnInvokeResult reConfirm = asTenant(TENANT, USER, () -> executor.invoke(confirmAction, again));
+        assertThat(reConfirm.status()).isEqualTo("REJECTED");
+        assertThat(reConfirm.errorCode()).isEqualTo(FormErrorCode.ACTION_RESERVATION_NOT_ACTIVE.getCode());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sw_form_txn_ledger WHERE reservation_id = ?"
+                + " AND entry_type = 'CONFIRM'", Long.class, reservationId)).isEqualTo(1L);
+        assertThat(colOf(table, "qty_available", recordId)).as("重复结算无第二次扣减").isEqualByComparingTo("95");
+
+        // 结算后普通写入仍受保护（策略未失效）
+        Long version2 = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(table)
+                + " WHERE " + q("id") + " = ?", Long.class, recordId);
+        assertRejected(() -> asTenant(TENANT, USER, () -> {
+            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            req.setVersion(version2);
+            req.setData(data("material", "LT04A-SINGLE2", "qty_available", "1", "qty_reserved", "0",
+                    "qty_reserved2", "0"));
+            updateService.updateRecord(formKey, recordId, req);
+            return null;
+        }), protectedCode);
+        assertThat(colOf(table, "qty_available", recordId)).isEqualByComparingTo("95");
+
+        System.out.println("[P62-EV] lt04a.single-object form=" + formId + " record=" + recordId
+                + " reservation=" + reservationId + " reserveAction=" + reserveAction + "(v1->v2) confirmAction="
+                + confirmAction + " policyChange=allowed(applyAt=" + appliedPolicy.appliedAt() + ")"
+                + " illegalChange=rejected(policy-unchanged) settle=frozen-v1(balance95/reserved0/reserved2-7)"
+                + " ordinary-write=blocked-before-and-after no-double-settle=true");
+    }
+
+    // ==================== LT04/T05 非法声明拒绝 ====================
 
     @Test
     @DisplayName("LT04/T05 非法声明拒绝：模型不支持的配置键在反序列化边界被收集，并在保存/发布入口明确定位拒绝")
