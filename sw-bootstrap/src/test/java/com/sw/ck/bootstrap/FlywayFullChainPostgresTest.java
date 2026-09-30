@@ -292,6 +292,45 @@ class FlywayFullChainPostgresTest {
     }
 
     @Test
+    @DisplayName("P62 产物：事务动作菜单 9100 与按钮 9101—9103 存在，且授予普通 admin（role 2）")
+    void p62TxnActionMenuSeed_finalState() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(url, USER, PASSWORD);
+             Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT name, permission, component, path, menu_type, parent_id FROM sys_menu WHERE id = 9100")) {
+                assertTrue(rs.next(), "菜单 id=9100（事务动作）应存在");
+                assertEquals("FormTxnAction", rs.getString("name"));
+                assertEquals("form:action:view", rs.getString("permission"));
+                assertEquals("form/views/TxnActionList", rs.getString("component"));
+                assertEquals("txn-action", rs.getString("path"));
+                assertEquals(1, rs.getInt("menu_type"));
+                assertEquals(2, rs.getInt("parent_id"));
+            }
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT permission, menu_type, parent_id FROM sys_menu WHERE id IN (9101, 9102, 9103) ORDER BY id")) {
+                assertTrue(rs.next(), "按钮 id=9101 应存在");
+                assertEquals("form:action:manage", rs.getString("permission"));
+                assertEquals(2, rs.getInt("menu_type"));
+                assertEquals(9100, rs.getInt("parent_id"));
+                assertTrue(rs.next(), "按钮 id=9102 应存在");
+                assertEquals("form:action:publish", rs.getString("permission"));
+                assertEquals(9100, rs.getInt("parent_id"));
+                assertTrue(rs.next(), "按钮 id=9103 应存在");
+                assertEquals("form:action:invoke", rs.getString("permission"));
+                assertEquals(9100, rs.getInt("parent_id"));
+            }
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM sys_role_menu rm JOIN sys_menu m ON m.id = rm.menu_id "
+                            + "WHERE rm.role_id = 2 AND m.id IN (9100, 9101, 9102, 9103) AND rm.deleted = 0")) {
+                assertTrue(rs.next());
+                assertEquals(4, rs.getInt(1), "普通 admin 角色应获授全部 4 个事务动作菜单");
+            }
+            System.out.println("[S3-production] P62 txn menu=(9100,form:action:view,form/views/TxnActionList),"
+                    + " buttons=(9101/9102/9103 manage/publish/invoke), ordinaryRoleBound=4, queryExit=0");
+        }
+    }
+
+    @Test
     @DisplayName("V36 产物：调试会话表 sw_agent_graph_debug_session / sw_agent_graph_debug_node 存在")
     void debugSessionTables_shouldExist() throws SQLException {
         try (Connection conn = DriverManager.getConnection(url, USER, PASSWORD);

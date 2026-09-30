@@ -3,8 +3,10 @@ package com.sw.ck.bootstrap.p62;
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
+import com.sw.ck.form.txn.model.C1PolicyModel;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.model.TxnInvokeRequest;
@@ -15,6 +17,7 @@ import com.sw.ck.form.txn.service.TxnActionTxOperations;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -65,6 +68,9 @@ class P62TxnActionPgBehaviourTest {
 
     private FormDefService formDefService;
     private FormSubmitService submitService;
+    private com.sw.ck.form.service.FormDataUpdateService updateService;
+    private com.sw.ck.form.service.FormDataDeleteService deleteService;
+    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
     private TxnActionService actionService;
     private TxnActionExecutor executor;
     private TxnActionTxOperations txOps;
@@ -105,6 +111,9 @@ class P62TxnActionPgBehaviourTest {
         jdbc = app.getBean(JdbcTemplate.class);
         formDefService = app.getBean(FormDefService.class);
         submitService = app.getBean(FormSubmitService.class);
+        updateService = app.getBean(com.sw.ck.form.service.FormDataUpdateService.class);
+        deleteService = app.getBean(com.sw.ck.form.service.FormDataDeleteService.class);
+        c1PolicyService = app.getBean(com.sw.ck.form.txn.service.C1PolicyService.class);
         actionService = app.getBean(TxnActionService.class);
         executor = app.getBean(TxnActionExecutor.class);
         txOps = app.getBean(TxnActionTxOperations.class);
@@ -337,6 +346,97 @@ class P62TxnActionPgBehaviourTest {
         System.out.println("[P62-EV] t03.same-tx commit=both-present rollback=both-absent");
     }
 
+    // ==================== T02：C1 全写入口一致（真实 PG + 真实表单写链路） ====================
+
+    @Test
+    @DisplayName("T02 C1 保护：受保护模型提交/更新/删除一律拒绝且无副作用；未保护模型原路径可用；跨租户不可达")
+    void c1ProtectsAllWritePaths() {
+        String c1Key = "p62_stock_c1";
+        String c1FormId = asTenant(TENANT, USER, () -> {
+            FormDefDTO draft = formDefService.createDraft(c1Key, "P62库存表C1", null, null);
+            formDefService.saveConfig(draft.getId(), stockDefinition());
+            formDefService.publish(draft.getId());
+            return draft.getId();
+        });
+        String c1Table = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(c1Key).getPhysicalTableName());
+
+        // 保护前：普通写入口原路径可用（含值建档）
+        String recordId = asTenant(TENANT, USER, () -> submitService.submitForm(c1Key,
+                data("material", "C1-A", "qty_available", "7", "qty_reserved", "0"), null, null, null));
+        assertThat(recordId).isNotBlank();
+
+        // 空值闸门：未填余额的记录（保护前允许存在）使启用被拒绝
+        String blankId = asTenant(TENANT, USER, () -> submitService.submitForm(c1Key,
+                data("material", "C1-BLANK"), null, null, null));
+        assertThat(blankId).isNotBlank();
+        assertRejected(() -> asTenant(TENANT, USER, () -> c1PolicyService.save(c1FormId, enabledC1Policy())),
+                FormErrorCode.C1_POLICY_INVALID.getCode());
+
+        // 保护前普通更新原路径可用：补值后启用成功
+        Long blankVersion = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(c1Table)
+                + " WHERE " + q("id") + " = ?", Long.class, blankId);
+        asTenant(TENANT, USER, () -> {
+            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            req.setVersion(blankVersion);
+            req.setData(data("material", "C1-BLANK", "qty_available", "0", "qty_reserved", "0"));
+            updateService.updateRecord(c1Key, blankId, req);
+            return null;
+        });
+        assertThat(asTenant(TENANT, USER, () -> c1PolicyService.save(c1FormId, enabledC1Policy()).enabled()))
+                .isTrue();
+
+        int protectedCode = FormErrorCode.C1_WRITE_PROTECTED.getCode();
+        // 保护后提交：带受保护值 / 仅未保护字段，一律拒绝（INSERT 写全列）
+        assertRejected(() -> asTenant(TENANT, USER, () -> submitService.submitForm(c1Key,
+                data("material", "C1-X", "qty_available", "5"), null, null, null)), protectedCode);
+        assertRejected(() -> asTenant(TENANT, USER, () -> submitService.submitForm(c1Key,
+                data("material", "C1-Y"), null, null, null)), protectedCode);
+
+        // 保护后更新：带受保护值 / 省略受保护字段，一律拒绝（整量覆盖写全列）
+        Long version = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(c1Table)
+                + " WHERE " + q("id") + " = ?", Long.class, recordId);
+        assertRejected(() -> asTenant(TENANT, USER, () -> {
+            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            req.setVersion(version);
+            req.setData(data("material", "C1-A", "qty_available", "999", "qty_reserved", "0"));
+            updateService.updateRecord(c1Key, recordId, req);
+            return null;
+        }), protectedCode);
+        assertRejected(() -> asTenant(TENANT, USER, () -> {
+            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            req.setVersion(version);
+            req.setData(data("material", "C1-A2"));
+            updateService.updateRecord(c1Key, recordId, req);
+            return null;
+        }), protectedCode);
+
+        // 保护后删除：拒绝（受保护模型须经受控动作结算）
+        assertRejected(() -> asTenant(TENANT, USER, () -> {
+            deleteService.deleteRecord(c1Key, recordId);
+            return null;
+        }), protectedCode);
+
+        // 拒绝无副作用：余额与未保护字段均未被改写
+        assertThat(jdbc.queryForObject("SELECT " + q("qty_available") + " FROM " + q(c1Table)
+                + " WHERE " + q("id") + " = ?", BigDecimal.class, recordId)).isEqualByComparingTo("7");
+        assertThat(jdbc.queryForObject("SELECT " + q("material") + " FROM " + q(c1Table)
+                + " WHERE " + q("id") + " = ?", String.class, recordId)).isEqualTo("C1-A");
+
+        // 未保护模型（p62_stock 未启用 C1）原路径可用
+        assertThat(submit("T02-PLAIN", "3")).isNotBlank();
+
+        // 跨租户：租户 100 看不到租户 0 的动作（列表为空），调用被拒绝
+        String reserveId = publishAction("t02_reserve", "T02预占", "RESERVE", reserveCfg());
+        String plainFormId = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(FORM_KEY).getId());
+        assertThat(asTenant(100L, USER, () -> actionService.listByForm(plainFormId))).isEmpty();
+        assertRejected(() -> asTenant(100L, USER, () ->
+                executor.invoke(reserveId, reserveReq("T02-CROSS", recordId, "1"))),
+                FormErrorCode.ACTION_NOT_FOUND.getCode());
+
+        System.out.println("[P62-EV] t02.c1 submit/update/delete=rejected plain=ok blank-enable=rejected"
+                + " cross-tenant=blocked");
+    }
+
     // ==================== 种子与工具 ====================
 
     private void seedStockForm() {
@@ -391,6 +491,29 @@ class P62TxnActionPgBehaviourTest {
         req.setRecordId(recordId);
         req.setQuantity(qty);
         return req;
+    }
+
+    /** 启用态 C1 策略（余额=可用量、预占=预占量，强制非负）。 */
+    private C1PolicyModel enabledC1Policy() {
+        C1PolicyModel model = new C1PolicyModel();
+        model.setEnabled(true);
+        model.setProtectedFields(List.of("qty_available", "qty_reserved"));
+        model.setBalanceField("qty_available");
+        model.setReservedField("qty_reserved");
+        model.setNonNegativeAvailable(true);
+        return model;
+    }
+
+    /** 断言调用被闸门拒绝且业务错误码匹配（C1 保护 / 跨租户不可达）。 */
+    private void assertRejected(ThrowingCallable call, int expectedCode) {
+        try {
+            call.call();
+            throw new AssertionError("应被拒绝但调用成功");
+        } catch (BaseException e) {
+            assertThat(e.getCode()).as("拒绝错误码").isEqualTo(expectedCode);
+        } catch (Throwable t) {
+            throw new AssertionError("应抛 BaseException，实际：" + t, t);
+        }
     }
 
     private String q(String identifier) {

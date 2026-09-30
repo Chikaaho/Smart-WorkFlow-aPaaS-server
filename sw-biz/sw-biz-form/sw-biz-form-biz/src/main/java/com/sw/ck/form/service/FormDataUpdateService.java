@@ -180,9 +180,9 @@ public class FormDataUpdateService {
         }
         formFieldValidator.validateFields(fieldDefs, submittedData, dictFacade);
 
-        // P62 C1 保护：受保护字段不能经普通表单更新写入（须走受控事务动作）
+        // P62 C1 保护：整量 UPDATE 覆盖全部用户列，受保护模型禁止经普通更新写入（须走受控事务动作）
         if (c1PolicyService != null) {
-            c1PolicyService.assertDirectWriteAllowed(formDef.getId(), submittedData.keySet());
+            c1PolicyService.assertBulkWriteAllowed(formDef.getId(), fieldDefs);
         }
 
         // —— Step 7: 主表整量 UPDATE（WHERE 叠加记录数据范围） ——

@@ -363,9 +363,9 @@ public class FormSubmitService {
         // ==========================================================
         formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
 
-        // P62 C1 保护：受保护字段不能经普通表单提交写入（须走受控事务动作）
+        // P62 C1 保护：INSERT 写入全部用户列，受保护模型禁止经普通提交创建（须走受控事务动作）
         if (c1PolicyService != null) {
-            c1PolicyService.assertDirectWriteAllowed(formDef.getId(), effectiveData.keySet());
+            c1PolicyService.assertBulkWriteAllowed(formDef.getId(), fieldDefs);
         }
 
         // ==========================================================

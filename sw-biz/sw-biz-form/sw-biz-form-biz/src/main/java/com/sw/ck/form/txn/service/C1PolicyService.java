@@ -142,7 +142,11 @@ public class C1PolicyService {
         return toView(entity);
     }
 
-    /** 启用前校验既有数据满足 可用=余额-预占 >= 0；不满足则拒绝启用。 */
+    /**
+     * 启用前校验既有数据满足 可用=余额-预占 >= 0 且余额/预占均有值；不满足则拒绝启用。
+     * <p>空值同样拒绝：NULL 参与不了可用量守卫（比较恒假），启用后该记录无法预占/调整，
+     * 受控动作也无法补救（动作自身被同一守卫拒绝），必须在启用闸门显式拦截。</p>
+     */
     private void validateExistingData(FormDefEntity form,
                                       Map<String, FormFieldValidator.FieldDef> defs,
                                       C1PolicyModel model) {
@@ -150,10 +154,13 @@ public class C1PolicyService {
         String reservedCol = binding.requireNumberColumn(defs, model.getReservedField(), "预占");
         String table = form.getPhysicalTableName();
         Long tenantId = currentTenantId();
+        String balance = DynamicTableSql.quote(balanceCol);
+        String reserved = DynamicTableSql.quote(reservedCol);
         String sql = "SELECT COUNT(*) FROM " + DynamicTableSql.quote(table)
                 + " WHERE " + DynamicTableSql.quote("deleted") + " = 0"
                 + " AND " + DynamicTableSql.quote("tenant_id") + " = ?"
-                + " AND (" + DynamicTableSql.quote(balanceCol) + " - " + DynamicTableSql.quote(reservedCol) + ") < 0";
+                + " AND (" + balance + " IS NULL OR " + reserved + " IS NULL"
+                + " OR (" + balance + " - " + reserved + ") < 0)";
         long bad;
         try {
             bad = DynamicTableSql.queryForLong(jdbcTemplate, table, sql, tenantId);
@@ -165,7 +172,7 @@ public class C1PolicyService {
         }
         if (bad > 0) {
             throw new BaseException(FormErrorCode.C1_POLICY_INVALID,
-                    "现有 " + bad + " 条记录不满足 可用=余额-预占 >= 0，不能启用保护");
+                    "现有 " + bad + " 条记录不满足 可用=余额-预占 >= 0（含空值），不能启用保护");
         }
     }
 
@@ -183,6 +190,28 @@ public class C1PolicyService {
                         "字段 " + f + " 为 C1 受保护数据，只能通过受控事务动作写入");
             }
         }
+    }
+
+    /**
+     * 整量写入闸门（表单提交 INSERT 与表单更新 UPDATE 共用）。
+     * <p>这两条写路径实际覆盖全部用户列——INSERT 显式写全列、UPDATE 按字段定义整量覆盖，
+     * 未提交的受保护字段会被写成 NULL；因此只检查「提交的键」会留下省略字段的静默改写路径。
+     * 受保护模型必须整体拒绝，受保护字段仅能由受控事务动作写入。</p>
+     */
+    public void assertBulkWriteAllowed(String formId, Map<String, FormFieldValidator.FieldDef> fieldDefs) {
+        C1PolicyModel model = enabledPolicy(formId);
+        if (model == null || fieldDefs == null || fieldDefs.isEmpty()) {
+            return;
+        }
+        List<String> writeColumns = new java.util.ArrayList<>();
+        for (Map.Entry<String, FormFieldValidator.FieldDef> entry : fieldDefs.entrySet()) {
+            String type = entry.getValue().type();
+            if ("TABLE".equalsIgnoreCase(type) || "LABEL".equalsIgnoreCase(type)) {
+                continue; // 不落主表用户列
+            }
+            writeColumns.add(entry.getKey());
+        }
+        assertDirectWriteAllowed(formId, writeColumns);
     }
 
     /** 受保护模型记录不允许直接删除（只能经受控动作结算或明细清理流程）。 */
