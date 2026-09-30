@@ -62,7 +62,11 @@ public class TieredCommandReconcileJob {
         int completed = 0;
         List<CommandEnvelope> pending = queue.listProcessingWithEffect(RECONCILE_LIMIT);
         for (CommandEnvelope command : pending) {
-            BpmCommandEffect effect = effectRecorder.findEffect(command.getCommandId());
+            BpmCommandEffect effect;
+            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                effect = effectRecorder.findEffect(command.getCommandId());
+            }
             if (effect == null) {
                 continue;
             }

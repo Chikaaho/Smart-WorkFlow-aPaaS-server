@@ -397,21 +397,23 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
      * 供恢复任务据权威结果确定收敛，不重做业务。
      */
     public List<CommandEnvelope> listProcessingWithEffect(int limit) {
-        List<BpmCommandEffect> effects = effectMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<BpmCommandEffect>()
-                        .orderByAsc("create_time")
-                        .last("LIMIT " + Math.max(1, limit)));
-        List<CommandEnvelope> result = new ArrayList<>();
+        // 对账线程无登录态：效果/命令两表查询全程挂起租户过滤（行内 tenant_id 自承载，
+        // 与 expireDue/markOverdue 同口径；主键定位不涉及租户裁剪）
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            List<BpmCommandEffect> effects = effectMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<BpmCommandEffect>()
+                            .orderByAsc("create_time")
+                            .last("LIMIT " + Math.max(1, limit)));
+            List<CommandEnvelope> result = new ArrayList<>();
             for (BpmCommandEffect effect : effects) {
                 BpmCommand command = commandService.getById(effect.getCommandId());
-                if (command != null && CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())) {
-                    result.add(toEnvelope(command));
+                    if (command != null && CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())) {
+                        result.add(toEnvelope(command));
+                    }
                 }
-            }
+            return result;
         }
-        return result;
     }
 
     private static String blankToNull(String value) {
