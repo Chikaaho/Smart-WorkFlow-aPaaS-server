@@ -265,6 +265,66 @@ class TxnActionFlowH2Test {
     // ==================== 调整 ====================
 
     @Test
+    @DisplayName("LT04 冻结语义与停用边界：重发布不改旧预占结算语义；停用只拒新调用且旧凭据可结算；非法声明保存即拒")
+    void frozenSemanticsDisableBoundaryAndUnsupportedDeclarations() {
+        String formId = jdbcTemplate.queryForObject(
+                "SELECT id FROM sw_form_def WHERE form_key = 'stock_form'", String.class);
+        jdbcTemplate.update("ALTER TABLE " + QSTOCK + " ADD COLUMN \"qty_reserved2\" NUMERIC(20,6) DEFAULT 0");
+        jdbcTemplate.update("UPDATE sw_form_config SET definition = ? WHERE form_id = ?",
+                "{\"schemaVersion\":1,\"title\":\"库存表\",\"fields\":["
+                        + "{\"name\":\"material\",\"type\":\"TEXT\",\"label\":\"物料\"},"
+                        + "{\"name\":\"qty_available\",\"type\":\"NUMBER\",\"label\":\"可用量\"},"
+                        + "{\"name\":\"qty_reserved\",\"type\":\"NUMBER\",\"label\":\"预占量\"},"
+                        + "{\"name\":\"qty_reserved2\",\"type\":\"NUMBER\",\"label\":\"预占量2\"}]}",
+                formId);
+
+        // 非法声明（模型不支持的键）在保存入口被明确拒绝，错误含违规键名
+        TxnActionConfig bad = cfg("qty_available", "qty_reserved", 600L);
+        bad.getUnsupportedKeys().put("remoteSideEffect", java.util.Map.of("url", "http://example.invalid"));
+        assertThatThrownBy(() -> create("stock_reserve_bad", "非法声明", "RESERVE", bad))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("remoteSideEffect");
+
+        // v1 预占 → 重发布 v2 改指 qty_reserved2 → 旧凭据仍按 v1 冻结版本语义结算
+        String reserveId = publishReserve("stock_reserve", 600L);
+        seedStock("lt04-f1", "100", "0");
+        TxnInvokeResult reserved = executor.invoke(reserveId, reserveReq("F1", "lt04-f1", "5"));
+        assertThat(reserved.status()).isEqualTo("SUCCEEDED");
+        String reservationId = reserved.reservationId();
+        actionService.update(reserveId, new TxnActionSaveRequest(null, "库存预占", "RESERVE", null,
+                cfg("qty_available", "qty_reserved2", 600L)));
+        assertThat(actionService.publish(reserveId).currentVersion()).isEqualTo(2);
+
+        String confirmId = publishAction("stock_confirm", "库存确认", "CONFIRM",
+                cfg("qty_available", "qty_reserved2", null));
+        TxnInvokeRequest confirmReq = new TxnInvokeRequest();
+        confirmReq.setReservationId(reservationId);
+        confirmReq.setInvocationKey("F2");
+        TxnInvokeResult confirmed = executor.invoke(confirmId, confirmReq);
+        assertThat(confirmed.status()).isEqualTo("SUCCEEDED");
+        assertThat(confirmed.actionVersion()).as("结算按预占受理冻结版本执行").isEqualTo(1);
+        assertThat(reservedOf("lt04-f1")).isEqualByComparingTo("0");
+        assertThat(jdbcTemplate.queryForObject("SELECT \"qty_reserved2\" FROM " + QSTOCK
+                + " WHERE \"id\" = 'lt04-f1'", BigDecimal.class)).as("新版本字段未被改写").isEqualByComparingTo("0");
+        assertThat(balanceOf("lt04-f1")).isEqualByComparingTo("95");
+
+        // 停用边界：停用预占动作 → 新调用被拒；既有凭据仍可结算（未受停用影响）
+        seedStock("lt04-f2", "50", "0");
+        TxnInvokeResult second = executor.invoke(reserveId, reserveReq("F3", "lt04-f2", "4"));
+        assertThat(second.status()).isEqualTo("SUCCEEDED");
+        actionService.disable(reserveId);
+        assertThatThrownBy(() -> executor.invoke(reserveId, reserveReq("F4", "lt04-f2", "1")))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("停用");
+        TxnInvokeRequest settle = new TxnInvokeRequest();
+        settle.setReservationId(second.reservationId());
+        settle.setInvocationKey("F5");
+        assertThat(executor.invoke(confirmId, settle).status())
+                .as("停用只拒绝新调用：旧凭据仍可结算").isEqualTo("SUCCEEDED");
+        assertThat(reservedOf("lt04-f2")).isEqualByComparingTo("0");
+    }
+
+    @Test
     @DisplayName("调整：增减余额受可用量非负守卫；减到可用为负被拒绝")
     void adjustGuards() {
         String adjustId = publishAction("stock_adjust", "库存调整", "ADJUST", cfg("qty_available", null, null));

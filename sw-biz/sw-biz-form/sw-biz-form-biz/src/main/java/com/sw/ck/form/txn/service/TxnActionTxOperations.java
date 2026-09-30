@@ -207,36 +207,45 @@ public class TxnActionTxOperations {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public TxnInvokeResult confirm(TxnActionEntity action, TxnActionVersionEntity version, TxnActionConfig cfg,
-                                   TxnInvokeRequest req, String invocationId, String invocationKey,
-                                   String requestHash) {
+    public TxnInvokeResult confirm(TxnActionEntity action, TxnInvokeRequest req,
+                                   String invocationId, String invocationKey, String requestHash) {
         long start = System.currentTimeMillis();
-        return settle(action, version, cfg, req, invocationId, invocationKey, requestHash, true, start);
+        return settle(action, req, invocationId, invocationKey, requestHash, true, start);
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public TxnInvokeResult release(TxnActionEntity action, TxnActionVersionEntity version, TxnActionConfig cfg,
-                                   TxnInvokeRequest req, String invocationId, String invocationKey,
-                                   String requestHash) {
+    public TxnInvokeResult release(TxnActionEntity action, TxnInvokeRequest req,
+                                   String invocationId, String invocationKey, String requestHash) {
         long start = System.currentTimeMillis();
-        return settle(action, version, cfg, req, invocationId, invocationKey, requestHash, false, start);
+        return settle(action, req, invocationId, invocationKey, requestHash, false, start);
     }
 
-    private TxnInvokeResult settle(TxnActionEntity action, TxnActionVersionEntity version, TxnActionConfig cfg,
-                                   TxnInvokeRequest req, String invocationId, String invocationKey,
-                                   String requestHash, boolean confirm, long start) {
+    /**
+     * 预占结算（CONFIRM/RELEASE）。
+     * <p>字段绑定与数量语义一律取自<b>预占受理时冻结的动作版本</b>：新发布版本不改变既有预占的结算语义；
+     * 凭据须属于本动作绑定的表单（租户由受控查询过滤），动作停用只拒绝新调用、不影响既有凭据结算。</p>
+     */
+    private TxnInvokeResult settle(TxnActionEntity action, TxnInvokeRequest req,
+                                   String invocationId, String invocationKey, String requestHash,
+                                   boolean confirm, long start) {
         FormDefEntity form = binding.requirePublishedForm(action.getFormId());
         Long tenantId = currentTenantId();
         Long userId = currentUserId();
-        Columns cols = resolveColumns(form, cfg);
-        if (cols.reservedCol() == null) {
-            throw new TxnBusinessRejection(FormErrorCode.ACTION_FIELD_BINDING_INVALID,
-                    (confirm ? "CONFIRM" : "RELEASE") + " 需要预占字段绑定");
-        }
         TxnReservationEntity reservation = req.getReservationId() == null ? null
                 : reservationMapper.selectById(req.getReservationId());
         if (reservation == null) {
             throw new TxnBusinessRejection(FormErrorCode.ACTION_RESERVATION_NOT_FOUND, "预占凭据不存在");
+        }
+        if (!Objects.equals(reservation.getFormId(), action.getFormId())) {
+            throw new TxnBusinessRejection(FormErrorCode.ACTION_RESERVATION_NOT_FOUND,
+                    "预占凭据不属于该表单，不能结算");
+        }
+        TxnActionVersionEntity version = requireFrozenVersion(reservation);
+        TxnActionConfig cfg = readConfig(version.getConfigJson());
+        Columns cols = resolveColumns(form, cfg);
+        if (cols.reservedCol() == null) {
+            throw new TxnBusinessRejection(FormErrorCode.ACTION_FIELD_BINDING_INVALID,
+                    (confirm ? "CONFIRM" : "RELEASE") + " 需要预占字段绑定");
         }
         LocalDateTime now = LocalDateTime.now();
         // 状态守卫：确认要求未过期（与过期释放竞争仅一次合法结算）；释放允许对未结算的任意 ACTIVE 生效
@@ -418,16 +427,25 @@ public class TxnActionTxOperations {
 
     /** 读取预占受理动作版本的配置（版本固定语义）。 */
     public TxnActionConfig versionConfig(TxnReservationEntity reservation) {
+        return readConfig(requireFrozenVersion(reservation).getConfigJson());
+    }
+
+    /** 预占受理时的动作版本实体（冻结语义的唯一来源）。 */
+    private TxnActionVersionEntity requireFrozenVersion(TxnReservationEntity reservation) {
         TxnActionVersionEntity version = versionMapper.selectOne(
                 Wrappers.<TxnActionVersionEntity>lambdaQuery()
                         .eq(TxnActionVersionEntity::getActionId, reservation.getActionId())
                         .eq(TxnActionVersionEntity::getVersionNo, reservation.getActionVersion()));
         if (version == null) {
             throw new TxnBusinessRejection(FormErrorCode.ACTION_NOT_FOUND,
-                    "预占对应的动作版本快照缺失，无法释放");
+                    "预占对应的动作版本快照缺失，无法结算");
         }
+        return version;
+    }
+
+    private TxnActionConfig readConfig(String configJson) {
         try {
-            return objectMapper.readValue(version.getConfigJson(), TxnActionConfig.class);
+            return objectMapper.readValue(configJson, TxnActionConfig.class);
         } catch (Exception e) {
             throw new TxnBusinessRejection(FormErrorCode.ACTION_CONFIG_INVALID, "动作版本配置解析失败");
         }

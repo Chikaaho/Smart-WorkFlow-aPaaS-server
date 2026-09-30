@@ -73,14 +73,10 @@ public class TxnActionExecutor {
             throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID, "请求体缺失");
         }
         TxnActionEntity action = actionService.requireAction(actionId);
-        TxnActionVersionEntity version = actionService.requireCurrentVersion(action);
-        TxnActionConfig cfg = actionService.readConfig(version.getConfigJson());
-        if (cfg == null) {
-            throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID, "动作版本配置为空，请重新发布");
-        }
         String requestKey = req.getInvocationKey() == null || req.getInvocationKey().isBlank()
                 ? null : req.getInvocationKey().trim();
         String requestHash = hashRequest(action, req);
+        // 幂等优先：已受理请求的回查（重放）不受动作停用影响
         if (requestKey != null) {
             TxnInvocationEntity existing = findInvocation(action.getId(), requestKey);
             if (existing != null) {
@@ -91,22 +87,38 @@ public class TxnActionExecutor {
         String storedKey = requestKey != null ? requestKey : "AUTO:" + invocationId;
         long start = System.currentTimeMillis();
         String type = action.getActionType() == null ? "" : action.getActionType().toUpperCase();
+        // 结算类调用（CONFIRM/RELEASE + 预占凭据）沿用预占受理时的冻结版本语义：
+        // 停用只拒绝新调用，既有凭据仍可结算（版本由结算方法从凭据解析）
+        boolean settleByReservation = (TxnActionService.TYPE_CONFIRM.equals(type)
+                || TxnActionService.TYPE_RELEASE.equals(type))
+                && req.getReservationId() != null && !req.getReservationId().isBlank();
+        TxnActionVersionEntity version = settleByReservation ? null : actionService.requireCurrentVersion(action);
+        TxnActionConfig cfg = version == null ? null : actionService.readConfig(version.getConfigJson());
+        if (!settleByReservation && cfg == null) {
+            throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID, "动作版本配置为空，请重新发布");
+        }
         try {
             return switch (type) {
                 case TxnActionService.TYPE_RESERVE ->
                         txOps.reserve(action, version, cfg, req, invocationId, storedKey, requestHash);
                 case TxnActionService.TYPE_CONFIRM ->
-                        txOps.confirm(action, version, cfg, req, invocationId, storedKey, requestHash);
+                        txOps.confirm(action, req, invocationId, storedKey, requestHash);
                 case TxnActionService.TYPE_RELEASE ->
-                        txOps.release(action, version, cfg, req, invocationId, storedKey, requestHash);
+                        txOps.release(action, req, invocationId, storedKey, requestHash);
                 case TxnActionService.TYPE_ADJUST ->
                         txOps.adjust(action, version, cfg, req, invocationId, storedKey, requestHash);
                 default -> throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID, "动作类型不合法：" + type);
             };
         } catch (TxnBusinessRejection rejection) {
             long duration = System.currentTimeMillis() - start;
+            // 拒绝记录需要一个已发布版本号；结算类调用可能未解析当前版本，此处回退取当前版本
+            TxnActionVersionEntity recordVersion = version != null ? version
+                    : actionService.currentVersionOrNull(action);
+            if (recordVersion == null) {
+                throw new BaseException(rejection.getErrorCode(), rejection.getMessage());
+            }
             try {
-                return txOps.recordRejected(action, version, req, invocationId, storedKey, requestHash,
+                return txOps.recordRejected(action, recordVersion, req, invocationId, storedKey, requestHash,
                         rejection.getErrorCode(), rejection.getMessage(), duration);
             } catch (DuplicateKeyException race) {
                 TxnInvocationEntity existing = findInvocation(action.getId(), storedKey);

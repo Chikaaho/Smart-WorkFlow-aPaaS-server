@@ -47,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * P62 首事务阶段真实 PostgreSQL 行为证据：
@@ -70,11 +71,13 @@ class P62TxnActionPgBehaviourTest {
     private FormSubmitService submitService;
     private com.sw.ck.form.service.FormDataUpdateService updateService;
     private com.sw.ck.form.service.FormDataDeleteService deleteService;
+    private com.sw.ck.form.service.FormImportExportService importExportService;
     private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
     private TxnActionService actionService;
     private TxnActionExecutor executor;
     private TxnActionTxOperations txOps;
     private TransactionTemplate txTemplate;
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @BeforeAll
     void boot() throws Exception {
@@ -113,10 +116,12 @@ class P62TxnActionPgBehaviourTest {
         submitService = app.getBean(FormSubmitService.class);
         updateService = app.getBean(com.sw.ck.form.service.FormDataUpdateService.class);
         deleteService = app.getBean(com.sw.ck.form.service.FormDataDeleteService.class);
+        importExportService = app.getBean(com.sw.ck.form.service.FormImportExportService.class);
         c1PolicyService = app.getBean(com.sw.ck.form.txn.service.C1PolicyService.class);
         actionService = app.getBean(TxnActionService.class);
         executor = app.getBean(TxnActionExecutor.class);
         txOps = app.getBean(TxnActionTxOperations.class);
+        objectMapper = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class);
         txTemplate = new TransactionTemplate(app.getBean(PlatformTransactionManager.class));
         seedStockForm();
         System.out.println("[P62-PG] 真实 PostgreSQL 完整启动成功 pgPort=" + pg.getPort() + " table=" + stockTable);
@@ -323,12 +328,14 @@ class P62TxnActionPgBehaviourTest {
         assertThat(reservedOf(committedRecord)).isEqualByComparingTo("5");
         assertThat(countInvocations(reserveId, "T03-COMMIT-K")).isEqualTo(1L);
 
-        // 回滚路径：表单记录 + 预占动作同事务，抛错回滚 → 两者同灭
+        // 回滚路径：表单记录 + 预占动作同事务，抛错回滚 → 表单行/调用记录/凭据/台账同灭
+        final String[] rollbackRecord = new String[1];
         try {
             txTemplate.execute(status -> {
                 String rid = asTenant(TENANT, USER, () -> submitService.submitForm(FORM_KEY,
                         data("material", "T03-ROLLBACK", "qty_available", "30", "qty_reserved", "0"),
                         null, null, null));
+                rollbackRecord[0] = rid;
                 asTenant(TENANT, USER, () ->
                         executor.invoke(reserveId, reserveReq("T03-ROLLBACK-K", rid, "5")));
                 throw new IllegalStateException("force-rollback");
@@ -339,11 +346,13 @@ class P62TxnActionPgBehaviourTest {
         }
         assertThat(countStockByMaterial("T03-ROLLBACK")).as("回滚后表单记录不存在").isZero();
         assertThat(countInvocations(reserveId, "T03-ROLLBACK-K")).as("回滚后无调用记录").isZero();
+        assertThat(countReservationsByRecord(rollbackRecord[0])).as("回滚后无预占凭据").isZero();
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sw_form_txn_ledger WHERE invocation_id IN "
                         + "(SELECT id FROM sw_form_txn_invocation WHERE invocation_key = 'T03-ROLLBACK-K')",
                 Long.class)).isZero();
-        System.out.println("[P62-EV] t03.same-tx commit=both-present rollback=both-absent");
+        System.out.println("[P62-EV] t03.same-tx commit=both-present rollback=both-absent"
+                + " (record/invocation/reservation/ledger all-absent)");
     }
 
     // ==================== T02：C1 全写入口一致（真实 PG + 真实表单写链路） ====================
@@ -437,6 +446,339 @@ class P62TxnActionPgBehaviourTest {
                 + " cross-tenant=blocked");
     }
 
+    // ==================== LT02：剩余写入口（导入）与声明边界 ====================
+
+    @Test
+    @DisplayName("LT02 C1 覆盖导入入口：受保护表单导入整批拒绝零写入；同一导入在未保护表单受控落库")
+    void c1CoversImportEntry() throws Exception {
+        String protectedKey = "p62_stock_c1imp";
+        String formId = asTenant(TENANT, USER, () -> {
+            FormDefDTO draft = formDefService.createDraft(protectedKey, "P62库存导入C1", null, null);
+            formDefService.saveConfig(draft.getId(), stockDefinition());
+            formDefService.publish(draft.getId());
+            return draft.getId();
+        });
+        String table = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(protectedKey).getPhysicalTableName());
+        assertThat(asTenant(TENANT, USER, () -> c1PolicyService.save(formId, enabledC1Policy()).enabled())).isTrue();
+
+        byte[] protectedRows = fillTemplate(
+                asTenant(TENANT, USER, () -> importExportService.generateTemplate(protectedKey)),
+                new Object[][]{{"LT02-IMP-A", 10, 0}, {"LT02-IMP-B", 20, 0}});
+        var protectedResult = asTenant(TENANT, USER, () ->
+                importExportService.importData(protectedKey, new java.io.ByteArrayInputStream(protectedRows)));
+        assertThat(protectedResult.successCount()).as("受保护表单导入整批拒绝：零成功").isZero();
+        assertThat(protectedResult.errorCount()).isEqualTo(2);
+        assertThat(protectedResult.errors()).hasSize(2);
+        for (var rowError : protectedResult.errors()) {
+            assertThat(rowError.message()).as("行级错误反馈 C1 保护原因").contains("C1");
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + q(table), Long.class))
+                .as("受保护表单导入被拒后零写入").isZero();
+
+        byte[] plainRows = fillTemplate(
+                asTenant(TENANT, USER, () -> importExportService.generateTemplate(FORM_KEY)),
+                new Object[][]{{"LT02-IMP-A", 10, 0}, {"LT02-IMP-B", 20, 0}});
+        var result = asTenant(TENANT, USER, () ->
+                importExportService.importData(FORM_KEY, new java.io.ByteArrayInputStream(plainRows)));
+        assertThat(result.successCount()).isEqualTo(2);
+        assertThat(result.errorCount()).isZero();
+        assertThat(countStockByMaterial("LT02-IMP-A")).isEqualTo(1L);
+        assertThat(countStockByMaterial("LT02-IMP-B")).isEqualTo(1L);
+        System.out.println("[P62-EV] lt02.import protected=rejected/zero-write plain=2-rows-committed");
+    }
+
+    // ==================== LT02：声明业务键与精度边界 ====================
+
+    @Test
+    @DisplayName("LT02 声明业务键隔离：键不匹配/未声明被拒；不同键值记录互不影响，凭据冻结键值快照")
+    void businessKeysDeclaredIsolationHolds() {
+        String recordA = submit("LT02-KEY-A", "50");
+        String recordB = submit("LT02-KEY-B", "50");
+        TxnActionConfig keyCfg = cfg("qty_available", "qty_reserved", 600L);
+        keyCfg.setKeyFields(List.of("material"));
+        String reserveId = publishAction("lt02_reserve_keys", "LT02键预占", "RESERVE", keyCfg);
+
+        TxnInvokeRequest first = reserveReq("LT02-KEY-1", recordA, "5");
+        first.setBusinessKeys(Map.of("material", "LT02-KEY-A"));
+        TxnInvokeResult ok = asTenant(TENANT, USER, () -> executor.invoke(reserveId, first));
+        assertThat(ok.status()).isEqualTo("SUCCEEDED");
+        String keysJson = jdbc.queryForObject("SELECT biz_keys_json FROM sw_form_txn_reservation WHERE id = ?",
+                String.class, ok.reservationId());
+        assertThat(keysJson).contains("material").contains("LT02-KEY-A");
+
+        TxnInvokeRequest mismatch = reserveReq("LT02-KEY-2", recordA, "5");
+        mismatch.setBusinessKeys(Map.of("material", "LT02-KEY-B"));
+        TxnInvokeResult mismatchResult = asTenant(TENANT, USER, () -> executor.invoke(reserveId, mismatch));
+        assertThat(mismatchResult.status()).isEqualTo("REJECTED");
+        assertThat(mismatchResult.errorCode()).isEqualTo(FormErrorCode.ACTION_FIELD_BINDING_INVALID.getCode());
+        assertThat(reservedOf(recordA)).as("键不匹配无副作用").isEqualByComparingTo("5");
+
+        TxnInvokeRequest undeclared = reserveReq("LT02-KEY-3", recordA, "5");
+        undeclared.setBusinessKeys(Map.of("warehouse", "W1"));
+        TxnInvokeResult undeclaredResult = asTenant(TENANT, USER, () -> executor.invoke(reserveId, undeclared));
+        assertThat(undeclaredResult.status()).isEqualTo("REJECTED");
+        assertThat(undeclaredResult.errorCode()).isEqualTo(FormErrorCode.ACTION_FIELD_BINDING_INVALID.getCode());
+
+        TxnInvokeRequest other = reserveReq("LT02-KEY-4", recordB, "7");
+        other.setBusinessKeys(Map.of("material", "LT02-KEY-B"));
+        assertThat(asTenant(TENANT, USER, () -> executor.invoke(reserveId, other)).status()).isEqualTo("SUCCEEDED");
+        assertThat(reservedOf(recordA)).as("不同业务键记录互不影响").isEqualByComparingTo("5");
+        assertThat(reservedOf(recordB)).isEqualByComparingTo("7");
+        System.out.println("[P62-EV] lt02.keys mismatch/undeclared=rejected isolation=A:5/B:7 snapshot=material");
+    }
+
+    @Test
+    @DisplayName("LT02 声明精度与合法负边界：超精度明确拒绝不静默舍入；可用量非负边界含等号")
+    void quantityPrecisionAndNonNegativeBoundaries() {
+        String recordId = submit("LT02-PREC", "100");
+        TxnActionConfig scale3 = cfg("qty_available", "qty_reserved", 600L);
+        scale3.setQuantityScale(3);
+        TxnActionConfig scale6 = cfg("qty_available", "qty_reserved", 600L);
+        scale6.setQuantityScale(6);
+        String reserve3 = publishAction("lt02_reserve_s3", "LT02精度预占3", "RESERVE", scale3);
+        String reserve6 = publishAction("lt02_reserve_s6", "LT02精度预占6", "RESERVE", scale6);
+        String adjustId = publishAction("lt02_adjust", "LT02调整", "ADJUST", scale6);
+
+        assertThat(invokeReserve(reserve3, "LT02-P1", recordId, "1.234").status()).isEqualTo("SUCCEEDED");
+        TxnInvokeResult overScale = invokeReserve(reserve3, "LT02-P2", recordId, "1.2345");
+        assertThat(overScale.status()).isEqualTo("REJECTED");
+        assertThat(overScale.errorCode()).isEqualTo(FormErrorCode.ACTION_QUANTITY_INVALID.getCode());
+        assertThat(overScale.errorMsg()).contains("精度");
+        assertThat(invokeReserve(reserve3, "LT02-P3", recordId, "2.000").status()).isEqualTo("SUCCEEDED");
+        assertThat(reservedOf(recordId)).as("未发生静默舍入（1.234+2.000）").isEqualByComparingTo("3.234");
+        assertThat(invokeReserve(reserve3, "LT02-P4", recordId, "0").status()).isEqualTo("REJECTED");
+        assertThat(invokeReserve(reserve3, "LT02-P5", recordId, "-2").status()).isEqualTo("REJECTED");
+        TxnInvokeResult huge = invokeReserve(reserve3, "LT02-P6", recordId, "100000000000000");
+        assertThat(huge.status()).isEqualTo("REJECTED");
+        assertThat(huge.errorMsg()).contains("范围");
+
+        assertThat(invokeReserve(reserve6, "LT02-P7", recordId, "0.000001").status())
+                .as("声明 6 位精度：6 位小数可受理").isEqualTo("SUCCEEDED");
+        TxnInvokeResult sevenDigits = invokeReserve(reserve6, "LT02-P8", recordId, "0.0000001");
+        assertThat(sevenDigits.status()).isEqualTo("REJECTED");
+        assertThat(sevenDigits.errorCode()).isEqualTo(FormErrorCode.ACTION_QUANTITY_INVALID.getCode());
+
+        assertThat(invokeAdjust(adjustId, "LT02-P9", recordId, "0").status()).isEqualTo("REJECTED");
+        String toZero = availableOf(recordId).negate().toPlainString();
+        assertThat(invokeAdjust(adjustId, "LT02-P10", recordId, toZero).status())
+                .as("调整到可用=0 的边界可受理").isEqualTo("SUCCEEDED");
+        assertThat(availableOf(recordId)).isEqualByComparingTo("0");
+        TxnInvokeResult belowZero = invokeAdjust(adjustId, "LT02-P11", recordId, "-0.001");
+        assertThat(belowZero.status()).isEqualTo("REJECTED");
+        assertThat(belowZero.errorCode()).isEqualTo(FormErrorCode.ACTION_INSUFFICIENT_AVAILABLE.getCode());
+        System.out.println("[P62-EV] lt02.precision scale3=1.234-ok/1.2345-rejected no-rounding"
+                + " scale6=6-digits-ok/7-digits-rejected adjust=zero-boundary-ok/below-rejected");
+    }
+
+    // ==================== LT04：冻结版本结算、停用边界与非法声明 ====================
+
+    @Test
+    @DisplayName("LT04/T05 冻结版本结算与停用边界：新发布不改旧预占语义；停用只拒新调用，旧凭据仍可结算")
+    void settlementUsesFrozenVersionAndSurvivesDisable() {
+        String formKey = "p62_stock_multi";
+        String formId = asTenant(TENANT, USER, () -> {
+            FormDefDTO draft = formDefService.createDraft(formKey, "P62多字段库存", null, null);
+            formDefService.saveConfig(draft.getId(), multiFieldDefinition());
+            formDefService.publish(draft.getId());
+            return draft.getId();
+        });
+        String table = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(formKey).getPhysicalTableName());
+        String recordId = asTenant(TENANT, USER, () -> submitService.submitForm(formKey,
+                data("material", "LT04-M", "qty_available", "100", "qty_reserved", "0", "qty_reserved2", "0"),
+                null, null, null));
+
+        // v1：预占绑定 qty_reserved
+        String reserveAction = asTenant(TENANT, USER, () -> {
+            String id = actionService.create(formId, new TxnActionSaveRequest("lt04_reserve", "LT04预占", "RESERVE",
+                    null, cfg("qty_available", "qty_reserved", 600L))).id();
+            actionService.publish(id);
+            return id;
+        });
+        TxnInvokeResult reserved = invokeReserve(reserveAction, "LT04-R1", recordId, "5");
+        assertThat(reserved.status()).isEqualTo("SUCCEEDED");
+        assertThat(reserved.actionVersion()).isEqualTo(1);
+        String reservationId = reserved.reservationId();
+
+        // 重新发布 v2：预占字段改指 qty_reserved2（新发布不得改变既有预占的结算语义）
+        asTenant(TENANT, USER, () -> {
+            actionService.update(reserveAction, new TxnActionSaveRequest(null, "LT04预占", "RESERVE", null,
+                    cfg("qty_available", "qty_reserved2", 600L)));
+            actionService.publish(reserveAction);
+            return null;
+        });
+        assertThat(asTenant(TENANT, USER, () -> actionService.get(reserveAction).currentVersion())).isEqualTo(2);
+
+        // CONFIRM 动作自身声明 qty_reserved2：结算仍必须按预占受理冻结版本（qty_reserved）执行
+        String confirmAction = asTenant(TENANT, USER, () -> {
+            String id = actionService.create(formId, new TxnActionSaveRequest("lt04_confirm", "LT04确认", "CONFIRM",
+                    null, cfg("qty_available", "qty_reserved2", null))).id();
+            actionService.publish(id);
+            return id;
+        });
+        TxnInvokeRequest confirmReq = new TxnInvokeRequest();
+        confirmReq.setReservationId(reservationId);
+        confirmReq.setInvocationKey("LT04-C1");
+        TxnInvokeResult confirmed = asTenant(TENANT, USER, () -> executor.invoke(confirmAction, confirmReq));
+        assertThat(confirmed.status()).isEqualTo("SUCCEEDED");
+        assertThat(confirmed.actionVersion()).as("结算按预占受理冻结版本执行").isEqualTo(1);
+        assertThat(colOf(table, "qty_reserved", recordId)).as("冻结版本预占字段被扣减").isEqualByComparingTo("0");
+        assertThat(colOf(table, "qty_reserved2", recordId)).as("新版本字段未被旧预占改写").isEqualByComparingTo("0");
+        assertThat(colOf(table, "qty_available", recordId)).isEqualByComparingTo("95");
+        assertThat(jdbc.queryForObject("SELECT action_version FROM sw_form_txn_ledger WHERE reservation_id = ?"
+                + " AND entry_type = 'CONFIRM'", Integer.class, reservationId)).isEqualTo(1);
+
+        // 跨表单凭据绑定：其他表单的预占凭据不能用本表单动作结算（修复前会误结算）
+        String plainFormId = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(FORM_KEY).getId());
+        String otherReserve = asTenant(TENANT, USER, () -> {
+            String id = actionService.create(plainFormId, new TxnActionSaveRequest("lt04_reserve_other",
+                    "LT04预占其他表", "RESERVE", null, cfg("qty_available", "qty_reserved", 600L))).id();
+            actionService.publish(id);
+            return id;
+        });
+        String otherRecord = submit("LT04-OTHER", "20");
+        TxnInvokeResult otherReserved = invokeReserve(otherReserve, "LT04-RB", otherRecord, "2");
+        TxnInvokeRequest crossForm = new TxnInvokeRequest();
+        crossForm.setReservationId(otherReserved.reservationId());
+        crossForm.setInvocationKey("LT04-CROSS");
+        TxnInvokeResult crossResult = asTenant(TENANT, USER, () -> executor.invoke(confirmAction, crossForm));
+        assertThat(crossResult.status()).isEqualTo("REJECTED");
+        assertThat(crossResult.errorCode()).isEqualTo(FormErrorCode.ACTION_RESERVATION_NOT_FOUND.getCode());
+        assertThat(reservedOf(otherRecord)).as("跨表单结算被拒无副作用").isEqualByComparingTo("2");
+
+        // 停用边界：预占动作停用 → 新预占被拒；既有凭据（停用前受理）仍可结算
+        TxnInvokeResult reserved2 = invokeReserve(reserveAction, "LT04-R2", recordId, "3");
+        assertThat(reserved2.status()).isEqualTo("SUCCEEDED");
+        asTenant(TENANT, USER, () -> {
+            actionService.disable(reserveAction);
+            return null;
+        });
+        assertRejected(() -> asTenant(TENANT, USER, () ->
+                        executor.invoke(reserveAction, reserveReq("LT04-R3", recordId, "1"))),
+                FormErrorCode.ACTION_DISABLED.getCode());
+        TxnInvokeRequest settleOld = new TxnInvokeRequest();
+        settleOld.setReservationId(reserved2.reservationId());
+        settleOld.setInvocationKey("LT04-C2");
+        assertThat(asTenant(TENANT, USER, () -> executor.invoke(confirmAction, settleOld)).status())
+                .as("停用只拒绝新调用：旧凭据仍可结算").isEqualTo("SUCCEEDED");
+        assertThat(colOf(table, "qty_reserved", recordId)).isEqualByComparingTo("0");
+        asTenant(TENANT, USER, () -> {
+            actionService.enable(reserveAction);
+            return null;
+        });
+
+        // 停用确认动作：无凭据的新调用被拒；既有凭据仍可结算；已受理请求重放不受停用影响
+        TxnInvokeResult reserved4 = invokeReserve(reserveAction, "LT04-R4", recordId, "2");
+        assertThat(reserved4.status()).isEqualTo("SUCCEEDED");
+        asTenant(TENANT, USER, () -> {
+            actionService.disable(confirmAction);
+            return null;
+        });
+        TxnInvokeRequest noCredential = new TxnInvokeRequest();
+        noCredential.setInvocationKey("LT04-C3");
+        assertRejected(() -> asTenant(TENANT, USER, () -> executor.invoke(confirmAction, noCredential)),
+                FormErrorCode.ACTION_DISABLED.getCode());
+        TxnInvokeRequest settleOld2 = new TxnInvokeRequest();
+        settleOld2.setReservationId(reserved4.reservationId());
+        settleOld2.setInvocationKey("LT04-C4");
+        assertThat(asTenant(TENANT, USER, () -> executor.invoke(confirmAction, settleOld2)).status())
+                .isEqualTo("SUCCEEDED");
+        TxnInvokeResult replayAfterDisable = asTenant(TENANT, USER, () -> executor.invoke(confirmAction, settleOld2));
+        assertThat(replayAfterDisable.replay()).as("已受理请求的回查不受停用影响").isTrue();
+
+        asTenant(TENANT, USER, () -> {
+            actionService.enable(confirmAction);
+            return null;
+        });
+        assertThat(asTenant(TENANT, USER, () -> actionService.get(reserveAction).status())).isEqualTo("PUBLISHED");
+        assertThat(asTenant(TENANT, USER, () -> actionService.get(confirmAction).status())).isEqualTo("PUBLISHED");
+        System.out.println("[P62-EV] lt04.frozen-v2-published confirm=v1-semantics(qty_reserved-deducted/qty_reserved2-untouched)"
+                + " cross-form-credential=rejected disable=new-call-rejected/old-credential-settled/replay-ok");
+    }
+
+    @Test
+    @DisplayName("LT04/T05 非法声明拒绝：模型不支持的配置键在反序列化边界被收集，并在保存/发布入口明确定位拒绝")
+    void unsupportedDeclarationsRejected() throws Exception {
+        // 对照：未声明模型类忽略未知键（证明下面的收集来自声明的封闭模型，而非全局配置）
+        TxnInvokeRequest tolerant = objectMapper.readValue(
+                "{\"quantity\":\"1\",\"unknownKey\":true}", TxnInvokeRequest.class);
+        assertThat(tolerant.getQuantity()).isEqualTo("1");
+
+        TxnActionConfig withUnknown = objectMapper.readValue(
+                "{\"balanceField\":\"qty_available\",\"remoteSideEffect\":{\"url\":\"http://example.invalid\"}}",
+                TxnActionConfig.class);
+        assertThat(withUnknown.getUnsupportedKeys()).as("未知键被收集而非静默丢弃").containsKey("remoteSideEffect");
+        assertThat(withUnknown.getBalanceField()).isEqualTo("qty_available");
+
+        // 保存入口：非法声明被明确拒绝，错误信息含违规键名
+        String formId = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(FORM_KEY).getId());
+        TxnActionConfig bad = cfg("qty_available", "qty_reserved", 600L);
+        bad.getUnsupportedKeys().put("humanWait", Boolean.TRUE);
+        bad.getUnsupportedKeys().put("transactionPropagation", "REQUIRES_NEW");
+        assertThatThrownBy(() -> asTenant(TENANT, USER, () -> actionService.create(formId,
+                new TxnActionSaveRequest("lt04_bad_decl", "LT04非法声明", "RESERVE", null, bad))))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("humanWait")
+                .hasMessageContaining("transactionPropagation");
+
+        // 发布入口：存量配置含未声明键（历史行/直改库）→ 结构化发布错误定位到键，发布被拒
+        String storedId = asTenant(TENANT, USER, () -> actionService.create(formId,
+                new TxnActionSaveRequest("lt04_stored_bad", "LT04存量非法", "RESERVE", null,
+                        cfg("qty_available", "qty_reserved", 600L))).id());
+        jdbc.update("UPDATE sw_form_txn_action SET config_json = ? WHERE id = ?",
+                "{\"balanceField\":\"qty_available\",\"reservedField\":\"qty_reserved\","
+                        + "\"expiresInSeconds\":600,\"remoteSideEffect\":{\"url\":\"http://example.invalid\"}}",
+                storedId);
+        assertThat(asTenant(TENANT, USER, () -> actionService.validate(storedId)))
+                .anyMatch(e -> "config.remoteSideEffect".equals(e.field()));
+        assertRejected(() -> asTenant(TENANT, USER, () -> actionService.publish(storedId)),
+                FormErrorCode.ACTION_CONFIG_INVALID.getCode());
+
+        // C1 策略声明同样封闭：未知键在保存入口被拒
+        C1PolicyModel c1Bad = objectMapper.readValue("{\"enabled\":true,\"remoteApproval\":true}",
+                C1PolicyModel.class);
+        assertThat(c1Bad.getUnsupportedKeys()).containsKey("remoteApproval");
+        assertThatThrownBy(() -> asTenant(TENANT, USER, () -> c1PolicyService.save(formId, c1Bad)))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("remoteApproval");
+        System.out.println("[P62-EV] lt04.unsupported-declaration collect=remoteSideEffect/remoteApproval"
+                + " save=rejected(humanWait/propagation) publish=structured-error(config.remoteSideEffect)");
+    }
+
+    // ==================== LT04：已受理但响应丢失后的同身份回查 ====================
+
+    @Test
+    @DisplayName("LT04 响应丢失后同身份回查：同键重试返回原结果且无重复效果；记录/凭据/台账按调用身份可定位")
+    void acceptedButResponseLostIsReadableByIdentity() {
+        String recordId = submit("LT04-LOST", "40");
+        String reserveId = publishAction("lt04_lost_reserve", "LT04丢失预占", "RESERVE", reserveCfg());
+        TxnInvokeResult first = invokeReserve(reserveId, "LT04-LOST-K", recordId, "6");
+        assertThat(first.status()).isEqualTo("SUCCEEDED");
+
+        TxnInvokeResult retry = invokeReserve(reserveId, "LT04-LOST-K", recordId, "6");
+        assertThat(retry.replay()).as("同键重试为重放").isTrue();
+        assertThat(retry.invocationId()).isEqualTo(first.invocationId());
+        assertThat(retry.reservationId()).isEqualTo(first.reservationId());
+        assertThat(reservedOf(recordId)).as("重放不产生第二次效果").isEqualByComparingTo("6");
+        assertThat(countInvocations(reserveId, "LT04-LOST-K")).isEqualTo(1L);
+        assertThat(countLedgerByReservation(reserveId, first.reservationId())).isEqualTo(1L);
+
+        var invocations = asTenant(TENANT, USER, () -> executor.pageInvocations(reserveId, null, null, USER, 1, 20));
+        assertThat(invocations.getRecords()).anyMatch(v -> first.invocationId().equals(v.id())
+                && "SUCCEEDED".equals(v.status())
+                && v.resultJson() != null && v.resultJson().contains(first.reservationId()));
+        var byId = asTenant(TENANT, USER, () -> executor.getInvocation(first.invocationId()));
+        assertThat(byId.bizRecordId()).isEqualTo(recordId);
+        var reservations = asTenant(TENANT, USER, () -> executor.pageReservations(reserveId, "ACTIVE", 1, 20));
+        assertThat(reservations.getRecords()).anyMatch(v -> first.reservationId().equals(v.id())
+                && v.quantity().compareTo(new BigDecimal("6")) == 0);
+        var ledger = asTenant(TENANT, USER, () ->
+                executor.pageLedger(reserveId, 1, first.reservationId(), 1, 20));
+        assertThat(ledger.getRecords()).hasSize(1);
+        assertThat(ledger.getRecords().get(0).entryType()).isEqualTo("RESERVE");
+        System.out.println("[P62-EV] lt04.lost-response retry=replay/same-invocation no-duplicate-effect"
+                + " readback=invocation/reservation/ledger");
+    }
+
     // ==================== 种子与工具 ====================
 
     private void seedStockForm() {
@@ -456,6 +798,59 @@ class P62TxnActionPgBehaviourTest {
                 + "{\"name\":\"material\",\"type\":\"TEXT\",\"label\":\"物料\",\"required\":false},"
                 + "{\"name\":\"qty_available\",\"type\":\"NUMBER\",\"label\":\"可用量\",\"required\":false},"
                 + "{\"name\":\"qty_reserved\",\"type\":\"NUMBER\",\"label\":\"预占量\",\"required\":false}]}";
+    }
+
+    private String multiFieldDefinition() {
+        return "{\"schemaVersion\":1,\"title\":\"P62多字段库存\",\"fields\":["
+                + "{\"name\":\"material\",\"type\":\"TEXT\",\"label\":\"物料\",\"required\":false},"
+                + "{\"name\":\"qty_available\",\"type\":\"NUMBER\",\"label\":\"可用量\",\"required\":false},"
+                + "{\"name\":\"qty_reserved\",\"type\":\"NUMBER\",\"label\":\"预占量\",\"required\":false},"
+                + "{\"name\":\"qty_reserved2\",\"type\":\"NUMBER\",\"label\":\"预占量2\",\"required\":false}]}";
+    }
+
+    /** 用真实模板（含签名）填充数据行：列顺序与模板映射行一致，数据行从第 3 行开始。 */
+    private byte[] fillTemplate(byte[] template, Object[][] rows) throws Exception {
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook =
+                     new org.apache.poi.xssf.usermodel.XSSFWorkbook(new java.io.ByteArrayInputStream(template));
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheet("模板");
+            for (int r = 0; r < rows.length; r++) {
+                org.apache.poi.ss.usermodel.Row row = sheet.createRow(2 + r);
+                for (int c = 0; c < rows[r].length; c++) {
+                    org.apache.poi.ss.usermodel.Cell cell = row.createCell(c);
+                    Object value = rows[r][c];
+                    if (value instanceof Number number) {
+                        cell.setCellValue(number.doubleValue());
+                    } else {
+                        cell.setCellValue(value == null ? "" : String.valueOf(value));
+                    }
+                }
+            }
+            workbook.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    private TxnInvokeResult invokeReserve(String actionId, String key, String recordId, String qty) {
+        return asTenant(TENANT, USER, () -> executor.invoke(actionId, reserveReq(key, recordId, qty)));
+    }
+
+    private TxnInvokeResult invokeAdjust(String actionId, String key, String recordId, String qty) {
+        TxnInvokeRequest req = new TxnInvokeRequest();
+        req.setInvocationKey(key);
+        req.setRecordId(recordId);
+        req.setQuantity(qty);
+        return asTenant(TENANT, USER, () -> executor.invoke(actionId, req));
+    }
+
+    private BigDecimal colOf(String table, String column, String recordId) {
+        return jdbc.queryForObject("SELECT " + q(column) + " FROM " + q(table)
+                + " WHERE " + q("id") + " = ?", BigDecimal.class, recordId);
+    }
+
+    private long countLedgerByReservation(String actionId, String reservationId) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM sw_form_txn_ledger WHERE action_id = ?"
+                + " AND reservation_id = ?", Long.class, actionId, reservationId);
     }
 
     private String submit(String material, String available) {
@@ -543,6 +938,11 @@ class P62TxnActionPgBehaviourTest {
     private long countInvocations(String actionId, String invocationKey) {
         return jdbc.queryForObject("SELECT COUNT(*) FROM sw_form_txn_invocation WHERE action_id = ?"
                 + " AND invocation_key = ?", Long.class, actionId, invocationKey);
+    }
+
+    private long countReservationsByRecord(String recordId) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM sw_form_txn_reservation WHERE record_id = ?",
+                Long.class, recordId);
     }
 
     private static Map<String, Object> data(Object... kv) {

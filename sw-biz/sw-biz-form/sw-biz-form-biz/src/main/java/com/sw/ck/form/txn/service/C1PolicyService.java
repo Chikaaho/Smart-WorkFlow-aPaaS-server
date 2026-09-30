@@ -77,6 +77,11 @@ public class C1PolicyService {
         if (model == null || model.getEnabled() == null) {
             throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID, "需要显式声明 enabled");
         }
+        if (model.getUnsupportedKeys() != null && !model.getUnsupportedKeys().isEmpty()) {
+            String keys = String.join("、", model.getUnsupportedKeys().keySet());
+            throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID,
+                    "C1 策略包含模型不支持的键：" + keys + "（声明未被受理，未启用保护）");
+        }
         Map<String, FormFieldValidator.FieldDef> defs = binding.fieldDefs(form.getId());
         boolean enabled = Boolean.TRUE.equals(model.getEnabled());
         C1PolicyModel normalized = new C1PolicyModel();

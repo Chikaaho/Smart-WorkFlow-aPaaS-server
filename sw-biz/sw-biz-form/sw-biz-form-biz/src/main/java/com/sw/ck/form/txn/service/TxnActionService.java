@@ -102,6 +102,7 @@ public class TxnActionService {
     public TxnActionView create(String formId, TxnActionSaveRequest req) {
         FormDefEntity form = binding.requirePublishedForm(formId);
         validateDraftBasics(req, true);
+        assertSupportedDeclarations(req.config());
         Long dup = actionMapper.selectCount(Wrappers.<TxnActionEntity>lambdaQuery()
                 .eq(TxnActionEntity::getFormId, form.getId())
                 .eq(TxnActionEntity::getActionKey, req.actionKey().trim()));
@@ -125,6 +126,7 @@ public class TxnActionService {
     public TxnActionView update(String id, TxnActionSaveRequest req) {
         TxnActionEntity entity = requireAction(id);
         validateDraftBasics(req, false);
+        assertSupportedDeclarations(req.config());
         if (req.actionKey() != null && !req.actionKey().trim().equals(entity.getActionKey())) {
             throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID, "动作标识创建后不可修改");
         }
@@ -225,14 +227,25 @@ public class TxnActionService {
         if (!STATUS_PUBLISHED.equals(action.getStatus()) || action.getCurrentVersion() == null) {
             throw new BaseException(FormErrorCode.ACTION_NOT_FOUND, "事务动作未发布，不能调用");
         }
-        TxnActionVersionEntity version = versionMapper.selectOne(
-                Wrappers.<TxnActionVersionEntity>lambdaQuery()
-                        .eq(TxnActionVersionEntity::getActionId, action.getId())
-                        .eq(TxnActionVersionEntity::getVersionNo, action.getCurrentVersion()));
+        TxnActionVersionEntity version = currentVersionOrNull(action);
         if (version == null) {
             throw new BaseException(FormErrorCode.ACTION_NOT_FOUND, "动作版本快照缺失，请重新发布");
         }
         return version;
+    }
+
+    /**
+     * 当前版本实体（不做停用/发布态门禁）：供结算类调用解析冻结版本后写入拒绝记录等审计用途。
+     * <p>未发布或版本快照缺失时返回 {@code null}。</p>
+     */
+    public TxnActionVersionEntity currentVersionOrNull(TxnActionEntity action) {
+        if (action == null || action.getCurrentVersion() == null) {
+            return null;
+        }
+        return versionMapper.selectOne(
+                Wrappers.<TxnActionVersionEntity>lambdaQuery()
+                        .eq(TxnActionVersionEntity::getActionId, action.getId())
+                        .eq(TxnActionVersionEntity::getVersionNo, action.getCurrentVersion()));
     }
 
     // ==================== 内部 ====================
@@ -256,6 +269,20 @@ public class TxnActionService {
         }
     }
 
+    /**
+     * 声明封闭性校验：模型不支持的配置键在保存入口明确拒绝（错误信息含违规键名）。
+     * <p>覆盖人工等待、远程副作用、自定义事务传播等平台未声明能力；不静默忽略客户端声明。</p>
+     */
+    private void assertSupportedDeclarations(TxnActionConfig cfg) {
+        if (cfg == null || cfg.getUnsupportedKeys() == null || cfg.getUnsupportedKeys().isEmpty()) {
+            return;
+        }
+        String keys = String.join("、", cfg.getUnsupportedKeys().keySet());
+        throw new BaseException(FormErrorCode.ACTION_CONFIG_INVALID,
+                "动作配置包含模型不支持的键：" + keys
+                        + "（平台未声明人工等待、远程副作用或自定义事务传播等能力，声明未被受理）");
+    }
+
     private List<TxnPublishError> validateConfig(FormDefEntity form, String actionType, TxnActionConfig cfg) {
         List<TxnPublishError> errors = new ArrayList<>();
         String type = actionType == null ? "" : actionType.toUpperCase();
@@ -266,6 +293,12 @@ public class TxnActionService {
         if (cfg == null) {
             errors.add(TxnPublishError.of(FormErrorCode.ACTION_CONFIG_INVALID, "config", "动作配置为空"));
             return errors;
+        }
+        if (cfg.getUnsupportedKeys() != null) {
+            for (String key : cfg.getUnsupportedKeys().keySet()) {
+                errors.add(TxnPublishError.of(FormErrorCode.ACTION_CONFIG_INVALID, "config." + key,
+                        "模型不支持该配置项（人工等待/远程副作用/自定义事务传播等能力未声明），发布被拒绝"));
+            }
         }
         Map<String, FormFieldValidator.FieldDef> defs = binding.fieldDefs(form.getId());
         if (defs.isEmpty()) {
