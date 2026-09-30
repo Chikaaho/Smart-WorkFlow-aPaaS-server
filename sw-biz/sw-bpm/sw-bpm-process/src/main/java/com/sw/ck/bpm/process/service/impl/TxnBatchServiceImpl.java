@@ -50,6 +50,9 @@ public class TxnBatchServiceImpl implements TxnBatchService {
     /** 与 FormTxnActionPortImpl 相同的方法权限码：批量受理沿用同一授权口径。 */
     static final String INVOKE_PERMISSION = "form:action:invoke";
 
+    /** 批次管理查询权限：非发起人回查他人批次所需（超管旁路）。 */
+    static final String MANAGE_PERMISSION = "form:action:manage";
+
     private final BpmCommandBatchMapper batchMapper;
     private final BpmCommandBatchItemMapper itemMapper;
     private final BpmCommandQueue commandQueue;
@@ -137,12 +140,24 @@ public class TxnBatchServiceImpl implements TxnBatchService {
 
     @Override
     public TxnBatchView get(String batchKey) {
-        LoginUser operator = requireAuthorizedOperator();
+        // 回查权限口径：调用权限或管理权限其一（管理者回查批次不属于业务调用）
+        LoginUser operator = requireAuthorizedOperator(s -> s.contains(INVOKE_PERMISSION)
+                || s.contains(MANAGE_PERMISSION));
         BpmCommandBatch batch = batchMapper.selectOne(Wrappers.<BpmCommandBatch>lambdaQuery()
                 .eq(BpmCommandBatch::getTenantId, operator.getTenantId())
                 .eq(BpmCommandBatch::getBatchKey, batchKey)
                 .last("LIMIT 1"));
         if (batch == null) {
+            throw new BaseException(BpmErrorCode.BATCH_NOT_FOUND);
+        }
+        // U07 查询边界：批次项携带业务结果，发起人可见自己的批次；
+        // 非发起人须持管理权限（form:action:manage）或超管，同租户其他受理人不默认可见
+        boolean isInitiator = operator.getUserId() != null
+                && operator.getUserId().equals(batch.getInitiatorId());
+        boolean isManager = operator.isSuperAdmin()
+                || (operator.getPermissions() != null
+                        && operator.getPermissions().contains(MANAGE_PERMISSION));
+        if (!isInitiator && !isManager) {
             throw new BaseException(BpmErrorCode.BATCH_NOT_FOUND);
         }
         return toView(batch, findItems(batch.getId()), false);
@@ -206,12 +221,17 @@ public class TxnBatchServiceImpl implements TxnBatchService {
     }
 
     private LoginUser requireAuthorizedOperator() {
+        return requireAuthorizedOperator(permissions -> permissions.contains(INVOKE_PERMISSION));
+    }
+
+    private LoginUser requireAuthorizedOperator(java.util.function.Predicate<java.util.Set<String>> permissionCheck) {
         LoginUser user = LoginUserHolder.get();
         if (user == null || user.getUserId() == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
-        boolean allowed = user.isSuperAdmin()
-                || (user.getPermissions() != null && user.getPermissions().contains(INVOKE_PERMISSION));
+        java.util.Set<String> permissions = user.getPermissions() == null
+                ? java.util.Set.of() : new java.util.HashSet<>(user.getPermissions());
+        boolean allowed = user.isSuperAdmin() || permissionCheck.test(permissions);
         if (!allowed) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(),
                     "无权受理批量调用：缺少 " + INVOKE_PERMISSION);

@@ -174,6 +174,18 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         if (status == null || !REPORTABLE_STATUS.contains(status)) {
             throw new BaseException(400, "结果状态只能是 SUCCESS / FAILED");
         }
+        // P62 分级执行 S4 安全合同（G4）：本端点是运维回写原通道，不是独立核实通道——
+        // 结果未知（UNKNOWN）只能经独立授权人工核实（iot:command:verify + 可信依据）收敛；
+        // 已确定结果（SUCCESS/FAILED/EXPIRED）不得被任何入口覆盖（冲突走受控回执留审计）。
+        if ("UNKNOWN".equals(command.getStatus())) {
+            throw new BaseException(409, "结果未知的命令须经独立授权人工核实通道收敛，"
+                    + "不接受运维回写（缺少 iot:command:verify 时无法补依据）");
+        }
+        if ("SUCCESS".equals(command.getStatus()) || "FAILED".equals(command.getStatus())
+                || "EXPIRED".equals(command.getStatus())) {
+            throw new BaseException(409, "命令已是确定终态（" + command.getStatus()
+                    + "），不接受结果覆盖");
+        }
         command.setStatus(status);
         // R8c：result 是设备可控文本（可能携带堆栈帧、绝对路径、超长噪声），
         // 与 MQTT ingest / 连接失败等设备侧输入同口径：DiagnosticText 清洗限长后落库，

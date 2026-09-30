@@ -80,6 +80,17 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
             return rejected(receipt.commandId(), null);
         }
 
+        // 租户边界负例防护：回执声明的租户必须与命令行租户一致（签名 canonical 已绑定
+        // tenantKey，值不一致按拒绝处理并留审计，防跨租户命令被他租户签名收敛）
+        if (receipt.tenantKey() == null
+                || !receipt.tenantKey().equals(String.valueOf(command.getTenantId()))) {
+            audit(command.getTenantId(), receipt, "RECEIPT_REJECTED", command.getStatus(),
+                    String.valueOf(command.getId()),
+                    "回执租户与命令行租户不一致: receipt=" + receipt.tenantKey()
+                            + ",command=" + command.getTenantId());
+            return rejected(command.getId(), command.getStatus());
+        }
+
         String before = command.getStatus();
         if (DETERMINED.contains(before)) {
             // 已确定结果不覆盖：同向幂等去重；反向留冲突审计
@@ -103,11 +114,27 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
             return rejected(command.getId(), before);
         }
 
-        applyOutcome(command, receipt.outcome(), receipt.output(), "RECEIPT", receipt.requestId(), null);
-        audit(command.getTenantId(), receipt, "RECEIPT_APPLIED", before,
-                String.valueOf(command.getId()), "before=" + before + ",after=" + receipt.outcome());
-        return new DeviceReceiptDecision(DeviceReceiptDecision.Verdict.APPLIED,
-                command.getId(), before, receipt.outcome());
+        // 条件更新保证并发下恰一次收敛：仅当前状态仍为 before 时写入；
+        // 竞争失败方按最新终态归类（同向 DUPLICATE / 异向 CONFLICT），不重复审计
+        boolean won = applyOutcomeConditional(command, receipt.outcome(), receipt.output(),
+                "RECEIPT", receipt.requestId(), null);
+        if (won) {
+            audit(command.getTenantId(), receipt, "RECEIPT_APPLIED", before,
+                    String.valueOf(command.getId()), "before=" + before + ",after=" + receipt.outcome());
+            return new DeviceReceiptDecision(DeviceReceiptDecision.Verdict.APPLIED,
+                    command.getId(), before, receipt.outcome());
+        }
+        IotDeviceCommand latest = commandMapper.selectById(command.getId());
+        String now = latest == null ? before : latest.getStatus();
+        DeviceReceiptDecision.Verdict verdict = receipt.outcome().equals(now) || "EXPIRED".equals(now)
+                ? DeviceReceiptDecision.Verdict.DUPLICATE
+                : DeviceReceiptDecision.Verdict.CONFLICT;
+        String auditAction = verdict == DeviceReceiptDecision.Verdict.CONFLICT
+                ? "RECEIPT_CONFLICT" : "RECEIPT_DUPLICATE";
+        audit(command.getTenantId(), receipt, auditAction,
+                before, String.valueOf(command.getId()),
+                "并发竞争失败: before=" + before + ",now=" + now + ",receipt=" + receipt.outcome());
+        return new DeviceReceiptDecision(verdict, command.getId(), before, now);
     }
 
     @Override
@@ -143,6 +170,23 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
     }
 
     // ==================== 内部 ====================
+
+    /** 条件更新：仅当状态仍为读取值时收敛（并发恰一次）；返回是否由本调用写入。 */
+    private boolean applyOutcomeConditional(IotDeviceCommand command, String outcome, String output,
+                                            String source, String requestId, String verifyDetail) {
+        IotDeviceCommand patch = new IotDeviceCommand();
+        patch.setStatus("SUCCESS".equals(outcome) ? "SUCCESS" : "FAILED");
+        patch.setResult(serializeResult(source, requestId, output, verifyDetail));
+        int updated = commandMapper.update(patch,
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                        .eq(IotDeviceCommand::getId, command.getId())
+                        .eq(IotDeviceCommand::getStatus, command.getStatus()));
+        if (updated > 0) {
+            log.info("设备命令结果已收敛: id={}, source={}, outcome={}", command.getId(), source, outcome);
+            return true;
+        }
+        return false;
+    }
 
     private void applyOutcome(IotDeviceCommand command, String outcome, String output,
                               String source, String requestId, String verifyDetail) {

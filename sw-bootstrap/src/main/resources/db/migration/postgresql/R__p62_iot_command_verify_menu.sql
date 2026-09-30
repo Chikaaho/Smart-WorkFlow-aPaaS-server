@@ -12,3 +12,11 @@ SELECT 9310, current_timestamp, current_timestamp, 0, 0, 2, 9104
 WHERE NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 2 AND rm.menu_id = 9104 AND rm.deleted = 0)
   AND EXISTS (SELECT 1 FROM sys_menu m WHERE m.id = 9104 AND m.deleted = 0)
   AND EXISTS (SELECT 1 FROM sys_role r WHERE r.id = 2 AND r.deleted = 0);
+
+-- P62 复核01 G6：设备管理菜单（332，iot:device:manage）授权管理员角色 role 2——
+-- 该菜单在 baseline 种子中未对 role 2 授权，设备管理页对管理员 403（错误横幅根因）。
+INSERT INTO sys_role_menu (id, create_time, update_time, deleted, version, role_id, menu_id)
+SELECT 9313, current_timestamp, current_timestamp, 0, 0, 2, 332
+WHERE NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 2 AND rm.menu_id = 332 AND rm.deleted = 0)
+  AND EXISTS (SELECT 1 FROM sys_menu m WHERE m.id = 332 AND m.deleted = 0)
+  AND EXISTS (SELECT 1 FROM sys_role r WHERE r.id = 2 AND r.deleted = 0);
