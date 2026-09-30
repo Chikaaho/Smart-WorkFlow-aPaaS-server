@@ -85,6 +85,8 @@ class TxnActionFlowH2Test {
     @Autowired
     private TxnActionTxOperations txOps;
     @Autowired
+    private com.sw.ck.form.txn.mapper.TxnReservationMapper reservationMapper;
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     private String formId;
@@ -241,7 +243,7 @@ class TxnActionFlowH2Test {
         assertThat(expiredReject.errorCode()).isEqualTo(FormErrorCode.ACTION_RESERVATION_EXPIRED.getCode());
         assertThat(reservedOf("stock-1")).isEqualByComparingTo("3");
 
-        TxnReservationExpiryJob job = new TxnReservationExpiryJob(jdbcTemplate, txOps, new FormIdGenerator());
+        TxnReservationExpiryJob job = new TxnReservationExpiryJob(reservationMapper, txOps, new FormIdGenerator());
         job.sweep();
         assertThat(reservationStatus(expiringId)).isEqualTo("EXPIRED");
         assertThat(reservedOf("stock-1")).isEqualByComparingTo("0");
