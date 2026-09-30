@@ -96,6 +96,7 @@ class GraphJsonPersistenceIntegrationTest {
                     mock(com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper.class),
                     mock(com.sw.ck.bpm.process.service.NodeFunctionService.class),
                     mock(GraphValidator.class),
+                    mock(com.sw.ck.bpm.process.validator.LightProcessGraphValidator.class),
                     mock(com.sw.ck.form.api.form.FormDefinitionService.class),
                     mock(BpmDeployFacade.class), mock(BpmFormBindingService.class), objectMapper);
         }

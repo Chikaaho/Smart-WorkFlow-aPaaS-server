@@ -90,6 +90,11 @@ public enum BpmErrorCode implements ErrorCode {
     DYNAMIC_BRANCH_EMPTY(2418, "bpm.dynamic_branch_empty", "动态并行分支没有可用来源，且未配置兜底策略，请检查并行节点的来源配置"),
     DYNAMIC_BRANCH_LEADER_MISSING(2419, "bpm.dynamic_branch_leader_missing", "动态并行分支的来源存在已停用部门或缺少负责人，且未配置跳过策略，请检查部门与负责人配置"),
     DYNAMIC_BRANCH_LIMIT_EXCEEDED(2420, "bpm.dynamic_branch_limit_exceeded", "动态并行分支数超过安全上限"),
+
+    // ==================== P62 生产轻流程（2421+） ====================
+    LIGHT_PROCESS_NODE_NOT_ALLOWED(2421, "bpm.light_process_node_not_allowed", "生产轻流程仅允许开始、结束、条件分支与事务动作节点，请移除人工等待、并行、通知或其他节点"),
+    LIGHT_PROCESS_CYCLE(2422, "bpm.light_process_cycle", "生产轻流程不允许存在环，请检查条件分支的连线方向"),
+    LIGHT_PROCESS_ACTION_LIMIT_EXCEEDED(2423, "bpm.light_process_action_limit_exceeded", "生产轻流程的事务动作节点最多 16 个，请拆分流程"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================

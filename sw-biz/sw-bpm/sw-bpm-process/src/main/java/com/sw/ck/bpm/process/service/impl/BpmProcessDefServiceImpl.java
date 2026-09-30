@@ -45,6 +45,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     private final com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper;
     private final com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService;
     private final GraphValidator graphValidator;
+    private final com.sw.ck.bpm.process.validator.LightProcessGraphValidator lightProcessGraphValidator;
     private final FormDefinitionService formDefinitionService;
     private final BpmDeployFacade bpmDeployFacade;
     private final BpmFormBindingService formBindingService;
@@ -54,6 +55,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
                                     com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper,
                                     com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService,
                                     GraphValidator graphValidator,
+                                    com.sw.ck.bpm.process.validator.LightProcessGraphValidator lightProcessGraphValidator,
                                     FormDefinitionService formDefinitionService,
                                     BpmDeployFacade bpmDeployFacade,
                                     BpmFormBindingService formBindingService,
@@ -62,6 +64,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         this.versionMapper = versionMapper;
         this.nodeFunctionService = nodeFunctionService;
         this.graphValidator = graphValidator;
+        this.lightProcessGraphValidator = lightProcessGraphValidator;
         this.formDefinitionService = formDefinitionService;
         this.bpmDeployFacade = bpmDeployFacade;
         this.formBindingService = formBindingService;
@@ -285,6 +288,14 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         if (!graphErrors.isEmpty()) {
             // 将首条错误转为异常
             GraphValidationError first = graphErrors.get(0);
+            throw new BaseException(first.getErrorCode(), first.getMessage());
+        }
+
+        // 2a+. 生产轻流程形态约束（P62：含事务动作节点的图限定白名单/无环/≤16 动作）
+        List<GraphValidationError> lightProcessErrors =
+                lightProcessGraphValidator.validate(graph.getElements());
+        if (!lightProcessErrors.isEmpty()) {
+            GraphValidationError first = lightProcessErrors.get(0);
             throw new BaseException(first.getErrorCode(), first.getMessage());
         }
 
