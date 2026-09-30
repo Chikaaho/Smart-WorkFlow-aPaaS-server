@@ -80,8 +80,8 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(7, result.migrationsExecuted,
-                "全新库应执行 7 条（V0.1.0 基线 + V0.1.1/V0.1.2/V0.1.3 增量 + 3 个 R__ 可重复对账），实际: " + result.migrationsExecuted);
+        assertEquals(8, result.migrationsExecuted,
+                "全新库应执行 8 条（V0.1.0 基线 + V0.1.1/V0.1.2/V0.1.3 增量 + 4 个 R__ 可重复对账），实际: " + result.migrationsExecuted);
         assertEquals("0.1.3", flyway.info().current().getVersion().getVersion(),
                 "终点当前版本应为 0.1.3 增量");
     }
@@ -90,7 +90,7 @@ class FlywayFullChainH2Test {
     @DisplayName("基线迁移后：info().applied() 共 6 条（0.1.0—0.1.3 + 2 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(7, applied.length, "已应用迁移数应为 7（基线 + 3 个增量 + 3 个 R__）");
+        assertEquals(8, applied.length, "已应用迁移数应为 8（基线 + 3 个增量 + 4 个 R__）");
         boolean baselineSeen = false;
         int incrementalSeen = 0;
         int repeatableCount = 0;
@@ -107,7 +107,7 @@ class FlywayFullChainH2Test {
         }
         assertTrue(baselineSeen, "V0.1.0 基线应已应用");
         assertEquals(3, incrementalSeen, "V0.1.1/V0.1.2/V0.1.3 增量应已应用");
-        assertEquals(3, repeatableCount, "3 个 R__ 菜单可重复对账应已应用");
+        assertEquals(4, repeatableCount, "4 个 R__ 菜单可重复对账应已应用");
     }
 
     @Test
