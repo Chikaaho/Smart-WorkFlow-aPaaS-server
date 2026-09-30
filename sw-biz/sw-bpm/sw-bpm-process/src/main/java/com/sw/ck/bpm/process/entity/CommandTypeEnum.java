@@ -24,7 +24,13 @@ public enum CommandTypeEnum {
     TASK_REJECT("TASK_REJECT"),
 
     /** 审批退回。 */
-    TASK_RETURN("TASK_RETURN");
+    TASK_RETURN("TASK_RETURN"),
+
+    /**
+     * 后台批量受控动作调用（P62 分级执行 S3）：payload 携带 batchId，
+     * 逐项独立事务、持久结果与稳定项键幂等；批次重放返回原批次。
+     */
+    BATCH_INVOKE("BATCH_INVOKE");
 
     private final String code;
 

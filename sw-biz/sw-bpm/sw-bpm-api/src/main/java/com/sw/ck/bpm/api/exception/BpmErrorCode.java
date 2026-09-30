@@ -95,6 +95,7 @@ public enum BpmErrorCode implements ErrorCode {
     LIGHT_PROCESS_NODE_NOT_ALLOWED(2421, "bpm.light_process_node_not_allowed", "生产轻流程仅允许开始、结束、条件分支与事务动作节点，请移除人工等待、并行、通知或其他节点"),
     LIGHT_PROCESS_CYCLE(2422, "bpm.light_process_cycle", "生产轻流程不允许存在环，请检查条件分支的连线方向"),
     LIGHT_PROCESS_ACTION_LIMIT_EXCEEDED(2423, "bpm.light_process_action_limit_exceeded", "生产轻流程的事务动作节点最多 16 个，请拆分流程"),
+    BATCH_NOT_FOUND(2424, "bpm.batch_not_found", "批量批次不存在或不属于当前租户"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================
