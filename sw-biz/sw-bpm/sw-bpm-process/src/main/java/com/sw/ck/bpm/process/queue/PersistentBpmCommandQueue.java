@@ -3,10 +3,14 @@ package com.sw.ck.bpm.process.queue;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.sw.ck.bpm.process.entity.BpmCommand;
+import com.sw.ck.bpm.process.entity.BpmCommandEffect;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
 import com.sw.ck.bpm.process.service.BpmCommandService;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -31,10 +35,18 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     private static final Logger log = LoggerFactory.getLogger(PersistentBpmCommandQueue.class);
 
-    private final BpmCommandService commandService;
+    /** 准入截止合法区间（P62 分级执行合同：1—300s，受理时冻结）。 */
+    public static final int DEADLINE_SECONDS_MIN = 1;
+    public static final int DEADLINE_SECONDS_MAX = 300;
+    public static final int DEADLINE_SECONDS_DEFAULT = 30;
 
-    public PersistentBpmCommandQueue(BpmCommandService commandService) {
+    private final BpmCommandService commandService;
+    private final BpmCommandEffectMapper effectMapper;
+
+    public PersistentBpmCommandQueue(BpmCommandService commandService,
+                                     BpmCommandEffectMapper effectMapper) {
         this.commandService = commandService;
+        this.effectMapper = effectMapper;
     }
 
     @Override
@@ -48,6 +60,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         command.setPayload(envelope.getPayload());
         command.setRetryCount(0);
         command.setInitiatorId(envelope.getInitiatorId());
+        applyTieredSemantics(command, envelope);
         commandService.save(command);
         envelope.setCommandId(command.getId());
         log.info("命令已受理: commandId={}, type={}, channel={}, key={}",
@@ -186,7 +199,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         // （与 complete/reject 同一领取权条件），读取校验通过不豁免写入校验。
         String status = command.getStatus();
         if (CommandStatusEnum.COMPLETED.getCode().equals(status)
-                || CommandStatusEnum.FAILED.getCode().equals(status)) {
+                || CommandStatusEnum.FAILED.getCode().equals(status)
+                || CommandStatusEnum.EXPIRED.getCode().equals(status)) {
             log.warn("命令失败处理被跳过: commandId={} 已是终态 {}", commandId, status);
             return false;
         }
@@ -259,6 +273,137 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         return Optional.ofNullable(commandService.getById(commandId)).map(this::toEnvelope);
     }
 
+    // ==================== P62 分级执行：身份/截止/效果权威 ====================
+
+    private void applyTieredSemantics(BpmCommand command, CommandEnvelope envelope) {
+        int seconds = envelope.getDeadlineSeconds() == 0
+                ? DEADLINE_SECONDS_DEFAULT : envelope.getDeadlineSeconds();
+        if (seconds < DEADLINE_SECONDS_MIN || seconds > DEADLINE_SECONDS_MAX) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    "准入截止秒数必须在 " + DEADLINE_SECONDS_MIN + "—" + DEADLINE_SECONDS_MAX + " 之间: " + seconds);
+        }
+        command.setLogicalCommandId(blankToNull(envelope.getLogicalCommandId()));
+        command.setPayloadFingerprint(blankToNull(envelope.getPayloadFingerprint()));
+        command.setTier(blankToNull(envelope.getTier()));
+        command.setCompletionPoint(blankToNull(envelope.getCompletionPoint()));
+        command.setDeadlineAt(LocalDateTime.now().plusSeconds(seconds));
+        envelope.setDeadlineAt(command.getDeadlineAt());
+    }
+
+    /**
+     * 准入截止扫描：仅 PENDING（待执行）且<strong>效果未发生</strong>（无效果权威行）的到期命令
+     * 收敛为 EXPIRED。执行中（PROCESSING）不得据此判过期，由 {@link #markOverdue} 仅记超期。
+     *
+     * @return 本次过期条数
+     */
+    public int expireDue(LocalDateTime now) {
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            List<BpmCommand> candidates = commandService.lambdaQuery()
+                    .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                    .isNotNull(BpmCommand::getDeadlineAt)
+                    .le(BpmCommand::getDeadlineAt, now)
+                    .orderByAsc(BpmCommand::getDeadlineAt)
+                    .last("LIMIT 200")
+                    .list();
+            int expired = 0;
+            for (BpmCommand candidate : candidates) {
+                if (effectMapper.selectById(candidate.getId()) != null) {
+                    continue; // 效果已发生：不得判过期（等待权威结果收敛）
+                }
+                boolean updated = commandService.lambdaUpdate()
+                        .eq(BpmCommand::getId, candidate.getId())
+                        .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                        .le(BpmCommand::getDeadlineAt, now)
+                        .set(BpmCommand::getStatus, CommandStatusEnum.EXPIRED.getCode())
+                        .set(BpmCommand::getFailureReason, "准入截止到期且未执行（效果未发生）")
+                        .set(BpmCommand::getFinishedAt, now)
+                        .update();
+                if (updated) {
+                    expired++;
+                }
+            }
+            if (expired > 0) {
+                log.warn("准入截止：{} 条待执行命令因效果未发生而过期（EXPIRED）", expired);
+            }
+            return expired;
+        }
+    }
+
+    /**
+     * 执行中超期标记：PROCESSING 且已过截止且未标记的命令写 {@code overdue_at}（证据字段），
+     * 不改状态、不判失败/过期——等待权威结果确定。
+     *
+     * @return 本次标记条数
+     */
+    public int markOverdue(LocalDateTime now) {
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            List<BpmCommand> candidates = commandService.lambdaQuery()
+                    .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
+                    .isNotNull(BpmCommand::getDeadlineAt)
+                    .le(BpmCommand::getDeadlineAt, now)
+                    .isNull(BpmCommand::getOverdueAt)
+                    .last("LIMIT 200")
+                    .list();
+            int marked = 0;
+            for (BpmCommand candidate : candidates) {
+                boolean updated = commandService.lambdaUpdate()
+                        .eq(BpmCommand::getId, candidate.getId())
+                        .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
+                        .isNull(BpmCommand::getOverdueAt)
+                        .set(BpmCommand::getOverdueAt, now)
+                        .update();
+                if (updated) {
+                    marked++;
+                }
+            }
+            return marked;
+        }
+    }
+
+    /** 统一逻辑身份查询（同身份重放/异载荷冲突判定；租户显式传入）。 */
+    public Optional<CommandEnvelope> findByLogicalId(Long tenantId, String logicalCommandId) {
+        if (logicalCommandId == null || logicalCommandId.isBlank()) {
+            return Optional.empty();
+        }
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            BpmCommand command = commandService.lambdaQuery()
+                    .eq(BpmCommand::getTenantId, tenantId)
+                    .eq(BpmCommand::getLogicalCommandId, logicalCommandId)
+                    .last("LIMIT 1")
+                    .one();
+            return Optional.ofNullable(command).map(this::toEnvelope);
+        }
+    }
+
+    /**
+     * 待对账清单：PROCESSING 且已有权威效果行（含提交后完成记录未写窗口）。
+     * 供恢复任务据权威结果确定收敛，不重做业务。
+     */
+    public List<CommandEnvelope> listProcessingWithEffect(int limit) {
+        List<BpmCommandEffect> effects = effectMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<BpmCommandEffect>()
+                        .orderByAsc("create_time")
+                        .last("LIMIT " + Math.max(1, limit)));
+        List<CommandEnvelope> result = new ArrayList<>();
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            for (BpmCommandEffect effect : effects) {
+                BpmCommand command = commandService.getById(effect.getCommandId());
+                if (command != null && CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())) {
+                    result.add(toEnvelope(command));
+                }
+            }
+        }
+        return result;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
     private CommandEnvelope toEnvelope(BpmCommand command) {
         CommandEnvelope envelope = new CommandEnvelope();
         envelope.setCommandId(command.getId());
@@ -273,6 +418,12 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         envelope.setResult(command.getResult());
         envelope.setFailureReason(command.getFailureReason());
         envelope.setClaimToken(command.getClaimToken());
+        envelope.setLogicalCommandId(command.getLogicalCommandId());
+        envelope.setPayloadFingerprint(command.getPayloadFingerprint());
+        envelope.setTier(command.getTier());
+        envelope.setCompletionPoint(command.getCompletionPoint());
+        envelope.setDeadlineAt(command.getDeadlineAt());
+        envelope.setOverdueAt(command.getOverdueAt());
         return envelope;
     }
 

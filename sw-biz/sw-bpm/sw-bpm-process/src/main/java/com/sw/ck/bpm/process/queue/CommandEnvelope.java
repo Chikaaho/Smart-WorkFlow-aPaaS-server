@@ -45,4 +45,25 @@ public class CommandEnvelope {
 
     /** 本次领取的租约令牌（claimDue 签发；写回时校验，防止旧持有者迟到写回）。 */
     private String claimToken;
+
+    /** 统一逻辑命令身份（跨通道同一操作；可选，受理时冻结）。 */
+    private String logicalCommandId;
+
+    /** 载荷指纹（sha256；与 logicalCommandId 配合判重放/冲突）。 */
+    private String payloadFingerprint;
+
+    /** 执行形态/等级（受理时冻结）。 */
+    private String tier;
+
+    /** 业务完成点声明（受理时冻结）。 */
+    private String completionPoint;
+
+    /** 准入截止秒数（受理输入；1—300，默认 30）。 */
+    private int deadlineSeconds = 30;
+
+    /** 准入截止时间（受理时冻结；回查用）。 */
+    private java.time.LocalDateTime deadlineAt;
+
+    /** 执行中超期标记（回查用）。 */
+    private java.time.LocalDateTime overdueAt;
 }

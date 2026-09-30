@@ -72,4 +72,28 @@ public class BpmCommand extends BaseEntity {
     /** 发起身份（可审计，不持久化凭证）。 */
     @TableField("initiator_id")
     private Long initiatorId;
+
+    /** 统一逻辑命令身份（跨通道同一操作；物理记录可映射；受理时冻结）。 */
+    @TableField("logical_command_id")
+    private String logicalCommandId;
+
+    /** 载荷指纹（sha256；同身份不同载荷必须拒绝）。 */
+    @TableField("payload_fingerprint")
+    private String payloadFingerprint;
+
+    /** 执行形态/等级（受理时冻结；改配置只影响新受理对象）。 */
+    @TableField("tier")
+    private String tier;
+
+    /** 业务完成点声明（受理时冻结）。 */
+    @TableField("completion_point")
+    private String completionPoint;
+
+    /** 准入截止（受理时按 1—300s 冻结）。 */
+    @TableField("deadline_at")
+    private LocalDateTime deadlineAt;
+
+    /** 执行中超过截止的标记时间（证据字段；不据此判失败/过期）。 */
+    @TableField("overdue_at")
+    private LocalDateTime overdueAt;
 }

@@ -165,8 +165,9 @@ public class OverlapH2TestConfig {
     }
 
     @Bean
-    public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService) {
-        return new StaleReadWindowQueue(commandService);
+    public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService,
+                                                     com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper) {
+        return new StaleReadWindowQueue(commandService, effectMapper);
     }
 
     /**
@@ -178,8 +179,9 @@ public class OverlapH2TestConfig {
 
         public volatile com.sw.ck.bpm.process.entity.BpmCommand staleSnapshot;
 
-        public StaleReadWindowQueue(BpmCommandServiceImpl commandService) {
-            super(commandService);
+        public StaleReadWindowQueue(BpmCommandServiceImpl commandService,
+                                    com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper) {
+            super(commandService, effectMapper);
         }
 
         @Override

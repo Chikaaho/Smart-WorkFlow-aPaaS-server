@@ -40,7 +40,7 @@ class CommandQueueTest {
     private final LambdaQueryChainWrapper<BpmCommand> queryChain = mock(LambdaQueryChainWrapper.class);
     private final LambdaUpdateChainWrapper<BpmCommand> updateChain = mock(LambdaUpdateChainWrapper.class);
 
-    private final PersistentBpmCommandQueue queue = new PersistentBpmCommandQueue(commandService);
+    private final PersistentBpmCommandQueue queue = new PersistentBpmCommandQueue(commandService, null);
 
     @BeforeEach
     @SuppressWarnings("unchecked")

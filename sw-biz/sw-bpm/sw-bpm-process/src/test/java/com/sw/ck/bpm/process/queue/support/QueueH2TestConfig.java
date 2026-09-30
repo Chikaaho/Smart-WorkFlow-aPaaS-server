@@ -6,8 +6,11 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
+import com.sw.ck.bpm.process.queue.CommandEffectRecorder;
 import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.bpm.process.queue.TieredCommandReconcileJob;
 import com.sw.ck.bpm.process.service.impl.BpmCommandServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
@@ -162,7 +165,20 @@ public class QueueH2TestConfig {
     }
 
     @Bean
-    public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService) {
-        return new PersistentBpmCommandQueue(commandService);
+    public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService,
+                                                     BpmCommandEffectMapper effectMapper) {
+        return new PersistentBpmCommandQueue(commandService, effectMapper);
+    }
+
+    @Bean
+    public CommandEffectRecorder commandEffectRecorder(BpmCommandMapper commandMapper,
+                                                       BpmCommandEffectMapper effectMapper) {
+        return new CommandEffectRecorder(commandMapper, effectMapper);
+    }
+
+    @Bean
+    public TieredCommandReconcileJob tieredCommandReconcileJob(PersistentBpmCommandQueue queue,
+                                                               CommandEffectRecorder recorder) {
+        return new TieredCommandReconcileJob(queue, recorder);
     }
 }
