@@ -84,6 +84,9 @@ class TxnActionFlowH2Test {
     private C1PolicyService c1PolicyService;
     @Autowired
     private TxnActionTxOperations txOps;
+
+    @Autowired
+    private com.sw.ck.form.api.port.FormTxnActionPort port;
     @Autowired
     private com.sw.ck.form.txn.mapper.TxnReservationMapper reservationMapper;
     @Autowired
@@ -415,6 +418,47 @@ class TxnActionFlowH2Test {
         return actionService.create(formId, new TxnActionSaveRequest(key, name, type, null, cfg));
     }
 
+    // ==================== 受控 Port（BPM 节点内部调用口径） ====================
+
+    @Test
+    @DisplayName("受控 Port：内部调用沿用同一授权与事务内核；无权限被拒；describe 供发布期绑定校验")
+    void formTxnActionPortDelegatesWithServerSideAuthorization() {
+        String actionId = publishReserve("stock_port_reserve", 600L);
+
+        // 无权（既非超管也无 form:action:invoke）：拒绝
+        assertThatThrownBy(() -> port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+                actionId, "stock-1", "2", "NODE:demo:1", null, null)))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("form:action:invoke");
+
+        // 授权后：与 HTTP 入口同一事务内核（幂等键沿用调用方稳定键）
+        LoginUser user = LoginUserHolder.get();
+        user.setPermissions(java.util.List.of("form:action:invoke"));
+        var result = port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+                actionId, "stock-1", "2", "NODE:demo:1", null, null));
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
+        assertThat(result.reservationId()).isNotBlank();
+        assertThat(result.actionVersion()).isEqualTo(1);
+        assertThat(reservedOf("stock-1")).isEqualByComparingTo("2");
+
+        // 同键重放：返回原结果、无第二次效果
+        var replay = port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+                actionId, "stock-1", "2", "NODE:demo:1", null, null));
+        assertThat(replay.replay()).isTrue();
+        assertThat(replay.reservationId()).isEqualTo(result.reservationId());
+        assertThat(reservedOf("stock-1")).isEqualByComparingTo("2");
+        assertThat(countInvocations(actionId)).isEqualTo(1L);
+
+        // 发布期绑定校验：已发布动作可描述；缺失/跨租户返回 empty（不泄露）
+        var descriptor = port.describe(actionId).orElseThrow();
+        assertThat(descriptor.status()).isEqualTo("PUBLISHED");
+        assertThat(descriptor.actionType()).isEqualTo("RESERVE");
+        assertThat(descriptor.currentVersion()).isEqualTo(1);
+        assertThat(port.describe("no-such-action")).isEmpty();
+        System.out.println("[P62-EV] s2.port authorized=delegated no-permission=rejected replay=same-reservation"
+                + " describe=PUBLISHED missing=empty");
+    }
+
     private String publishAction(String key, String name, String type, TxnActionConfig cfg) {
         String id = create(key, name, type, cfg).id();
         actionService.publish(id);
@@ -730,6 +774,12 @@ class TxnActionFlowH2Test {
                                                            JdbcTemplate jdbcTemplate) {
             return new TxnActionTxOperations(invocationMapper, reservationMapper, ledgerMapper, versionMapper,
                     binding, new FormIdGenerator(), om, jdbcTemplate);
+        }
+
+        @Bean
+        public com.sw.ck.form.api.port.FormTxnActionPort formTxnActionPort(TxnActionService actionService,
+                                                                         TxnActionExecutor executor) {
+            return new com.sw.ck.form.txn.port.FormTxnActionPortImpl(actionService, executor);
         }
 
         @Bean
