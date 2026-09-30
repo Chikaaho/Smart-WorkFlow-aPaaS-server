@@ -213,31 +213,40 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         }
         int retryCount = command.getRetryCount() == null ? 0 : command.getRetryCount();
         if (retryCount + 1 >= maxRetries) {
-            boolean failed = commandService.lambdaUpdate()
+            // 调度线程可能无登录态（如"无命令处理器"拒绝路径先于身份还原）：
+            // 与读取同口径挂起租户过滤，命令行 tenant_id 自承载、主键+状态+令牌定位
+            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                boolean failed = commandService.lambdaUpdate()
+                        .eq(BpmCommand::getId, commandId)
+                        .eq(BpmCommand::getStatus, status)
+                        .eq(BpmCommand::getClaimToken, claimToken == null ? "" : claimToken)
+                        .set(BpmCommand::getStatus, CommandStatusEnum.FAILED.getCode())
+                        .set(BpmCommand::getFailureReason, truncate(reason))
+                        .set(BpmCommand::getFinishedAt, LocalDateTime.now())
+                        .update();
+                if (!failed) {
+                    log.warn("命令终态失败改判被跳过: commandId={} 状态已变化", commandId);
+                    return false;
+                }
+                log.warn("命令终态失败: commandId={}, retries={}, reason={}", commandId, retryCount + 1, reason);
+                return false;
+            }
+        }
+        long backoff = backoffMillis * (1L << Math.min(retryCount, 10));
+        boolean retried;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            retried = commandService.lambdaUpdate()
                     .eq(BpmCommand::getId, commandId)
                     .eq(BpmCommand::getStatus, status)
                     .eq(BpmCommand::getClaimToken, claimToken == null ? "" : claimToken)
-                    .set(BpmCommand::getStatus, CommandStatusEnum.FAILED.getCode())
+                    .set(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                    .set(BpmCommand::getRetryCount, retryCount + 1)
+                    .set(BpmCommand::getNextRetryAt, LocalDateTime.now().plusNanos(backoff * 1_000_000))
                     .set(BpmCommand::getFailureReason, truncate(reason))
-                    .set(BpmCommand::getFinishedAt, LocalDateTime.now())
                     .update();
-            if (!failed) {
-                log.warn("命令终态失败改判被跳过: commandId={} 状态已变化", commandId);
-                return false;
-            }
-            log.warn("命令终态失败: commandId={}, retries={}, reason={}", commandId, retryCount + 1, reason);
-            return false;
         }
-        long backoff = backoffMillis * (1L << Math.min(retryCount, 10));
-        boolean retried = commandService.lambdaUpdate()
-                .eq(BpmCommand::getId, commandId)
-                .eq(BpmCommand::getStatus, status)
-                .eq(BpmCommand::getClaimToken, claimToken == null ? "" : claimToken)
-                .set(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
-                .set(BpmCommand::getRetryCount, retryCount + 1)
-                .set(BpmCommand::getNextRetryAt, LocalDateTime.now().plusNanos(backoff * 1_000_000))
-                .set(BpmCommand::getFailureReason, truncate(reason))
-                .update();
         if (!retried) {
             log.warn("命令重试改派被跳过: commandId={} 状态已变化", commandId);
             return false;
@@ -249,7 +258,12 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     /** 失败处理前的命令读取；测试以此注入"读取后、写入前"的交接窗口快照。 */
     protected BpmCommand readCommandForFailure(Long commandId) {
-        return commandService.getById(commandId);
+        // 调度线程无登录态（含"无命令处理器"拒绝路径先于身份还原）：与 claimDue/reclaimStale
+        // 同口径挂起租户过滤——命令行 tenant_id 自承载租户语义，主键定位不涉及租户裁剪
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return commandService.getById(commandId);
+        }
     }
 
     @Override

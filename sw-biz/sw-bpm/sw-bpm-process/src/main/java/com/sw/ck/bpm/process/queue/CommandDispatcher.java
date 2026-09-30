@@ -119,6 +119,14 @@ public class CommandDispatcher {
         }
     }
 
+    /**
+     * 单命令消费（public 测试接缝，供隔离升级/回退演练直调指定命令，
+     * 与 dispatchOne 同一消费语义：身份回查→处理器分发→完成/重试/拒绝）。
+     */
+    public void dispatchOneForTest(CommandEnvelope envelope) {
+        dispatchOne(envelope);
+    }
+
     /** 普通车道轮询（包内可见，供测试直调）。 */
     void pollNormal() {
         try {
