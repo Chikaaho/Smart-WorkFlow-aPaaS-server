@@ -80,7 +80,23 @@ public enum FormErrorCode implements ErrorCode {
     DYNAMIC_TABLE_METADATA_UNAVAILABLE(1510, "form.dynamic_table_metadata_unavailable",
             "动态宽表元数据或引用检查不可用，已拒绝本次操作"),
     DYNAMIC_ROW_LOCK_TIMEOUT(1511, "form.dynamic_row_lock_timeout",
-            "该记录正在被其他操作占用，请稍后重试");
+            "该记录正在被其他操作占用，请稍后重试"),
+
+    // ==================== 本地事务动作（1600-1699，P62 首事务阶段） ====================
+    ACTION_NOT_FOUND(1600, "form.action_not_found", "事务动作不存在或未发布"),
+    ACTION_DISABLED(1601, "form.action_disabled", "事务动作已停用，不能发起新调用"),
+    ACTION_CONFIG_INVALID(1602, "form.action_config_invalid", "动作配置未通过发布校验，请修正后重试"),
+    ACTION_FIELD_BINDING_INVALID(1603, "form.action_field_binding_invalid", "动作字段绑定无效，请检查后重试"),
+    ACTION_INSUFFICIENT_AVAILABLE(1604, "form.action_insufficient_available", "可用数量不足，操作被拒绝"),
+    ACTION_VERSION_CONFLICT(1605, "form.action_version_conflict", "目标数据版本冲突，请刷新后重试"),
+    ACTION_IDEMPOTENCY_CONFLICT(1606, "form.action_idempotency_conflict", "相同调用标识对应不同请求内容，已拒绝"),
+    ACTION_TARGET_NOT_FOUND(1607, "form.action_target_not_found", "动作目标记录不存在或已删除"),
+    ACTION_RESERVATION_NOT_FOUND(1608, "form.action_reservation_not_found", "预占凭据不存在"),
+    ACTION_RESERVATION_NOT_ACTIVE(1609, "form.action_reservation_not_active", "预占凭据已结算或已释放，不能重复操作"),
+    ACTION_RESERVATION_EXPIRED(1610, "form.action_reservation_expired", "预占已过期，不能确认"),
+    ACTION_QUANTITY_INVALID(1611, "form.action_quantity_invalid", "数量不符合模型声明的精度或范围"),
+    C1_WRITE_PROTECTED(1612, "form.c1_write_protected", "该字段为 C1 受保护数据，只能通过受控事务动作写入"),
+    C1_POLICY_INVALID(1613, "form.c1_policy_invalid", "现有数据不满足 C1 约束，无法启用保护");
 
     private final int code;
     private final String errorKey;
