@@ -362,7 +362,11 @@ class P62BudgetMeasurementPgTest {
                 try {
                     List<Sample> samples = new ArrayList<>();
                     while (System.currentTimeMillis() < formalEnd) {
-                        samples.add(action.call());
+                        Sample sample = action.call();
+                        // 容量保护：异常突发（如认证故障）下截断明细仅保留计数（回执声明）
+                        if (samples.size() < 250_000) {
+                            samples.add(sample);
+                        }
                         submitCount.incrementAndGet();
                     }
                     return samples;
