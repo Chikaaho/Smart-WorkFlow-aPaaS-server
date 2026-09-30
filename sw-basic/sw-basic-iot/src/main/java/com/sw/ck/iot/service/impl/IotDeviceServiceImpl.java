@@ -194,6 +194,22 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
     }
 
     @Override
+    public List<IotDeviceCommand> findByApprovalBizId(Long tenantId, String approvalBizId) {
+        if (approvalBizId == null || approvalBizId.isBlank()) {
+            return List.of();
+        }
+        // 跨模块回查按显式租户边界执行（挂起线程租户，避免登录态缺失/错位）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return commandMapper.selectList(
+                    Wrappers.<IotDeviceCommand>lambdaQuery()
+                            .eq(IotDeviceCommand::getTenantId, tenantId)
+                            .eq(IotDeviceCommand::getApprovalBizId, approvalBizId)
+                            .orderByAsc(IotDeviceCommand::getId));
+        }
+    }
+
+    @Override
     public IotDeviceCommand getCommand(Long commandId) {
         return commandMapper.selectById(commandId);
     }

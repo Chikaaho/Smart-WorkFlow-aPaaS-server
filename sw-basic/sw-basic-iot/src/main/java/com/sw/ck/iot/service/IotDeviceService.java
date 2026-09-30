@@ -61,6 +61,16 @@ public interface IotDeviceService extends BaseService<IotDevice> {
      *
      * <p>仅落库入队，不执行外部 I/O；同一幂等键重复调用返回既有命令，不新建记录。</p>
      */
+    /**
+     * 按审批业务 ID 回查关联设备命令（P62 S4 关联回查；实现侧挂起租户过滤，
+     * 以显式 tenantId 为边界）。
+     *
+     * @param tenantId      租户 ID
+     * @param approvalBizId 审批业务 ID（流程实例 ID）
+     * @return 关联命令列表（无关联时为空列表）
+     */
+    java.util.List<com.sw.ck.iot.entity.IotDeviceCommand> findByApprovalBizId(Long tenantId, String approvalBizId);
+
     IotDeviceCommand dispatchCommandIdempotent(String productId, String deviceName,
             String commandKey, String commandType, String payload, String approvalBizId,
             String idempotentKey);

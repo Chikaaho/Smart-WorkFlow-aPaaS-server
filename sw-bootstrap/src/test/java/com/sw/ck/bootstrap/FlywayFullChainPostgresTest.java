@@ -94,8 +94,8 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(6, result.migrationsExecuted,
-                "全新库应执行 6 条（V0.1.0 基线 + V0.1.1/V0.1.2/V0.1.3 增量 + 2 个 R__ 可重复对账），实际: "
+        assertEquals(7, result.migrationsExecuted,
+                "全新库应执行 7 条（V0.1.0 基线 + V0.1.1/V0.1.2/V0.1.3 增量 + 3 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
     }
 
@@ -110,7 +110,7 @@ class FlywayFullChainPostgresTest {
     @DisplayName("基线迁移后：info().applied() 共 6 条（0.1.0—0.1.3 + 2 个可重复对账），终点 0.1.3")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
-        assertEquals(6, applied.length, "已应用迁移数应为 6（基线 + 3 个增量 + 2 个 R__）");
+        assertEquals(7, applied.length, "已应用迁移数应为 7（基线 + 3 个增量 + 3 个 R__）");
         boolean baselineSeen = false;
         int incrementalSeen = 0;
         int repeatableCount = 0;
@@ -127,7 +127,7 @@ class FlywayFullChainPostgresTest {
         }
         assertTrue(baselineSeen, "V0.1.0 基线应已应用");
         assertEquals(3, incrementalSeen, "V0.1.1/V0.1.2/V0.1.3 增量应已应用");
-        assertEquals(2, repeatableCount, "2 个 R__ 菜单可重复对账应已应用");
+        assertEquals(3, repeatableCount, "3 个 R__ 菜单可重复对账应已应用");
         assertEquals("0.1.3", flyway().info().current().getVersion().getVersion(),
                 "终点当前版本应为 0.1.3 增量");
     }
@@ -161,7 +161,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立基线库应成功");
-        assertEquals(6, first.migrationsExecuted, "基线库应含 6 条，实际: " + first.migrationsExecuted);
+        assertEquals(7, first.migrationsExecuted, "基线库应含 7 条，实际: " + first.migrationsExecuted);
 
         try (Connection conn = DriverManager.getConnection(tamperedUrl, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {

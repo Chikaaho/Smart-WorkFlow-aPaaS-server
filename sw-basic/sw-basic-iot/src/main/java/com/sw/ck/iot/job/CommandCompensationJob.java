@@ -60,6 +60,9 @@ public class CommandCompensationJob {
         // 2.1 回收滞留发送中的命令（发送者崩溃留下的 SENDING 租约）
         processStaleSending();
 
+        // 2.2 回执超时 → 待核实（P62 S4：已真实发出但无确定业务回执，转 UNKNOWN，禁止自动重发）
+        processReceiptTimeoutCommands();
+
         // 3. 重试瞬时失败（真实重试，受重试预算与过期时间约束）
         retryFailedCommands();
 
@@ -123,6 +126,27 @@ public class CommandCompensationJob {
         for (IotDeviceCommand command : stale) {
             withCommandTenant(command, () -> commandQueueService.reclaimStaleSending(command.getId(),
                     LocalDateTime.now().minusMinutes(STUCK_MINUTES)));
+        }
+    }
+
+    /**
+     * 回执超时处理（P62 分级执行 S4）：SENT/DELIVERED/ACKED 超过回执等待窗口
+     * 且无确定业务回执 → 待核实 UNKNOWN。传输已真实发出，结果不明不自动当失败重发；
+     * 后续由受守卫的设备回执（可收敛 UNKNOWN）或独立授权人工核实确定终态。
+     */
+    private void processReceiptTimeoutCommands() {
+        List<IotDeviceCommand> timeouts = commandQueueService.getReceiptTimeoutCommands();
+        if (timeouts.isEmpty()) {
+            return;
+        }
+        log.info("发现 {} 条回执超时命令，转待核实", timeouts.size());
+        for (IotDeviceCommand command : timeouts) {
+            withCommandTenant(command, () -> {
+                commandQueueService.markUnknown(command.getId(),
+                        "回执超时：传输已发出但未获确定业务回执（转待核实，不自动重发）");
+                log.warn("命令已转待核实: id={}, productId={}, deviceName={}",
+                        command.getId(), command.getProductId(), command.getDeviceName());
+            });
         }
     }
 

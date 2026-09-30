@@ -195,6 +195,15 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     }
 
     @Override
+    public List<IotDeviceCommand> getReceiptTimeoutCommands() {
+        // 补偿调度线程无登录态：挂起租户过滤（同 getExpiredCommands 口径）
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return commandMapper.selectReceiptTimeout(LocalDateTime.now(), null);
+        }
+    }
+
+    @Override
     public List<IotDeviceCommand> getStuckCommands(int stuckMinutes) {
         // 补偿调度线程无登录态：挂起租户过滤（同 getExpiredCommands 口径）
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =

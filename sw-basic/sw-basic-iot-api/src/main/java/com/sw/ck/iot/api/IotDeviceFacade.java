@@ -39,6 +39,15 @@ public interface IotDeviceFacade {
                                    String payload, String approvalBizId);
 
     /**
+     * 按审批业务 ID（流程实例 ID）回查关联设备命令（P62 分级执行 S4 关联回查，U07）。
+     *
+     * @param tenantId          租户 ID
+     * @param approvalBizId     审批业务 ID（流程实例 ID）
+     * @return 关联命令摘要列表（命令 ID/设备/命令键/状态/结果时间）；无关联时为空列表
+     */
+    java.util.List<DeviceCommandSummary> findByApprovalBizId(Long tenantId, String approvalBizId);
+
+    /**
      * 下发设备控制命令（调用方指定<b>稳定幂等键</b>；Phase 4 可靠业务事件用）。
      *
      * <p>与 {@link #dispatchCommand} 语义一致（仅入队，不做外部 I/O），但幂等键来自业务稳定身份

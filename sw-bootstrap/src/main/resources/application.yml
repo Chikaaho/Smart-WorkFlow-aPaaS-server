@@ -192,6 +192,8 @@ sw:
       - /auth/sso/candidate
       - /auth/sso/*/authorize-login
       - /openapi/v1/**
+      # P62 S4：设备命令结果回执通道（外部传输对端回调，HMAC 来源签名守卫，无登录态）
+      - /iot/commands/receipt
       # I5 收口：仅放行无详情的最小健康探针（liveness/readiness），详细健康、
       # 指标、环境与管理入口一律需要认证；swagger 调试入口不再随生产开放
       - /actuator/health

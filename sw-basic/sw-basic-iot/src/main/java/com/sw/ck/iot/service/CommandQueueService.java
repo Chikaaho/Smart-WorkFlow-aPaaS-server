@@ -107,6 +107,13 @@ public interface CommandQueueService {
     List<IotDeviceCommand> getExpiredCommands();
 
     /**
+     * 查询回执超时命令（已发出且超过回执等待窗口、无确定业务回执）。
+     *
+     * @return 回执超时命令列表（调用方转为待核实 UNKNOWN，不自动重发）
+     */
+    List<IotDeviceCommand> getReceiptTimeoutCommands();
+
+        /**
      * 查询滞留命令（超过指定时间未处理）。
      *
      * @param stuckMinutes 滞留时间阈值（分钟）

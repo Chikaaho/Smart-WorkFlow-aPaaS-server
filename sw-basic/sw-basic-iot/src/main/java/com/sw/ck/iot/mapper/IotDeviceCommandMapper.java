@@ -51,6 +51,22 @@ public interface IotDeviceCommandMapper extends BaseMapperX<IotDeviceCommand> {
     }
 
     /**
+     * 查询回执超时命令（P62 S4：已真实发出 SENT/DELIVERED/ACKED，
+     * 超过回执等待窗口仍无确定业务回执 → 待核实 UNKNOWN；据此转换，禁止自动重发）。
+     *
+     * @param now      当前时间
+     * @param tenantId 租户 ID（null = 跨租户扫描，供补偿调度挂起租户过滤使用）
+     * @return 回执超时命令列表
+     */
+    default List<IotDeviceCommand> selectReceiptTimeout(LocalDateTime now, Long tenantId) {
+        return selectList(new LambdaQueryWrapper<IotDeviceCommand>()
+                .eq(tenantId != null, IotDeviceCommand::getTenantId, tenantId)
+                .eq(IotDeviceCommand::getDeleted, 0)
+                .in(IotDeviceCommand::getStatus, "SENT", "DELIVERED", "ACKED")
+                .le(IotDeviceCommand::getExpiryTime, now));
+    }
+
+    /**
      * 按幂等键查询命令（防重复）。
      *
      * @param idempotentKey 幂等键
