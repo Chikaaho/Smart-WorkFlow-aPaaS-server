@@ -85,6 +85,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * </pre>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@org.junit.jupiter.api.TestMethodOrder(org.junit.jupiter.api.MethodOrderer.OrderAnnotation.class)
 @DisplayName("P62 复核02 G1/G2b 固定预算测量（真实HTTP入口，手动：-Dp62.budget.measurement=true）")
 @EnabledIfSystemProperty(named = "p62.budget.measurement", matches = "true")
 class P62BudgetMeasurementPgTest {
@@ -226,6 +227,7 @@ class P62BudgetMeasurementPgTest {
     // ==================== G1a 场景一：实时动作（预算 P99≤300ms） ====================
 
     @Test
+    @org.junit.jupiter.api.Order(2)
     @DisplayName("G1a 实时动作：16并发（两租户各8）× 预热60s + 正式5min，真实HTTP入口")
     void realTimeActionBudget() throws Exception {
         runLoad(new LoadSpec("realtime-action", CONCURRENCY_TOTAL,
@@ -237,6 +239,7 @@ class P62BudgetMeasurementPgTest {
     // ==================== G1a 场景二 + G1b：生产轻流程（受理 P99≤2s + 配对） ====================
 
     @Test
+    @org.junit.jupiter.api.Order(3)
     @DisplayName("G1a 轻流程：16并发 × 预热60s + 正式5min，入口至持久受理 P99≤2s（真实HTTP入口）")
     void lightProcessAcceptanceBudget() throws Exception {
         runLoad(new LoadSpec("light-process-acceptance", CONCURRENCY_TOTAL,
@@ -246,6 +249,7 @@ class P62BudgetMeasurementPgTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Order(4)
     @DisplayName("G1b 受理→目标提交配对：同轮按 biz_record_id 关联，有效对数/未完成数/分布（PG时钟双侧）")
     void lightProcessAcceptanceToTargetPairs() throws Exception {
         Path samples = evidenceDir.resolve("light-process-acceptance-samples.csv.gz");
@@ -370,7 +374,8 @@ class P62BudgetMeasurementPgTest {
     // ==================== 恢复段（U08 套件内自检；权威证据=真实中断演练 G2a） ====================
 
     @Test
-    @DisplayName("恢复段（套件内）：100条无外部依赖命令收敛≤120s、重复效果=0")
+    @org.junit.jupiter.api.Order(1)
+    @DisplayName("恢复段（套件内，先于负载场景单独度量）：100条无外部依赖命令收敛≤120s、重复效果=0")
     void recoveryDrainBudget() throws Exception {
         TenantFixture t0 = fixtures.get(0L);
         com.sw.ck.bpm.process.service.TxnBatchService batchService =
@@ -931,12 +936,25 @@ class P62BudgetMeasurementPgTest {
 
     private TenantFixture seedTenant(Long tenant, long userId, String formKey, int objects,
                                      double balance, String actionName) throws Exception {
+        // 租户注册（I5 租户有效性：未注册租户的 debug 身份装载直接失败→401）
+        jdbc.update("INSERT INTO sys_tenant (id, create_time, update_time, deleted, tenant_id,"
+                        + " version, name, code, status, description, domain_name) "
+                        + "VALUES (?, current_timestamp, current_timestamp, 0, 0, 0, ?, ?, 0,"
+                        + " '预算测量隔离租户', 'localhost') ON CONFLICT (id) DO NOTHING",
+                tenant, "预算测量租户" + tenant, "p62-budget-t" + tenant);
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, ?, 'seed-not-a-login-secret', '预算测量操作员', ?, 0) "
-                + "ON CONFLICT (id) DO NOTHING", userId, "budget-op-" + tenant, tenant);
+                + "ON CONFLICT (id) DO NOTHING", userId, "budget-op-" + userId, tenant);
         jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) "
                 + "VALUES (?, ?, ?, 2) ON CONFLICT (id) DO NOTHING",
                 userId, tenant, userId);
+        // 表单提交授权（form:data:submit 菜单 350 由 V0.1.0 登记；role 2 授权随种子补齐）
+        jdbc.update("INSERT INTO sys_role_menu (id, create_time, update_time, deleted, tenant_id,"
+                        + " version, role_id, menu_id) "
+                        + "SELECT ?, current_timestamp, current_timestamp, 0, 0, 0, 2, 350 "
+                        + "WHERE NOT EXISTS (SELECT 1 FROM sys_role_menu WHERE role_id = 2"
+                        + " AND menu_id = 350 AND deleted = 0) ON CONFLICT (id) DO NOTHING",
+                350000L + userId);
         FormDefService formDefService = app.getBean(FormDefService.class);
         com.sw.ck.form.txn.service.TxnActionService actionService =
                 app.getBean(com.sw.ck.form.txn.service.TxnActionService.class);
