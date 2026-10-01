@@ -94,10 +94,12 @@ class P62BudgetMeasurementPgTest {
     private static final int CONCURRENCY_TOTAL = 16;
     private static final int CONCURRENCY_STRESS = 64;
     private static final int HOTSPOT_MOD_G1 = 10;
-    private static final int G1_WARMUP_SECONDS = 60;
-    private static final int G1_FORMAL_SECONDS = 300;
-    private static final int STRESS_WARMUP_SECONDS = 30;
-    private static final int STRESS_FORMAL_SECONDS = 300;
+    // 合同默认 60/300 与 30/300；-Dp62.warmup.seconds/-Dp62.formal.seconds 仅用于
+    // 正式测量前的短分布验证（产出样本标注 shortVerify=true，不作为 U08 判定样本）
+    private static final int G1_WARMUP_SECONDS = Integer.getInteger("p62.warmup.seconds", 60);
+    private static final int G1_FORMAL_SECONDS = Integer.getInteger("p62.formal.seconds", 300);
+    private static final int STRESS_WARMUP_SECONDS = Integer.getInteger("p62.stress.warmup.seconds", 30);
+    private static final int STRESS_FORMAL_SECONDS = Integer.getInteger("p62.stress.formal.seconds", 300);
     private static final int OBJECTS_PER_TENANT_G1 = 1000;
     private static final int OBJECTS_PER_TENANT_STRESS = 10000;
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
@@ -287,15 +289,18 @@ class P62BudgetMeasurementPgTest {
         String summary = ("g1b.pairs scenario=light-process-acceptance accepted=%d validPairs=%d"
                 + " succeededPairs=%d rejectedPairs=%d incomplete=%d"
                 + " pairP50=%.1fms pairP95=%.1fms pairP99=%.1fms pairMax=%.1fms"
-                + " clock=PG(accept=create_time,target=invocation.update_time) runId=%s")
+                + " boundary=accept_row_ts(<=accept-commit) -> target_row_ts(<=target-visible;"
+                + " post-drain re-read probes visibility) runId=%s")
                 .formatted(recordMeta.size(), pairs.size(), succeededPairs, rejectedPairs, incomplete,
                         percentile(latencies, 0.50), percentile(latencies, 0.95),
                         percentile(latencies, 0.99), percentile(latencies, 1.0), runId);
         StringBuilder pairCsv = new StringBuilder(
-                "record_id,tenant,accept_ts,target_ts,status,latency_ms\n");
+                "record_id,command_id,invocation_id,tenant,accept_row_ts,target_row_ts,status,"
+                        + "latency_ms\n");
         for (PairRow p : pairs) {
-            pairCsv.append(String.format(Locale.ROOT, "%s,%s,%s,%s,%s,%.1f%n",
-                    p.recordId(), p.tenant(), p.acceptTs(), p.targetTs(), p.status(), p.latencyMs()));
+            pairCsv.append(String.format(Locale.ROOT, "%s,%s,%s,%s,%s,%s,%s,%.1f%n",
+                    p.recordId(), p.commandId(), p.invocationId(), p.tenant(), p.acceptTs(),
+                    p.targetTs(), p.status(), p.latencyMs()));
         }
         writeNew(evidenceDir.resolve("light-process-acceptance-pairs.csv.gz"),
                 out -> {
@@ -303,6 +308,21 @@ class P62BudgetMeasurementPgTest {
                         gz.write(pairCsv.toString().getBytes(StandardCharsets.UTF_8));
                     }
                 });
+        // 提交后只读可见性探针：重读前 100 对行，记录 PG 当前时钟作为可见上界证据
+        String pgNow = jdbc.queryForObject("SELECT to_char(now(), 'YYYY-MM-DD HH24:MI:SS.MS')",
+                String.class);
+        long visibleProbe = 0;
+        for (PairRow p : pairs.subList(0, Math.min(100, pairs.size()))) {
+            Integer n = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sw_form_txn_invocation WHERE id::text = ?"
+                            + " AND status IN ('SUCCEEDED','REJECTED')", Integer.class, p.invocationId());
+            if (n != null && n == 1) {
+                visibleProbe++;
+            }
+        }
+        summary += "\nvisibility-probe reRead=100 visible=" + visibleProbe
+                + " observedAtPgClock=" + pgNow
+                + " (提交后只读可见；accept_row_ts<=受理提交时刻, target_row_ts<=目标可见时刻)";
         writeEvidence("light-process-acceptance-pairs.txt", summary);
         System.out.println("[P62-EV] " + summary);
         org.assertj.core.api.Assertions.assertThat(pairs.size()).as("有效配对数>0").isGreaterThan(0);
@@ -331,20 +351,22 @@ class P62BudgetMeasurementPgTest {
         System.out.println("[P62-EV] g1b drain-wait timeout after 8min（未完成样本如实计入）");
     }
 
-    private record PairRow(String recordId, String tenant, String acceptTs, String targetTs,
-                           String status, double latencyMs) {
+    private record PairRow(String recordId, String commandId, String invocationId, String tenant,
+                           String acceptTs, String targetTs, String status, double latencyMs) {
     }
 
     private void collectPairs(List<String> recordIds, List<PairRow> pairs,
                               Map<String, String[]> recordMeta) {
         String in = String.join(",", recordIds.stream().map(id -> "'" + id + "'").toList());
+        // 目标提交行：动作调用（节点键）行；含调用行 id 作同对象锚
         Map<String, Map<String, Object>> invocations = new HashMap<>();
-        jdbc.queryForList("SELECT DISTINCT ON (biz_record_id) biz_record_id, status,"
-                        + " to_char(update_time, 'YYYY-MM-DD HH24:MI:SS.MS') AS target_ts"
+        jdbc.queryForList("SELECT DISTINCT ON (biz_record_id) biz_record_id, id::text AS invocation_id,"
+                        + " status, to_char(update_time, 'YYYY-MM-DD HH24:MI:SS.MS') AS target_ts"
                         + " FROM sw_form_txn_invocation WHERE biz_record_id IN (" + in + ")"
                         + " AND invocation_key LIKE 'NODE:%' AND status IN ('SUCCEEDED','REJECTED')"
                         + " ORDER BY biz_record_id, update_time")
                 .forEach(row -> invocations.put(String.valueOf(row.get("biz_record_id")), row));
+        // 受理行 + 受理命令（FLOW_START 行）——record/command/target 同对象三元
         Map<String, String> acceptTs = new HashMap<>();
         jdbc.queryForList("SELECT id::text AS rid, to_char(create_time, 'YYYY-MM-DD HH24:MI:SS.MS')"
                         + " AS accept_ts FROM " + fixtures.get(0L).stockTable
@@ -353,6 +375,13 @@ class P62BudgetMeasurementPgTest {
                         + " FROM " + fixtures.get(100L).stockTable + " WHERE id::text IN (" + in + ")")
                 .forEach(row -> acceptTs.put(String.valueOf(row.get("rid")),
                         String.valueOf(row.get("accept_ts"))));
+        Map<String, String> commandIds = new HashMap<>();
+        String commandKeys = recordIds.stream().map(id -> "'FLOW_START:" + id + "'")
+                .collect(java.util.stream.Collectors.joining(","));
+        jdbc.queryForList("SELECT substring(command_key from 12) AS rid, id::text AS cid"
+                        + " FROM sw_bpm_command WHERE command_key IN (" + commandKeys + ")")
+                .forEach(row -> commandIds.put(String.valueOf(row.get("rid")),
+                        String.valueOf(row.get("cid"))));
         for (String recordId : recordIds) {
             Map<String, Object> inv = invocations.get(recordId);
             String acc = acceptTs.get(recordId);
@@ -366,7 +395,8 @@ class P62BudgetMeasurementPgTest {
             if (latency < 0) {
                 continue;
             }
-            pairs.add(new PairRow(recordId, meta[3], acc,
+            pairs.add(new PairRow(recordId, commandIds.getOrDefault(recordId, ""),
+                    String.valueOf(inv.get("invocation_id")), meta[3], acc,
                     String.valueOf(inv.get("target_ts")), String.valueOf(inv.get("status")), latency));
         }
     }
@@ -480,6 +510,11 @@ class P62BudgetMeasurementPgTest {
         }, "p62-stress-sampler");
         sampler.setDaemon(true);
         sampler.start();
+        // OA 并行请求（复核03 G2b）：2 条代表 OA 读路径（/api/auth/menus，页面加载依赖）
+        // 与压力窗口全程并行，逐请求记录 endpoint/时间/结果/耗时
+        AtomicBoolean oaRunning = new AtomicBoolean(true);
+        Thread oaWorker = oaParallelWorker(oaRunning);
+        oaWorker.start();
         try {
             runLoad(new LoadSpec("stress-boundary", CONCURRENCY_STRESS,
                     STRESS_WARMUP_SECONDS, STRESS_FORMAL_SECONDS, 2, this::invokeRealtimeOnce));
@@ -488,8 +523,66 @@ class P62BudgetMeasurementPgTest {
             System.out.println("[P62-EV] g2b observation-only verdict=" + report.verdict());
         } finally {
             sampling.set(false);
+            oaRunning.set(false);
             sampler.join(10_000);
+            oaWorker.join(10_000);
         }
+    }
+
+    /** OA 并行读 worker（复核03 G2b）：压力窗口内持续请求 /api/auth/menus，逐请求落 CSV。 */
+    private Thread oaParallelWorker(AtomicBoolean running) {
+        return new Thread(() -> {
+            StringBuilder csv = new StringBuilder("endpoint,ts,latency_ms,http_status\n");
+            long count = 0;
+            long non200 = 0;
+            long errors = 0;
+            String bearer = "Bearer test_" + fixtures.get(0L).userId;
+            while (running.get()) {
+                long begin = System.nanoTime();
+                String outcome;
+                try {
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create("http://127.0.0.1:" + port + "/api/auth/menus"))
+                            .timeout(REQUEST_TIMEOUT)
+                            .header("Authorization", bearer)
+                            .GET()
+                            .build();
+                    HttpResponse<String> response = HTTP.send(request,
+                            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                    outcome = String.valueOf(response.statusCode());
+                    if (response.statusCode() != 200) {
+                        non200++;
+                    }
+                } catch (Exception e) {
+                    outcome = "ERROR:" + e.getClass().getSimpleName();
+                    errors++;
+                }
+                double latency = (System.nanoTime() - begin) / 1_000_000.0;
+                count++;
+                csv.append(String.format(Locale.ROOT, "/api/auth/menus,%s,%.1f,%s%n",
+                        LocalDateTime.now().format(TS), latency, outcome));
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            try {
+                writeNew(evidenceDir.resolve("oa-parallel-requests.csv"), out ->
+                        out.write(csv.toString().getBytes(StandardCharsets.UTF_8)));
+                String line = "oa-parallel endpoint=/api/auth/menus requests=" + count
+                        + " non200=" + non200 + " errors=" + errors
+                        + " window=stress-formal-parallel identity=test_"
+                        + fixtures.get(0L).userId;
+                Files.writeString(evidenceDir.resolve("oa-parallel-summary.txt"), line + "\n",
+                        StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE);
+                System.out.println("[P62-EV] " + line);
+            } catch (Exception e) {
+                System.out.println("[P62-EV] oa csv write failed: " + e);
+            }
+        }, "p62-oa-parallel");
     }
 
     // ==================== 负载框架 ====================
@@ -521,19 +614,24 @@ class P62BudgetMeasurementPgTest {
         TenantFixture fx = fixtures.get(tenant);
         String material = "B-" + runId + "-" + tenant + "-" + worker + "-"
                 + java.util.UUID.randomUUID();
+        // 实际动作目标：预置 1000 对象按固定序列选择（10% 热点跨线程共享），
+        // 经 target_record_id 透传为流程变量，TXN_ACTION recordIdSource=variable 解析——
+        // 样本 object_id 即真实动作目标（复核03 G1a 修正：不再以新业务键冒充目标）
+        String targetRecordId = pickRecord(fx, worker);
         String[] captured = new String[1];
         long begin = System.nanoTime();
-        String body = "{\"material\":\"" + material + "\",\"qty_available\":\"1000\",\"qty_reserved\":\"0\"}";
+        String body = "{\"material\":\"" + material + "\",\"qty_available\":\"1000\","
+                + "\"qty_reserved\":\"0\",\"target_record_id\":\"" + targetRecordId + "\"}";
         String outcome = post("/api/form/data/" + fx.formKey, fx.bearer, body,
                 json -> {
                     captured[0] = json;
                     return json != null && !json.isEmpty() ? "ACCEPTED" : "REJECTED";
                 });
-        // 配对键=服务端真实记录 id（HTTP data 回包），material 仅作对象标签
+        // 配对键=服务端真实记录 id（HTTP data 回包）；object_id=真实动作目标
         String realRecordId = captured[0] == null ? material
                 : captured[0].endsWith("\"") ? captured[0].substring(0, captured[0].length() - 1)
                 : captured[0];
-        return new String[]{material, realRecordId,
+        return new String[]{targetRecordId, realRecordId,
                 String.valueOf((System.nanoTime() - begin) / 1_000_000.0), outcome};
     }
 
@@ -611,10 +709,15 @@ class P62BudgetMeasurementPgTest {
         return json.substring(start, end);
     }
 
-    /** 固定种子目标选择：每 worker 确定随机序列（热点比例由场景 hotspotMod 决定）。 */
+    /** 固定种子目标选择：每 worker 一条贯穿全程的前进随机序列（复核03 G1a 修正——
+     * 旧实现每次调用重建同种子 Random，序列恒定导致每 worker 恒命中同一对象）。
+     * 热点=每租户 records[0]，由两租户各 8/32 worker 跨线程共享；其余均匀分布。 */
+    private final Map<Integer, Random> workerRandoms = new java.util.concurrent.ConcurrentHashMap<>();
+
     private String pickRecord(TenantFixture fx, int worker) {
         List<String> records = fx.recordIds;
-        Random random = new Random(SEED * 31 + worker * 2 + (fx.tenant == 0L ? 0 : 1));
+        Random random = workerRandoms.computeIfAbsent(worker,
+                w -> new Random(SEED * 31 + w * 2L + (fx.tenant == 0L ? 0 : 1)));
         if (random.nextInt(hotspotMod) == 0) {
             return records.get(0);
         }
@@ -796,6 +899,28 @@ class P62BudgetMeasurementPgTest {
         });
         legal.sort(Double::compare);
         long illegal = rejected[0] + timeouts[0] + errors[0];
+        // 目标分布复算（复核03 G1a/G2b 完成条件）：每租户 正式样本数/热点命中数与频率/
+        // 唯一目标数/热点跨worker数 —— 由样本文件逐行统计
+        Map<String, Long> tenantTotal = new LinkedHashMap<>();
+        Map<String, Long> tenantHotspot = new LinkedHashMap<>();
+        Map<String, java.util.Set<String>> tenantTargets = new LinkedHashMap<>();
+        Map<String, java.util.Set<String>> hotspotWorkers = new LinkedHashMap<>();
+        readGzipLines(sampleFile, line -> {
+            String[] parts = line.split(",", -1);
+            if (parts.length < 9 || !"FORMAL".equals(parts[0])) {
+                return;
+            }
+            String tenant = parts[3];
+            String target = parts[5];
+            String worker = parts[4];
+            tenantTotal.merge(tenant, 1L, Long::sum);
+            tenantTargets.computeIfAbsent(tenant, k -> new java.util.HashSet<>()).add(target);
+            TenantFixture fx = fixtures.get(Long.valueOf(tenant));
+            if (fx != null && !fx.recordIds.isEmpty() && fx.recordIds.get(0).equals(target)) {
+                tenantHotspot.merge(tenant, 1L, Long::sum);
+                hotspotWorkers.computeIfAbsent(tenant, k -> new java.util.HashSet<>()).add(worker);
+            }
+        });
         double rejectRate = formal[0] == 0 ? 1 : (double) rejected[0] / formal[0];
         String verdict = Double.isNaN(budgetMillis) ? "OBSERVATION-ONLY"
                 : (formal[0] >= 5000 && percentile(legal, 0.99) <= budgetMillis
@@ -809,17 +934,28 @@ class P62BudgetMeasurementPgTest {
                 + " warmup=%ds formal=%ds formalSamples=%d warmupSamples=%d legal=%d illegal=%d"
                 + " (rejected=%d timeout=%d error=%d) rejectRate=%.4f"
                 + " p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms budgetP99=%s verdict=%s"
-                + " seed=%d runId=%s samplesSha256=%s").formatted(
+                + " seed=%d runId=%s shortVerify=%s samplesSha256=%s").formatted(
                 scenario, port, reportConcurrency, reportWarmupSeconds, reportFormalSeconds,
                 report.formalSamples(), warmup[0], report.legal(), report.illegal(), report.rejected(),
                 report.timeouts(), report.errors(), report.rejectRate(), report.p50(), report.p95(),
                 report.p99(), report.max(),
                 Double.isNaN(budgetMillis) ? "N/A" : budgetMillis + "ms", verdict, SEED, runId,
-                report.sha256());
+                isShortVerify(), report.sha256());
         String name = Double.isNaN(budgetMillis) ? "stress-boundary-report.txt"
                 : scenario + "-report.txt";
-        writeEvidence(name, summary + "\noutcomes=" + outcomes);
-        System.out.println("[P62-EV] budget." + summary);
+        StringBuilder distribution = new StringBuilder();
+        for (String tenant : tenantTotal.keySet()) {
+            long total = tenantTotal.get(tenant);
+            long hot = tenantHotspot.getOrDefault(tenant, 0L);
+            distribution.append(String.format(Locale.ROOT,
+                    "\ntarget-distribution tenant=%s formal=%d hotspotHits=%d hotspotFreq=%.4f"
+                            + " uniqueTargets=%d hotspotSharedWorkers=%d",
+                    tenant, total, hot, total == 0 ? 0 : (double) hot / total,
+                    tenantTargets.get(tenant).size(),
+                    hotspotWorkers.getOrDefault(tenant, java.util.Set.of()).size()));
+        }
+        writeEvidence(name, summary + "\noutcomes=" + outcomes + distribution);
+        System.out.println("[P62-EV] budget." + summary + distribution);
         return report;
     }
 
@@ -882,6 +1018,12 @@ class P62BudgetMeasurementPgTest {
         return sb.toString();
     }
 
+    private static boolean isShortVerify() {
+        return !"300".equals(String.valueOf(G1_FORMAL_SECONDS))
+                || !"60".equals(String.valueOf(G1_WARMUP_SECONDS))
+                || !"300".equals(String.valueOf(STRESS_FORMAL_SECONDS));
+    }
+
     private static double percentile(List<Double> sorted, double q) {
         if (sorted.isEmpty()) {
             return 0;
@@ -924,7 +1066,8 @@ class P62BudgetMeasurementPgTest {
             sb.append("fixture tenant=").append(e.getKey()).append(" userId=").append(fx.userId)
                     .append(" formKey=").append(fx.formKey).append(" actionId=").append(fx.actionId)
                     .append(" processKey=").append(fx.lightProcessKey)
-                    .append(" objects=").append(fx.recordIds.size()).append('\n');
+                    .append(" objects=").append(fx.recordIds.size())
+                    .append(" hotspotId=").append(fx.recordIds.get(0)).append('\n');
         }
         sb.append("budgetContract=realtime P99<=300ms entry->commit; light acceptance P99<=2s entry->persistent-acceptance;"
                 + " client-observed loopback latency is declared upper bound of server entry->commit\n");
@@ -994,7 +1137,8 @@ class P62BudgetMeasurementPgTest {
                     node("start", "START", Map.of()),
                     node("act-1", "TXN_ACTION", Map.of(
                             "name", "库存预占", "actionId", fx.actionId,
-                            "recordIdSource", "instanceBusinessKey", "quantity", "1",
+                            "recordIdSource", "variable", "recordIdVariable", "variable:targetRecordId",
+                            "quantity", "1",
                             "failureStrategy", "BLOCK")),
                     node("end", "END", Map.of()),
                     edge("e1", "start", "act-1"),
@@ -1040,7 +1184,8 @@ class P62BudgetMeasurementPgTest {
         return "{\"schemaVersion\":1,\"title\":\"预算测量库存\",\"fields\":["
                 + "{\"name\":\"material\",\"type\":\"TEXT\",\"label\":\"物料\",\"required\":false},"
                 + "{\"name\":\"qty_available\",\"type\":\"NUMBER\",\"label\":\"可用量\",\"required\":false},"
-                + "{\"name\":\"qty_reserved\",\"type\":\"NUMBER\",\"label\":\"预占量\",\"required\":false}]}";
+                + "{\"name\":\"qty_reserved\",\"type\":\"NUMBER\",\"label\":\"预占量\",\"required\":false},"
+                + "{\"name\":\"target_record_id\",\"type\":\"TEXT\",\"label\":\"动作目标记录\",\"required\":false}]}";
     }
 
     private static Map<String, Object> data(Object... kv) {

@@ -88,6 +88,14 @@ public final class P62RecoveryDrillWorker {
                     provider.setPrimary(true);
                     ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62DrillLoginContextProvider", provider);
+                    // 演练资产（仅隔离进程）：异步任务锁 60s——真实中断后新进程在锁过期后重执行
+                    org.springframework.beans.factory.support.RootBeanDefinition lockConfigurer =
+                            new org.springframework.beans.factory.support.RootBeanDefinition();
+                    lockConfigurer.setInstanceSupplier(() ->
+                            (org.flowable.spring.boot.ProcessEngineConfigurationConfigurer) cfg ->
+                                    cfg.setAsyncExecutorAsyncJobLockTimeInMillis(60_000));
+                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                            .registerBeanDefinition("p62DrillAsyncLockConfigurer", lockConfigurer);
                     // debug-auth kickOut 走 Redis 缓存：隔离演练无 Redis，替换为无操作缓存
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
@@ -104,14 +112,138 @@ public final class P62RecoveryDrillWorker {
         ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         root.setLevel(ch.qos.logback.classic.Level.WARN);
+        ch.qos.logback.classic.Logger flowableJobs = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger("org.flowable.job.service.impl.asyncexecutor");
+        flowableJobs.setLevel(ch.qos.logback.classic.Level.INFO);
 
         switch (mode) {
             case "accept" -> acceptAndHold(app, evidenceDir, runId);
             case "recover" -> readyAndHold(app, evidenceDir, readyFile);
             case "seed-isolation" -> seedIsolationAndHold(app, evidenceDir, runId, readyFile);
             case "plain" -> readyAndHold(app, evidenceDir, readyFile);
+            case "window-submit" -> windowSubmitAndHold(app, evidenceDir, runId, readyFile);
+            case "execute-job" -> executeJobAndHold(app, evidenceDir, readyFile, args[6]);
             default -> throw new IllegalArgumentException("未知模式: " + mode);
         }
+    }
+
+    /**
+     * G3a 恢复进程 B（复核03）：新进程经 Flowable 生产管理 API
+     * {@code ManagementService.executeJob} 立即执行中断残留的异步任务（管理控制台
+     * 恢复卡住任务的真实路径），经同一命令栈重执行节点委托（幂等键重放），
+     * 写执行证据后驻留。
+     */
+    private static void executeJobAndHold(ConfigurableApplicationContext app, Path evidenceDir,
+                                          String readyFile, String jobId) throws Exception {
+        writeNewFile(evidenceDir.resolve(readyFile == null ? "window-recover-ready.txt" : readyFile),
+                "pid=" + ProcessHandle.current().pid()
+                        + " mode=execute-job jobId=" + jobId
+                        + " at=" + java.time.LocalDateTime.now() + "\n");
+        String result = asOperator(() -> {
+            var managementService = app.getBean(org.flowable.engine.ManagementService.class);
+            managementService.executeJob(jobId);
+            return "EXECUTED";
+        });
+        writeNewFile(evidenceDir.resolve("window-job-executed.txt"),
+                "pid=" + ProcessHandle.current().pid() + " jobId=" + jobId
+                        + " managementService.executeJob=" + result
+                        + " at=" + java.time.LocalDateTime.now() + "\n");
+        System.out.println("[P62-EV] g3a.window recover executeJob=" + result);
+        Thread.sleep(15 * 60 * 1000L);
+        app.close();
+    }
+
+    /**
+     * G3a 窗口进程（复核03）：种子表单/动作/轻流程（START→TXN_ACTION→END，默认源）并
+     * 发布；提交一笔表单后驻留。异步任务由编排器锁定（act_ru_job 行锁）制造
+     * "动作效果已独立提交、引擎进度未提交"窗口，随后本进程被 SIGKILL。
+     */
+    private static void windowSubmitAndHold(ConfigurableApplicationContext app, Path evidenceDir,
+                                            String runId, String readyFile) throws Exception {
+        var jdbc = app.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
+                + "VALUES (?, 'drill-operator', 'seed-not-a-login-secret', '恢复演练员', ?, 0) "
+                + "ON CONFLICT (id) DO NOTHING", USER, TENANT);
+        jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) VALUES (92301, ?, ?, 2) "
+                + "ON CONFLICT (id) DO NOTHING", TENANT, USER);
+        asOperator(() -> {
+            FormDefService formDefService = app.getBean(FormDefService.class);
+            if (formDefService.getFormDefByKey(FORM_KEY) != null) {
+                return null; // 幂等：重试轮复用已发布表单/流程
+            }
+            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "窗口演练库存", null, null);
+            formDefService.saveConfig(draft.getId(), stockDefinition());
+            formDefService.publish(draft.getId());
+            return null;
+        });
+        String actionId = asOperator(() -> {
+            FormDefService formDefService = app.getBean(FormDefService.class);
+            TxnActionService actionService = app.getBean(TxnActionService.class);
+            String formId = formDefService.getFormDefByKey(FORM_KEY).getId();
+            var existingAction = actionService.listByForm(formId).stream()
+                    .filter(v -> "window_reserve".equals(v.name()))
+                    .findFirst();
+            if (existingAction.isPresent()) {
+                return existingAction.get().id(); // 幂等：重试轮复用已发布动作
+            }
+            TxnActionConfig cfg = new TxnActionConfig();
+            cfg.setBalanceField("qty_available");
+            cfg.setReservedField("qty_reserved");
+            cfg.setExpiresInSeconds(600L);
+            String id = actionService.create(formId, new TxnActionSaveRequest(
+                    "window_reserve", "窗口演练预占", "RESERVE", null, cfg)).id();
+            actionService.publish(id);
+            return id;
+        });
+        // 轻流程发布（默认 instanceBusinessKey 源）
+        asOperator(() -> {
+            var processDefService = app.getBean(
+                    com.sw.ck.bpm.process.service.BpmProcessDefService.class);
+            long publishedFlows = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sw_bpm_process_def WHERE form_key = ?"
+                            + " AND name = '窗口演练轻流程' AND status = 'PUBLISHED'", Long.class, FORM_KEY);
+            if (publishedFlows > 0) {
+                return null; // 幂等：重试轮复用已发布轻流程
+            }
+            var def = processDefService.createDef("窗口演练轻流程", FORM_KEY);
+            var elements = List.of(
+                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("w-start").kind("node")
+                            .type("START").config(Map.of()).style(Map.of()).build(),
+                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("act-1").kind("node")
+                            .type("TXN_ACTION").config(Map.of(
+                                    "name", "窗口预占", "actionId", actionId,
+                                    "recordIdSource", "instanceBusinessKey", "quantity", "1"))
+                            .style(Map.of()).build(),
+                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("w-end").kind("node")
+                            .type("END").config(Map.of()).style(Map.of()).build(),
+                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("we1").kind("edge")
+                            .source("w-start").target("act-1").config(Map.of()).style(Map.of()).build(),
+                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("we2").kind("edge")
+                            .source("act-1").target("w-end").config(Map.of()).style(Map.of()).build());
+            var graph = com.sw.ck.bpm.api.dto.ProcessGraph.builder()
+                    .processKey(def.getProcessKey()).name("窗口演练轻流程")
+                    .formKey(FORM_KEY).version(1).elements(elements).build();
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(graph);
+            processDefService.saveDraftGraph(def.getId(), json);
+            var published = processDefService.publish(def.getId());
+            if (!"PUBLISHED".equals(published.getStatus())) {
+                throw new IllegalStateException("窗口轻流程发布失败");
+            }
+            return null;
+        });
+        FormSubmitService submitService = app.getBean(FormSubmitService.class);
+        String recordId = asOperator(() -> submitService.submitForm(FORM_KEY,
+                data("material", "WINDOW-" + runId, "qty_available", "10", "qty_reserved", "0"),
+                null, null, null));
+        writeNewFile(evidenceDir.resolve(readyFile == null ? "window-submitted.txt" : readyFile),
+                "pid=" + ProcessHandle.current().pid()
+                        + " recordId=" + recordId
+                        + " actionId=" + actionId
+                        + " formKey=" + FORM_KEY
+                        + " at=" + java.time.LocalDateTime.now() + "\n");
+        System.out.println("[P62-EV] g3a.window submitted recordId=" + recordId);
+        Thread.sleep(15 * 60 * 1000L);
+        app.close();
     }
 
     /** 进程 A：受理 100 条 → 真实消费 20 条 → 真实 claim 1 条不执行 → 驻留待 SIGKILL。 */
@@ -142,6 +274,12 @@ public final class P62RecoveryDrillWorker {
             FormDefService formDefService = app.getBean(FormDefService.class);
             TxnActionService actionService = app.getBean(TxnActionService.class);
             String formId = formDefService.getFormDefByKey(FORM_KEY).getId();
+            var existingAction = actionService.listByForm(formId).stream()
+                    .filter(v -> "window_reserve".equals(v.name()))
+                    .findFirst();
+            if (existingAction.isPresent()) {
+                return existingAction.get().id(); // 幂等：重试轮复用已发布动作
+            }
             TxnActionConfig cfg = new TxnActionConfig();
             cfg.setBalanceField("qty_available");
             cfg.setReservedField("qty_reserved");
@@ -276,6 +414,12 @@ public final class P62RecoveryDrillWorker {
             FormDefService formDefService = app.getBean(FormDefService.class);
             TxnActionService actionService = app.getBean(TxnActionService.class);
             String formId = formDefService.getFormDefByKey(FORM_KEY).getId();
+            var existingAction = actionService.listByForm(formId).stream()
+                    .filter(v -> "window_reserve".equals(v.name()))
+                    .findFirst();
+            if (existingAction.isPresent()) {
+                return existingAction.get().id(); // 幂等：重试轮复用已发布动作
+            }
             TxnActionConfig cfg = new TxnActionConfig();
             cfg.setBalanceField("qty_available");
             cfg.setReservedField("qty_reserved");

@@ -174,6 +174,11 @@ public class ProcessStartService {
         // 透传为流程变量，供审批通过后下发设备命令（无则跳过，不影响普通审批流）
         putFirstNotBlank(variables, "deviceKey", cmd.getSubmittedData(), "device_key", "deviceKey");
         putFirstNotBlank(variables, "commandKey", cmd.getSubmittedData(), "command_key", "commandKey");
+        // P62 分级执行：事务动作节点变量源目标透传（表单携带 target_record_id/targetRecordId
+        // 时成为流程变量，供 recordIdSource=variable 的 TXN_ACTION 节点解析实际动作目标；
+        // 无则跳过，不影响普通审批流与 instanceBusinessKey 缺省源）
+        putFirstNotBlank(variables, "targetRecordId", cmd.getSubmittedData(),
+                "target_record_id", "targetRecordId");
 
         // 原: runtimeService.startProcessInstanceByKeyAndTenantId(...)
         // → bpmRuntimeFacade.startProcess(...)
