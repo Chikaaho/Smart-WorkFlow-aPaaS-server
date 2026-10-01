@@ -91,6 +91,8 @@ public final class P62RecoveryDrillWorker {
                     // debug-auth kickOut 走 Redis 缓存：隔离演练无 Redis，替换为无操作缓存
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
+                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                                    .setAllowBeanDefinitionOverriding(true);
                             ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
                                     .registerBeanDefinition("loginUserCacheService",
                                             new org.springframework.beans.factory.support.RootBeanDefinition(
@@ -304,7 +306,8 @@ public final class P62RecoveryDrillWorker {
         legacy.setInitiatorId(USER);
         legacy.setPayload(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
                 "formKey", FORM_KEY, "recordId", records.get(0), "submitter", String.valueOf(USER))));
-        Long legacy1Id = tx.execute(status -> queue.enqueue(legacy));
+        // 入队需登录态（租户填充拦截器），与消费身份同口径
+        Long legacy1Id = asOperator(() -> tx.execute(status -> queue.enqueue(legacy)));
 
         String readyPath = readyFile == null ? "iso-ready.txt" : readyFile;
         writeNewFile(evidenceDir.resolve(readyPath),

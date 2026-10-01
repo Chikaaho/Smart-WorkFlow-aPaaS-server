@@ -79,7 +79,8 @@ class P62ConsumerIsolationPgTest {
         EVIDENCE = Path.of(dir);
         Files.createDirectories(EVIDENCE);
         pg = EmbeddedPostgres.builder().start();
-        pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
+        pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort()
+                + "/postgres?stringtype=unspecified&user=postgres&password=postgres";
         jdbc = new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(pgUrl));
         jdbc.execute("SELECT 1");
         System.out.println("[P62-EV] g5a orchestrator pid=" + ProcessHandle.current().pid()
@@ -172,8 +173,8 @@ class P62ConsumerIsolationPgTest {
                 "SELECT id FROM sw_bpm_command_batch WHERE batch_key=?", Long.class, batchKey2);
         waitBatchCompleted(batchKey2, 180_000L);
         long effects = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM sw_bpm_command_effect WHERE biz_ref LIKE 'BATCH:" + batchKey2
-                        + ":%'", Long.class);
+                "SELECT COUNT(*) FROM sw_bpm_command_effect WHERE biz_ref = ?",
+                Long.class, "BATCH:" + batchKey2);
         long invocations = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sw_form_txn_invocation WHERE invocation_key LIKE 'BATCH:"
                         + batchKey2 + ":%'", Long.class);
@@ -198,8 +199,8 @@ class P62ConsumerIsolationPgTest {
         assertThat(codeOf(resp3.body())).as("停新入口后新类型再次被能力门禁拒绝").isEqualTo(2425);
         long batchesKept = countRows("sw_bpm_command_batch");
         long effectsKept = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM sw_bpm_command_effect WHERE biz_ref LIKE 'BATCH:" + batchKey2
-                        + ":%'", Long.class);
+                "SELECT COUNT(*) FROM sw_bpm_command_effect WHERE biz_ref = ?",
+                Long.class, "BATCH:" + batchKey2);
         long invocationsKept = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sw_form_txn_invocation WHERE invocation_key LIKE 'BATCH:"
                         + batchKey2 + ":%'", Long.class);
@@ -238,13 +239,27 @@ class P62ConsumerIsolationPgTest {
     }
 
     /** ready 文件字段：port, actionId, recordIds[...], legacy1CommandId。 */
+    /** ready 字段 tolerant 解析：seed-isolation 含完整 manifest；plain 仅 pid/port/at/state。 */
     private String[] parseReady(Path ready) throws Exception {
         String content = Files.readString(ready, StandardCharsets.UTF_8);
         String port = field(content, "port");
-        String actionId = field(content, "actionId");
-        String recordIds = field(content, "recordIds");
-        String legacy = field(content, "legacy1CommandId");
-        return new String[]{port, actionId, recordIds, firstRecord(recordIds), "legacy", legacy};
+        String actionId = optionalField(content, "actionId");
+        String recordIds;
+        Matcher ids = Pattern.compile("recordIds=(\\[[^\\]]*\\])").matcher(content);
+        if (ids.find()) {
+            recordIds = ids.group(1);
+        } else {
+            recordIds = "[]";
+        }
+        String legacy = optionalField(content, "legacy1CommandId");
+        return new String[]{port, actionId, recordIds,
+                recordIds.startsWith("[") && recordIds.length() > 2 ? firstRecord(recordIds) : "",
+                "legacy", legacy};
+    }
+
+    private String optionalField(String content, String key) {
+        Matcher m = Pattern.compile(key + "=([^ \\n]+)").matcher(content);
+        return m.find() ? m.group(1).trim() : "";
     }
 
     private String firstRecord(String recordIds) {
@@ -262,7 +277,7 @@ class P62ConsumerIsolationPgTest {
     }
 
     private String field(String content, String key) {
-        Matcher m = Pattern.compile(key + "=([^\\n]+)").matcher(content);
+        Matcher m = Pattern.compile(key + "=([^ \\n]+)").matcher(content);
         assertThat(m.find()).as("ready 字段存在: " + key).isTrue();
         return m.group(1).trim();
     }

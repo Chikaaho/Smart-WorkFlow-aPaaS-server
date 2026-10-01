@@ -183,6 +183,8 @@ class P62BudgetMeasurementPgTest {
                     // debug-auth kickOut 走 Redis 缓存：隔离测量无 Redis，替换为无操作缓存（不注入权限、不影响回查）
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
+                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                                    .setAllowBeanDefinitionOverriding(true);
                             ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
                                     .registerBeanDefinition("loginUserCacheService",
                                             new org.springframework.beans.factory.support.RootBeanDefinition(

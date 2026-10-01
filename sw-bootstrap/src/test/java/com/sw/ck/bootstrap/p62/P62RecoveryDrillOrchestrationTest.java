@@ -57,7 +57,8 @@ class P62RecoveryDrillOrchestrationTest {
         EVIDENCE = Path.of(dir);
         Files.createDirectories(EVIDENCE);
         pg = EmbeddedPostgres.builder().start();
-        pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
+        pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort()
+                + "/postgres?stringtype=unspecified&user=postgres&password=postgres";
         jdbc = new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(pgUrl));
         jdbc.execute("SELECT 1");
         System.out.println("[P62-EV] g2a orchestrator pid=" + ProcessHandle.current().pid()
