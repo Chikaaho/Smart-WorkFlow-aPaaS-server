@@ -131,12 +131,23 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
             return;
         }
         String reason = "动作节点被拒绝: " + result.errorCode() + " " + result.errorMsg();
-        if (shouldBlock(config)) {
+        if (blockOnFailure(config)) {
             throw new BaseException(BpmErrorCode.NODE_DELIVERY_FAILED.getCode(), reason);
         }
         execution.setVariable(actionVar(execution, "error"), reason);
         log.warn("动作节点按 CONTINUE 策略跳过失败: processInstance={}, activity={}, reason={}",
                 execution.getProcessInstanceId(), execution.getCurrentActivityId(), reason);
+    }
+
+    /**
+     * 事务动作节点失败语义（方向 U01/G3a 合同）：默认 BLOCK——动作拒绝时抛业务异常使
+     * 该自动步骤失败，已提交节点效果与进度保留、实例不伪报整体成功；显式配置
+     * {@code failureStrategy=CONTINUE} 才记录并推进。此缺省与本类 javadoc 承诺一致，
+     * 与 NodeDelegateSupport（通知节点，I6 入队即推进语义）不同。
+     */
+    private boolean blockOnFailure(Map<String, Object> config) {
+        Object strategy = config.get("failureStrategy");
+        return strategy == null || "BLOCK".equalsIgnoreCase(String.valueOf(strategy));
     }
 
     /** 回查拒绝记录（recordRejected 独立事务提交）；无记录则为真实故障原样上抛。 */

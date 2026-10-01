@@ -20,6 +20,7 @@ import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,16 @@ public class TxnBatchServiceImpl implements TxnBatchService {
     /** 批次管理查询权限：非发起人回查他人批次所需（超管旁路）。 */
     static final String MANAGE_PERMISSION = "form:action:manage";
 
+    /**
+     * 新能力部署门禁（P62 G5a/U06 兼容合同）：批量受理新入口默认关闭。
+     * 关闭时即便持有 {@code form:action:invoke} 授权也不能产生新类型命令，
+     * 与旧版本消费者并存期间保证零新类型落库；须旧消费者退出且在途核清后
+     * 由部署配置协调开启。消费侧 {@code BatchInvokeCommandHandler} 注册
+     * 受同一开关约束。
+     */
+    @Value("${sw.bpm.txn-batch.enabled:false}")
+    private boolean txnBatchEnabled;
+
     private final BpmCommandBatchMapper batchMapper;
     private final BpmCommandBatchItemMapper itemMapper;
     private final BpmCommandQueue commandQueue;
@@ -71,6 +82,13 @@ public class TxnBatchServiceImpl implements TxnBatchService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public TxnBatchView submit(TxnBatchSubmitRequest request) {
+        // 能力开关先于授权判定：默认关=部署门禁，持权限用户在旧消费者存活期也不产生新类型
+        if (!txnBatchEnabled) {
+            log.warn("批量受理被能力门禁拒绝（sw.bpm.txn-batch.enabled=false）: batchKey={}",
+                    request == null ? null : request.getBatchKey());
+            throw new BaseException(BpmErrorCode.BATCH_CAPABILITY_DISABLED.getCode(),
+                    BpmErrorCode.BATCH_CAPABILITY_DISABLED.getMessage());
+        }
         LoginUser operator = requireAuthorizedOperator();
         validateRequest(request);
 

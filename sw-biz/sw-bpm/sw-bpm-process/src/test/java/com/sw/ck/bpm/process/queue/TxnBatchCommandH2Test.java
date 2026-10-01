@@ -44,7 +44,8 @@ import static org.mockito.Mockito.when;
  * </p>
  */
 @SpringBootTest(classes = BatchH2TestConfig.class,
-        webEnvironment = SpringBootTest.WebEnvironment.NONE)
+        webEnvironment = SpringBootTest.WebEnvironment.NONE,
+        properties = "sw.bpm.txn-batch.enabled=true")
 @DisplayName("P62 S3 后台批量命令（H2 真实持久化）")
 class TxnBatchCommandH2Test {
 

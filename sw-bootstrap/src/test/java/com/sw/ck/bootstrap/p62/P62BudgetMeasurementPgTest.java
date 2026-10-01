@@ -1,22 +1,20 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bpm.api.dto.GraphElement;
+import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
+import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.TxnBatchService;
+import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
-import com.sw.ck.form.txn.model.TxnInvokeRequest;
-import com.sw.ck.form.txn.model.TxnInvokeResult;
-import com.sw.ck.form.txn.service.TxnActionExecutor;
-import com.sw.ck.form.txn.service.TxnActionService;
-import com.sw.ck.security.holder.LoginUser;
-import com.sw.ck.security.holder.LoginUserHolder;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -28,74 +26,119 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.math.BigDecimal;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * P62 分级执行 S6：U08 固定预算测量（限定环境；非生产 SLA，不进常规回归门）。
+ * P62 分级执行 G1a/G1b/G2b：U08 固定预算测量（复核02 一级提示原子账本）。
  *
- * <p>手动运行（约 20 分钟，含预热/正式/恢复/压力边界四组）：</p>
+ * <p><b>真实 HTTP 入口</b>：应用进程（测试 JVM 内单应用进程）以真实 Tomcat 端口启动，
+ * 负载经 {@code POST /api/form/action/{id}/invoke}（实时动作）与
+ * {@code POST /api/form/data/{formKey}}（生产轻流程持久受理）下发；身份用
+ * debug-auth（{@code Bearer test_<uid>}，dev profile + 回环来源），每租户独立
+ * bearer，权限经正式 UserDetailsProvider 回查。</p>
+ *
+ * <p><b>样本完整性</b>：逐请求全量记录（tenant/object/时间戳/耗时/结果）到 gzip CSV，
+ * 固定 runId + {@link StandardOpenOption#CREATE_NEW} 不可覆盖；统计由样本文件回读
+ * 复算，不由内存计数替代。失败轮样本永不删除、永不覆盖。</p>
+ *
+ * <p><b>G1b</b>：轻流程轮按 {@code sw_form_txn_invocation.biz_record_id} 关联受理
+ * （表单行 create_time）与目标动作提交（节点调用行 update_time），双侧均为 PG 时钟；
+ * 未完成样本不丢弃，报告有效对数与未完成数。</p>
+ *
+ * <p>手动运行（资源重任务，串行运行）：</p>
  * <pre>
  * MAVEN_OPTS="-Xmx2g" mvn -pl sw-bootstrap -am test -Dtest=P62BudgetMeasurementPgTest \
- *   -Dp62.budget.measurement=true -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+ *   -Dp62.budget.measurement=true -Dp62.runId=&lt;runId&gt; \
+ *   -Dp62.evidence.dir=&lt;绝对路径&gt; -Dp62.build.commit=$(git rev-parse HEAD) \
+ *   -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+ * # 压力边界单独：追加 -Dtest=P62BudgetMeasurementPgTest#stressBoundaryObservation -Dp62.budget.stress=true
  * </pre>
- *
- * <p>固定合同（方向《分级执行与统一命令》时效与测量节）：
- * 单应用进程 + 单隔离 PG17.5、堆 2GiB；两租户各 1000 对象、10% 请求命中热点、
- * 90% 均匀分布其余 999 对象、固定随机种子；并发 16（两租户各 8）、预热 60s、
- * 正式 5min；实时动作预算 P99≤300ms（服务层入口至事务提交）、轻流程入口至持久
- * 受理 P99≤2s（另报受理至动作结算）；样本 ≥5000/组、合法失败=0、过载拒绝≤1%；
- * 恢复：100 条无外部依赖命令全部收敛 ≤120s、重复效果=0；压力边界 64 并发只度量。
- * 测量边界声明：入口为服务层事务入口（FormSubmitService/TxnActionExecutor），
- * 不含 HTTP 反序列化耗时；进程不重启，恢复段模拟"新进程可服务后开始消费"。</p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@DisplayName("P62 S6 U08 固定预算测量（手动运行：-Dp62.budget.measurement=true）")
+@DisplayName("P62 复核02 G1/G2b 固定预算测量（真实HTTP入口，手动：-Dp62.budget.measurement=true）")
 @EnabledIfSystemProperty(named = "p62.budget.measurement", matches = "true")
 class P62BudgetMeasurementPgTest {
 
     private static final long SEED = 20260930L;
-    private static final int WARMUP_SECONDS = 60;
-    private static final int FORMAL_SECONDS = 300;
     private static final int CONCURRENCY_TOTAL = 16;
-    private static final int HOTSPOT_MOD = 10;
+    private static final int CONCURRENCY_STRESS = 64;
+    private static final int HOTSPOT_MOD_G1 = 10;
+    private static final int G1_WARMUP_SECONDS = 60;
+    private static final int G1_FORMAL_SECONDS = 300;
+    private static final int STRESS_WARMUP_SECONDS = 30;
+    private static final int STRESS_FORMAL_SECONDS = 300;
+    private static final int OBJECTS_PER_TENANT_G1 = 1000;
+    private static final int OBJECTS_PER_TENANT_STRESS = 10000;
+    private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private static EmbeddedPostgres pg;
     private static ConfigurableApplicationContext app;
     private static JdbcTemplate jdbc;
-    private static final Path EVIDENCE_DIR = Path.of("build", "p62-budget");
+    private static String runId;
+    private static Path evidenceDir;
 
-    private FormDefService formDefService;
-    private FormSubmitService submitService;
-    private TxnActionService actionService;
-    private TxnActionExecutor executor;
-    private TxnBatchService batchService;
-    private BpmCommandMapper commandMapper;
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .build();
+    private static final java.time.Duration REQUEST_TIMEOUT = java.time.Duration.ofSeconds(10);
 
-    private final Map<Long, String> tenantAction = new HashMap<>();
-    private final Map<Long, String> tenantFormKey = new HashMap<>();
-    private final Map<Long, List<String>> tenantRecords = new HashMap<>();
+    private static int port;
+    private static final Map<Long, TenantFixture> fixtures = new HashMap<>();
+
+    /** 每租户测量夹具：库存表单/动作/轻流程定义与对象记录清单。 */
+    private static final class TenantFixture {
+        Long tenant;
+        long userId;
+        String bearer;
+        String formKey;
+        String stockTable;
+        String actionId;
+        String lightProcessKey;
+        List<String> recordIds = new ArrayList<>();
+    }
 
     @BeforeAll
     void boot() throws Exception {
+        runId = System.getProperty("p62.runId");
+        String dir = System.getProperty("p62.evidence.dir");
+        if (runId == null || runId.isBlank() || dir == null || dir.isBlank()) {
+            throw new IllegalStateException(
+                    "必须提供 -Dp62.runId 与 -Dp62.evidence.dir（固定 runId 不可覆盖采集目录）");
+        }
+        evidenceDir = Path.of(dir);
+        Files.createDirectories(evidenceDir);
+
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
         Map<String, Object> props = new HashMap<>();
@@ -113,8 +156,20 @@ class P62BudgetMeasurementPgTest {
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.datasource.dynamic.hikari.maximum-pool-size", "32");
+        // 复核02 G5a 能力开关：测量套件恢复段使用批次受理，需显式开启（默认关）
+        props.put("sw.bpm.txn-batch.enabled", "true");
+        // G1a 轻流程场景吞吐配置（冻结并写入 env-frozen）：命令调度与节点异步执行池
+        props.put("sw.bpm.command.poll-interval-millis", "100");
+        props.put("sw.bpm.command.p0-poll-interval-millis", "100");
+        props.put("sw.bpm.command.batch-size", "50");
+        props.put("flowable.async-executor-activate", "true");
+        props.put("flowable.process.async.executor.core-pool-size", "8");
+        props.put("flowable.process.async.executor.max-pool-size", "8");
+        props.put("flowable.process.async.executor.async-job-lock-time-in-millis", "60000");
+        props.put("sw.security.debug-auth.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
+                    context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
                             new org.springframework.core.env.MapPropertySource("p62-budget", props));
                     context.getEnvironment().getSystemProperties()
@@ -125,35 +180,31 @@ class P62BudgetMeasurementPgTest {
                     provider.setPrimary(true);
                     ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62BudgetLoginContextProvider", provider);
+                    // debug-auth kickOut 走 Redis 缓存：隔离测量无 Redis，替换为无操作缓存（不注入权限、不影响回查）
+                    context.addBeanFactoryPostProcessor(bf -> {
+                        if (bf.containsBeanDefinition("loginUserCacheService")) {
+                            ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
+                                    .registerBeanDefinition("loginUserCacheService",
+                                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                                                    NoopLoginUserCacheService.class));
+                        }
+                    });
                 })
                 .run();
-        // 测量静默：压测下 DEBUG SQL 日志会引入磁盘 I/O 背景负载，污染时序样本（固定合同要求无其他背景负载）。
-        // initializer 阶段设置的 logging 属性晚于日志系统初始化，必须在代码级收敛。
+        // 压测下 DEBUG SQL 日志引入磁盘 I/O 背景负载，污染时序样本（固定合同要求无其他背景负载）
         ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         root.setLevel(ch.qos.logback.classic.Level.WARN);
         jdbc = app.getBean(JdbcTemplate.class);
-        formDefService = app.getBean(FormDefService.class);
-        submitService = app.getBean(FormSubmitService.class);
-        actionService = app.getBean(TxnActionService.class);
-        executor = app.getBean(TxnActionExecutor.class);
-        batchService = app.getBean(TxnBatchService.class);
-        commandMapper = app.getBean(BpmCommandMapper.class);
-        Files.createDirectories(EVIDENCE_DIR);
+        port = Integer.parseInt(app.getEnvironment().getProperty("local.server.port"));
 
-        // 测量用户（正式身份链：dispatcher 消费时经 UserDetailsProvider 回查，role 2 携调用权限）
-        jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
-                + "VALUES (91999, 'budget-operator', 'seed-not-a-login-secret', '预算测量操作员', 0, 0) "
-                + "ON CONFLICT (id) DO NOTHING");
-        jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) VALUES (91999, 0, 91999, 2) "
-                + "ON CONFLICT (id) DO NOTHING");
-
-        seedTenant(0L, "p62_budget_t0");
-        seedTenant(100L, "p62_budget_t100");
-        System.out.println("[P62-EV] budget boot ok pgPort=" + pg.getPort()
-                + " heap=" + Runtime.getRuntime().maxMemory() / 1024 / 1024 + "MiB"
-                + " jvm=" + System.getProperty("java.version")
-                + " os=" + System.getProperty("os.arch"));
+        seedTenant(0L, 91999L, "p62_budget_t0", OBJECTS_PER_TENANT_G1, 100000, "budget_reserve");
+        seedTenant(100L, 92999L, "p62_budget_t100", OBJECTS_PER_TENANT_G1, 100000, "budget_reserve");
+        // 冻结环境档案在种子后写出（含全部夹具身份）
+        writeEnvFrozen();
+        System.out.println("[P62-EV] budget boot ok pgPort=" + pg.getPort() + " httpPort=" + port
+                + " heapMaxMiB=" + Runtime.getRuntime().maxMemory() / 1024 / 1024
+                + " runId=" + runId);
     }
 
     @AfterAll
@@ -168,181 +219,428 @@ class P62BudgetMeasurementPgTest {
         } catch (Exception ignored) {
             // 关闭容错
         }
-        LoginUserHolder.clear();
     }
 
-    // ==================== 场景一：实时动作（预算 P99≤300ms） ====================
+    // ==================== G1a 场景一：实时动作（预算 P99≤300ms） ====================
 
     @Test
-    @DisplayName("实时动作：并发 16（两租户各 8）× 预热 60s + 正式 5min，P99≤300ms、合法失败=0")
+    @DisplayName("G1a 实时动作：16并发（两租户各8）× 预热60s + 正式5min，真实HTTP入口")
     void realTimeActionBudget() throws Exception {
-        MeasurementResult result = runLoad("realtime-action", () -> {
-            Long tenant = ThreadLocalTenant.get();
-            String recordId = pickRecord(tenant);
-            TxnInvokeRequest req = new TxnInvokeRequest();
-            req.setInvocationKey("BUDGET-" + tenant + "-" + java.util.UUID.randomUUID());
-            req.setRecordId(recordId);
-            req.setQuantity("1");
-            long begin = System.nanoTime();
-            TxnInvokeResult r = executor.invoke(tenantAction.get(tenant), req);
-            long elapsedNanos = System.nanoTime() - begin;
-            boolean legal = "SUCCEEDED".equals(r.status());
-            return new Sample(elapsedNanos / 1_000_000.0, legal,
-                    legal ? "SUCCEEDED" : "REJECTED:" + r.errorCode());
-        }, true);
-        report("realtime-action", result, 300.0);
+        runLoad(new LoadSpec("realtime-action", CONCURRENCY_TOTAL,
+                G1_WARMUP_SECONDS, G1_FORMAL_SECONDS, HOTSPOT_MOD_G1, this::invokeRealtimeOnce));
+        MeasurementReport report = reportFromSampleFile("realtime-action", 300.0, "SUCCEEDED");
+        assertThatPass(report);
     }
 
-    // ==================== 场景二：生产轻流程（预算 P99≤2s 至持久受理） ====================
+    // ==================== G1a 场景二 + G1b：生产轻流程（受理 P99≤2s + 配对） ====================
 
     @Test
-    @DisplayName("轻流程：并发 16 × 预热 60s + 正式 5min，入口至持久受理 P99≤2s、合法失败=0")
+    @DisplayName("G1a 轻流程：16并发 × 预热60s + 正式5min，入口至持久受理 P99≤2s（真实HTTP入口）")
     void lightProcessAcceptanceBudget() throws Exception {
-        MeasurementResult result = runLoad("light-process", () -> {
-            Long tenant = ThreadLocalTenant.get();
-            long begin = System.nanoTime();
-            String recordId = submitService.submitForm(tenantFormKey.get(tenant),
-                    data("material", "B-" + java.util.UUID.randomUUID(),
-                            "qty_available", "1000", "qty_reserved", "0"),
-                    null, null, null);
-            long acceptNanos = System.nanoTime() - begin;
-            boolean accepted = recordId != null && !recordId.isBlank();
-            return new Sample(acceptNanos / 1_000_000.0, accepted,
-                    accepted ? "ACCEPTED" : "NO_RECORD");
-        }, false);
-        report("light-process-acceptance", result, 2000.0);
+        runLoad(new LoadSpec("light-process-acceptance", CONCURRENCY_TOTAL,
+                G1_WARMUP_SECONDS, G1_FORMAL_SECONDS, HOTSPOT_MOD_G1, this::submitLightOnce));
+        MeasurementReport report = reportFromSampleFile("light-process-acceptance", 2000.0, "ACCEPTED");
+        assertThatPass(report);
     }
 
-    // ==================== 恢复：100 条命令收敛 ≤120s ====================
+    @Test
+    @DisplayName("G1b 受理→目标提交配对：同轮按 biz_record_id 关联，有效对数/未完成数/分布（PG时钟双侧）")
+    void lightProcessAcceptanceToTargetPairs() throws Exception {
+        Path samples = evidenceDir.resolve("light-process-acceptance-samples.csv.gz");
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(samples),
+                "先运行 lightProcessAcceptanceBudget 生成同轮样本");
+        waitForDrain();
+        List<PairRow> pairs = new ArrayList<>();
+        List<String[]> acceptedRows = new ArrayList<>();
+        readGzipLines(samples, line -> {
+            String[] parts = line.split(",", -1);
+            // 列: 0 phase,1 seq,2 ts,3 tenant,4 worker,5 object_id,6 request_id,7 latency,8 outcome
+            if (parts.length >= 9 && "FORMAL".equals(parts[0]) && parts[8].startsWith("ACCEPTED")) {
+                acceptedRows.add(parts);
+            }
+        });
+        Map<String, String[]> recordMeta = new HashMap<>();
+        for (String[] parts : acceptedRows) {
+            recordMeta.put(parts[6], parts);
+        }
+        List<String> batch = new ArrayList<>(1000);
+        for (String recordId : recordMeta.keySet()) {
+            batch.add(recordId);
+            if (batch.size() >= 1000) {
+                collectPairs(batch, pairs, recordMeta);
+                batch = new ArrayList<>(1000);
+            }
+        }
+        if (!batch.isEmpty()) {
+            collectPairs(batch, pairs, recordMeta);
+        }
+        long incomplete = recordMeta.size() - pairs.size();
+        List<Double> latencies = pairs.stream().mapToDouble(PairRow::latencyMs).sorted().boxed().toList();
+        long succeededPairs = pairs.stream().filter(p -> "SUCCEEDED".equals(p.status())).count();
+        long rejectedPairs = pairs.size() - succeededPairs;
+        String summary = ("g1b.pairs scenario=light-process-acceptance accepted=%d validPairs=%d"
+                + " succeededPairs=%d rejectedPairs=%d incomplete=%d"
+                + " pairP50=%.1fms pairP95=%.1fms pairP99=%.1fms pairMax=%.1fms"
+                + " clock=PG(accept=create_time,target=invocation.update_time) runId=%s")
+                .formatted(recordMeta.size(), pairs.size(), succeededPairs, rejectedPairs, incomplete,
+                        percentile(latencies, 0.50), percentile(latencies, 0.95),
+                        percentile(latencies, 0.99), percentile(latencies, 1.0), runId);
+        StringBuilder pairCsv = new StringBuilder(
+                "record_id,tenant,accept_ts,target_ts,status,latency_ms\n");
+        for (PairRow p : pairs) {
+            pairCsv.append(String.format(Locale.ROOT, "%s,%s,%s,%s,%s,%.1f%n",
+                    p.recordId(), p.tenant(), p.acceptTs(), p.targetTs(), p.status(), p.latencyMs()));
+        }
+        writeNew(evidenceDir.resolve("light-process-acceptance-pairs.csv.gz"),
+                out -> {
+                    try (java.util.zip.GZIPOutputStream gz = new java.util.zip.GZIPOutputStream(out)) {
+                        gz.write(pairCsv.toString().getBytes(StandardCharsets.UTF_8));
+                    }
+                });
+        writeEvidence("light-process-acceptance-pairs.txt", summary);
+        System.out.println("[P62-EV] " + summary);
+        org.assertj.core.api.Assertions.assertThat(pairs.size()).as("有效配对数>0").isGreaterThan(0);
+    }
+
+    /** 配对前等待同轮命令队列与节点异步任务排干（有界）；超时按未完成如实计入。 */
+    private void waitForDrain() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 8 * 60_000L;
+        long lastLog = 0;
+        while (System.currentTimeMillis() < deadline) {
+            Long pendingCommands = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sw_bpm_command WHERE command_key LIKE 'FLOW_START:%'"
+                            + " AND status IN ('PENDING','PROCESSING')", Long.class);
+            Long pendingJobs = jdbc.queryForObject("SELECT COUNT(*) FROM act_ru_job", Long.class);
+            if ((pendingCommands == null || pendingCommands == 0)
+                    && (pendingJobs == null || pendingJobs == 0)) {
+                return;
+            }
+            if (System.currentTimeMillis() - lastLog > 30_000) {
+                lastLog = System.currentTimeMillis();
+                System.out.println("[P62-EV] g1b drain-wait pendingCommands=" + pendingCommands
+                        + " pendingJobs=" + pendingJobs);
+            }
+            Thread.sleep(2000);
+        }
+        System.out.println("[P62-EV] g1b drain-wait timeout after 8min（未完成样本如实计入）");
+    }
+
+    private record PairRow(String recordId, String tenant, String acceptTs, String targetTs,
+                           String status, double latencyMs) {
+    }
+
+    private void collectPairs(List<String> recordIds, List<PairRow> pairs,
+                              Map<String, String[]> recordMeta) {
+        String in = String.join(",", recordIds.stream().map(id -> "'" + id + "'").toList());
+        Map<String, Map<String, Object>> invocations = new HashMap<>();
+        jdbc.queryForList("SELECT DISTINCT ON (biz_record_id) biz_record_id, status,"
+                        + " to_char(update_time, 'YYYY-MM-DD HH24:MI:SS.MS') AS target_ts"
+                        + " FROM sw_form_txn_invocation WHERE biz_record_id IN (" + in + ")"
+                        + " AND invocation_key LIKE 'NODE:%' AND status IN ('SUCCEEDED','REJECTED')"
+                        + " ORDER BY biz_record_id, update_time")
+                .forEach(row -> invocations.put(String.valueOf(row.get("biz_record_id")), row));
+        Map<String, String> acceptTs = new HashMap<>();
+        jdbc.queryForList("SELECT id::text AS rid, to_char(create_time, 'YYYY-MM-DD HH24:MI:SS.MS')"
+                        + " AS accept_ts FROM " + fixtures.get(0L).stockTable
+                        + " WHERE id::text IN (" + in + ")"
+                        + " UNION ALL SELECT id::text, to_char(create_time, 'YYYY-MM-DD HH24:MI:SS.MS')"
+                        + " FROM " + fixtures.get(100L).stockTable + " WHERE id::text IN (" + in + ")")
+                .forEach(row -> acceptTs.put(String.valueOf(row.get("rid")),
+                        String.valueOf(row.get("accept_ts"))));
+        for (String recordId : recordIds) {
+            Map<String, Object> inv = invocations.get(recordId);
+            String acc = acceptTs.get(recordId);
+            if (inv == null || acc == null) {
+                continue;
+            }
+            String[] meta = recordMeta.get(recordId);
+            java.time.LocalDateTime a = LocalDateTime.parse(acc, TS);
+            java.time.LocalDateTime t = LocalDateTime.parse(String.valueOf(inv.get("target_ts")), TS);
+            double latency = java.time.Duration.between(a, t).toNanos() / 1_000_000.0;
+            if (latency < 0) {
+                continue;
+            }
+            pairs.add(new PairRow(recordId, meta[3], acc,
+                    String.valueOf(inv.get("target_ts")), String.valueOf(inv.get("status")), latency));
+        }
+    }
+
+    // ==================== 恢复段（U08 套件内自检；权威证据=真实中断演练 G2a） ====================
 
     @Test
-    @DisplayName("恢复：100 条无外部依赖命令全部收敛 ≤120s、重复效果=0")
+    @DisplayName("恢复段（套件内）：100条无外部依赖命令收敛≤120s、重复效果=0")
     void recoveryDrainBudget() throws Exception {
-        String actionId = tenantAction.get(0L);
-        List<String> records = tenantRecords.get(0L);
-        // 100 条单项批次（无外部依赖：本地库存对象、即时可结算）
+        TenantFixture t0 = fixtures.get(0L);
+        com.sw.ck.bpm.process.service.TxnBatchService batchService =
+                app.getBean(com.sw.ck.bpm.process.service.TxnBatchService.class);
+        BpmCommandMapper commandMapper = app.getBean(BpmCommandMapper.class);
         List<Long> commandIds = new ArrayList<>(100);
         for (int i = 0; i < 100; i++) {
             TxnBatchSubmitRequest request = new TxnBatchSubmitRequest();
-            request.setBatchKey("budget-recover-" + i);
-            request.setActionId(actionId);
+            request.setBatchKey("budget-recover-" + runId + "-" + i);
+            request.setActionId(t0.actionId);
             TxnBatchSubmitRequest.Item item = new TxnBatchSubmitRequest.Item();
             item.setItemKey("recover-" + i);
-            item.setRecordId(records.get(i));
+            item.setRecordId(t0.recordIds.get(i % t0.recordIds.size()));
             item.setQuantity("1");
             request.setItems(List.of(item));
-            TxnBatchView view = asTenant(0L, () -> batchService.submit(request));
+            TxnBatchView view = asTenant(0L, t0.userId, () -> batchService.submit(request));
             commandIds.add(view.getCommandId());
         }
         long begin = System.currentTimeMillis();
         long deadline = begin + 120_000L;
-        AtomicInteger completed = new AtomicInteger();
+        int completed = 0;
         while (System.currentTimeMillis() < deadline) {
-            completed.set(0);
+            completed = 0;
             for (Long id : commandIds) {
-                BpmCommand c = asTenant(0L, () -> commandMapper.selectById(id));
+                BpmCommand c = asTenant(0L, t0.userId, () -> commandMapper.selectById(id));
                 if (c != null && "COMPLETED".equals(c.getStatus())) {
-                    completed.incrementAndGet();
+                    completed++;
                 }
             }
-            if (completed.get() >= 100) {
+            if (completed >= 100) {
                 break;
             }
             Thread.sleep(500);
         }
         long elapsed = System.currentTimeMillis() - begin;
         long effects = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM sw_bpm_command_effect WHERE biz_ref LIKE 'BATCH:budget-recover-%'",
+                "SELECT COUNT(*) FROM sw_bpm_command_effect WHERE biz_ref LIKE 'BATCH:budget-recover-"
+                        + runId + "-%'",
                 Long.class);
         long invocations = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM sw_form_txn_invocation WHERE invocation_key LIKE 'BATCH:budget-recover-%'",
+                "SELECT COUNT(*) FROM sw_form_txn_invocation WHERE invocation_key LIKE 'BATCH:budget-recover-"
+                        + runId + "-%'",
                 Long.class);
-        assertThat(elapsed).as("100 条命令收敛 %d ms ≤120s", elapsed).isLessThanOrEqualTo(120_000L);
-        assertThat(effects).as("效果权威恰 100").isEqualTo(100L);
-        assertThat(invocations).as("调用记录恰 100（重复效果=0）").isEqualTo(100L);
+        org.assertj.core.api.Assertions.assertThat(elapsed)
+                .as("100条命令收敛 %d ms ≤120s", elapsed).isLessThanOrEqualTo(120_000L);
+        org.assertj.core.api.Assertions.assertThat(effects).as("效果权威恰100").isEqualTo(100L);
+        org.assertj.core.api.Assertions.assertThat(invocations).as("调用记录恰100（重复效果=0）").isEqualTo(100L);
         writeEvidence("recovery-drain.txt", "elapsedMs=" + elapsed + " completed=" + completed
-                + " effects=100 invocations=100 (≤120s budget, duplicate-effects=0)");
+                + " effects=100 invocations=100 (≤120s budget, duplicate-effects=0) runId=" + runId);
         System.out.println("[P62-EV] budget.recovery elapsedMs=" + elapsed + " completed=100/100"
                 + " duplicate-effects=0");
     }
 
-    // ==================== 压力边界：64 并发只度量 ====================
+    // ==================== G2b 压力边界：64并发只度量 ====================
 
     @Test
-    @DisplayName("压力边界：64 并发（两租户各 32）× 5min 只度量（不设达标结论）")
+    @DisplayName("G2b 压力边界：64并发（两租户各32）× 各1万对象 × 每租户50%争同一对象 × 5min 只度量")
     void stressBoundaryObservation() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeTrue(
                 Boolean.getBoolean("p62.budget.stress"), "压力边界按需运行：-Dp62.budget.stress=true");
-        StressConfig.CONCURRENCY.set(64);
-        MeasurementResult result = runLoad("stress-boundary", () -> {
-            Long tenant = ThreadLocalTenant.get();
-            String recordId = pickRecord(tenant);
-            TxnInvokeRequest req = new TxnInvokeRequest();
-            req.setInvocationKey("STRESS-" + tenant + "-" + java.util.UUID.randomUUID());
-            req.setRecordId(recordId);
-            req.setQuantity("1");
-            long begin = System.nanoTime();
-            TxnInvokeResult r = executor.invoke(tenantAction.get(tenant), req);
-            long elapsedNanos = System.nanoTime() - begin;
-            boolean legal = "SUCCEEDED".equals(r.status());
-            return new Sample(elapsedNanos / 1_000_000.0, legal,
-                    legal ? "SUCCEEDED" : "REJECTED:" + r.errorCode());
-        }, true);
-        report("stress-boundary", result, Double.NaN);
-    }
-
-    static final class StressConfig {
-        static final ThreadLocal<Integer> CONCURRENCY = ThreadLocal.withInitial(() -> 16);
-        private StressConfig() {
+        seedTenant(0L, 92901L, "p62_stress_t0", OBJECTS_PER_TENANT_STRESS, 100000, "stress_reserve");
+        TenantFixture t100 = seedTenant(100L, 92902L, "p62_stress_t100",
+                OBJECTS_PER_TENANT_STRESS, 100000, "stress_reserve");
+        // 每租户热点对象余额收紧到 5000：50% 争用下先锁等待后合法拒绝（1604），形成完整竞争画像
+        jdbc.update("UPDATE " + t100.stockTable + " SET qty_available = 5000 WHERE id = ?",
+                t100.recordIds.get(0));
+        jdbc.update("UPDATE " + fixtures.get(0L).stockTable + " SET qty_available = 5000 WHERE id = ?",
+                fixtures.get(0L).recordIds.get(0));
+        // 资源采样：5s 一轮（堆/线程/PG 活跃与锁等待）
+        AtomicBoolean sampling = new AtomicBoolean(true);
+        Thread sampler = new Thread(() -> {
+            StringBuilder csv = new StringBuilder("ts,heap_used_mib,threads,pg_active,pg_lock_waits\n");
+            while (sampling.get()) {
+                try {
+                    long heapUsed = (Runtime.getRuntime().totalMemory()
+                            - Runtime.getRuntime().freeMemory()) / 1024 / 1024;
+                    long pgActive = jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM pg_stat_activity WHERE state='active'"
+                                    + " AND pid <> pg_backend_pid()", Long.class);
+                    long lockWaits = jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type='Lock'",
+                            Long.class);
+                    csv.append(String.format(Locale.ROOT, "%s,%d,%d,%d,%d%n",
+                            LocalDateTime.now().format(TS), heapUsed, Thread.activeCount(),
+                            pgActive, lockWaits));
+                } catch (Exception e) {
+                    csv.append(LocalDateTime.now().format(TS)).append(",sample-error\n");
+                }
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            try {
+                writeNew(evidenceDir.resolve("stress-resources.csv"), out ->
+                        out.write(csv.toString().getBytes(StandardCharsets.UTF_8)));
+            } catch (Exception e) {
+                System.out.println("[P62-EV] stress resource csv write failed: " + e);
+            }
+        }, "p62-stress-sampler");
+        sampler.setDaemon(true);
+        sampler.start();
+        try {
+            runLoad(new LoadSpec("stress-boundary", CONCURRENCY_STRESS,
+                    STRESS_WARMUP_SECONDS, STRESS_FORMAL_SECONDS, 2, this::invokeRealtimeOnce));
+            MeasurementReport report = reportFromSampleFile("stress-boundary", Double.NaN, "SUCCEEDED",
+                CONCURRENCY_STRESS, STRESS_WARMUP_SECONDS, STRESS_FORMAL_SECONDS);
+            System.out.println("[P62-EV] g2b observation-only verdict=" + report.verdict());
+        } finally {
+            sampling.set(false);
+            sampler.join(10_000);
         }
     }
 
     // ==================== 负载框架 ====================
 
-    private record Sample(double millis, boolean legal, String outcome) {
+    /** 单请求动作：返回 [objectId, requestId, latencyMs, outcome]。 */
+    private interface RequestAction {
+        String[] call(Long tenant, int worker) throws Exception;
     }
 
-    /** 测量操作身份（固定测量用户 91999；sys_user 行由 boot 种子化供调度身份回查）。 */
-    private static LoginUser budgetOperator(Long tenant) {
-        LoginUser user = new LoginUser();
-        user.setUserId(91999L);
-        user.setTenantId(tenant);
-        user.setPermissions(new ArrayList<>(List.of("form:action:invoke")));
-        return user;
+    private record LoadSpec(String scenario, int concurrency, int warmupSeconds, int formalSeconds,
+                            int hotspotMod, RequestAction action) {
     }
 
-    private static final class ThreadLocalTenant {
-        private static final ThreadLocal<Long> TENANT = new ThreadLocal<>();
-        static Long get() {
-            return TENANT.get();
+    private String[] invokeRealtimeOnce(Long tenant, int worker) throws Exception {
+        TenantFixture fx = fixtures.get(tenant);
+        String recordId = pickRecord(fx, worker);
+        String invocationKey = "BUDGET-" + runId + "-" + tenant + "-" + worker + "-"
+                + java.util.UUID.randomUUID();
+        long begin = System.nanoTime();
+        String body = "{\"recordId\":\"" + recordId + "\",\"quantity\":\"1\",\"invocationKey\":\""
+                + invocationKey + "\"}";
+        String outcome = post("/api/form/action/" + fx.actionId + "/invoke", fx.bearer, body,
+                json -> json.contains("\"SUCCEEDED\"") ? "SUCCEEDED" : "REJECTED");
+        return new String[]{recordId, invocationKey,
+                String.valueOf((System.nanoTime() - begin) / 1_000_000.0), outcome};
+    }
+
+    private String[] submitLightOnce(Long tenant, int worker) throws Exception {
+        TenantFixture fx = fixtures.get(tenant);
+        String material = "B-" + runId + "-" + tenant + "-" + worker + "-"
+                + java.util.UUID.randomUUID();
+        String[] captured = new String[1];
+        long begin = System.nanoTime();
+        String body = "{\"material\":\"" + material + "\",\"qty_available\":\"1000\",\"qty_reserved\":\"0\"}";
+        String outcome = post("/api/form/data/" + fx.formKey, fx.bearer, body,
+                json -> {
+                    captured[0] = json;
+                    return json != null && !json.isEmpty() ? "ACCEPTED" : "REJECTED";
+                });
+        // 配对键=服务端真实记录 id（HTTP data 回包），material 仅作对象标签
+        String realRecordId = captured[0] == null ? material
+                : captured[0].endsWith("\"") ? captured[0].substring(0, captured[0].length() - 1)
+                : captured[0];
+        return new String[]{material, realRecordId,
+                String.valueOf((System.nanoTime() - begin) / 1_000_000.0), outcome};
+    }
+
+    /** 单请求 HTTP 调用；返回结果分类（SUCCEEDED/ACCEPTED/REJECTED:<code>/TIMEOUT/ERROR）。 */
+    private String post(String pathWithQuery, String bearer, String jsonBody,
+                        java.util.function.Function<String, String> outcomeOf) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + pathWithQuery))
+                .timeout(REQUEST_TIMEOUT)
+                .header("Authorization", bearer)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
+                .build();
+        try {
+            HttpResponse<String> response = HTTP.send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() != 200) {
+                return "REJECTED:" + response.statusCode();
+            }
+            String body = response.body();
+            String code = extractJsonNumber(body, "code");
+            if (!"0".equals(code)) {
+                return "REJECTED:" + code;
+            }
+            String data = extractJsonField(body, "data");
+            return outcomeOf.apply(data == null ? "" : data);
+        } catch (java.net.http.HttpTimeoutException e) {
+            return "TIMEOUT";
+        } catch (IOException e) {
+            return "ERROR:" + e.getClass().getSimpleName();
         }
-        static void set(Long tenant) {
-            TENANT.set(tenant);
-        }
     }
 
-    private MeasurementResult runLoad(String scenario, Callable<Sample> action,
-                                      boolean perTenantPool) throws Exception {
-        int concurrency = "stress-boundary".equals(scenario) ? 64 : CONCURRENCY_TOTAL;
-        ExecutorService pool = Executors.newFixedThreadPool(concurrency);
+    /** 最小 JSON 数值字段提取（R 契约固定 {code,msg,data}，避免引入解析器热路径开销）。 */
+    private static String extractJsonNumber(String json, String field) {
+        int i = json.indexOf("\"" + field + "\"");
+        if (i < 0) {
+            return null;
+        }
+        int colon = json.indexOf(':', i);
+        int end = colon + 1;
+        while (end < json.length() && (json.charAt(end) == ' ' || json.charAt(end) == '-'
+                || Character.isDigit(json.charAt(end)))) {
+            end++;
+        }
+        String v = json.substring(colon + 1, end).trim();
+        return v.startsWith("-") || v.isEmpty() ? v : v;
+    }
+
+    /** 提取 data 字段的原始值（字符串取引号内，对象/数组取原文到平衡点由调用方处理）。 */
+    private static String extractJsonField(String json, String field) {
+        int i = json.indexOf("\"" + field + "\"");
+        if (i < 0) {
+            return null;
+        }
+        int colon = json.indexOf(':', i);
+        int start = colon + 1;
+        while (start < json.length() && json.charAt(start) == ' ') {
+            start++;
+        }
+        if (start >= json.length()) {
+            return null;
+        }
+        if (json.charAt(start) == '"') {
+            int end = json.indexOf('"', start + 1);
+            return json.substring(start + 1, end);
+        }
+        if (json.charAt(start) == '{' || json.charAt(start) == '[') {
+            return json.substring(start);
+        }
+        int end = start;
+        while (end < json.length() && json.charAt(end) != ',') {
+            end++;
+        }
+        return json.substring(start, end);
+    }
+
+    /** 固定种子目标选择：每 worker 确定随机序列（热点比例由场景 hotspotMod 决定）。 */
+    private String pickRecord(TenantFixture fx, int worker) {
+        List<String> records = fx.recordIds;
+        Random random = new Random(SEED * 31 + worker * 2 + (fx.tenant == 0L ? 0 : 1));
+        if (random.nextInt(hotspotMod) == 0) {
+            return records.get(0);
+        }
+        return records.get(1 + random.nextInt(records.size() - 1));
+    }
+
+    private int hotspotMod = HOTSPOT_MOD_G1;
+
+    private void runLoad(LoadSpec spec) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(spec.concurrency());
         CountDownLatch start = new CountDownLatch(1);
-        List<Future<Sample>> warmupFutures = new ArrayList<>();
+        Path sampleFile = evidenceDir.resolve(spec.scenario() + "-samples.csv.gz");
+        SampleWriter writer = new SampleWriter(sampleFile);
+        writer.start();
         AtomicLong submitCount = new AtomicLong();
-        // 预热 60s（不计正式样本）
-        long warmupEnd = System.currentTimeMillis() + WARMUP_SECONDS * 1000L;
-        for (int t = 0; t < concurrency; t++) {
-            final Long tenant = perTenantPool ? (t % 2 == 0 ? 0L : 100L) : 0L;
+        this.hotspotMod = spec.hotspotMod();
+        // 预热：不计正式样本（phase=WARMUP 留档审计）
+        List<Future<?>> warmupFutures = new ArrayList<>();
+        long warmupEnd = System.currentTimeMillis() + spec.warmupSeconds() * 1000L;
+        for (int w = 0; w < spec.concurrency(); w++) {
+            final int worker = w;
+            final Long tenant = worker % 2 == 0 ? 0L : 100L;
             warmupFutures.add(pool.submit(() -> {
-                ThreadLocalTenant.set(tenant);
-                LoginUserHolder.set(budgetOperator(tenant));
                 try {
                     start.await();
                     while (System.currentTimeMillis() < warmupEnd) {
-                        action.call();
-                        submitCount.incrementAndGet();
+                        String[] s = spec.action().call(tenant, worker);
+                        writer.offer(new String[]{"WARMUP", String.valueOf(submitCount.incrementAndGet()),
+                                LocalDateTime.now().format(TS), String.valueOf(tenant),
+                                String.valueOf(worker), s[0], s[1], s[2], s[3]});
                     }
                 } finally {
-                    LoginUserHolder.clear();
+                    // worker 结束
                 }
                 return null;
             }));
@@ -351,78 +649,230 @@ class P62BudgetMeasurementPgTest {
         for (Future<?> f : warmupFutures) {
             f.get();
         }
-        // 正式 5min 全量记录
-        List<Future<List<Sample>>> formalFutures = new ArrayList<>();
-        long formalEnd = System.currentTimeMillis() + FORMAL_SECONDS * 1000L;
-        for (int t = 0; t < concurrency; t++) {
-            final Long tenant = perTenantPool ? (t % 2 == 0 ? 0L : 100L) : 0L;
+        // 正式：全量逐请求记录
+        List<Future<?>> formalFutures = new ArrayList<>();
+        long formalEnd = System.currentTimeMillis() + spec.formalSeconds() * 1000L;
+        for (int w = 0; w < spec.concurrency(); w++) {
+            final int worker = w;
+            final Long tenant = worker % 2 == 0 ? 0L : 100L;
             formalFutures.add(pool.submit(() -> {
-                ThreadLocalTenant.set(tenant);
-                LoginUserHolder.set(budgetOperator(tenant));
                 try {
-                    List<Sample> samples = new ArrayList<>();
                     while (System.currentTimeMillis() < formalEnd) {
-                        Sample sample = action.call();
-                        // 容量保护：异常突发（如认证故障）下截断明细仅保留计数（回执声明）
-                        if (samples.size() < 250_000) {
-                            samples.add(sample);
-                        }
-                        submitCount.incrementAndGet();
+                        String[] s = spec.action().call(tenant, worker);
+                        writer.offer(new String[]{"FORMAL", String.valueOf(submitCount.incrementAndGet()),
+                                LocalDateTime.now().format(TS), String.valueOf(tenant),
+                                String.valueOf(worker), s[0], s[1], s[2], s[3]});
                     }
-                    return samples;
-                } finally {
-                    LoginUserHolder.clear();
+                } catch (Exception e) {
+                    System.out.println("[P62-EV] worker " + worker + " aborted: " + e);
                 }
+                return null;
             }));
         }
-        List<Sample> all = new ArrayList<>();
-        for (Future<List<Sample>> f : formalFutures) {
-            all.addAll(f.get());
+        for (Future<?> f : formalFutures) {
+            f.get();
         }
         pool.shutdown();
-        return new MeasurementResult(scenario, concurrency, warmupSeconds(), FORMAL_SECONDS, all);
+        writer.finish();
+        System.out.println("[P62-EV] load done scenario=" + spec.scenario()
+                + " requests=" + submitCount.get() + " samples=" + sampleFile.getFileName()
+                + " sha256=" + sha256(sampleFile));
     }
 
-    private int warmupSeconds() {
-        return WARMUP_SECONDS;
+    /** 单写者线程样本落盘：gzip CSV，CREATE_NEW 不可覆盖；热路径仅入队。 */
+    private static final class SampleWriter {
+        private final BlockingQueue<String[]> queue = new ArrayBlockingQueue<>(100_000);
+        private final String[] poison = new String[0];
+        private final Path file;
+        private Thread thread;
+        private volatile Throwable error;
+
+        SampleWriter(Path file) {
+            this.file = file;
+        }
+
+        void start() throws IOException {
+            OpenOption[] options = {StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE};
+            thread = new Thread(() -> {
+                try (var out = Files.newOutputStream(file, options);
+                     var gz = new java.util.zip.GZIPOutputStream(out, 64 * 1024);
+                     var bw = new BufferedWriter(new java.io.OutputStreamWriter(gz, StandardCharsets.UTF_8),
+                             256 * 1024)) {
+                    bw.write("phase,seq,ts_iso,tenant,worker,object_id,request_id,latency_ms,outcome\n");
+                    while (true) {
+                        String[] row = queue.take();
+                        if (row.length == 0) {
+                            break;
+                        }
+                        bw.write(String.join(",", row));
+                        bw.write('\n');
+                    }
+                    bw.flush();
+                } catch (Throwable t) {
+                    error = t;
+                }
+            }, "p62-sample-writer");
+            thread.start();
+        }
+
+        void offer(String[] row) {
+            try {
+                boolean ok = queue.offer(row, 30, TimeUnit.SECONDS);
+                if (!ok) {
+                    throw new IllegalStateException("样本队列溢出：写入跟不上负载（测量环境故障）");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+        }
+
+        void finish() throws Exception {
+            offer(poison);
+            thread.join(120_000);
+            if (error != null) {
+                throw new IllegalStateException("样本落盘失败（固定 runId 不可覆盖）", error);
+            }
+        }
     }
 
-    private record MeasurementResult(String scenario, int concurrency, int warmupSeconds,
-                                     int formalSeconds, List<Sample> samples) {
+    /** 回读样本文件复算统计（不由内存计数替代）。 */
+    private record MeasurementReport(String scenario, long formalSamples, long legal, long illegal,
+                                     long timeouts, long errors, long rejected, double rejectRate,
+                                     double p50, double p95, double p99, double max,
+                                     double budgetP99, String verdict, String sha256) {
     }
 
-    private void report(String scenario, MeasurementResult result, double budgetMillis)
-            throws Exception {
-        List<Double> legal = result.samples().stream().filter(Sample::legal)
-                .map(Sample::millis).sorted().toList();
-        long illegal = result.samples().size() - legal.size();
-        long rejects = result.samples().stream().filter(s -> !s.legal()).count();
-        double p50 = percentile(legal, 0.50);
-        double p95 = percentile(legal, 0.95);
-        double p99 = percentile(legal, 0.99);
-        double max = legal.isEmpty() ? 0 : legal.get(legal.size() - 1);
-        double rejectRate = result.samples().isEmpty() ? 0 : (double) rejects / result.samples().size();
-        String verdict = Double.isNaN(budgetMillis)
-                ? "OBSERVATION-ONLY"
-                : (p99 <= budgetMillis && illegal == 0 && rejectRate <= 0.01
-                        ? "PASS" : "FAIL");
-        String summary = ("scenario=%s concurrency=%d warmup=%ds formal=%ds samples=%d legal=%d"
-                + " illegal=%d rejectRate=%.4f p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms"
-                + " budgetP99=%s verdict=%s seed=%d").formatted(
-                        scenario, result.concurrency(), result.warmupSeconds(), result.formalSeconds(),
-                        result.samples().size(), legal.size(), illegal, rejectRate,
-                        p50, p95, p99, max,
-                        Double.isNaN(budgetMillis) ? "N/A" : budgetMillis + "ms", verdict, SEED);
-        writeEvidence(scenario + ".txt", summary);
+    private MeasurementReport reportFromSampleFile(String scenario, double budgetMillis,
+                                                   String legalOutcome) throws Exception {
+        return reportFromSampleFile(scenario, budgetMillis, legalOutcome,
+                CONCURRENCY_TOTAL, G1_WARMUP_SECONDS, G1_FORMAL_SECONDS);
+    }
+
+    private MeasurementReport reportFromSampleFile(String scenario, double budgetMillis,
+                                                   String legalOutcome, int reportConcurrency,
+                                                   int reportWarmupSeconds,
+                                                   int reportFormalSeconds) throws Exception {
+        Path sampleFile = evidenceDir.resolve(scenario + "-samples.csv.gz");
+        List<Double> legal = new ArrayList<>();
+        final long[] formal = {0};
+        final long[] warmup = {0};
+        final long[] timeouts = {0};
+        final long[] errors = {0};
+        final long[] rejected = {0};
+        Map<String, Long> outcomes = new LinkedHashMap<>();
+        readGzipLines(sampleFile, line -> {
+            String[] parts = line.split(",", -1);
+            if (parts.length < 9 || "phase".equals(parts[0])) {
+                return;
+            }
+            if ("WARMUP".equals(parts[0])) {
+                warmup[0]++;
+                return;
+            }
+            if (!"FORMAL".equals(parts[0])) {
+                return;
+            }
+            formal[0]++;
+            String outcome = parts[8];
+            outcomes.merge(outcome, 1L, Long::sum);
+            double latency = Double.parseDouble(parts[7]);
+            if (legalOutcome.equals(outcome)) {
+                legal.add(latency);
+            } else if (outcome.startsWith("REJECTED")) {
+                rejected[0]++;
+            } else if ("TIMEOUT".equals(outcome)) {
+                timeouts[0]++;
+            } else if (outcome.startsWith("ERROR")) {
+                errors[0]++;
+            }
+        });
+        legal.sort(Double::compare);
+        long illegal = rejected[0] + timeouts[0] + errors[0];
+        double rejectRate = formal[0] == 0 ? 1 : (double) rejected[0] / formal[0];
+        String verdict = Double.isNaN(budgetMillis) ? "OBSERVATION-ONLY"
+                : (formal[0] >= 5000 && percentile(legal, 0.99) <= budgetMillis
+                        && illegal == 0 && rejectRate <= 0.01 ? "PASS" : "FAIL");
+        MeasurementReport report = new MeasurementReport(scenario, formal[0], legal.size(), illegal,
+                timeouts[0], errors[0], rejected[0], rejectRate,
+                percentile(legal, 0.50), percentile(legal, 0.95), percentile(legal, 0.99),
+                legal.isEmpty() ? 0 : legal.get(legal.size() - 1), budgetMillis, verdict,
+                sha256(sampleFile));
+        String summary = ("scenario=%s entry=HTTP(http://127.0.0.1:%d) concurrency=%d"
+                + " warmup=%ds formal=%ds formalSamples=%d warmupSamples=%d legal=%d illegal=%d"
+                + " (rejected=%d timeout=%d error=%d) rejectRate=%.4f"
+                + " p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms budgetP99=%s verdict=%s"
+                + " seed=%d runId=%s samplesSha256=%s").formatted(
+                scenario, port, reportConcurrency, reportWarmupSeconds, reportFormalSeconds,
+                report.formalSamples(), warmup[0], report.legal(), report.illegal(), report.rejected(),
+                report.timeouts(), report.errors(), report.rejectRate(), report.p50(), report.p95(),
+                report.p99(), report.max(),
+                Double.isNaN(budgetMillis) ? "N/A" : budgetMillis + "ms", verdict, SEED, runId,
+                report.sha256());
+        String name = Double.isNaN(budgetMillis) ? "stress-boundary-report.txt"
+                : scenario + "-report.txt";
+        writeEvidence(name, summary + "\noutcomes=" + outcomes);
         System.out.println("[P62-EV] budget." + summary);
-        assertThat(verdict)
-                .as("%s 预算裁决", scenario).isEqualTo(Double.isNaN(budgetMillis) ? "OBSERVATION-ONLY" : "PASS");
+        return report;
+    }
+
+    private static void assertThatPass(MeasurementReport report) {
+        org.assertj.core.api.Assertions.assertThat(report.verdict())
+                .as("%s 预算裁决（formal=%d legal=%d illegal=%d）", report.scenario(),
+                        report.formalSamples(), report.legal(), report.illegal())
+                .isEqualTo("PASS");
+    }
+
+    // ==================== 文件与哈希（CREATE_NEW 不可覆盖） ====================
+
+    private interface LineConsumer {
+        void accept(String line) throws IOException;
+    }
+
+    private static void readGzipLines(Path gz, LineConsumer consumer) throws IOException {
+        try (var in = Files.newInputStream(gz, StandardOpenOption.READ);
+             var stream = new java.util.zip.GZIPInputStream(in, 64 * 1024);
+             var reader = new java.io.BufferedReader(new java.io.InputStreamReader(stream,
+                     StandardCharsets.UTF_8), 256 * 1024)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                consumer.accept(line);
+            }
+        }
+    }
+
+    private interface Sink {
+        void write(java.io.OutputStream out) throws IOException;
+    }
+
+    private static void writeNew(Path file, Sink sink) throws IOException {
+        Files.write(file, new byte[0], StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        try (var out = Files.newOutputStream(file, StandardOpenOption.WRITE,
+                StandardOpenOption.APPEND)) {
+            sink.write(out);
+        }
     }
 
     private void writeEvidence(String fileName, String content) throws Exception {
-        Files.writeString(EVIDENCE_DIR.resolve(fileName),
-                content + "\nrecordedAt=" + LocalDateTime.now() + "\n",
-                StandardCharsets.UTF_8);
+        Files.writeString(evidenceDir.resolve(fileName), content
+                        + "\nrecordedAt=" + LocalDateTime.now().format(TS) + "\nrunId=" + runId + "\n",
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+    }
+
+    private static String sha256(Path file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (var in = Files.newInputStream(file, StandardOpenOption.READ)) {
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                digest.update(buf, 0, n);
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (byte b : digest.digest()) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 
     private static double percentile(List<Double> sorted, double q) {
@@ -433,48 +883,140 @@ class P62BudgetMeasurementPgTest {
         return sorted.get(Math.max(0, Math.min(sorted.size() - 1, index)));
     }
 
-    /** 固定种子目标选择：10% 热点（首条记录），90% 均匀分布其余 999 条。 */
-    private String pickRecord(Long tenant) {
-        List<String> records = tenantRecords.get(tenant);
-        Random random = new Random(SEED + Thread.currentThread().getId() + records.hashCode());
-        if (random.nextInt(HOTSPOT_MOD) == 0) {
-            return records.get(0);
+    /** 冻结环境档案：堆/参数/池/身份/源码身份（可独立复算测量组的对象）。 */
+    private void writeEnvFrozen() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        sb.append("runId=").append(runId).append('\n');
+        sb.append("recordedAt=").append(LocalDateTime.now().format(TS)).append('\n');
+        sb.append("entry=HTTP real Tomcat port=").append(port).append('\n');
+        sb.append("javaVersion=").append(System.getProperty("java.version")).append('\n');
+        sb.append("osName=").append(System.getProperty("os.name")).append('\n');
+        sb.append("osArch=").append(System.getProperty("os.arch")).append('\n');
+        sb.append("cores=").append(Runtime.getRuntime().availableProcessors()).append('\n');
+        sb.append("heapMaxMiB=").append(Runtime.getRuntime().maxMemory() / 1024 / 1024).append('\n');
+        sb.append("jvmInputArgs=").append(String.join(" ",
+                ProcessHandle.current().info().arguments().orElse(new String[0]))).append('\n');
+        sb.append("envMAVEN_OPTS=").append(System.getenv().getOrDefault("MAVEN_OPTS", "")).append('\n');
+        sb.append("buildCommit=").append(System.getProperty("p62.build.commit", "")).append('\n');
+        sb.append("pgVersion=").append(jdbc.queryForObject("SELECT version()", String.class)).append('\n');
+        sb.append("pgPort=").append(pg.getPort()).append('\n');
+        sb.append("hikariMaxPool=").append(app.getEnvironment()
+                .getProperty("sw.datasource.dynamic.hikari.maximum-pool-size")).append('\n');
+        sb.append("dispatcherPollMillis=").append(app.getEnvironment()
+                .getProperty("sw.bpm.command.poll-interval-millis")).append('\n');
+        sb.append("dispatcherBatchSize=").append(app.getEnvironment()
+                .getProperty("sw.bpm.command.batch-size")).append('\n');
+        sb.append("dispatcherStaleSeconds=").append(app.getEnvironment()
+                .getProperty("sw.bpm.command.stale-seconds")).append('\n');
+        sb.append("flowableAsyncCorePool=").append(app.getEnvironment()
+                .getProperty("flowable.process.async.executor.core-pool-size")).append('\n');
+        sb.append("debugAuth=enabled(dev profile, loopback) perTenantBearer\n");
+        sb.append("identity=debug token test_<uid> -> UserDetailsProvider 正式回查\n");
+        for (Map.Entry<Long, TenantFixture> e : fixtures.entrySet()) {
+            TenantFixture fx = e.getValue();
+            sb.append("fixture tenant=").append(e.getKey()).append(" userId=").append(fx.userId)
+                    .append(" formKey=").append(fx.formKey).append(" actionId=").append(fx.actionId)
+                    .append(" processKey=").append(fx.lightProcessKey)
+                    .append(" objects=").append(fx.recordIds.size()).append('\n');
         }
-        return records.get(1 + random.nextInt(records.size() - 1));
+        sb.append("budgetContract=realtime P99<=300ms entry->commit; light acceptance P99<=2s entry->persistent-acceptance;"
+                + " client-observed loopback latency is declared upper bound of server entry->commit\n");
+        Files.writeString(evidenceDir.resolve("env-frozen.txt"), sb.toString(),
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
     }
 
     // ==================== 种子 ====================
 
-    private void seedTenant(Long tenant, String formKey) {
-        asTenant(tenant, () -> {
+    private TenantFixture seedTenant(Long tenant, long userId, String formKey, int objects,
+                                     double balance, String actionName) throws Exception {
+        jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
+                + "VALUES (?, ?, 'seed-not-a-login-secret', '预算测量操作员', ?, 0) "
+                + "ON CONFLICT (id) DO NOTHING", userId, "budget-op-" + tenant, tenant);
+        jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) "
+                + "VALUES (?, ?, ?, 2) ON CONFLICT (id) DO NOTHING",
+                userId, tenant, userId);
+        FormDefService formDefService = app.getBean(FormDefService.class);
+        com.sw.ck.form.txn.service.TxnActionService actionService =
+                app.getBean(com.sw.ck.form.txn.service.TxnActionService.class);
+        BpmProcessDefService processDefService = app.getBean(BpmProcessDefService.class);
+        FormSubmitService submitService = app.getBean(FormSubmitService.class);
+
+        asTenant(tenant, userId, () -> {
             FormDefDTO draft = formDefService.createDraft(formKey, "预算测量库存", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
+            return null;
+        });
+        TenantFixture fx = new TenantFixture();
+        fx.tenant = tenant;
+        fx.userId = userId;
+        fx.bearer = "Bearer test_" + userId;
+        fx.formKey = formKey;
+        fx.stockTable = asTenant(tenant, userId, () -> formDefService.getFormDefByKey(formKey))
+                .getPhysicalTableName();
+
+        fx.actionId = asTenant(tenant, userId, () -> {
             String formId = formDefService.getFormDefByKey(formKey).getId();
             TxnActionConfig cfg = new TxnActionConfig();
             cfg.setBalanceField("qty_available");
             cfg.setReservedField("qty_reserved");
             cfg.setExpiresInSeconds(600L);
             String actionId = actionService.create(formId, new TxnActionSaveRequest(
-                    "budget_reserve", "预算预占", "RESERVE", null, cfg)).id();
+                    actionName, "预算预占", "RESERVE", null, cfg)).id();
             actionService.publish(actionId);
-            tenantAction.put(tenant, actionId);
-            tenantFormKey.put(tenant, formKey);
-            return null;
+            return actionId;
         });
-        List<String> records = new ArrayList<>(1000);
-        for (int i = 0; i < 1000; i++) {
-            records.add(asTenant(tenant, () -> submitService.submitForm(formKey,
-                    data("material", "OBJ-" + tenant + "-" + records.size(),
-                            "qty_available", "100000", "qty_reserved", "0"),
-                    null, null, null)));
+
+        // 生产轻流程（固定代表：START→TXN_ACTION→END 单动作成功路径）发布并绑定表单
+        fx.lightProcessKey = asTenant(tenant, userId, () -> {
+            var def = processDefService.createDef("预算轻流程-" + tenant, formKey);
+            List<GraphElement> elements = List.of(
+                    node("start", "START", Map.of()),
+                    node("act-1", "TXN_ACTION", Map.of(
+                            "name", "库存预占", "actionId", fx.actionId,
+                            "recordIdSource", "instanceBusinessKey", "quantity", "1",
+                            "failureStrategy", "BLOCK")),
+                    node("end", "END", Map.of()),
+                    edge("e1", "start", "act-1"),
+                    edge("e2", "act-1", "end"));
+            ProcessGraph graph = ProcessGraph.builder()
+                    .processKey(def.getProcessKey()).name("预算轻流程-" + tenant)
+                    .formKey(formKey).version(1).elements(elements).build();
+            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+                    .writeValueAsString(graph);
+            processDefService.saveDraftGraph(def.getId(), json);
+            BpmProcessDef published = processDefService.publish(def.getId());
+            if (!"PUBLISHED".equals(published.getStatus())) {
+                throw new IllegalStateException("轻流程发布失败: " + def.getProcessKey());
+            }
+            return published.getProcessKey();
+        });
+
+        // 固定种子对象记录：首条=热点（其余 90% 请求均匀分布其后 N-1 条）
+        for (int i = 0; i < objects; i++) {
+            String recordId = asTenant(tenant, userId, () -> submitService.submitForm(formKey,
+                    data("material", "OBJ-" + tenant + "-" + fx.recordIds.size(),
+                            "qty_available", String.valueOf(balance), "qty_reserved", "0"),
+                    null, null, null));
+            fx.recordIds.add(recordId);
         }
-        tenantRecords.put(tenant, records);
-        System.out.println("[P62-EV] budget seeded tenant=" + tenant + " records=1000 action="
-                + tenantAction.get(tenant));
+        fixtures.put(tenant, fx);
+        System.out.println("[P62-EV] budget seeded tenant=" + tenant + " objects=" + objects
+                + " action=" + fx.actionId + " process=" + fx.lightProcessKey);
+        return fx;
     }
 
-    private String stockDefinition() {
+    private static GraphElement node(String id, String type, Map<String, Object> config) {
+        return GraphElement.builder().id(id).kind("node").type(type)
+                .config(config == null ? Map.of() : config).style(Map.of()).build();
+    }
+
+    private static GraphElement edge(String id, String source, String target) {
+        return GraphElement.builder().id(id).kind("edge").source(source).target(target)
+                .config(Map.of()).style(Map.of()).build();
+    }
+
+    private static String stockDefinition() {
         return "{\"schemaVersion\":1,\"title\":\"预算测量库存\",\"fields\":["
                 + "{\"name\":\"material\",\"type\":\"TEXT\",\"label\":\"物料\",\"required\":false},"
                 + "{\"name\":\"qty_available\",\"type\":\"NUMBER\",\"label\":\"可用量\",\"required\":false},"
@@ -482,21 +1024,22 @@ class P62BudgetMeasurementPgTest {
     }
 
     private static Map<String, Object> data(Object... kv) {
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {
             map.put(String.valueOf(kv[i]), kv[i + 1]);
         }
         return map;
     }
 
-    private static <T> T asTenant(Long tenant, Callable<T> action) {
-        LoginUser previous = LoginUserHolder.get();
-        LoginUser user = new LoginUser();
-        user.setUserId(91999L);
+    private static <T> T asTenant(Long tenant, long userId, Callable<T> action) {
+        com.sw.ck.security.holder.LoginUser previous =
+                com.sw.ck.security.holder.LoginUserHolder.get();
+        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        user.setUserId(userId);
         user.setTenantId(tenant);
-        user.setPermissions(new ArrayList<>(List.of("form:action:invoke")));
+        user.setPermissions(new ArrayList<>(List.of("form:action:invoke", "form:action:manage")));
         try {
-            LoginUserHolder.set(user);
+            com.sw.ck.security.holder.LoginUserHolder.set(user);
             return action.call();
         } catch (RuntimeException e) {
             throw e;
@@ -504,9 +1047,9 @@ class P62BudgetMeasurementPgTest {
             throw new IllegalStateException(e);
         } finally {
             if (previous == null) {
-                LoginUserHolder.clear();
+                com.sw.ck.security.holder.LoginUserHolder.clear();
             } else {
-                LoginUserHolder.set(previous);
+                com.sw.ck.security.holder.LoginUserHolder.set(previous);
             }
         }
     }
@@ -519,6 +1062,38 @@ class P62BudgetMeasurementPgTest {
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    /** debug-auth 的 Redis 缓存无操作替换：隔离测量环境无 Redis；权限仍经 UserDetailsProvider 正式回查。 */
+    public static class NoopLoginUserCacheService extends com.sw.ck.security.cache.LoginUserCacheService {
+        public NoopLoginUserCacheService() {
+            super(null, null);
+        }
+
+        @Override
+        public void cache(com.sw.ck.security.holder.LoginUser loginUser) {
+            // no-op
+        }
+
+        @Override
+        public com.sw.ck.security.holder.LoginUser get(Long userId) {
+            return null;
+        }
+
+        @Override
+        public void evict(Long userId) {
+            // no-op
+        }
+
+        @Override
+        public void markTokenRevoked(String rawToken) {
+            // no-op
+        }
+
+        @Override
+        public boolean isTokenRevoked(String rawToken) {
+            return false;
         }
     }
 }

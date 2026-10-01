@@ -96,6 +96,7 @@ public enum BpmErrorCode implements ErrorCode {
     LIGHT_PROCESS_CYCLE(2422, "bpm.light_process_cycle", "生产轻流程不允许存在环，请检查条件分支的连线方向"),
     LIGHT_PROCESS_ACTION_LIMIT_EXCEEDED(2423, "bpm.light_process_action_limit_exceeded", "生产轻流程的事务动作节点最多 16 个，请拆分流程"),
     BATCH_NOT_FOUND(2424, "bpm.batch_not_found", "批量批次不存在或不属于当前租户"),
+    BATCH_CAPABILITY_DISABLED(2425, "bpm.batch_capability_disabled", "批量事务调用能力未启用（新入口默认关闭，须旧消费者退出核清后协调开启）"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================

@@ -23,14 +23,24 @@ import java.util.Map;
 /**
  * 后台批量受控动作调用处理器（P62 分级执行 S3，U02/U03/U07）。
  * <p>
+/**
+ * 后台批量受控动作调用处理器（P62 分级执行 S3，U02/U03/U07）。
+ * <p>
  * 逐项独立事务（{@code REQUIRES_NEW}）：单项业务拒绝不回滚其他项，部分失败可定位、
  * 可恢复。项调用经 {@link FormTxnActionPort} 以稳定幂等键
  * {@code BATCH:{batchKey}:{itemKey}} 执行——同键同载荷重放返回原结果，
  * 同键异载荷被动作内核明确拒绝（1606）；重入恢复只处理 PENDING 项，
  * 已终态项不重做。批次结算（全部项终态）与命令效果权威账本同事务写入。
  * </p>
+ * <p>
+ * 消费侧隔离（P62 G5a/U06 兼容合同）：新类型处理器仅在部署开关
+ * {@code sw.bpm.txn-batch.enabled=true} 时注册；默认（旧版本语义进程）不注册，
+ * 与受理侧同一开关保证"旧消费者存活期零新类型"。
+ * </p>
  */
 @Component
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+        name = "sw.bpm.txn-batch.enabled", havingValue = "true", matchIfMissing = false)
 public class BatchInvokeCommandHandler implements BpmCommandHandler {
 
     private static final Logger log = LoggerFactory.getLogger(BatchInvokeCommandHandler.class);

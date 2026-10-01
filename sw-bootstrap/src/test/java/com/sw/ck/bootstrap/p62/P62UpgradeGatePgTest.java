@@ -86,6 +86,7 @@ class P62UpgradeGatePgTest {
         props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.bpm.txn-batch.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
