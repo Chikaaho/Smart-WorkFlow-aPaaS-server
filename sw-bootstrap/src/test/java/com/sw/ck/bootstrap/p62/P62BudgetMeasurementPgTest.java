@@ -158,7 +158,7 @@ class P62BudgetMeasurementPgTest {
         props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.datasource.dynamic.hikari.maximum-pool-size", "32");
+        props.put("sw.datasource.dynamic.hikari.maximum-pool-size", "64");
         // 复核02 G5a 能力开关：测量套件恢复段使用批次受理，需显式开启（默认关）
         props.put("sw.bpm.txn-batch.enabled", "true");
         // G1a 轻流程场景吞吐配置（冻结并写入 env-frozen）：命令调度与节点异步执行池
@@ -358,14 +358,17 @@ class P62BudgetMeasurementPgTest {
     private void collectPairs(List<String> recordIds, List<PairRow> pairs,
                               Map<String, String[]> recordMeta) {
         String in = String.join(",", recordIds.stream().map(id -> "'" + id + "'").toList());
-        // 目标提交行：动作调用（节点键）行；含调用行 id 作同对象锚
+        // 目标提交行：variable 源下调用行 biz_record_id=动作目标 id，与受理记录分属两对象；
+        // 同轮关联经流程实例链：受理记录(business_key) -> sw_bpm_instance.process_instance_id
+        //   -> 调用行 invocation_key='NODE:<pid>:<activity>'（同实例唯一）
         Map<String, Map<String, Object>> invocations = new HashMap<>();
-        jdbc.queryForList("SELECT DISTINCT ON (biz_record_id) biz_record_id, id::text AS invocation_id,"
-                        + " status, to_char(update_time, 'YYYY-MM-DD HH24:MI:SS.MS') AS target_ts"
-                        + " FROM sw_form_txn_invocation WHERE biz_record_id IN (" + in + ")"
-                        + " AND invocation_key LIKE 'NODE:%' AND status IN ('SUCCEEDED','REJECTED')"
-                        + " ORDER BY biz_record_id, update_time")
-                .forEach(row -> invocations.put(String.valueOf(row.get("biz_record_id")), row));
+        jdbc.queryForList("SELECT i.business_key AS rid, v.id::text AS invocation_id, v.status,"
+                        + " to_char(v.update_time, 'YYYY-MM-DD HH24:MI:SS.MS') AS target_ts"
+                        + " FROM sw_bpm_instance i JOIN sw_form_txn_invocation v"
+                        + " ON v.invocation_key = 'NODE:' || i.process_instance_id || ':act-1'"
+                        + " WHERE i.business_key IN (" + in + ")"
+                        + " AND v.status IN ('SUCCEEDED','REJECTED')")
+                .forEach(row -> invocations.put(String.valueOf(row.get("rid")), row));
         // 受理行 + 受理命令（FLOW_START 行）——record/command/target 同对象三元
         Map<String, String> acceptTs = new HashMap<>();
         jdbc.queryForList("SELECT id::text AS rid, to_char(create_time, 'YYYY-MM-DD HH24:MI:SS.MS')"
