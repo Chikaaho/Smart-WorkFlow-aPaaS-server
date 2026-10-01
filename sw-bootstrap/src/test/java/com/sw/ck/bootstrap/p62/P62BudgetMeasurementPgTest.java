@@ -1156,6 +1156,12 @@ class P62BudgetMeasurementPgTest {
             return published.getProcessKey();
         });
 
+        // 种子期停用表单绑定（发布自动激活）：否则每笔种子提交都会触发轻流程实例
+        // （种子数据无 target_record_id → 节点无目标 → 失败任务风暴）。种子完成后再激活，
+        // 测量流量全程绑定生效（fixture 管理，不影响测量语义）
+        jdbc.update("UPDATE sw_bpm_form_binding SET active = false"
+                        + " WHERE process_def_key = ? AND form_key = ?",
+                fx.lightProcessKey, formKey);
         // 固定种子对象记录：首条=热点（其余 90% 请求均匀分布其后 N-1 条）
         for (int i = 0; i < objects; i++) {
             String recordId = asTenant(tenant, userId, () -> submitService.submitForm(formKey,
@@ -1163,6 +1169,16 @@ class P62BudgetMeasurementPgTest {
                             "qty_available", String.valueOf(balance), "qty_reserved", "0"),
                     null, null, null));
             fx.recordIds.add(recordId);
+        }
+        jdbc.update("UPDATE sw_bpm_form_binding SET active = true"
+                        + " WHERE process_def_key = ? AND form_key = ?",
+                fx.lightProcessKey, formKey);
+        long activeBindings = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sw_bpm_form_binding WHERE process_def_key = ?"
+                        + " AND form_key = ? AND active = true", Long.class,
+                fx.lightProcessKey, formKey);
+        if (activeBindings != 1L) {
+            throw new IllegalStateException("绑定重新激活失败: " + fx.lightProcessKey);
         }
         fixtures.put(tenant, fx);
         System.out.println("[P62-EV] budget seeded tenant=" + tenant + " objects=" + objects
