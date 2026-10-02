@@ -1032,56 +1032,41 @@ class P62BudgetMeasurementPgTest {
         return sb.toString();
     }
 
-    /** 解包 dynamic-datasource 包装链，读取 Druid 池真实 maxActive（测量环境合同字段）。 */
+    /** 解包 dynamic-datasource（baomidou 4.3.1）：DynamicRoutingDataSource.dataSourceMap →
+     * ItemDataSource.realDataSource → DruidDataSource，读取真实 maxActive（环境合同字段）。 */
     private static long findDruidMaxActive() throws Exception {
         for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class)
                 .stream().toList()) {
-            Object cur = ds;
-            for (int depth = 0; cur != null && depth < 6; depth++) {
-                if (cur instanceof com.alibaba.druid.pool.DruidDataSource druid) {
-                    return druid.getMaxActive();
-                }
-                cur = unwrapDelegate(cur);
-            }
-        }
-        // dynamic-datasource 的 master 在路由数据源的映射里而非主 Bean（反射取解析后映射）
-        for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class)
-                .stream().toList()) {
-            for (String mapField : new String[]{"resolvedDataSources", "targetDataSources"}) {
-                try {
-                    var f = ds.getClass().getDeclaredField(mapField);
-                    f.setAccessible(true);
-                    Object map = f.get(ds);
-                    if (map instanceof java.util.Map<?, ?> m) {
-                        for (Object inner : m.values()) {
-                            Object cur = inner;
-                            for (int depth = 0; cur != null && depth < 6; depth++) {
-                                if (cur instanceof com.alibaba.druid.pool.DruidDataSource druid) {
-                                    return druid.getMaxActive();
-                                }
-                                cur = unwrapDelegate(cur);
-                            }
-                        }
+            if (ds instanceof com.baomidou.dynamic.datasource.DynamicRoutingDataSource routing) {
+                for (javax.sql.DataSource inner : routing.getDataSources().values()) {
+                    Long v = druidMaxActiveOf(inner);
+                    if (v != null) {
+                        return v;
                     }
-                } catch (Exception ignored) {
-                    // 尝试下一个字段
                 }
             }
         }
         throw new IllegalStateException("未找到 Druid 池（无法核实 maxActive）");
     }
 
-    private static Object unwrapDelegate(Object o) {
-        for (String field : new String[]{"realDataSource", "delegate", "dataSource"}) {
-            try {
-                var f = o.getClass().getDeclaredField(field);
-                f.setAccessible(true);
-                return f.get(o);
-            } catch (Exception ignored) {
-                // 尝试下一个字段
+    private static Long druidMaxActiveOf(Object cur) throws Exception {
+        for (int depth = 0; cur != null && depth < 6; depth++) {
+            if (cur instanceof com.alibaba.druid.pool.DruidDataSource druid) {
+                return (long) druid.getMaxActive();
             }
+            cur = unwrapField(cur, "realDataSource");
         }
         return null;
+    }
+
+    private static Object unwrapField(Object o, String field) {
+        try {
+            var f = o.getClass().getDeclaredField(field);
+            f.setAccessible(true);
+            return f.get(o);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static boolean isShortVerify() {
