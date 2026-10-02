@@ -117,6 +117,7 @@ class P62BudgetMeasurementPgTest {
     private static final java.time.Duration REQUEST_TIMEOUT = java.time.Duration.ofSeconds(10);
 
     private static int port;
+    private static ConfigurableApplicationContext appRef;
     private static final Map<Long, TenantFixture> fixtures = new HashMap<>();
 
     /** 每租户测量夹具：库存表单/动作/轻流程定义与对象记录清单。 */
@@ -206,6 +207,7 @@ class P62BudgetMeasurementPgTest {
         ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         root.setLevel(ch.qos.logback.classic.Level.WARN);
+        appRef = app;
         jdbc = app.getBean(JdbcTemplate.class);
         long druidMaxActive = findDruidMaxActive();
         if (druidMaxActive < 48) {
@@ -488,6 +490,10 @@ class P62BudgetMeasurementPgTest {
                 t100.recordIds.get(0));
         jdbc.update("UPDATE " + fixtures.get(0L).stockTable + " SET qty_available = 5000 WHERE id = ?",
                 fixtures.get(0L).recordIds.get(0));
+        // 复核04 G2b 剩余项：真实 OA 业务代表读（已授权用户待办 /workflow/tasks/todo）
+        // 与压力窗口全程并行——每租户 1 个真实待办对象（APPROVAL 节点实例 approve 至测量用户），
+        // 逐请求记录 tenant/user/endpoint/业务对象/业务码/发起时间/耗时/拒绝，不再以 /api/auth/menus 代 OA
+        seedOaBusiness();
         // 资源采样：5s 一轮（堆/线程/PG 活跃与锁等待）
         AtomicBoolean sampling = new AtomicBoolean(true);
         Thread sampler = new Thread(() -> {
@@ -529,6 +535,11 @@ class P62BudgetMeasurementPgTest {
         AtomicBoolean oaRunning = new AtomicBoolean(true);
         Thread oaWorker = oaParallelWorker(oaRunning);
         oaWorker.start();
+        // OA 业务代表读并行 worker（复核04 G2b 剩余项）：两租户各自真实待办读，逐请求落 CSV
+        Thread oaBizWorker0 = oaBusinessWorker(oaRunning, 0L);
+        Thread oaBizWorker100 = oaBusinessWorker(oaRunning, 100L);
+        oaBizWorker0.start();
+        oaBizWorker100.start();
         try {
             runLoad(new LoadSpec("stress-boundary", CONCURRENCY_STRESS,
                     STRESS_WARMUP_SECONDS, STRESS_FORMAL_SECONDS, 2, this::invokeRealtimeOnce));
@@ -540,7 +551,11 @@ class P62BudgetMeasurementPgTest {
             oaRunning.set(false);
             sampler.join(10_000);
             oaWorker.join(10_000);
+            oaBizWorker0.join(10_000);
+            oaBizWorker100.join(10_000);
         }
+        // worker 收敛后再落 OA 业务读报告（含逐租户 CSV 与首响应原文）
+        writeOaBusinessReport(oaBizWindowRows);
     }
 
     /** OA 并行读 worker（复核03 G2b）：压力窗口内持续请求 /api/auth/menus，逐请求落 CSV。 */
@@ -597,6 +612,249 @@ class P62BudgetMeasurementPgTest {
                 System.out.println("[P62-EV] oa csv write failed: " + e);
             }
         }, "p62-oa-parallel");
+    }
+
+    // ==================== 复核04 G2b 剩余项：真实 OA 业务代表读（同压力窗口） ====================
+
+    /**
+     * 每租户真实 OA 业务对象：发布 APPROVAL 节点流程并绑定本租户 OA 表单，
+     * 以测量用户为发起人发起 1 个实例 → 该用户出现 1 条真实待办（/workflow/tasks/todo 可读）。
+     */
+    private void seedOaBusiness() throws Exception {
+        for (Long tenant : List.of(0L, 100L)) {
+            TenantFixture fx = fixtures.get(tenant);
+            String formKey = "p62_oa_todo_t" + tenant;
+            long userId = fx.userId;
+            BpmProcessDefService processDefService = appRef.getBean(BpmProcessDefService.class);
+            com.sw.ck.bpm.process.service.ProcessStartService startService =
+                    appRef.getBean(com.sw.ck.bpm.process.service.ProcessStartService.class);
+            asTenant(tenant, userId, () -> {
+                FormDefDTO draft = appRef.getBean(FormDefService.class)
+                        .createDraft(formKey, "OA业务待办", null, null);
+                appRef.getBean(FormDefService.class).saveConfig(draft.getId(), stockDefinition());
+                appRef.getBean(FormDefService.class).publish(draft.getId());
+                return null;
+            });
+            String processKey = asTenant(tenant, userId, () -> {
+                var def = processDefService.createDef("OA业务待办流程-" + tenant, formKey);
+                List<GraphElement> elements = List.of(
+                        node("start", "START", Map.of()),
+                        node("approve", "APPROVAL", Map.of("name", "OA待办审批",
+                                "approver", Map.of("type", "DESIGNATED",
+                                        "value", List.of(String.valueOf(userId))))),
+                        node("end", "END", Map.of()),
+                        edge("e1", "start", "approve"),
+                        edge("e2", "approve", "end"));
+                ProcessGraph graph = ProcessGraph.builder()
+                        .processKey(def.getProcessKey()).name("OA业务待办流程-" + tenant)
+                        .formKey(formKey).version(1).elements(elements).build();
+                String json = appRef.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+                        .writeValueAsString(graph);
+                processDefService.saveDraftGraph(def.getId(), json);
+                BpmProcessDef published = processDefService.publish(def.getId());
+                if (!"PUBLISHED".equals(published.getStatus())) {
+                    throw new IllegalStateException("OA 业务流程发布失败: " + def.getProcessKey());
+                }
+                return published.getProcessKey();
+            });
+            asTenant(tenant, userId, () -> {
+                com.sw.ck.bpm.process.dto.StartCommand cmd =
+                        new com.sw.ck.bpm.process.dto.StartCommand();
+                cmd.setFormKey(formKey);
+                cmd.setRecordId("OA-TODO-" + tenant + "-" + userId);
+                cmd.setSubmitter(userId);
+                cmd.setTenantId(tenant);
+                cmd.setSubmittedData(data("material", "OA-TODO-" + tenant,
+                        "qty_available", "1", "qty_reserved", "0"));
+                startService.start(cmd);
+                return null;
+            });
+            long pending = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM ACT_RU_TASK WHERE ASSIGNEE_ = ?",
+                    Long.class, String.valueOf(userId));
+            if (pending < 1) {
+                throw new IllegalStateException("OA 业务待办未生成: tenant=" + tenant
+                        + " user=" + userId + " processKey=" + processKey);
+            }
+            System.out.println("[P62-EV] oa-business seeded tenant=" + tenant + " user=" + userId
+                    + " formKey=" + formKey + " processKey=" + processKey + " pendingTasks=" + pending);
+        }
+    }
+
+    /** OA 业务代表读样本：tenant,user,endpoint,bizCode,bizObjects,httpStatus,ts,latencyMs,outcome。 */
+    private final List<String> oaBizWindowRows = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * OA 业务代表读 worker（复核04 G2b 剩余项）：压力窗口内持续请求本租户
+     * `/api/workflow/tasks/todo`（真实待办读，业务对象=待办任务），逐请求记录原始值。
+     */
+    private Thread oaBusinessWorker(AtomicBoolean running, Long tenant) {
+        return new Thread(() -> {
+            TenantFixture fx = fixtures.get(tenant);
+            String bearer = "Bearer test_" + fx.userId;
+            long count = 0;
+            long non200 = 0;
+            long errors = 0;
+            long minTotal = Long.MAX_VALUE;
+            String firstBody = null;
+            while (running.get()) {
+                long begin = System.nanoTime();
+                String httpStatus;
+                String bizCode = "";
+                String bizObjects = "";
+                String outcome;
+                try {
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create("http://127.0.0.1:" + port
+                                    + "/api/workflow/tasks/todo?pageNum=1&pageSize=10"))
+                            .timeout(REQUEST_TIMEOUT)
+                            .header("Authorization", bearer)
+                            .GET()
+                            .build();
+                    HttpResponse<String> response = HTTP.send(request,
+                            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                    httpStatus = String.valueOf(response.statusCode());
+                    if (response.statusCode() != 200) {
+                        non200++;
+                        outcome = "REJECTED:" + response.statusCode();
+                    } else {
+                        bizCode = extractJsonNumber(response.body(), "code");
+                        String total = extractJsonScalar(response.body(), "total");
+                        if (total == null) {
+                            throw new IllegalStateException("待办响应缺 total/非成功业务码");
+                        }
+                        long totalValue = Long.parseLong(total);
+                        bizObjects = "todoTotal=" + totalValue;
+                        minTotal = Math.min(minTotal, totalValue);
+                        if (firstBody == null) {
+                            firstBody = response.body();
+                        }
+                        outcome = "OK";
+                    }
+                } catch (Exception e) {
+                    httpStatus = "-";
+                    outcome = "ERROR:" + e.getClass().getSimpleName();
+                    errors++;
+                }
+                double latency = (System.nanoTime() - begin) / 1_000_000.0;
+                count++;
+                oaBizWindowRows.add(String.format(Locale.ROOT,
+                        "%d,%d,/api/workflow/tasks/todo,%s,%s,%s,%s,%.1f,%s",
+                        tenant, fx.userId, bizCode, bizObjects, httpStatus,
+                        LocalDateTime.now().format(TS), latency, outcome));
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            try {
+                StringBuilder csv = new StringBuilder(
+                        "tenant,user,endpoint,bizCode,bizObjects,httpStatus,ts,latencyMs,outcome\n");
+                for (String row : oaBizWindowRows) {
+                    if (row.startsWith(tenant + ",")) {
+                        csv.append(row).append('\n');
+                    }
+                }
+                writeNew(evidenceDir.resolve("oa-business-todo-requests-t" + tenant + ".csv"),
+                        out -> out.write(csv.toString().getBytes(StandardCharsets.UTF_8)));
+                if (firstBody != null) {
+                    Files.writeString(evidenceDir.resolve("oa-business-todo-response-t" + tenant + ".json"),
+                            firstBody, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW,
+                            StandardOpenOption.WRITE);
+                }
+                System.out.println("[P62-EV] oa-business tenant=" + tenant + " requests=" + count
+                        + " non200=" + non200 + " errors=" + errors + " minTodoTotal="
+                        + (minTotal == Long.MAX_VALUE ? -1 : minTotal));
+            } catch (Exception e) {
+                System.out.println("[P62-EV] oa business csv write failed: " + e);
+            }
+        }, "p62-oa-business-t" + tenant);
+    }
+
+    /**
+     * OA 业务读报告：按实际样本文件回读统计（请求数/非 200/拒绝/错误/耗时分位），
+     * 并把窗口边界（首末请求时点）与负载正式窗口对齐，供"窗口外不作并行证据"核验。
+     */
+    private void writeOaBusinessReport(List<String> rows) throws Exception {
+        String summary = buildOaBusinessSummary(rows);
+        System.out.println("[P62-EV] " + summary.replace('\n', ' '));
+    }
+
+    private String buildOaBusinessSummary(List<String> rows) throws Exception {
+        Path sample = evidenceDir.resolve("stress-boundary-samples.csv.gz");
+        final String[] firstFormal = {null};
+        final String[] lastFormal = {null};
+        final long[] formal = {0};
+        readGzipLines(sample, line -> {
+            String[] parts = line.split(",", -1);
+            if (parts.length < 9 || !"FORMAL".equals(parts[0])) {
+                return;
+            }
+            formal[0]++;
+            if (firstFormal[0] == null) {
+                firstFormal[0] = parts[2];
+            }
+            lastFormal[0] = parts[2];
+        });
+        StringBuilder sb = new StringBuilder();
+        sb.append("oa-business endpoint=/api/workflow/tasks/todo window=stress-formal-parallel"
+                + " loadFormalSamples=").append(formal[0])
+                .append(" loadFormalFirstTs=").append(firstFormal[0])
+                .append(" loadFormalLastTs=").append(lastFormal[0]).append('\n');
+        for (Long tenant : List.of(0L, 100L)) {
+            List<Double> latencies = new ArrayList<>();
+            long requests = 0;
+            long non200 = 0;
+            long errors = 0;
+            long nonZeroCode = 0;
+            long minTotal = Long.MAX_VALUE;
+            long maxTotal = Long.MIN_VALUE;
+            String firstTs = null;
+            String lastTs = null;
+            for (String row : rows) {
+                String[] parts = row.split(",", -1);
+                if (parts.length < 9 || !parts[0].equals(String.valueOf(tenant))) {
+                    continue;
+                }
+                requests++;
+                if (firstTs == null) {
+                    firstTs = parts[6];
+                }
+                lastTs = parts[6];
+                if (!"200".equals(parts[5])) {
+                    non200++;
+                }
+                if (parts[8].startsWith("ERROR")) {
+                    errors++;
+                }
+                if (!"0".equals(parts[3])) {
+                    nonZeroCode++;
+                }
+                String total = parts[4].replace("todoTotal=", "");
+                long totalValue = Long.parseLong(total);
+                minTotal = Math.min(minTotal, totalValue);
+                maxTotal = Math.max(maxTotal, totalValue);
+                latencies.add(Double.parseDouble(parts[7]));
+            }
+            latencies.sort(Double::compare);
+            sb.append(String.format(Locale.ROOT,
+                    "oa-business tenant=%d user=%d endpoint=/api/workflow/tasks/todo requests=%d"
+                            + " non200=%d errors=%d nonZeroBizCode=%d todoTotalMin=%d todoTotalMax=%d"
+                            + " p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms"
+                            + " firstTs=%s lastTs=%s%n",
+                    tenant, fixtures.get(tenant).userId, requests, non200, errors, nonZeroCode,
+                    minTotal == Long.MAX_VALUE ? -1 : minTotal,
+                    maxTotal == Long.MIN_VALUE ? -1 : maxTotal,
+                    percentile(latencies, 0.50), percentile(latencies, 0.95),
+                    percentile(latencies, 0.99),
+                    latencies.isEmpty() ? 0 : latencies.get(latencies.size() - 1),
+                    firstTs, lastTs));
+        }
+        writeNew(evidenceDir.resolve("oa-business-summary.txt"),
+                out -> out.write(sb.toString().getBytes(StandardCharsets.UTF_8)));
+        return sb.toString();
     }
 
     // ==================== 负载框架 ====================
@@ -693,6 +951,31 @@ class P62BudgetMeasurementPgTest {
         }
         String v = json.substring(colon + 1, end).trim();
         return v.startsWith("-") || v.isEmpty() ? v : v;
+    }
+
+    /** R 契约字段的实际渲染可能是字符串（如 PageResult.total="1"）：取带引号或不带引号的原始标量。 */
+    private static String extractJsonScalar(String json, String field) {
+        int i = json.indexOf("\"" + field + "\"");
+        if (i < 0) {
+            return null;
+        }
+        int colon = json.indexOf(':', i) + 1;
+        while (colon < json.length() && json.charAt(colon) == ' ') {
+            colon++;
+        }
+        if (colon >= json.length()) {
+            return null;
+        }
+        if (json.charAt(colon) == '"') {
+            int end = json.indexOf('"', colon + 1);
+            return end < 0 ? null : json.substring(colon + 1, end);
+        }
+        int end = colon;
+        while (end < json.length() && (json.charAt(end) == '-' || json.charAt(end) == '.'
+                || Character.isDigit(json.charAt(end)))) {
+            end++;
+        }
+        return end == colon ? null : json.substring(colon, end);
     }
 
     /** 提取 data 字段的原始值（字符串取引号内，对象/数组取原文到平衡点由调用方处理）。 */
@@ -1287,7 +1570,8 @@ class P62BudgetMeasurementPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
+    /** 生成 RSA PKCS#8 BASE64 测试私钥（同一批 P62 测试共用）。 */
+    public static String generatedRsaPkcs8Base64() {
         try {
             java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
