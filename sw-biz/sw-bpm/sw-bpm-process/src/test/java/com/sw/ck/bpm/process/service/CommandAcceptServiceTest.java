@@ -111,22 +111,58 @@ class CommandAcceptServiceTest {
     }
 
     @Test
-    @DisplayName("同 key 已存在且状态非 FAILED → 幂等返回 duplicated=true 且不再 enqueue")
+    @DisplayName("同 key 已存在且状态非 FAILED → 同载荷幂等命中返回原受理且不再 enqueue（提示05 G3b1）")
     void acceptTaskAction_shouldReturnExistingWhenNotFailed() {
-        CommandEnvelope existing = new CommandEnvelope();
+        // 第一次受理：捕获入队信封（payload 与 payload_fingerprint 由受理层写入）
+        when(commandQueue.findByKey(0L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.empty());
+        when(commandQueue.enqueue(any(CommandEnvelope.class))).thenAnswer(inv -> {
+            CommandEnvelope env = inv.getArgument(0);
+            env.setCommandId(66L);
+            return 66L;
+        });
+        service.acceptTaskAction("task-9", ApprovalAction.APPROVE, null, CommandChannelEnum.NORMAL);
+        ArgumentCaptor<CommandEnvelope> captor = ArgumentCaptor.forClass(CommandEnvelope.class);
+        verify(commandQueue).enqueue(captor.capture());
+        CommandEnvelope existing = captor.getValue();
         existing.setCommandId(66L);
-        existing.setCommandType(CommandTypeEnum.TASK_APPROVE);
-        existing.setChannel(CommandChannelEnum.NORMAL);
-        existing.setCommandKey("TASK_APPROVE:task-9:2");
         existing.setStatus("PROCESSING");
-        when(commandQueue.findByKey(0L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.of(existing));
 
+        // 第二次同载荷受理：幂等命中返回原命令
+        when(commandQueue.findByKey(0L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.of(existing));
         CommandAcceptRespDTO resp = service.acceptTaskAction("task-9", ApprovalAction.APPROVE,
                 null, CommandChannelEnum.NORMAL);
 
         assertThat(resp.getCommandId()).isEqualTo(66L);
         assertThat(resp.isDuplicated()).isFalse();
-        verify(commandQueue, never()).enqueue(any());
+        verify(commandQueue, org.mockito.Mockito.times(1)).enqueue(any());
+    }
+
+    @Test
+    @DisplayName("同 key 异载荷（含运行期在途命令）→ 明确拒绝载荷冲突，不吞成成功（提示05 G3b1）")
+    void acceptTaskAction_shouldRejectSameKeyDifferentPayload() {
+        when(commandQueue.findByKey(0L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.empty());
+        when(commandQueue.enqueue(any(CommandEnvelope.class))).thenAnswer(inv -> {
+            CommandEnvelope env = inv.getArgument(0);
+            env.setCommandId(66L);
+            return 66L;
+        });
+        service.acceptTaskAction("task-9", ApprovalAction.APPROVE, null, CommandChannelEnum.NORMAL);
+        ArgumentCaptor<CommandEnvelope> captor = ArgumentCaptor.forClass(CommandEnvelope.class);
+        verify(commandQueue).enqueue(captor.capture());
+        CommandEnvelope existing = captor.getValue();
+        existing.setCommandId(66L);
+        existing.setStatus("PROCESSING");
+        when(commandQueue.findByKey(0L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.of(existing));
+
+        // 同键、comment 不同的重放：必须拒绝（COMMAND_PAYLOAD_MISMATCH），不得返回原命令
+        ApprovalActionRequest different = new ApprovalActionRequest();
+        different.setComment("第二载荷");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        service.acceptTaskAction("task-9", ApprovalAction.APPROVE,
+                                different, CommandChannelEnum.NORMAL))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("不同的请求载荷");
+        verify(commandQueue, never()).requeueFailed(any());
     }
 
     @Test

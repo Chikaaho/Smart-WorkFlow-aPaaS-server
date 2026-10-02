@@ -9,6 +9,7 @@ import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
+import com.sw.ck.bpm.process.queue.CommandFingerprint;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.security.holder.LoginUser;
@@ -94,9 +95,25 @@ public class CommandAcceptService {
                                                         LoginUser loginUser,
                                                         CommandTypeEnum type,
                                                         String commandKey) {
+        String incomingPayload = toPayload(taskId, action, request);
+        String incomingFingerprint = CommandFingerprint.of(incomingPayload);
         CommandEnvelope existing = commandQueue.findByKey(loginUser.getTenantId(), commandKey)
                 .orElse(null);
         if (existing != null && !"FAILED".equals(existing.getStatus())) {
+            // 同键命中（提示05 G3b1）：同载荷=同一操作重放，返回原受理；异载荷=明确拒绝，
+            // 不得默认成功（含受理尚未完成/运行期的首次并发冲突）。旧行缺指纹时以存储
+            // payload 原文回推指纹（可解释兼容），不迁移、不默认异载荷成功。
+            String existingFingerprint = existing.getPayloadFingerprint() != null
+                    && !existing.getPayloadFingerprint().isBlank()
+                    ? existing.getPayloadFingerprint()
+                    : CommandFingerprint.of(existing.getPayload());
+            if (!incomingFingerprint.equals(existingFingerprint)) {
+                log.warn("同键异载荷拒绝: key={}, existingCommandId={}, incomingFingerprint={}, "
+                                + "existingFingerprint={}",
+                        commandKey, existing.getCommandId(), incomingFingerprint, existingFingerprint);
+                throw new BaseException(
+                        com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
+            }
             log.info("审批命令幂等命中: key={}, commandId={}", commandKey, existing.getCommandId());
             return toResp(existing, false);
         }
@@ -104,7 +121,8 @@ public class CommandAcceptService {
         // FAILED 终态允许重新提交：唯一键 (tenant_id, command_key) 语义下复用同键行重置入队，
         // 不走新插（同键新插必撞唯一键且事务已污染，无法再走幂等返回）
         if (existing != null) {
-            existing.setPayload(toPayload(taskId, action, request));
+            existing.setPayload(incomingPayload);
+            existing.setPayloadFingerprint(incomingFingerprint);
             commandQueue.requeueFailed(existing);
             return toResp(existing, true);
         }
@@ -115,7 +133,8 @@ public class CommandAcceptService {
         envelope.setCommandKey(commandKey);
         envelope.setTenantId(loginUser.getTenantId());
         envelope.setInitiatorId(loginUser.getUserId());
-        envelope.setPayload(toPayload(taskId, action, request));
+        envelope.setPayload(incomingPayload);
+        envelope.setPayloadFingerprint(incomingFingerprint);
         try {
             commandQueue.enqueue(envelope);
         } catch (DuplicateKeyException e) {

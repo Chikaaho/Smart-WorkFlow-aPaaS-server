@@ -247,9 +247,9 @@ class P62CrossChannelIdentityPgTest {
         long effectsBefore = countNotifications(taskId);
         long commandsBefore = countCommandsByKey(taskId);
 
-        // 1. 异步命令入口（NORMAL 通道）受理同一逻辑操作
+        // 1. 异步命令入口（NORMAL 通道）受理同一逻辑操作（提示05 G3b1：跨入口恢复要求同载荷）
         String acceptResp = post("/api/workflow/commands/tasks/" + taskId + "/complete?channel=NORMAL",
-                bearer, "{\"comment\":\"异步先行\"}");
+                bearer, "{\"comment\":\"跨通道同载荷-a\"}");
         Long commandId = extractNumber(acceptResp, "commandId");
         raw.append("[async-first] accept response: ").append(acceptResp).append('\n');
         // 2. 结果回查（受理≠完成）
@@ -257,9 +257,9 @@ class P62CrossChannelIdentityPgTest {
         raw.append("[async-first] command status: ").append(statusResp).append('\n');
         assertTerminal(statusResp);
 
-        // 3. 同步入口对同一逻辑操作（同租户/同任务/同动作/同操作人）
+        // 3. 同步入口对同一逻辑操作（同租户/同任务/同动作/同操作人/同载荷）
         String syncResp = post("/api/workflow/tasks/" + taskId + "/complete", bearer,
-                "{\"comment\":\"同步跟进\"}");
+                "{\"comment\":\"跨通道同载荷-a\"}");
         raw.append("[async-first] sync response: ").append(syncResp).append('\n');
 
         // 4. 实际效果不增加（动作台账/命令台账/通知）且同步入口同操作为明确去重成功
@@ -289,7 +289,7 @@ class P62CrossChannelIdentityPgTest {
 
         // 1. 同步 HTTP 入口先行
         String syncResp = post("/api/workflow/tasks/" + taskId + "/complete", bearer,
-                "{\"comment\":\"同步先行\"}");
+                "{\"comment\":\"跨通道同载荷-b\"}");
         raw.append("[sync-first] sync response: ").append(syncResp).append('\n');
         assertThat(syncResp).as("同步入口先行必须成功").contains("httpStatus=200").contains("\"code\":0");
         // 只读现场：同步入口提交后运行期任务已消失、历史行已完成（证明同操作不会再执行）
@@ -299,9 +299,9 @@ class P62CrossChannelIdentityPgTest {
                 .append(jdbc.queryForList("SELECT END_TIME_ FROM ACT_HI_TASKINST WHERE ID_ = ?", taskId))
                 .append('\n');
 
-        // 2. 异步命令入口对同一逻辑操作：必须恢复原结果（RECOVERED + 原动作记录标识），不得误报二次成功
+        // 2. 异步命令入口对同一逻辑操作（同载荷）：必须恢复原结果（RECOVERED + 原动作记录标识），不得误报二次成功
         String acceptResp = post("/api/workflow/commands/tasks/" + taskId + "/complete?channel=NORMAL",
-                bearer, "{\"comment\":\"异步跟进\"}");
+                bearer, "{\"comment\":\"跨通道同载荷-b\"}");
         Long commandId = extractNumber(acceptResp, "commandId");
         raw.append("[sync-first] accept response: ").append(acceptResp).append('\n');
         String statusResp = awaitCommandTerminal(commandId, bearer);

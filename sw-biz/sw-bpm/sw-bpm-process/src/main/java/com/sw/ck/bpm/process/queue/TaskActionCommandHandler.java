@@ -6,6 +6,7 @@ import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.TaskActionService;
+import com.sw.ck.common.exception.BaseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -71,12 +72,23 @@ public class TaskActionCommandHandler implements BpmCommandHandler {
         // 任务仍在运行期（另一入口尚未提交/不同操作人）时保持原路径，由执行核心判定冲突。
         boolean sameOperationPrior = sameOperation(envelope, request, prior);
         if (sameOperationPrior && !taskActionService.isTaskInRuntime(taskId)) {
-            String recovered = "{\"status\":\"RECOVERED\",\"actionRecordId\":" + prior.getId() + "}";
-            log.info("同身份重放恢复自身已提交结果（跨入口）: commandId={}, taskId={}, "
+            // 跨入口恢复前置（提示05 G3b1）：同身份且载荷一致才按 RECOVERED 恢复原结果；
+            // 同身份异载荷不得吞成成功——明确拒绝（COMMAND_PAYLOAD_MISMATCH），由调度器
+            // 按失败终态处理，不进入执行核心产生任何效果。
+            if (taskActionService.auditPayloadConsistent(request, prior)) {
+                String recovered = "{\"status\":\"RECOVERED\",\"actionRecordId\":" + prior.getId() + "}";
+                log.info("同身份重放恢复自身已提交结果（跨入口）: commandId={}, taskId={}, "
+                                + "actionRecordId={}, actor={}, action={}",
+                        envelope.getCommandId(), taskId, prior.getId(), prior.getActorId(),
+                        prior.getAction());
+                return recovered;
+            }
+            log.warn("同身份异载荷拒绝（跨入口恢复分支）: commandId={}, taskId={}, "
                             + "actionRecordId={}, actor={}, action={}",
                     envelope.getCommandId(), taskId, prior.getId(), prior.getActorId(),
                     prior.getAction());
-            return recovered;
+            throw new BaseException(
+                    com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
         }
         taskActionService.execute(taskId, request, envelope.getCommandId());
 

@@ -82,6 +82,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         }
         command.setStatus(CommandStatusEnum.PENDING.getCode());
         command.setPayload(envelope.getPayload());
+        command.setPayloadFingerprint(blankToNull(envelope.getPayloadFingerprint()));
         command.setRetryCount(0);
         command.setFailureReason(null);
         command.setNextRetryAt(null);

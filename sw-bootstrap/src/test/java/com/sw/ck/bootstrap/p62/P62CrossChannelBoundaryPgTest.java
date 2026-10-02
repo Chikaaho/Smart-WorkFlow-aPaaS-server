@@ -245,11 +245,11 @@ class P62CrossChannelBoundaryPgTest {
         return taskId;
     }
 
-    // ==================== 场景1：异步同键异载荷（受理幂等命中、原结果不覆盖） ====================
+    // ==================== 场景1：异步同键异载荷（受理明确拒绝、同载荷正向命中） ====================
 
     @Test
     @Order(1)
-    @DisplayName("异步同键异载荷：受理命中原命令不新建，原命令结果与动作记录载荷不覆盖，效果不增")
+    @DisplayName("异步同键异载荷：运行期与终态后均明确拒绝(2426)，同键同载荷幂等命中原命令，原结果不覆盖")
     void sameKeyDifferentPayloadAsync() throws Exception {
         String taskId = startPendingTask("asp");
         String bearer = bearer(USER);
@@ -257,11 +257,22 @@ class P62CrossChannelBoundaryPgTest {
         long effectsBefore = countNotifications(taskId);
         long commandsBefore = countCommandsByKey(taskId);
 
-        // 1. 异步受理 APPROVE（载荷 comment=第一载荷），等待业务终态
+        // 1. 异步受理 APPROVE（载荷 comment=第一载荷）
         String acceptResp = post("/api/workflow/commands/tasks/" + taskId + "/complete?channel=NORMAL",
                 bearer, "{\"comment\":\"第一载荷\"}");
         raw.append("[async-payload] accept-1: ").append(acceptResp).append('\n');
         Long commandId = extractNumber(acceptResp, "commandId");
+
+        // 2. 受理尚未完成（命令在途/任务运行期）即以同键异载荷提交：受理层明确拒绝
+        String duringFlightResp = post("/api/workflow/commands/tasks/" + taskId + "/complete?channel=NORMAL",
+                bearer, "{\"comment\":\"第二载荷\"}");
+        raw.append("[async-payload] accept-in-flight(same key, different payload): ")
+                .append(duringFlightResp).append('\n');
+        assertThat(duringFlightResp).as("运行期同键异载荷必须被拒绝且携带载荷冲突码 2426")
+                .contains("\"code\":2426")
+                .as("异载荷不得默认成功（code=0 即失败）").doesNotContain("\"code\":0");
+
+        // 3. 等首次命令业务终态并读回原载荷/记录
         String statusResp = awaitCommandTerminal(commandId, bearer, 60_000);
         raw.append("[async-payload] status-1: ").append(statusResp).append('\n');
         assertThat(statusResp).as("首次异步执行必须成功").contains("\"status\":\"COMPLETED\"");
@@ -272,25 +283,34 @@ class P62CrossChannelBoundaryPgTest {
                 .append(" fingerprint=").append(fingerprintBefore).append('\n');
         raw.append("[async-payload] record-1: ").append(recordBefore).append('\n');
 
-        // 2. 同键（TASK_APPROVE:taskId:actor）异载荷（comment=第二载荷）再次受理
+        // 4. 终态后同键异载荷再次提交：仍明确拒绝（任务已消失不构成吞掉异载荷的理由）
         String replayResp = post("/api/workflow/commands/tasks/" + taskId + "/complete?channel=NORMAL",
                 bearer, "{\"comment\":\"第二载荷\"}");
         raw.append("[async-payload] accept-2(same key, different payload): ").append(replayResp).append('\n');
-        Long replayCommandId = extractNumber(replayResp, "commandId");
+        assertThat(replayResp).as("终态后同键异载荷必须被拒绝且携带载荷冲突码 2426")
+                .contains("\"code\":2426")
+                .as("异载荷不得默认成功（code=0 即失败）").doesNotContain("\"code\":0");
+        assertThat(extractNumber(replayResp, "commandId"))
+                .as("异载荷拒绝响应不得返回原命令受理标识").isNull();
 
-        // 3. 反向断言：不新建第二命令、原命令结果不变、原动作记录载荷不覆盖、效果不增
-        assertThat(replayCommandId).as("同键异载荷必须命中原命令受理标识，不得新建")
-                .isEqualTo(commandId);
-        assertThat(countCommandsByKey(taskId)).as("同键异载荷不产生第二条命令行")
-                .isEqualTo(commandsBefore + 1);
+        // 5. 同键同载荷重放：幂等命中原命令（正向保留：同身份同有效载荷保持原结果）
+        String samePayloadResp = post("/api/workflow/commands/tasks/" + taskId + "/complete?channel=NORMAL",
+                bearer, "{\"comment\":\"第一载荷\"}");
+        raw.append("[async-payload] accept-3(same key, same payload): ").append(samePayloadResp).append('\n');
+        assertThat(extractNumber(samePayloadResp, "commandId"))
+                .as("同键同载荷必须命中原命令受理标识").isEqualTo(commandId);
+
+        // 6. 原命令结果不变、原动作记录载荷不覆盖、效果不增
         String statusAfter = awaitCommandTerminal(commandId, bearer, 5_000);
         raw.append("[async-payload] status-after-replay: ").append(statusAfter).append('\n');
         assertThat(statusAfter).as("原命令终态保持 COMPLETED 且结果仍指向原动作记录")
                 .contains("\"status\":\"COMPLETED\"").contains("actionRecordId");
         assertThat(commandPayload(commandId)).as("原命令 payload 不被异载荷覆盖").isEqualTo(payloadBefore);
         assertThat(commandFingerprint(commandId))
-                .as("payload_fingerprint 实际值不变（受理入口现状：未写入指纹）")
+                .as("payload_fingerprint 实际值不变（本轮受理已写入指纹，与既有语义一致）")
                 .isEqualTo(fingerprintBefore);
+        assertThat(fingerprintBefore).as("本轮受理写入载荷指纹（SHA-256 of payload）")
+                .isNotEqualTo("<NULL>");
         String recordAfter = actionRecordJson(taskId);
         raw.append("[async-payload] record-after-replay: ").append(recordAfter).append('\n');
         assertThat(recordAfter).as("动作记录载荷字段不因异载荷重放覆盖").isEqualTo(recordBefore);
@@ -303,35 +323,46 @@ class P62CrossChannelBoundaryPgTest {
                 commandsBefore, countCommandsByKey(taskId)));
         assertThat(actionsAfter).as("动作记录恰一条").isEqualTo(1L);
         assertThat(effectsAfter).as("通知不增加").isEqualTo(effectsBefore);
+        assertThat(countCommandsByKey(taskId)).as("同键异载荷与同载荷重放均不产生第二条命令行")
+                .isEqualTo(commandsBefore + 1);
     }
 
-    // ==================== 场景2：同步同身份异载荷（恢复成功、原记录不覆盖） ====================
+    // ==================== 场景2：同步同身份异载荷（明确拒绝、同载荷恢复正向） ====================
 
     @Test
     @Order(2)
-    @DisplayName("同步同身份异载荷：恢复原结果不覆盖原记录载荷字段，效果不增（等价语义：任务已消失后载荷无生效路径）")
+    @DisplayName("同步同身份异载荷：明确拒绝(2426)不吞成成功；同载荷重放恢复原结果且原记录不覆盖")
     void sameIdentityDifferentPayloadSync() throws Exception {
         String taskId = startPendingTask("ssp");
         String bearer = bearer(USER);
         long actionsBefore = countActions(taskId);
         long effectsBefore = countNotifications(taskId);
+        String firstBody = "{\"comment\":\"同步第一载荷\"}";
 
-        String firstResp = post("/api/workflow/tasks/" + taskId + "/complete", bearer,
-                "{\"comment\":\"同步第一载荷\"}");
+        String firstResp = post("/api/workflow/tasks/" + taskId + "/complete", bearer, firstBody);
         raw.append("[sync-payload] sync-1: ").append(firstResp).append('\n');
         assertThat(firstResp).as("同步首次执行必须成功")
                 .contains("httpStatus=200").contains("\"code\":0");
         String recordBefore = actionRecordJson(taskId);
         raw.append("[sync-payload] record-1: ").append(recordBefore).append('\n');
 
-        // 任务已消失后：同 (任务, 操作人, 动作) 异载荷重放——恢复分支只读身份字段，不读不写载荷字段
+        // 任务已消失后：同 (任务, 操作人, 动作) 异载荷重放——明确拒绝（2426），不得恢复为成功
         String replayResp = post("/api/workflow/tasks/" + taskId + "/complete", bearer,
                 "{\"comment\":\"同步第二载荷\",\"opinionData\":{\"score\":999}}");
         raw.append("[sync-payload] sync-2(same identity, different payload): ").append(replayResp).append('\n');
+        assertThat(replayResp).as("同步同身份异载荷必须被拒绝且携带载荷冲突码 2426")
+                .contains("\"code\":2426")
+                .as("异载荷不得默认成功（code=0 即失败）").doesNotContain("\"code\":0");
+
+        // 同身份同载荷重放：恢复原结果（正向保留，U02 同键同载荷跨重放一致）
+        String sameResp = post("/api/workflow/tasks/" + taskId + "/complete", bearer, firstBody);
+        raw.append("[sync-payload] sync-3(same identity, same payload): ").append(sameResp).append('\n');
+        assertThat(sameResp).as("同身份同载荷重放恢复成功")
+                .contains("httpStatus=200").contains("\"code\":0");
 
         String recordAfter = actionRecordJson(taskId);
         raw.append("[sync-payload] record-after-replay: ").append(recordAfter).append('\n');
-        assertThat(recordAfter).as("原动作记录不因异载荷重放覆盖").isEqualTo(recordBefore);
+        assertThat(recordAfter).as("原动作记录不因异载荷重放或同载荷恢复覆盖").isEqualTo(recordBefore);
         assertThat(recordBefore).as("原记录保留首次载荷 comment").contains("同步第一载荷");
         long actionsAfter = countActions(taskId);
         long effectsAfter = countNotifications(taskId);

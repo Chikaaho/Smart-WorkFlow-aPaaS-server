@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -99,6 +100,92 @@ public class TaskActionService {
     }
 
     /**
+     * 同身份重放的载荷一致性判定（提示05 G3b1）。
+     * <p>
+     * 口径：只比对审批动作实际消费、会写入业务或审计记录的字段——comment/opinionData
+     * （合并语义与 {@link #recordAction} 一致）、opinionFormId/opinionFormVersion、
+     * targetUserId。taskId/action 已含在幂等身份内不重复比对；participants/receivers/
+     * deadline 等审批动作入口不消费的传输字段不参与判定（真实无效字段可排除）。
+     * 两侧行为 JSON 经 readTree 语义比较（键序无关）。
+     * </p>
+     *
+     * @return true=载荷一致（可恢复原结果）；false=同身份异载荷（必须拒绝，不得默认成功）
+     */
+    public boolean auditPayloadConsistent(ApprovalActionRequest request, ApprovalActionRecord handled) {
+        if (handled == null) {
+            return false;
+        }
+        ApprovalActionRequest effective = request == null ? new ApprovalActionRequest() : request;
+        // 请求侧期望 opinionData：与 recordAction + ApprovalOpinionValidator.ensureDefaultRemark
+        // 合并语义一致（comment 非空时 putIfAbsent 原值，空意见时契约补空串）
+        Map<String, Object> expectedOpinion = new java.util.LinkedHashMap<>(
+                effective.getOpinionData() == null ? Map.of() : effective.getOpinionData());
+        if (effective.getComment() != null && !effective.getComment().isBlank()) {
+            expectedOpinion.putIfAbsent("comment", effective.getComment());
+        } else {
+            expectedOpinion.putIfAbsent("comment", "");
+        }
+        Map<String, Object> storedOpinion = parseOpinionData(handled.getOpinionData());
+        if (!jsonEquivalent(expectedOpinion, storedOpinion)) {
+            log.warn("载荷一致性判定不一致[opinionData]: expected={}, stored={}",
+                    expectedOpinion, storedOpinion);
+            return false;
+        }
+        // opinionFormId/version：首次提交时执行核心按契约填充（节点配置意见表单或
+        // DEFAULT_REMARK/1），记录侧存的即填充后值。请求缺省（空）时规范化结果必然与
+        // 记录一致（同节点同冻结配置），不构成差异；显式携带时严格比对。
+        if (effective.getOpinionFormId() != null && !effective.getOpinionFormId().isBlank()
+                && !Objects.equals(effective.getOpinionFormId().trim(), normalize(handled.getOpinionFormId()))) {
+            log.warn("载荷一致性判定不一致[opinionFormId]: expected={}, stored={}",
+                    effective.getOpinionFormId(), handled.getOpinionFormId());
+            return false;
+        }
+        if (effective.getOpinionFormVersion() != null && !effective.getOpinionFormVersion().isBlank()
+                && !Objects.equals(effective.getOpinionFormVersion().trim(),
+                        normalize(handled.getOpinionFormVersion()))) {
+            log.warn("载荷一致性判定不一致[opinionFormVersion]: expected={}, stored={}",
+                    effective.getOpinionFormVersion(), handled.getOpinionFormVersion());
+            return false;
+        }
+        if (!Objects.equals(effective.getTargetUserId(), handled.getTargetUserId())) {
+            log.warn("载荷一致性判定不一致[targetUserId]: expected={}, stored={}",
+                    effective.getTargetUserId(), handled.getTargetUserId());
+            return false;
+        }
+        return true;
+    }
+
+    /** 旧记录 opinion_data 解析：空/损坏按空对象处理（可解释兼容，不冒充一致）。 */
+    private Map<String, Object> parseOpinionData(String opinionData) {
+        if (opinionData == null || opinionData.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(opinionData,
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    /** 行为 JSON 语义比较：键序无关；任一侧不可解析按字符串原文保守比较。 */
+    private boolean jsonEquivalent(Map<String, Object> left, Map<String, Object> right) {
+        if (Objects.equals(left, right)) {
+            return true;
+        }
+        try {
+            return objectMapper.readTree(objectMapper.writeValueAsString(left))
+                    .equals(objectMapper.readTree(objectMapper.writeValueAsString(right)));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String normalize(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /**
      * 执行审批动作（命令通道入口携带 commandId）。
      * <p>
      * 幂等恢复语义（提示05 §4 断言3）：目标任务已消失但存在动作记录时——
@@ -133,6 +220,16 @@ public class TaskActionService {
                         && requestedAction.equals(handled.getAction());
                 if ((commandId != null && commandId.equals(handled.getCommandId()))
                         || (commandId == null && sameOperation)) {
+                    // 同命令确认丢失后的重投：命令身份一致即恢复（载荷由受理层保证）。
+                    // 同步入口（无受理命令标识）同身份重放：还须载荷一致——同身份异载荷
+                    // 不得因任务已消失而被吞成成功（U02/提示05 G3b1），明确拒绝。
+                    if (commandId == null && !auditPayloadConsistent(request, handled)) {
+                        log.warn("同身份异载荷拒绝（同步入口恢复分支）: taskId={}, actionRecordId={}, "
+                                        + "actor={}, action={}",
+                                taskId, handled.getId(), handled.getActorId(), handled.getAction());
+                        throw new BaseException(
+                                com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
+                    }
                     log.info("同身份重放恢复自身已提交结果: taskId={}, commandId={}, "
                                     + "actionRecordId={}, actor={}, action={}",
                             taskId, commandId, handled.getId(), handled.getActorId(),
