@@ -207,7 +207,7 @@ class P62FrozenSemanticsPgTest {
     // ==================== 2. 真实 FLOW_START 非空业务 ====================
 
     @Test
-    @DisplayName("真实FLOW_START：旧类型命令消费启动真实实例（1行）；重复消费不重复启动（仍1行）")
+    @DisplayName("真实FLOW_START：表单自动受理命令消费启动唯一实例（1行）；跨键同recordId重放被幂等跳过（仍1行）")
     void realFlowStartHandlerStartsRealInstanceAndIsIdempotent() throws Exception {
         String actionId = publishAction("frozen_flow", "冻结流程预占");
         // 发布真实轻流程 START→TXN_ACTION(qty 2)→END
@@ -229,9 +229,17 @@ class P62FrozenSemanticsPgTest {
             processDefService.publish(def.getId());
             return null;
         });
+        // seedRecord（表单提交）在生产语义下经 FlowStartPort 于表单事务内自动受理
+        // FLOW_START:{recordId}（标准键）——复核06 合跑轮两实例来源之一（另一条为下方
+        // 手动入队的 g3b- 跨键命令）。自动命令交由真实后台调度消费：真实生产链验证。
         String recordId = seedRecord("FRZ-FLOW", "10");
+        waitCommandTerminalByKey("FLOW_START:" + recordId, 120_000L);
+        long autoInstances = instanceCount(recordId);
+        assertThat(autoInstances).as("表单自动受理的 FLOW_START 消费后启动唯一真实实例")
+                .isEqualTo(1L);
 
-        // 经真实队列 API 入队旧类型 FLOW_START（payload 与 FlowStartCommandHandler 契约一致）
+        // 经真实队列 API 入队同 recordId 的跨键重放命令（生产不存在该受理路径——标准键唯一
+        // 约束拦截同键重复；此处显式构造以验证 handler 层重复启动防护幂等跳过）
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("formKey", FORM_KEY);
         payload.put("recordId", recordId);
@@ -249,29 +257,18 @@ class P62FrozenSemanticsPgTest {
         Long commandId = asOperator(() -> tx.execute(status -> queue.enqueue(envelope)));
         envelope.setCommandId(commandId);
 
-        // 真实 handler 首次消费：非空业务——真实实例启动
+        // 真实 handler 消费跨键重放命令：既有实例存在 → SKIP_DUPLICATE，不产生第二实例
         CommandEnvelope claimed = claimBy(commandId);
         asOperator(() -> {
             dispatcher.dispatchOneForTest(claimed);
             return null;
         });
         waitCommandStatus(commandId, "COMPLETED", 120_000L);
-        long instances = instanceCount(recordId);
-        assertThat(instances).as("旧类型命令消费启动真实实例").isEqualTo(1L);
-
-        // 重复消费：SKIP_DUPLICATE 不重复启动
-        CommandEnvelope requeue = requeueForDuplicate(commandId, envelope);
-        asOperator(() -> {
-            dispatcher.dispatchOneForTest(requeue);
-            return null;
-        });
         long instancesAfterReplay = instanceCount(recordId);
-        assertThat(instancesAfterReplay).as("重复消费不重复启动实例").isEqualTo(1L);
-        System.out.println("[P62-EV] g3b.real-flow-start instances=1 replay-instances=1"
+        assertThat(instancesAfterReplay).as("跨键同 recordId 重放不重复启动实例").isEqualTo(1L);
+        System.out.println("[P62-EV] g3b.real-flow-start auto-instances=1 replay-instances=1"
                 + " recordId=" + recordId);
     }
-
-    // ==================== 3. 跨会话（断连后）回查 ====================
 
     @Test
     @DisplayName("断连后回查：新事务/新连接重放同幂等键返回原结果（replay=true），预占不叠加")
@@ -342,6 +339,23 @@ class P62FrozenSemanticsPgTest {
         throw new AssertionError("命令未收敛: " + commandId + " 期望=" + status + " 实际=" + actual);
     }
 
+    /** 按命令键等待命令终态（自动受理命令由真实后台调度消费，测试线程不领取）。 */
+    private void waitCommandTerminalByKey(String commandKey, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String actual = null;
+        while (System.currentTimeMillis() < deadline) {
+            actual = jdbc.queryForObject(
+                    "SELECT status FROM sw_bpm_command WHERE command_key = ? AND tenant_id = ?"
+                            + " ORDER BY id DESC LIMIT 1",
+                    String.class, commandKey, TENANT);
+            if ("COMPLETED".equals(actual) || "FAILED".equals(actual)) {
+                return;
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("命令未收敛: " + commandKey + " 实际=" + actual);
+    }
+
     private void waitInvocation(String invocationKey, long timeoutMs) throws Exception {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
@@ -354,31 +368,6 @@ class P62FrozenSemanticsPgTest {
             Thread.sleep(300);
         }
         throw new AssertionError("调用行未收敛: " + invocationKey);
-    }
-
-    /** FAILED→PENDING 重排（真实队列 API），返回可重消费的信封。 */
-    private CommandEnvelope requeueForDuplicate(Long commandId, CommandEnvelope original) {
-        // 直接以原信封再次领取（命令仍 COMPLETED 时 claim 不到）——改走重新入队路径：
-        // 复制原命令为同 logical 身份的新物理行由生产语义不允许；改为验证 SKIP_DUPLICATE
-        // 语义：FlowStartCommandHandler 对已启动实例的重复启动幂等跳过，经二次 dispatch
-        // 同一信封无法满足（命令已终态）。此处以同 payload 新命令（同 recordId）验证
-        // handler 幂等（实例唯一），等价于重复启动防护。
-        try {
-            CommandEnvelope duplicate = new CommandEnvelope();
-            duplicate.setCommandType(original.getCommandType());
-            duplicate.setChannel(CommandChannelEnum.NORMAL);
-            duplicate.setCommandKey(original.getCommandKey() + ":dup");
-            duplicate.setTenantId(original.getTenantId());
-            duplicate.setInitiatorId(original.getInitiatorId());
-            duplicate.setPayload(original.getPayload());
-            TransactionTemplate tx = new TransactionTemplate(
-                    app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
-            Long id = asOperator(() -> tx.execute(status -> queue.enqueue(duplicate)));
-            duplicate.setCommandId(id);
-            return claimBy(id);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
     }
 
     private String publishAction(String name, String label) {
