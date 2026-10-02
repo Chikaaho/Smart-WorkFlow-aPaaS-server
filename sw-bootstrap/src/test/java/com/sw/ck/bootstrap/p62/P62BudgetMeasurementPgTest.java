@@ -158,7 +158,13 @@ class P62BudgetMeasurementPgTest {
         props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.datasource.dynamic.hikari.maximum-pool-size", "64");
+        // 连接池身份（复核03 后修正）：实际池为 Druid（dynamic-datasource 全局 druid 块），
+        // 旧键 hikari.maximum-pool-size 无效——maxActive=5 导致 16 并发连接饥饿（10s 超时）。
+        // 显式设 Druid 池并 boot 后断言实际值（env-frozen 记录真实池身份）
+        props.put("spring.datasource.dynamic.druid.initial-size", "10");
+        props.put("spring.datasource.dynamic.druid.min-idle", "10");
+        props.put("spring.datasource.dynamic.druid.max-active", "64");
+        props.put("spring.datasource.dynamic.druid.max-wait", "10000");
         // 复核02 G5a 能力开关：测量套件恢复段使用批次受理，需显式开启（默认关）
         props.put("sw.bpm.txn-batch.enabled", "true");
         // G1a 轻流程场景吞吐配置（冻结并写入 env-frozen）：命令调度与节点异步执行池
@@ -201,6 +207,11 @@ class P62BudgetMeasurementPgTest {
                 org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         root.setLevel(ch.qos.logback.classic.Level.WARN);
         jdbc = app.getBean(JdbcTemplate.class);
+        long druidMaxActive = findDruidMaxActive();
+        if (druidMaxActive < 48) {
+            throw new IllegalStateException("Druid maxActive=" + druidMaxActive
+                    + " < 48：连接池配置未生效（16并发+调度+异步节点将饥饿），禁止进入测量");
+        }
         port = Integer.parseInt(app.getEnvironment().getProperty("local.server.port"));
 
         seedTenant(0L, 91999L, "p62_budget_t0", OBJECTS_PER_TENANT_G1, 100000, "budget_reserve");
@@ -1021,6 +1032,58 @@ class P62BudgetMeasurementPgTest {
         return sb.toString();
     }
 
+    /** 解包 dynamic-datasource 包装链，读取 Druid 池真实 maxActive（测量环境合同字段）。 */
+    private static long findDruidMaxActive() throws Exception {
+        for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class)
+                .stream().toList()) {
+            Object cur = ds;
+            for (int depth = 0; cur != null && depth < 6; depth++) {
+                if (cur instanceof com.alibaba.druid.pool.DruidDataSource druid) {
+                    return druid.getMaxActive();
+                }
+                cur = unwrapDelegate(cur);
+            }
+        }
+        // dynamic-datasource 的 master 在路由数据源的映射里而非主 Bean（反射取解析后映射）
+        for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class)
+                .stream().toList()) {
+            for (String mapField : new String[]{"resolvedDataSources", "targetDataSources"}) {
+                try {
+                    var f = ds.getClass().getDeclaredField(mapField);
+                    f.setAccessible(true);
+                    Object map = f.get(ds);
+                    if (map instanceof java.util.Map<?, ?> m) {
+                        for (Object inner : m.values()) {
+                            Object cur = inner;
+                            for (int depth = 0; cur != null && depth < 6; depth++) {
+                                if (cur instanceof com.alibaba.druid.pool.DruidDataSource druid) {
+                                    return druid.getMaxActive();
+                                }
+                                cur = unwrapDelegate(cur);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // 尝试下一个字段
+                }
+            }
+        }
+        throw new IllegalStateException("未找到 Druid 池（无法核实 maxActive）");
+    }
+
+    private static Object unwrapDelegate(Object o) {
+        for (String field : new String[]{"realDataSource", "delegate", "dataSource"}) {
+            try {
+                var f = o.getClass().getDeclaredField(field);
+                f.setAccessible(true);
+                return f.get(o);
+            } catch (Exception ignored) {
+                // 尝试下一个字段
+            }
+        }
+        return null;
+    }
+
     private static boolean isShortVerify() {
         return !"300".equals(String.valueOf(G1_FORMAL_SECONDS))
                 || !"60".equals(String.valueOf(G1_WARMUP_SECONDS))
@@ -1052,8 +1115,9 @@ class P62BudgetMeasurementPgTest {
         sb.append("buildCommit=").append(System.getProperty("p62.build.commit", "")).append('\n');
         sb.append("pgVersion=").append(jdbc.queryForObject("SELECT version()", String.class)).append('\n');
         sb.append("pgPort=").append(pg.getPort()).append('\n');
-        sb.append("hikariMaxPool=").append(app.getEnvironment()
+        sb.append("hikariMaxPool(stale-key,ineffective)=").append(app.getEnvironment()
                 .getProperty("sw.datasource.dynamic.hikari.maximum-pool-size")).append('\n');
+        sb.append("druidMaxActive(actual)=").append(findDruidMaxActive()).append('\n');
         sb.append("dispatcherPollMillis=").append(app.getEnvironment()
                 .getProperty("sw.bpm.command.poll-interval-millis")).append('\n');
         sb.append("dispatcherBatchSize=").append(app.getEnvironment()
