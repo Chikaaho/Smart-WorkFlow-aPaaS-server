@@ -65,16 +65,41 @@ public class TaskActionCommandHandler implements BpmCommandHandler {
                 ? null : approvalActionService.findByTaskId(taskId);
         boolean replay = prior != null && envelope.getCommandId() != null
                 && envelope.getCommandId().equals(prior.getCommandId());
-
+        // 统一幂等身份（复核04 G3b）：同一 (任务, 操作人, 动作) 的既有动作记录即同一逻辑业务
+        // 操作；运行期任务已不存在时本命令注定不产生新效果——直接按 RECOVERED 恢复原结果，
+        // 不进入执行核心（避免同窗口 runtime 视图差异把幂等恢复放大成"已被处理"失败）。
+        // 任务仍在运行期（另一入口尚未提交/不同操作人）时保持原路径，由执行核心判定冲突。
+        boolean sameOperationPrior = sameOperation(envelope, request, prior);
+        if (sameOperationPrior && !taskActionService.isTaskInRuntime(taskId)) {
+            String recovered = "{\"status\":\"RECOVERED\",\"actionRecordId\":" + prior.getId() + "}";
+            log.info("同身份重放恢复自身已提交结果（跨入口）: commandId={}, taskId={}, "
+                            + "actionRecordId={}, actor={}, action={}",
+                    envelope.getCommandId(), taskId, prior.getId(), prior.getActorId(),
+                    prior.getAction());
+            return recovered;
+        }
         taskActionService.execute(taskId, request, envelope.getCommandId());
 
-        ApprovalActionRecord committed = replay ? prior
+        // 同身份既有记录 = 本命令未产生新效果：结果按 RECOVERED 回写并携带原动作记录标识，
+        // 供跨通道结果关联与回查（不是第二次审批）。
+        boolean recoveredByIdentity = replay || sameOperationPrior;
+        ApprovalActionRecord committed = recoveredByIdentity ? prior
                 : (approvalActionService == null ? null : approvalActionService.findByTaskId(taskId));
-        String result = "{\"status\":\"" + (replay ? "RECOVERED" : "DONE") + "\""
+        String result = "{\"status\":\"" + (recoveredByIdentity ? "RECOVERED" : "DONE") + "\""
                 + (committed == null ? "" : ",\"actionRecordId\":" + committed.getId())
                 + "}";
         log.info("审批命令已执行: commandId={}, taskId={}, action={}, result={}",
                 envelope.getCommandId(), taskId, request.getAction(), result);
         return result;
+    }
+
+    /** 同一逻辑业务操作判定：既有动作记录与当前命令同为同一操作人、同一动作。 */
+    private static boolean sameOperation(CommandEnvelope envelope, ApprovalActionRequest request,
+                                         ApprovalActionRecord prior) {
+        return prior != null
+                && envelope.getInitiatorId() != null
+                && envelope.getInitiatorId().equals(prior.getActorId())
+                && request.getAction() != null
+                && request.getAction().name().equals(prior.getAction());
     }
 }

@@ -92,6 +92,13 @@ public class TaskActionService {
     }
 
     /**
+     * 运行期任务判定（命令通道幂等恢复前置检查：任务仍在运行期才进入执行核心）。
+     */
+    public boolean isTaskInRuntime(String taskId) {
+        return bpmTaskFacade.getTask(taskId).isPresent();
+    }
+
+    /**
      * 执行审批动作（命令通道入口携带 commandId）。
      * <p>
      * 幂等恢复语义（提示05 §4 断言3）：目标任务已消失但存在动作记录时——
@@ -114,10 +121,22 @@ public class TaskActionService {
             ApprovalActionRecord handled = approvalActionService == null
                     ? null : approvalActionService.findByTaskId(taskId);
             if (handled != null) {
-                if (commandId != null && commandId.equals(handled.getCommandId())) {
-                    log.info("同命令重放恢复自身已提交结果: commandId={}, taskId={}, "
-                                    + "actionRecordId={}, actor={}",
-                            commandId, taskId, handled.getId(), handled.getActorId());
+                // 统一幂等身份（复核04 G3b）：同一租户内 (任务, 操作人, 动作) 即同一逻辑业务操作，
+                // 与入口无关。同步 HTTP 入口不携带受理命令标识，但同一身份重放必须恢复自身
+                // 已提交结果（原结果可回查、无第二次业务效果），不得因入口不同拒绝；
+                // 不同身份（他人/异动作/异命令）保持确定性“已被处理”冲突。
+                String requestedAction = request == null || request.getAction() == null
+                        ? ApprovalAction.APPROVE.name() : request.getAction().name();
+                boolean sameOperation = loginUser != null
+                        && loginUser.getUserId() != null
+                        && loginUser.getUserId().equals(handled.getActorId())
+                        && requestedAction.equals(handled.getAction());
+                if ((commandId != null && commandId.equals(handled.getCommandId()))
+                        || (commandId == null && sameOperation)) {
+                    log.info("同身份重放恢复自身已提交结果: taskId={}, commandId={}, "
+                                    + "actionRecordId={}, actor={}, action={}",
+                            taskId, commandId, handled.getId(), handled.getActorId(),
+                            handled.getAction());
                     return com.sw.ck.common.response.R.ok();
                 }
                 log.warn("已被处理冲突（不同命令/意图）: taskId={}, 已办命令={}, 当前命令={}",
