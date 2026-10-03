@@ -1722,14 +1722,15 @@ class P62ResourceAssurancePgTest {
             }
         }
 
+        /** 完成入组：ts_end∈[窗口起点, 窗口起点+formal)（stat-definition.txt 定义；含上界）。 */
         private boolean inFormal(String[] row) {
             if (formalBeginMs == 0) {
                 return true;
             }
             try {
                 LocalDateTime parsed = LocalDateTime.parse(row[0], TS);
-                return parsed.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        >= formalBeginMs;
+                long end = parsed.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                return end >= formalBeginMs && end < formalBeginMs + FORMAL_SECONDS * 1000L;
             } catch (Exception e) {
                 return true;
             }
@@ -1857,13 +1858,13 @@ class P62ResourceAssurancePgTest {
             long total = histogram.values().stream().mapToLong(Long::longValue).sum();
             List<String[]> formalRows = collector.formalRows();
             List<Double> all = collector.allResultLatencies();
-            List<Double> success = collector.legalLatencies("SUCCEEDED");
-            if (success.isEmpty()) {
-                success = collector.legalLatencies("ACCEPTED");
-            }
-            if (success.isEmpty()) {
-                success = collector.legalLatencies("OK");
-            }
+            // 混合形态采集器（突发轮含实时 SUCCEEDED 与轻流程 ACCEPTED）必须合并全部合法类，
+            // 否则未命中的合法类会被计入"既非合法亦非拒绝"的第三桶（复核要求全结果口径）
+            List<Double> success = new ArrayList<>();
+            success.addAll(collector.legalLatencies("SUCCEEDED"));
+            success.addAll(collector.legalLatencies("ACCEPTED"));
+            success.addAll(collector.legalLatencies("OK"));
+            success.sort(Double::compare);
             List<Double> rejects = collector.latenciesOf(outcome -> outcome.startsWith("REJECTED")
                     || "TIMEOUT".equals(outcome) || outcome.startsWith("ERROR"));
             long startedInWindow = formalRows.size();
