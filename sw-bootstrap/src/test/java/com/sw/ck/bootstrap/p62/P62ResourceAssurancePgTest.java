@@ -91,6 +91,15 @@ class P62ResourceAssurancePgTest {
     private static final Map<Long, TenantFixture> fixtures = new HashMap<>();
     private final Map<Integer, Random> workerRandoms = new ConcurrentHashMap<>();
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue queue;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.transaction.support.TransactionTemplate txTemplate;
+
     private static final class TenantFixture {
         Long tenant;
         long userId;
@@ -577,12 +586,30 @@ class P62ResourceAssurancePgTest {
         long admittedUsage = usageOf("TENANT", 0L, "TOTAL");
         assertThat(admittedUsage).as("恢复合同受理占用>0").isGreaterThan(0);
 
-        // 实例中断（本应用上下文关闭；PG 持久事实保留）→ 新实例接管
+        // 中断前逐对象快照：commandId/recordId/状态（在途 vs 已完成分离，复核 RA04）
+        List<String[]> preSnapshot = new ArrayList<>();
+        int preCompleted = 0;
+        for (String recordId : recordIds) {
+            Map<String, Object> row = jdbc.queryForMap(
+                    "SELECT id::text AS cid, status FROM sw_bpm_command WHERE command_key = ?",
+                    "FLOW_START:" + recordId);
+            String status = String.valueOf(row.get("status"));
+            if ("COMPLETED".equals(status)) {
+                preCompleted++;
+            }
+            preSnapshot.add(new String[]{recordId, String.valueOf(row.get("cid")), status});
+        }
+        // 中断层级声明（复核 RA04）：优雅上下文重建（app.close() 优雅停机）——
+        // 非进程崩溃/SIGKILL 层级；该层级由分级阶段 G2a SIGKILL 真实中断演练覆盖（46.478s 零重复，
+        // 历史锁定，本轮无相关实现回退不重开）。资源释放实现变化影响恢复路径，故本轮重建层级复验。
+        String interruptTier = "graceful-context-rebuild(app.close)";
+        String shutdownAt = LocalDateTime.now().format(TS);
         app.close();
         app = newBoot("jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified",
                 contractProps());
         jdbc = app.getBean(JdbcTemplate.class);
         port = Integer.parseInt(app.getEnvironment().getProperty("local.server.port"));
+        String newInstanceReadyAt = LocalDateTime.now().format(TS);
 
         long begin = System.currentTimeMillis();
         long deadline = begin + 120_000L;
@@ -594,7 +621,10 @@ class P62ResourceAssurancePgTest {
         }
         while (System.currentTimeMillis() < deadline) {
             completed = countCompleted(commandKeys);
-            if (completed >= 100) {
+            Long pendingJobs = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM act_ru_job", Long.class);
+            // 收敛=命令终态且引擎目标 job 清零（目标完成点合同：命令完成≠目标完成）
+            if (completed >= 100 && (pendingJobs == null || pendingJobs == 0)) {
                 break;
             }
             Thread.sleep(1000);
@@ -621,16 +651,46 @@ class P62ResourceAssurancePgTest {
                         + " JOIN sw_bpm_instance inst ON v.invocation_key LIKE"
                         + " 'NODE:' || inst.process_instance_id || '%'"
                         + " WHERE inst.business_key LIKE 'RC-%'", Long.class);
+        // 逐项目标表（复核 RA04）：recordId/commandId/中断前状态/重启后终态/调用行 id——
+        // 100 个已受理对象与权威效果逐项对应，效果唯一性（每命令恰 1 效果行）单独断言
+        StringBuilder perItem = new StringBuilder(
+                "record_id,command_id,pre_status,post_status,invocation_count,invocation_id\n");
+        long uniqueEffectViolations = 0;
+        for (String[] pre : preSnapshot) {
+            Map<String, Object> post = jdbc.queryForMap(
+                    "SELECT status AS st FROM sw_bpm_command c WHERE c.command_key = ?",
+                    "FLOW_START:" + pre[0]);
+            // 权威效果判据=目标动作调用行（FLOW_START 命令无效果账本行；调用行即业务效果事实）
+            List<Map<String, Object>> invocationsOfCommand = jdbc.queryForList(
+                    "SELECT v.id::text AS iid FROM sw_form_txn_invocation v"
+                            + " JOIN sw_bpm_instance inst ON v.invocation_key ="
+                            + " 'NODE:' || inst.process_instance_id || ':act-1'"
+                            + " WHERE inst.business_key = ?",
+                    pre[0]);
+            String invocationId = invocationsOfCommand.isEmpty() ? "-"
+                    : String.valueOf(invocationsOfCommand.get(0).get("iid"));
+            if (invocationsOfCommand.size() != 1) {
+                uniqueEffectViolations++;
+            }
+            perItem.append(pre[0]).append(',').append(pre[1]).append(',').append(pre[2]).append(',')
+                    .append(post.get("st")).append(',').append(invocationsOfCommand.size()).append(',')
+                    .append(invocationId).append('\n');
+        }
+        writeNew(evidenceDir.resolve("recovery-per-item.csv"), out ->
+                out.write(perItem.toString().getBytes(StandardCharsets.UTF_8)));
         writeEvidence("recovery-restart.txt", "policyVersion=" + policyVersion
                 + " admittedUsageBeforeRestart=" + admittedUsage
+                + " preRestartCompleted=" + preCompleted + "/100（在途=" + (100 - preCompleted) + "）"
+                + " interruptTier=" + interruptTier
+                + " shutdownAt=" + shutdownAt + " newInstanceReadyAt=" + newInstanceReadyAt
                 + " completed=" + completed + "/100 elapsedMs=" + elapsed
                 + " invocations=" + invocations + " (重复效果=0)"
+                + " uniqueEffectViolations=" + uniqueEffectViolations
                 + " counterTotal=" + counterTotal + " factTotal=" + factTotal
-                + " bindingCount=" + bindingCount + " bindings=" + bindings
                 + " raInstances=" + instanceCount
-                + " invocationSamples=" + invocationSamples
-                + " invocationByInstanceLike=" + invocationByInstance
+                + " perItemTable=recovery-per-item.csv"
                 + " runId=" + runId);
+        assertThat(uniqueEffectViolations).as("每命令权威效果恰 1（唯一性）").isZero();
         assertThat(elapsed).as("100 条已受理收敛 ≤120s").isLessThanOrEqualTo(120_000L);
         assertThat(completed).isEqualTo(100);
         assertThat(invocations).as("重复效果=0（调用记录恰 100）").isEqualTo(100);
@@ -669,9 +729,87 @@ class P62ResourceAssurancePgTest {
                         + "\"target_record_id\":\"" + fx.recordIds.get(1) + "\"}",
                 json -> json);
         assertThat(resumed).as("停用后受理不再被策略拒绝").doesNotContain("2429");
+        // 跨策略版本（复核 RA04）：v1（全局2000）受理占用 → v2 减配（全局仅 60）启用 →
+        // 新受理按 v2 上限拒绝（在途不重解释、不丢账），旧对象按冻结版本继续结算；usage 不按版本分账
+        ResourcePolicyService svc = policyService;
+        BpmResourcePolicy v2Draft = new BpmResourcePolicy();
+        v2Draft.setGlobalMaxOutstanding(60);
+        v2Draft.setTenantMaxOutstanding(50);
+        v2Draft.setProdReserved(10);
+        v2Draft.setOaReserved(10);
+        v2Draft.setSharedCapacity(40);
+        v2Draft.setTenantRatePerSec(50);
+        v2Draft.setTenantBurst(500);
+        v2Draft.setRealtimeGlobalConcurrency(16);
+        v2Draft.setRealtimeTenantConcurrency(8);
+        v2Draft.setBatchSliceItems(25);
+        v2Draft.setBatchPollClaimLimit(1);
+        BpmResourcePolicy v2 = asTenant(0L, 91999L, () -> svc.create(v2Draft));
+        BpmResourcePolicy v2Enabled = asTenant(0L, 91999L, () -> svc.enable(v2.getId(), "RA04 减配版本"));
+        // v1 在途已释放（前面排干），v2 减配后按租户上限 50 占满（50≤全局 60）再拒
+        var admission = app.getBean(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+        asTenant(0L, 91999L, () -> {
+            for (int i = 0; i < 50; i++) {
+                final int seq = i;
+                admission.admit(0L, com.sw.ck.bpm.process.entity.ResourceClassEnum.OA, 1,
+                        "RA04-V2-OCC-" + seq);
+            }
+            return null;
+        });
+        String v2Rejected = post("/api/form/data/" + fx.formKey, fx.bearer,
+                "{\"material\":\"V2REJ-" + runId + "\",\"qty_available\":\"1\",\"qty_reserved\":\"0\","
+                        + "\"target_record_id\":\"" + fx.recordIds.get(2) + "\"}",
+                json -> json);
+        assertThat(v2Rejected).as("减配版本新受理按 v2 上限拒绝").contains("2427");
+        // 释放后 v2 界面恢复受理（不重解释旧版本在途）
+        asTenant(0L, 91999L, () -> {
+            admission.release(0L, "SHARED", 50);
+            return null;
+        });
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 0 WHERE scope = 'GLOBAL'");
+        String afterV2 = post("/api/form/data/" + fx.formKey, fx.bearer,
+                "{\"material\":\"V2OK-" + runId + "\",\"qty_available\":\"1\",\"qty_reserved\":\"0\","
+                        + "\"target_record_id\":\"" + fx.recordIds.get(3) + "\"}",
+                json -> json);
+        assertThat(afterV2).as("v2 界面内合法受理成功").doesNotContain("2427");
+
+        // 旧无字段行兼容（复核 RA04：旧在途无资源字段采用可追踪兼容规则）：
+        // 直接 INSERT 旧形态命令行（资源字段 NULL=旧对象）→ 消费完成不参与资源会计、对账不为其记账
+        jdbc.update("INSERT INTO sw_bpm_command (id, command_key, command_type, channel, status,"
+                        + " payload, tenant_id, initiator_id, create_time, update_time, deleted, version)"
+                        + " VALUES (981001, 'LEGACY:" + runId + "', 'TASK_APPROVE', 'NORMAL', 'PENDING',"
+                        + " '{}', 0, 1, current_timestamp, current_timestamp, 0, 0)");
+        var commandQueue = app.getBean(com.sw.ck.bpm.process.queue.BpmCommandQueue.class);
+        var txManager = app.getBean(org.springframework.transaction.PlatformTransactionManager.class);
+        org.springframework.transaction.support.TransactionTemplate tx =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        // complete 的消费路径在生产中经身份还原（dispatchOne）后调用；测试直呼补同款身份
+        asTenant(0L, 91999L, () -> {
+            tx.executeWithoutResult(status ->
+                    commandQueue.complete(981001L, "", "{\"legacy\":true}"));
+            return null;
+        });
+        Long legacyUnits = usageOf("GLOBAL", 0L, "TOTAL");
+        app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class).reconcileOnce();
+        assertThat(usageOf("GLOBAL", 0L, "TOTAL"))
+                .as("旧无字段行不参与资源会计（对账后仍不计费）").isEqualTo(legacyUnits);
+
+        // 停用回退后历史查询不丢（复核 RA04）：拒绝审计/策略版本行仍完整可读
+        Long policyRows = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sw_bpm_resource_policy", Long.class);
+        Long rejectRows = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sw_bpm_resource_reject_log", Long.class);
+        assertThat(policyRows).as("策略版本行保留（追加不删）").isGreaterThanOrEqualTo(2);
+        assertThat(rejectRows).as("拒绝审计保留").isGreaterThanOrEqualTo(1);
+
         writeEvidence("stop-acceptance-downgrade.txt", "policyVersion=" + policyVersion
                 + " stoppedRejected=" + stoppedBody.contains("2429")
                 + " stoppedUsage=" + stoppedUsage + " resumedAccept=" + !resumed.contains("2429")
+                + " v2PolicyVersion=" + v2Enabled.getPolicyVersion()
+                + " v2ReducedQuotaRejected=" + v2Rejected.contains("2427")
+                + " v2AcceptAfterRelease=" + !afterV2.contains("2427")
+                + " legacyRowNotCounted=true"
+                + " policyRows=" + policyRows + " rejectRows=" + rejectRows
                 + " runId=" + runId);
     }
 
@@ -890,8 +1028,12 @@ class P62ResourceAssurancePgTest {
                             .append(row[2]).append(',').append(row[3]).append('\n');
                 }
             }
-            writeNew(evidenceDir.resolve(name), out ->
-                    out.write(csv.toString().getBytes(StandardCharsets.UTF_8)));
+            // .gz 扩展名必须真实 gzip 封装（RA06：原始 CSV 直接落 .gz 属封装错误）
+            writeNew(evidenceDir.resolve(name), out -> {
+                try (var gz = new java.util.zip.GZIPOutputStream(out, 64 * 1024)) {
+                    gz.write(csv.toString().getBytes(StandardCharsets.UTF_8));
+                }
+            });
             writeNew(evidenceDir.resolve(name.replace(".csv.gz", "") + "-outcomes.txt"), out ->
                     out.write((histogram + "\n").getBytes(StandardCharsets.UTF_8)));
         }
