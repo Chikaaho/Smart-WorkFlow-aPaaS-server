@@ -575,10 +575,14 @@ class P62ResourceAssurancePgTest {
             worker.start();
         }
 
-        long formalBegin = System.currentTimeMillis();
+        long warmupBegin = System.currentTimeMillis();
         Thread.sleep(WARMUP_SECONDS * 1000L);
-        // 正式窗口起点标记（原始时间戳对齐；预热样本照常落盘供审计单列）
+        // 正式窗口定义（单源）：预热结束即正式起点；报告/统计定义/采集器/复算脚本引用同一对时间戳
         long formalStart = System.currentTimeMillis();
+        long formalEnd = formalStart + FORMAL_SECONDS * 1000L;
+        windowWarmupBeginMs = warmupBegin;
+        windowFormalBeginMs = formalStart;
+        windowFormalEndMs = formalEnd;
         formalBeginMsHolder = formalStart;
         protectedRealtime.markFormalBegin(formalStart);
         protectedLight.markFormalBegin(formalStart);
@@ -617,7 +621,7 @@ class P62ResourceAssurancePgTest {
         long counterTotal = usageOf("GLOBAL", 0L, "TOTAL");
         long factTotal = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
                 .factBySegment().values().stream().mapToLong(Long::longValue).sum();
-        String report = report(scenario, formalBegin, protectedRealtime, protectedLight, oaRead,
+        String report = report(scenario, protectedRealtime, protectedLight, oaRead,
                 oaApproval, burstLoad, burstBatch);
         writeEvidence(scenario + "-report.txt", report + "\nquota-samples:\n" + quotaCsv
                 + "\nconvergence: openBefore=" + openBefore + " openAfter=" + openAfter
@@ -629,7 +633,8 @@ class P62ResourceAssurancePgTest {
         writePairingEvidence(scenario, lightTraces, approvalTraces, batchTraces);
         writeConvergenceDetail(scenario, protectedTenant, convergeMillis, openBefore, openAfter,
                 counterTotal, factTotal);
-        writeStatDefinition(scenario, formalStart);
+        writeOccupancyResponsibility(scenario);
+        writeStatDefinition(scenario);
         System.out.println("[P62-EV] " + scenario + " done openAfter=" + openAfter
                 + " counterTotal=" + counterTotal + " factTotal=" + factTotal);
         shortVerifyAssertions(protectedRealtime, protectedLight, oaRead, oaApproval, burstLoad);
@@ -664,12 +669,16 @@ class P62ResourceAssurancePgTest {
                 + "command_status,command_create,claimed_at,finished_at,resource_class,"
                 + "resource_segment,resource_units,resource_released_at,claim_wait_ms,"
                 + "accept_to_finished_ms,instance_id,instance_status,invocation_id,"
-                + "invocation_status,invocation_duration_ms\n");
+                + "invocation_status,invocation_duration_ms,target_invocation_create,"
+                + "target_invocation_update,target_record_update_time,target_record_version,"
+                + "target_record_qty_reserved,approval_task_end,approval_instance_end\n");
         Map<String, Long> statusCounts = new LinkedHashMap<>();
         List<Double> protectedOaClaimWaits = new ArrayList<>();
         Map<String, Integer> orphanByStatus = new LinkedHashMap<>();
         int traced = 0;
         int unpaired = 0;
+        int lightTargetsWithSubmitPoint = 0;
+        int approvalTargetsWithSubmitPoint = 0;
         for (LightSubmitTrace trace : lightTraces) {
             if (trace.recordId() == null || "-".equals(trace.recordId())) {
                 continue;
@@ -686,6 +695,15 @@ class P62ResourceAssurancePgTest {
             String instanceId = inst == null ? "-" : String.valueOf(inst.get("process_instance_id"));
             Map<String, Object> inv = "-".equals(instanceId) ? null
                     : queryInvocationRow("NODE:" + instanceId + ":act-1");
+            // 目标提交点=目标事务调用行 update_time + 目标记录 update_time/version/效果值
+            // （命令 finished_at 不能替代目标提交，复核03）
+            TenantFixture fx = fixtures.get(trace.tenant());
+            Map<String, Object> targetRow = fx == null || fx.stockTable == null ? null : queryOne(
+                    "SELECT update_time, version, qty_reserved FROM " + fx.stockTable
+                            + " WHERE id = ? AND deleted = 0", trace.recordId());
+            if (inv != null && inv.get("update_time") != null && targetRow != null) {
+                lightTargetsWithSubmitPoint++;
+            }
             String status = String.valueOf(cmd.get("status"));
             statusCounts.merge("command:" + status, 1L, Long::sum);
             Long claimWait = millisBetween(cmd.get("create_time"), cmd.get("claimed_at"));
@@ -697,7 +715,7 @@ class P62ResourceAssurancePgTest {
                 protectedOaClaimWaits.add(claimWait.doubleValue());
             }
             csv.append("light,").append(trace.tenant()).append(',').append(trace.recordId())
-                    .append(',').append(trace.outcome()).append(',').append(commandKey).append(',')
+                    .append(',').append(csv(trace.outcome())).append(',').append(commandKey).append(',')
                     .append(status).append(',').append(str(cmd.get("create_time"))).append(',')
                     .append(str(cmd.get("claimed_at"))).append(',').append(str(cmd.get("finished_at")))
                     .append(',').append(str(cmd.get("resource_class"))).append(',')
@@ -709,7 +727,13 @@ class P62ResourceAssurancePgTest {
                     .append(instanceId).append(',').append(inst == null ? "-" : str(inst.get("status")))
                     .append(',').append(inv == null ? "-" : str(inv.get("id"))).append(',')
                     .append(inv == null ? "-" : str(inv.get("status"))).append(',')
-                    .append(inv == null ? "-" : str(inv.get("duration_ms"))).append('\n');
+                    .append(inv == null ? "-" : str(inv.get("duration_ms"))).append(',')
+                    .append(inv == null ? "-" : str(inv.get("create_time"))).append(',')
+                    .append(inv == null ? "-" : str(inv.get("update_time"))).append(',')
+                    .append(targetRow == null ? "-" : str(targetRow.get("update_time"))).append(',')
+                    .append(targetRow == null ? "-" : str(targetRow.get("version"))).append(',')
+                    .append(targetRow == null ? "-" : str(targetRow.get("qty_reserved"))).append(',')
+                    .append('-').append(',').append('-').append('\n');
         }
         for (ApprovalTrace trace : approvalTraces) {
             if (trace.taskId() == null || "-".equals(trace.taskId()) || "SKIP".equals(trace.taskId())) {
@@ -737,8 +761,17 @@ class P62ResourceAssurancePgTest {
                 orphanByStatus.merge("OPEN:approval:" + status, 1, Integer::sum);
             }
             Map<String, Object> hiTask = queryHiTask(trace.taskId());
+            // 审批动作提交点=引擎历史任务 end_time_ + 实例 end_time_（审批流程无表单动作，
+            // 目标完成=人工任务终结并推进实例；任务/实例未终结=合法未完责任）
+            Object taskEnd = hiTask == null ? null : hiTask.get("end_time_");
+            Map<String, Object> hiProc = hiTask == null || hiTask.get("proc_inst_id_") == null
+                    ? null : queryHiProcInst(String.valueOf(hiTask.get("proc_inst_id_")));
+            Object procEnd = hiProc == null ? null : hiProc.get("end_time_");
+            if (taskEnd != null) {
+                approvalTargetsWithSubmitPoint++;
+            }
             csv.append("approval,").append(trace.tenant()).append(',').append(trace.taskId())
-                    .append(',').append(trace.outcome()).append(',').append(commandKey).append(',')
+                    .append(',').append(csv(trace.outcome())).append(',').append(commandKey).append(',')
                     .append(status).append(',').append(str(cmd.get("create_time"))).append(',')
                     .append(str(cmd.get("claimed_at"))).append(',').append(str(cmd.get("finished_at")))
                     .append(',').append(str(cmd.get("resource_class"))).append(',')
@@ -749,7 +782,10 @@ class P62ResourceAssurancePgTest {
                     .append(millisBetween(cmd.get("create_time"), cmd.get("finished_at"))).append(',')
                     .append('-').append(',').append(hiTask == null ? "-" : str(hiTask.get("delete_reason_")))
                     .append(',').append('-').append(',').append('-').append(',').append('-')
-                    .append('\n');
+                    .append(',').append('-').append(',').append('-').append(',').append('-')
+                    .append(',').append('-').append(',').append('-').append(',')
+                    .append(taskEnd == null ? "-" : str(taskEnd)).append(',')
+                    .append(procEnd == null ? "-" : str(procEnd)).append('\n');
         }
         for (BatchSubmitTrace trace : batchTraces) {
             if (trace.batchKey() == null || "-".equals(trace.batchKey())) {
@@ -779,7 +815,7 @@ class P62ResourceAssurancePgTest {
                     + " FROM sw_bpm_command_batch_item i JOIN sw_bpm_command_batch b ON i.batch_id = b.id"
                     + " WHERE b.batch_key = ? AND b.tenant_id = ?", trace.batchKey(), trace.tenant());
             csv.append("batch,").append(trace.tenant()).append(',').append(trace.batchKey())
-                    .append(',').append(trace.outcome()).append(',').append("BATCH:").append(trace.batchKey())
+                    .append(',').append(csv(trace.outcome())).append(',').append("BATCH:").append(trace.batchKey())
                     .append(',').append(cmd == null ? "NO_COMMAND(拒绝整笔回滚)" : str(cmd.get("status")))
                     .append(',').append(field(cmd, "create_time")).append(',')
                     .append(field(cmd, "claimed_at")).append(',').append(field(cmd, "finished_at"))
@@ -798,9 +834,14 @@ class P62ResourceAssurancePgTest {
                     .append(" pending=").append(itemStats == null ? "-" : str(itemStats.get("pending")))
                     .append(" maxItemWaitMs=").append(itemWait == null ? "-" : str(itemWait.get("max_item_ms")))
                     .append(',').append('-').append(',').append('-').append(',').append('-')
+                    .append(',').append('-').append(',').append('-').append(',').append('-')
+                    .append(',').append('-').append(',').append('-').append(',').append('-')
                     .append(',').append('-').append('\n');
         }
-        writeEvidence("pairing.csv", csv.toString());
+        // 脚注不写入 CSV（复核：footnote 行破坏 CSV 解析）——runId/记录时刻进 pairing-summary.txt
+        Files.writeString(evidenceDir.resolve("pairing.csv"), csv.toString(),
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING);
         double maxClaimWait = protectedOaClaimWaits.stream().mapToDouble(Double::doubleValue).max().orElse(0);
         Map<String, Long> commandStatuses = new LinkedHashMap<>();
         for (Map<String, Object> row : jdbc.queryForList("SELECT status, COUNT(*) AS n FROM sw_bpm_command"
@@ -809,13 +850,36 @@ class P62ResourceAssurancePgTest {
         }
         writeEvidence("pairing-summary.txt", "scenario=" + scenario + "\ntracedSubmissions=" + traced
                 + "\nunpaired=" + unpaired + "\ntraceOutcomeCounts=" + statusCounts
+                + "\nlightTargetsWithSubmitPoint=" + lightTargetsWithSubmitPoint
+                + "\napprovalTargetsWithSubmitPoint=" + approvalTargetsWithSubmitPoint
                 + "\nprotectedOaClaimWaitSamples=" + protectedOaClaimWaits.size()
                 + "\nprotectedOaClaimWaitMaxMs=" + String.format(Locale.ROOT, "%.0f", maxClaimWait)
                 + " (合同上界 5000ms)\nopenOrUnpairedByStatus=" + orphanByStatus
-                + "\ncommandsCreatedAfterWindowBeginByStatus=" + commandStatuses + "\n");
+                + "\ncommandsCreatedAfterWindowBeginByStatus=" + commandStatuses
+                + "\n注意=unpaired 仅为「trace 有键但库中无命令行」的请求（HTTP 级失败/500 在受理前终结，"
+                + "以 -samples.csv 的 outcome 为准）；pairing.csv 无脚注行，可直接按列解析\n");
+        // 勾稽：HTTP 样本失败账 vs 配对行（复核03 要求 1940/1921/49 与失败账勾稽）
+        System.out.println("[P62-EV] pairing traced=" + traced + " unpaired=" + unpaired
+                + " lightTargetSubmitPoints=" + lightTargetsWithSubmitPoint
+                + " approvalTargetSubmitPoints=" + approvalTargetsWithSubmitPoint);
     }
 
     private volatile long formalBeginMsHolder;
+    /** 正式窗口三时间戳（单源；报告/统计定义/复算引用同一对值）。 */
+    private static volatile long windowWarmupBeginMs;
+    private static volatile long windowFormalBeginMs;
+    private static volatile long windowFormalEndMs;
+
+    /** CSV 字段（RFC4180：含逗号/引号/换行时加引号并转义内部引号）。 */
+    private static String csv(String value) {
+        if (value == null) {
+            return "";
+        }
+        boolean quote = value.contains(",") || value.contains("\"")
+                || value.contains("\n") || value.contains("\r");
+        String escaped = value.replace("\"", "\"\"");
+        return quote ? "\"" + escaped + "\"" : escaped;
+    }
 
     private Map<String, Object> queryCommandRow(long tenant, String commandKey) {
         return queryOne("SELECT status, create_time, claimed_at, finished_at, resource_class,"
@@ -829,13 +893,22 @@ class P62ResourceAssurancePgTest {
     }
 
     private Map<String, Object> queryInvocationRow(String invocationKey) {
-        return queryOne("SELECT id, status, duration_ms FROM sw_form_txn_invocation"
-                + " WHERE invocation_key = ?", invocationKey);
+        return queryOne("SELECT id, status, duration_ms, create_time, update_time"
+                + " FROM sw_form_txn_invocation WHERE invocation_key = ?", invocationKey);
     }
 
     private Map<String, Object> queryHiTask(String taskId) {
         try {
-            return queryOne("SELECT delete_reason_ FROM act_hi_taskinst WHERE id_ = ?", taskId);
+            return queryOne("SELECT delete_reason_, end_time_, proc_inst_id_ FROM act_hi_taskinst"
+                    + " WHERE id_ = ?", taskId);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Map<String, Object> queryHiProcInst(String procInstId) {
+        try {
+            return queryOne("SELECT end_time_ FROM act_hi_procinst WHERE proc_inst_id_ = ?", procInstId);
         } catch (Exception e) {
             return null;
         }
@@ -925,59 +998,179 @@ class P62ResourceAssurancePgTest {
         writeEvidence("convergence-detail.txt", sb.toString());
     }
 
+    /**
+     * RA02b1：占用责任分类（不以 open=0/计数=事实 替代逐对象责任）。
+     * 计数与事实的每一单位归到持久对象：①在途命令 ②轻流程目标链（COMPLETED+TARGET_ACTION_DONE
+     * 未释放，按引擎链是否活跃分类）③批次非终态项 ④引擎队列；基线（正式窗口前创建）与窗口内
+     * 增量分开；先显式调用一次对账，把「应收敛」与「合法未完责任」分开后再对剩余对象逐条列示。
+     */
+    private void writeOccupancyResponsibility(String scenario) throws Exception {
+        var factView = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class);
+        var reconcileJob = app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class);
+        long counterBefore = usageOf("GLOBAL", 0L, "TOTAL");
+        Map<String, Long> factBefore = factView.factBySegment();
+        long factTotalBefore = factBefore.values().stream().mapToLong(Long::longValue).sum();
+        // 对账到收敛（单轮撤回上限 500；逐轮记录，直到无释放/无修复才判「残余=合法未完责任」）
+        StringBuilder reconcileTrace = new StringBuilder();
+        var outcome = reconcileJob.reconcileOnce();
+        reconcileTrace.append("  pass1=").append(outcome).append('\n');
+        for (int pass = 2; pass <= 10
+                && (outcome.lightTargetsReleased() > 0 || outcome.countersRepaired() > 0); pass++) {
+            outcome = reconcileJob.reconcileOnce();
+            reconcileTrace.append("  pass").append(pass).append('=').append(outcome).append('\n');
+        }
+        long counterAfter = usageOf("GLOBAL", 0L, "TOTAL");
+        Map<String, Long> factAfter = factView.factBySegment();
+        long factTotalAfter = factAfter.values().stream().mapToLong(Long::longValue).sum();
+        StringBuilder sb = new StringBuilder("scenario=").append(scenario).append('\n');
+        sb.append("windowFormalBegin=").append(windowFormalBeginMs).append('\n');
+        sb.append("counterTotalBeforeReconcile=").append(counterBefore)
+                .append(" factTotalBeforeReconcile=").append(factTotalBefore)
+                .append(" factBySegment=").append(factBefore).append('\n');
+        sb.append("reconcileToConvergence:\n").append(reconcileTrace)
+                .append("  counterTotalAfter=").append(counterAfter)
+                .append(" factTotalAfter=").append(factTotalAfter)
+                .append(" factBySegmentAfter=").append(factAfter).append('\n');
+        sb.append("[1] 在途命令（PENDING/PROCESSING，非批次，未释放）按 租户/类别/段：\n");
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT tenant_id, resource_class, resource_segment, COUNT(*) AS commands,"
+                        + " SUM(resource_units) AS units,"
+                        + " COUNT(*) FILTER (WHERE create_time < ?) AS baseline_commands,"
+                        + " COALESCE(SUM(resource_units) FILTER (WHERE create_time < ?),0) AS baseline_units"
+                        + " FROM sw_bpm_command WHERE resource_units IS NOT NULL AND resource_released_at IS NULL"
+                        + " AND status IN ('PENDING','PROCESSING')"
+                        + " AND (command_type IS NULL OR command_type <> 'BATCH_INVOKE')"
+                        + " GROUP BY tenant_id, resource_class, resource_segment"
+                        + " ORDER BY tenant_id, resource_segment",
+                new java.sql.Timestamp(windowFormalBeginMs), new java.sql.Timestamp(windowFormalBeginMs))) {
+            sb.append("  ").append(row).append('\n');
+        }
+        List<Map<String, Object>> targets = jdbc.queryForList(
+                "SELECT c.tenant_id, c.command_key, c.resource_segment, c.create_time"
+                        + " FROM sw_bpm_command c WHERE c.resource_units IS NOT NULL"
+                        + " AND c.resource_released_at IS NULL AND c.status = 'COMPLETED'"
+                        + " AND c.resource_class = 'PROD' AND c.completion_point = 'TARGET_ACTION_DONE'"
+                        + " ORDER BY c.create_time");
+        int activeChain = 0;
+        int inactiveChain = 0;
+        int baselineTargets = 0;
+        StringBuilder detail = new StringBuilder();
+        for (Map<String, Object> row : targets) {
+            String commandKey = String.valueOf(row.get("command_key"));
+            String recordId = commandKey != null && commandKey.startsWith("FLOW_START:")
+                    ? commandKey.substring("FLOW_START:".length()) : null;
+            boolean chainActive = recordId != null && factView.engineTargetChainActive(recordId);
+            boolean isBaseline = ((java.sql.Timestamp) row.get("create_time")).getTime()
+                    < windowFormalBeginMs;
+            if (chainActive) {
+                activeChain++;
+            } else {
+                inactiveChain++;
+            }
+            if (isBaseline) {
+                baselineTargets++;
+            }
+            if (detail.length() < 6000) {
+                detail.append("  target tenant=").append(row.get("tenant_id"))
+                        .append(" segment=").append(row.get("resource_segment"))
+                        .append(" engineChainActive=").append(chainActive)
+                        .append(" baselineBeforeWindow=").append(isBaseline)
+                        .append(" key=").append(commandKey)
+                        .append(" create=").append(row.get("create_time")).append('\n');
+            }
+        }
+        sb.append("[2] 轻流程目标链占用（COMPLETED+TARGET_ACTION_DONE 未释放，对账收敛后）：total=")
+                .append(targets.size()).append(" engineChainActive=").append(activeChain)
+                .append(" engineChainInactive=").append(inactiveChain)
+                .append(" baselineBeforeWindow=").append(baselineTargets).append('\n')
+                .append("  责任解释=引擎链活跃（存在未完成异步 job/死信）=合法未完责任（目标未终结即占用成立）；"
+                        + "引擎链不活跃=对账应收敛（本方法已对账到定点：无新释放/修复），"
+                        + "定点后仍残留的不活跃对象即对账缺口，逐条列示如下\n")
+                .append(detail);
+        sb.append("[3] 批次非终态项（未释放批次命令的非终态项数）：\n");
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT c.tenant_id, c.resource_segment, COUNT(*) FILTER (WHERE i.status = 'PENDING')"
+                        + " AS pending_items, COUNT(*) FILTER (WHERE i.status = 'PROCESSING')"
+                        + " AS processing_items FROM sw_bpm_command c"
+                        + " JOIN sw_bpm_command_batch b ON b.command_id = c.id"
+                        + " JOIN sw_bpm_command_batch_item i ON i.batch_id = b.id"
+                        + " WHERE c.resource_units IS NOT NULL AND c.resource_released_at IS NULL"
+                        + " AND c.status IN ('PENDING','PROCESSING')"
+                        + " GROUP BY c.tenant_id, c.resource_segment")) {
+            sb.append("  ").append(row).append('\n');
+        }
+        sb.append("[4] 引擎层：pendingJobs=").append(factView.enginePendingJobs())
+                .append(" deadLetterJobs=").append(factView.engineDeadLetterJobs()).append('\n');
+        sb.append("[5] 分类口径：baseline=create_time<正式窗口起点（含种子与上一轮遗留，人工长流程不套单动作预算）；"
+                + "window=窗口内增量（负载产生，单动作责任须逐项终结并释放）\n");
+        writeEvidence("occupancy-responsibility.txt", sb.toString());
+    }
+
     /** 采集/统计口径定义（复核：采集定义须支持归因强度；协变量与样本的配对规则显式化）。 */
-    private void writeStatDefinition(String scenario, long formalStart) throws Exception {
+    private void writeStatDefinition(String scenario) throws Exception {
         StringBuilder sb = new StringBuilder();
         sb.append("scenario=").append(scenario).append("\nrunId=").append(runId).append('\n');
-        sb.append("windowBeginEpochMs=").append(formalStart).append(" warmup=").append(WARMUP_SECONDS)
-                .append("s formal=").append(FORMAL_SECONDS).append("s shortVerify=").append(isShortVerify())
-                .append('\n');
+        sb.append("windowWarmupBeginEpochMs=").append(windowWarmupBeginMs)
+                .append(" windowFormalBeginEpochMs=").append(windowFormalBeginMs)
+                .append(" windowFormalEndEpochMs=").append(windowFormalEndMs)
+                .append(" warmup=").append(WARMUP_SECONDS).append("s formal=").append(FORMAL_SECONDS)
+                .append("s shortVerify=").append(isShortVerify()).append('\n');
+        sb.append("singleSource=以上三个时间戳与采集器 markFormalBegin、报告 window 字段、"
+                + "复算脚本参数为同一变量（同一 run 内不可出现第二个窗口起点）\n");
         sb.append("sampleFields=ts_end(完成时刻),ts_start(发起时刻=ts_end-latency),latency_ms,outcome\n");
-        sb.append("requestCohort=发起入组：ts_start∈[windowBegin, windowBegin+formal)；"
-                + "完成入组：ts_end∈同区间。报告同时给出两者与『发起入组但完成在窗口外』计数，"
-                + "跨窗口请求追踪到完成/超时（不因窗口结束丢弃慢样本）\n");
+        sb.append("primaryCohort=发起入组（cohort_start_in_window）：请求 ts_start∈[formalBegin, formalEnd)，"
+                + "完成可落在窗口外——分位数/预算以该组为准（追踪到完成/超时，不因窗口结束丢弃慢样本）\n");
+        sb.append("secondaryCohort=完成入组（cohort_end_in_window）：ts_end∈[formalBegin, formalEnd)（含上界）\n");
+        sb.append("boundaryOutside=start_in_window_finish_after（窗口内发起、窗口后完成）与"
+                + "start_before_window_finish_in_window（预热样本完成在窗口内，供审计单列）\n");
         sb.append("percentile=nearest-rank（升序第 ceil(q*n) 个样本），n=该口径样本数；"
                 + "不插值、不剔除慢样本、不以 p50 替代 p99\n");
         sb.append("successClasses=protected-realtime:SUCCEEDED / protected-light:ACCEPTED / "
                 + "oa-read:OK / oa-approval:ACCEPTED / burst:SUCCEEDED+ACCEPTED / 批:ACCEPTED\n");
-        sb.append("rejectClasses=REJECTED:*(业务拒绝，含错误码) / TIMEOUT(请求超时 10s) / ERROR:*(客户端异常)\n");
-        sb.append("allResultDistribution=每采集器同时报告合法样本分位数与全结果分位数（含拒绝/超时）\n");
+        sb.append("rejectClasses=REJECTED:*(业务拒绝，含错误码) / TIMEOUT(请求超时 10s) / ERROR:*(客户端异常)；"
+                + "HTTP 500 归 ERROR:HTTP500 桶，不与业务拒绝混计\n");
+        sb.append("allResultDistribution=每采集器同时报告合法样本与全结果（含拒绝/超时/500）分位数\n");
+        sb.append("pairingFields=受理→命令→引擎实例/调用→目标或审批提交时点→占用释放；"
+                + "目标提交=目标事务调用行 update_time 与目标记录 update_time/version 双读回，"
+                + "审批提交=引擎历史任务 end_time 与实例 end_time；命令 finished_at 不替代目标提交点\n");
         sb.append("proc_cpu_pct_of_machine=Δ(getProcessCpuTime)/Δ(wall)/核数*100（进程真实 CPU 占用，"
                 + "非 load average；相邻两次 1s 采样差分，首个采样点为 -1）\n");
         sb.append("proc_cpu_pct_of_one_core=Δ(getProcessCpuTime)/Δ(wall)*100\n");
         sb.append("load_avg=getSystemLoadAverage()（一/五/十五分钟均值中的 1min，含等待进程，不单独作为"
                 + "CPU 饱和证据）\n");
         sb.append("heap_used_mib=MemoryMXBean 堆已用；gc_count/gc_time_ms=相邻采样区间内全收集器"
-                + "回收次数/耗时增量（GC 停顿与尾延迟的相关性据此判定）\n");
+                + "回收次数/耗时增量（GC 停顿与尾延迟的相关性据此判定；单次最大停顿须引用原始 GC 事件，"
+                + "聚合 gc_time 不能声明单次停顿）\n");
         sb.append("slow_rt_1s_le300=最近 1000ms 内完成且 latency>300ms 的受保护实时请求数；"
                 + "slow_light_10s_le2000 / slow_oa_10s_le1000 / slow_approval_10s_le1000 同理"
                 + "（慢样本与资源采样点按完成时刻配对）\n");
         sb.append("burst_reject_1s=最近 1000ms 内完成的突发拒绝数（拒绝响应 P99 与拒绝到达率的配对）\n");
         sb.append("pool_wait_thread/pool_wait_millis_max=Druid 等待线程数/maxWait 配置值（非实际最大等待）；"
-                + "pg_lock_waits=pg_stat_activity 中 wait_event_type='Lock' 的连接数\n");
+                + "pg_lock_waits=pg_stat_activity 中 wait_event_type='Lock' 的连接数；"
+                + "PG 服务端死锁/锁等待语句见 pg-server-*.log（log_error_verbosity=verbose）\n");
         sb.append("resourceSampleInterval=1000ms（采样点时刻=ts 列，本地+08:00）\n");
         writeEvidence("stat-definition.txt", sb.toString());
-        this.formalBeginMsHolder = formalStart;
+        this.formalBeginMsHolder = windowFormalBeginMs;
     }
 
     private void shortVerifyAssertions(SampleCollector protectedRealtime, SampleCollector protectedLight,
                                        SampleCollector oaRead, SampleCollector oaApproval,
                                        SampleCollector burstLoad) {
-        List<Double> rt = protectedRealtime.legalLatencies("SUCCEEDED");
-        List<Double> light = protectedLight.legalLatencies("ACCEPTED");
-        List<Double> read = oaRead.legalLatencies("OK");
-        List<Double> approve = oaApproval.legalLatencies("ACCEPTED");
-        assertThat(protectedRealtime.failureCount("SUCCEEDED"))
-                .as("受保护实时动作意外失败/过载拒绝=0").isZero();
+        // 预算判定用发起入组（ts_start∈正式窗口，完成可窗口外）：慢样本不因窗口边界被丢弃
+        List<Double> rt = protectedRealtime.latenciesOfStart("SUCCEEDED"::equals);
+        List<Double> light = protectedLight.latenciesOfStart("ACCEPTED"::equals);
+        List<Double> read = oaRead.latenciesOfStart("OK"::equals);
+        List<Double> approve = oaApproval.latenciesOfStart("ACCEPTED"::equals);
+        assertThat(protectedRealtime.startCount("SUCCEEDED")).as("受保护实时动作意外失败/过载拒绝=0").isZero();
         assertThat(percentile(rt, 0.99)).as("实时入口→提交 P99≤300ms").isLessThanOrEqualTo(300);
-        assertThat(protectedLight.failureCount("ACCEPTED")).as("受保护轻流程失败/拒绝=0").isZero();
+        assertThat(protectedLight.startCount("ACCEPTED")).as("受保护轻流程失败/拒绝=0").isZero();
         assertThat(percentile(light, 0.99)).as("轻流程入口→持久受理 P99≤2s").isLessThanOrEqualTo(2000);
-        assertThat(oaRead.failureCount("OK")).as("OA 读失败=0").isZero();
+        assertThat(oaRead.startCount("OK")).as("OA 读失败=0").isZero();
         assertThat(percentile(read, 0.99)).as("OA 读 P99≤1s").isLessThanOrEqualTo(1000);
-        assertThat(oaApproval.failureCount("ACCEPTED")).as("OA 审批受理失败=0").isZero();
+        assertThat(oaApproval.startCount("ACCEPTED")).as("OA 审批受理失败=0").isZero();
         assertThat(percentile(approve, 0.99)).as("OA 审批受理 P99≤1s").isLessThanOrEqualTo(1000);
         // 突发拒绝 P99≤1s（拒绝只允许记到实际越额负载；拒绝率如实报告不伪装成功率）
-        List<Double> burstRejected = burstLoad.latenciesOf(outcome -> outcome.startsWith("REJECTED"));
+        List<Double> burstRejected = burstLoad.latenciesOfStart(outcome -> outcome.startsWith("REJECTED"));
         if (!burstRejected.isEmpty()) {
             assertThat(percentile(burstRejected, 0.99))
                     .as("超额拒绝响应 P99≤1s").isLessThanOrEqualTo(1000);
@@ -1992,16 +2185,24 @@ class P62ResourceAssurancePgTest {
 
         /** 完成入组：ts_end∈[窗口起点, 窗口起点+formal)（stat-definition.txt 定义；含上界）。 */
         private boolean inFormal(String[] row) {
-            if (formalBeginMs == 0) {
+            long begin = windowFormalBeginMs != 0 ? windowFormalBeginMs : formalBeginMs;
+            if (begin == 0) {
                 return true;
             }
-            try {
-                LocalDateTime parsed = LocalDateTime.parse(row[0], TS);
-                long end = parsed.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
-                return end >= formalBeginMs && end < formalBeginMs + FORMAL_SECONDS * 1000L;
-            } catch (Exception e) {
+            long end = windowFormalEndMs != 0 ? windowFormalEndMs : begin + FORMAL_SECONDS * 1000L;
+            long ts = epochOf(row[0]);
+            return ts >= begin && ts < end;
+        }
+
+        /** 发起入组：ts_start∈[窗口起点, 窗口终点)（完成可落在窗口外，追踪到完成）。 */
+        private boolean startedInFormal(String[] row) {
+            long begin = windowFormalBeginMs != 0 ? windowFormalBeginMs : formalBeginMs;
+            if (begin == 0) {
                 return true;
             }
+            long end = windowFormalEndMs != 0 ? windowFormalEndMs : begin + FORMAL_SECONDS * 1000L;
+            long ts = epochOf(row[1]);
+            return ts >= begin && ts < end;
         }
 
         List<Double> legalLatencies(String legalOutcome) {
@@ -2033,6 +2234,13 @@ class P62ResourceAssurancePgTest {
             }
         }
 
+        /** 发起入组内非合法结果计数（预算的反向断言用同一口径）。 */
+        long startCount(String legalOutcome) {
+            synchronized (lock) {
+                return rows.stream().filter(r -> startedInFormal(r) && !legalOutcome.equals(r[3])).count();
+            }
+        }
+
         Map<String, Long> outcomeHistogram() {
             synchronized (lock) {
                 Map<String, Long> histogram = new LinkedHashMap<>();
@@ -2048,6 +2256,72 @@ class P62ResourceAssurancePgTest {
             synchronized (lock) {
                 return new ArrayList<>(rows);
             }
+        }
+
+        /** 发起入组样本（ts_start∈窗口；完成可在窗口外）——预算/分位数主口径。 */
+        java.util.List<String[]> startCohortRows() {
+            synchronized (lock) {
+                return rows.stream().filter(this::startedInFormal)
+                        .collect(java.util.stream.Collectors.toList());
+            }
+        }
+
+        /** 发起入组 + 结果过滤的延迟（nearest-rank 输入）。 */
+        List<Double> latenciesOfStart(java.util.function.Predicate<String> outcomeMatch) {
+            synchronized (lock) {
+                List<Double> list = new ArrayList<>();
+                for (String[] row : rows) {
+                    if (startedInFormal(row) && outcomeMatch.test(row[3])) {
+                        list.add(Double.parseDouble(row[2]));
+                    }
+                }
+                list.sort(Double::compare);
+                return list;
+            }
+        }
+
+        /** 发起入组全结果延迟（含拒绝/超时/500）。 */
+        java.util.List<Double> allResultLatenciesByStart() {
+            synchronized (lock) {
+                return rows.stream().filter(this::startedInFormal)
+                        .map(row -> Double.parseDouble(row[2]))
+                        .sorted().collect(java.util.stream.Collectors.toList());
+            }
+        }
+
+        /** 发起入组内的结果直方图（分母与结果分布同一口径）。 */
+        Map<String, Long> outcomeHistogramByStart() {
+            synchronized (lock) {
+                Map<String, Long> histogram = new LinkedHashMap<>();
+                for (String[] row : rows) {
+                    if (startedInFormal(row)) {
+                        histogram.merge(row[3], 1L, Long::sum);
+                    }
+                }
+                return histogram;
+            }
+        }
+
+        /** 预热期发起、正式窗口内完成（边界外来源单列）。 */
+        long startedBeforeWindowFinishedInside() {
+            long begin = windowFormalBeginMs != 0 ? windowFormalBeginMs : formalBeginMs;
+            if (begin == 0) {
+                return 0;
+            }
+            synchronized (lock) {
+                return rows.stream().filter(row -> epochOf(row[1]) < begin && inFormal(row)).count();
+            }
+        }
+
+        /** CSV 字段（RFC4180：含逗号/引号/换行时加引号并转义内部引号）。 */
+        private static String csv(String value) {
+            if (value == null) {
+                return "";
+            }
+            boolean quote = value.contains(",") || value.contains("\"")
+                    || value.contains("\n") || value.contains("\r");
+            String escaped = value.replace("\"", "\"\"");
+            return quote ? "\"" + escaped + "\"" : escaped;
         }
 
         /** 完成入组样本（ts_end ≥ 窗口起点）。 */
@@ -2096,7 +2370,7 @@ class P62ResourceAssurancePgTest {
             synchronized (lock) {
                 for (String[] row : rows) {
                     csv.append(row[0]).append(',').append(row[1]).append(',')
-                            .append(row[2]).append(',').append(row[3]).append('\n');
+                            .append(row[2]).append(',').append(csv(row[3])).append('\n');
                 }
             }
             // .gz 扩展名必须真实 gzip 封装（RA06：原始 CSV 直接落 .gz 属封装错误）
@@ -2112,53 +2386,85 @@ class P62ResourceAssurancePgTest {
 
     /**
      * 报告口径（stat-definition.txt 同步落盘）：每个采集器给出
-     * ①全样本/发起入组/完成入组/窗口外计数 ②全结果分位数（含拒绝/超时/失败）
-     * ③合法样本分位数 ④拒绝样本分位数；分位数一律 nearest-rank，不剔除慢样本。
+     * ①发起入组（预算主口径，完成可窗口外）结果直方图与全部分位数
+     * ②完成入组分位数 ③边界外计数（窗口内发起窗口后完成 / 预热发起窗口内完成）
+     * ④全结果/合法/拒绝分开；分位数一律 nearest-rank，不剔除慢样本。
      */
-    private String report(String scenario, long formalBegin, SampleCollector... collectors) {
+    private String report(String scenario, SampleCollector... collectors) {
         StringBuilder sb = new StringBuilder("scenario=").append(scenario)
-                .append(" windowBegin=").append(formalBegin)
+                .append(" windowWarmupBegin=").append(windowWarmupBeginMs)
+                .append(" windowFormalBegin=").append(windowFormalBeginMs)
+                .append(" windowFormalEnd=").append(windowFormalEndMs)
                 .append(" warmup=").append(WARMUP_SECONDS).append("s formal=").append(FORMAL_SECONDS)
                 .append("s shortVerify=").append(isShortVerify())
                 .append(" entry=HTTP:").append(port).append('\n');
         for (SampleCollector collector : collectors) {
             Map<String, Long> histogram = collector.outcomeHistogram();
             long total = histogram.values().stream().mapToLong(Long::longValue).sum();
+            List<String[]> startRows = collector.startCohortRows();
             List<String[]> formalRows = collector.formalRows();
-            List<Double> all = collector.allResultLatencies();
-            // 混合形态采集器（突发轮含实时 SUCCEEDED 与轻流程 ACCEPTED）必须合并全部合法类，
-            // 否则未命中的合法类会被计入"既非合法亦非拒绝"的第三桶（复核要求全结果口径）
-            List<Double> success = new ArrayList<>();
-            success.addAll(collector.legalLatencies("SUCCEEDED"));
-            success.addAll(collector.legalLatencies("ACCEPTED"));
-            success.addAll(collector.legalLatencies("OK"));
-            success.sort(Double::compare);
-            List<Double> rejects = collector.latenciesOf(outcome -> outcome.startsWith("REJECTED")
-                    || "TIMEOUT".equals(outcome) || outcome.startsWith("ERROR"));
-            long startedInWindow = formalRows.size();
-            long completedInWindow = formalRows.size();
-            long startedInWindowCompletedAfter = collector.startedInWindowFinishedAfter(formalBegin
-                    + FORMAL_SECONDS * 1000L);
+            // 发起入组（主口径）：全体/合法/业务拒绝/500/超时分开，分母为发起入组样本数
+            List<Double> allStart = collector.allResultLatenciesByStart();
+            List<Double> legalStart = new ArrayList<>();
+            legalStart.addAll(collector.latenciesOfStart("SUCCEEDED"::equals));
+            legalStart.addAll(collector.latenciesOfStart("ACCEPTED"::equals));
+            legalStart.addAll(collector.latenciesOfStart("OK"::equals));
+            legalStart.sort(Double::compare);
+            List<Double> businessRejected = collector.latenciesOfStart(outcome ->
+                    outcome.startsWith("REJECTED"));
+            List<Double> serverErrors = collector.latenciesOfStart(outcome ->
+                    "TIMEOUT".equals(outcome) || outcome.startsWith("ERROR"));
+            long startedInWindowCompletedAfter = collector.startedInWindowFinishedAfter(windowFormalEndMs);
+            long startedBeforeWindowFinishedInside = collector.startedBeforeWindowFinishedInside();
             sb.append("collector=").append(collector.name)
                     .append(" samples_total=").append(total)
-                    .append(" cohort_start_in_window=").append(startedInWindow)
-                    .append(" cohort_end_in_window=").append(completedInWindow)
+                    .append(" cohort_start_in_window=").append(startRows.size())
+                    .append(" cohort_end_in_window=").append(formalRows.size())
                     .append(" start_in_window_finish_after=").append(startedInWindowCompletedAfter)
-                    .append(" outcomes=").append(histogram).append('\n');
-            sb.append("  all_results n=").append(all.size())
+                    .append(" start_before_window_finish_inside=").append(startedBeforeWindowFinishedInside)
+                    .append(" startCohortOutcomes=").append(collector.outcomeHistogramByStart()).append('\n');
+            sb.append("  start_cohort all n=").append(allStart.size())
+                    .append(String.format(Locale.ROOT, " p50=%.1fms p90=%.1fms p95=%.1fms p99=%.1fms max=%.1fms",
+                            percentile(allStart, 0.50), percentile(allStart, 0.90), percentile(allStart, 0.95),
+                            percentile(allStart, 0.99), max(allStart)))
+                    .append('\n');
+            sb.append("  start_cohort legal n=").append(legalStart.size())
+                    .append(String.format(Locale.ROOT, " p50=%.1fms p90=%.1fms p95=%.1fms p99=%.1fms max=%.1fms",
+                            percentile(legalStart, 0.50), percentile(legalStart, 0.90), percentile(legalStart, 0.95),
+                            percentile(legalStart, 0.99), max(legalStart)))
+                    .append('\n');
+            sb.append("  start_cohort business_rejected n=").append(businessRejected.size())
+                    .append(String.format(Locale.ROOT, " p50=%.1fms p90=%.1fms p99=%.1fms max=%.1fms",
+                            percentile(businessRejected, 0.50), percentile(businessRejected, 0.90),
+                            percentile(businessRejected, 0.99), max(businessRejected)))
+                    .append('\n');
+            sb.append("  start_cohort server_error_or_timeout n=").append(serverErrors.size())
+                    .append(String.format(Locale.ROOT, " p50=%.1fms p90=%.1fms p99=%.1fms max=%.1fms",
+                            percentile(serverErrors, 0.50), percentile(serverErrors, 0.90),
+                            percentile(serverErrors, 0.99), max(serverErrors)))
+                    .append('\n');
+            List<Double> all = collector.allResultLatencies();
+            List<Double> endLegal = new ArrayList<>();
+            endLegal.addAll(collector.legalLatencies("SUCCEEDED"));
+            endLegal.addAll(collector.legalLatencies("ACCEPTED"));
+            endLegal.addAll(collector.legalLatencies("OK"));
+            endLegal.sort(Double::compare);
+            List<Double> endRejects = collector.latenciesOf(outcome -> outcome.startsWith("REJECTED")
+                    || "TIMEOUT".equals(outcome) || outcome.startsWith("ERROR"));
+            sb.append("  end_cohort all n=").append(all.size())
                     .append(String.format(Locale.ROOT, " p50=%.1fms p90=%.1fms p95=%.1fms p99=%.1fms max=%.1fms",
                             percentile(all, 0.50), percentile(all, 0.90), percentile(all, 0.95),
                             percentile(all, 0.99), max(all)))
                     .append('\n');
-            sb.append("  legal_results n=").append(success.size())
+            sb.append("  end_cohort legal n=").append(endLegal.size())
                     .append(String.format(Locale.ROOT, " p50=%.1fms p90=%.1fms p95=%.1fms p99=%.1fms max=%.1fms",
-                            percentile(success, 0.50), percentile(success, 0.90), percentile(success, 0.95),
-                            percentile(success, 0.99), max(success)))
+                            percentile(endLegal, 0.50), percentile(endLegal, 0.90), percentile(endLegal, 0.95),
+                            percentile(endLegal, 0.99), max(endLegal)))
                     .append('\n');
-            sb.append("  rejected_results n=").append(rejects.size())
+            sb.append("  end_cohort rejected_or_error n=").append(endRejects.size())
                     .append(String.format(Locale.ROOT, " p50=%.1fms p90=%.1fms p99=%.1fms max=%.1fms",
-                            percentile(rejects, 0.50), percentile(rejects, 0.90),
-                            percentile(rejects, 0.99), max(rejects)))
+                            percentile(endRejects, 0.50), percentile(endRejects, 0.90),
+                            percentile(endRejects, 0.99), max(endRejects)))
                     .append('\n');
         }
         return sb.toString();

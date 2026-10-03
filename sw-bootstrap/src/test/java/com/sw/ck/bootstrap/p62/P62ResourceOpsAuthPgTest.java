@@ -246,15 +246,16 @@ class P62ResourceOpsAuthPgTest {
         exchange(ev, "D4-read-rejects", "GET", "/api/workflow/resource/rejects?page=1&size=10",
                 outsider, null);
 
-        // E 跨租户：t1 只读身份强制查询他租户范围被强制本租户（total=0）；t2 授予 view 后
-        // 仍只看到本租户对象（租户 2 无对象 → 0），且无法写 t1 策略
+        // E 跨租户：t1/t2 查看身份带越界 tenantId 参数 → 强制本租户（非空数据下断言
+        // 「只见本租户对象」而非旧的空表 total=0——复核03 已判空表不证明隔离）
         String crossTenant = exchange(ev, "E1-tenant1-viewer-asks-tenant2", "GET",
                 "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=2", viewer, null);
-        assertThat(crossTenant).contains("\"total\":\"0\"");
+        assertThat(crossTenant).doesNotContain("RA03A2-T2-");
+        // 授予 t2 查看（有权限身份下的越界请求才证明租户强制，而非仅权限拒绝——复核03）
         bindRole(9003L, "RA03查看", 94201L, List.of(9106L, 9107L));
         String t2AsksT1 = exchange(ev, "E2-tenant2-viewer-asks-tenant1", "GET",
                 "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1", outsider, null);
-        assertThat(t2AsksT1).contains("\"total\":\"0\"");
+        assertThat(t2AsksT1).doesNotContain("RA03A2-T1-");
         String t2StopT1 = exchange(ev, "E3-tenant2-write-t1-policy", "POST",
                 "/api/workflow/resource/policy/" + policyId + "/stop-acceptance", outsider,
                 "{\"stop\":true}");
@@ -272,6 +273,112 @@ class P62ResourceOpsAuthPgTest {
         Files.writeString(evidenceDir.resolve("auth-matrix.txt"), ev.toString(), StandardCharsets.UTF_8,
                 java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE);
         System.out.println("[P62-EV] ra03 auth matrix ok");
+    }
+
+    // ==================== RA03a2：非空租户对象隔离（复核03 残余边界） ====================
+
+    @Test
+    @DisplayName("RA03a2：租户非空对象隔离——查看身份强制本租户/他租户同id不可见/管理身份全局运维边界显式")
+    void tenantIsolationWithNonEmptyObjects() throws Exception {
+        seedIdentities();
+        // 独立身份：不改动 authMatrix 使用的 94201（两类共享一库，方法顺序不定）
+        seedTenantUser(2L, 94203L, "ra03-viewer2-t2");
+        bindRole(9004L, "RA03查看2", 94203L, List.of(9106L, 9107L));
+        StringBuilder ev = new StringBuilder("scenario=RA03a2 租户非空对象隔离（真实HTTP读取+JDBC回读）\n")
+                .append("边界设计回读=resolveScope：view-only 身份强制本租户（tenantId 参数被忽略）；\n")
+                .append("持 manage 的运维身份为全局运维（可按 tenantId 参数跨租户查询）——两者都在本矩阵显式取证\n");
+        long t1a = seedIsolationCommand(1L, "RA03A2-T1-CMD-A", "SHARED");
+        long t1b = seedIsolationCommand(1L, "RA03A2-T1-CMD-B", "PROD_RESERVED");
+        long t2a = seedIsolationCommand(2L, "RA03A2-T2-CMD-A", "SHARED");
+        long t2b = seedIsolationCommand(2L, "RA03A2-T2-CMD-B", "OA_RESERVED");
+        seedIsolationCommand(2L, "RA03A2-T2-CMD-C", "SHARED");
+        seedIsolationReject(1L, "RA03A2-T1-RATE");
+        seedIsolationReject(2L, "RA03A2-T2-RATE");
+        ev.append("seeded: commands t1=[").append(t1a).append(',').append(t1b)
+                .append("] t2=[").append(t2a).append(',').append(t2b).append(",RA03A2-T2-CMD-C]")
+                .append("；reject 行 tenant1/tenant2 各 1（detail 带标记）\n");
+        String t1Admin = "Bearer test_94101";
+        String t1Viewer = "Bearer test_94102";
+        String t2Viewer = "Bearer test_94203";
+
+        // G1 运维身份（view+manage）无参数=全局视图（设计显式化：行内可见 tenant_id）
+        String t1AdminList = exchange(ev, "G1-manager-global-list", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=20", t1Admin, null);
+        assertThat(t1AdminList).contains("RA03A2-T1-CMD-A").contains("RA03A2-T2-CMD-A")
+                .contains("\"tenant_id\":\"1\"").contains("\"tenant_id\":\"2\"");
+        // G2 查看身份强制本租户（非空）
+        String t2List = exchange(ev, "G2-t2-viewer-own", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=20", t2Viewer, null);
+        assertThat(t2List).contains("RA03A2-T2-CMD-A").contains("RA03A2-T2-CMD-C")
+                .doesNotContain("RA03A2-T1-");
+        String t1ViewerList = exchange(ev, "G2b-t1-viewer-own", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=20", t1Viewer, null);
+        assertThat(t1ViewerList).contains("RA03A2-T1-CMD-A").doesNotContain("RA03A2-T2-");
+
+        // G3/G4 他租户同 id 详情对查看身份不可见
+        String crossDetailT1 = exchange(ev, "G3-t1-viewer-asks-t2-detail", "GET",
+                "/api/workflow/resource/backlog/commands/" + t2a, t1Viewer, null);
+        assertThat(crossDetailT1).doesNotContain("RA03A2-T2-CMD-A");
+        String crossDetailT2 = exchange(ev, "G4-t2-viewer-asks-t1-detail", "GET",
+                "/api/workflow/resource/backlog/commands/" + t1a, t2Viewer, null);
+        assertThat(crossDetailT2).doesNotContain("RA03A2-T1-CMD-A");
+
+        // G5 越界 tenantId 参数：查看身份被强制本租户；管理身份按参数生效
+        String forcedViewer = exchange(ev, "G5-t1-viewer-asks-tenant2", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=20&tenantId=2", t1Viewer, null);
+        assertThat(forcedViewer).doesNotContain("RA03A2-T2-").contains("RA03A2-T1-");
+        String managerScoped = exchange(ev, "G5b-manager-asks-tenant2", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=20&tenantId=2", t1Admin, null);
+        assertThat(managerScoped).contains("RA03A2-T2-CMD-A").doesNotContain("RA03A2-T1-");
+
+        // G6/G7 拒绝审计同租户边界
+        String rejectsT1 = exchange(ev, "G6-t1-rejects", "GET",
+                "/api/workflow/resource/rejects?page=1&size=20", t1Viewer, null);
+        assertThat(rejectsT1).contains("RA03A2-T1-RATE").doesNotContain("RA03A2-T2-RATE");
+        String rejectsT2 = exchange(ev, "G7-t2-rejects", "GET",
+                "/api/workflow/resource/rejects?page=1&size=20", t2Viewer, null);
+        assertThat(rejectsT2).contains("RA03A2-T2-RATE").doesNotContain("RA03A2-T1-RATE");
+
+        // G8 只读身份写全局策略 403；对象逐项不变（JDBC 回读）
+        String t2Write = exchange(ev, "G8-t2-write-policy-403", "POST",
+                "/api/workflow/resource/policy/1/stop-acceptance", t2Viewer, "{\"stop\":true}");
+        assertThat(t2Write).contains("403");
+        for (Map<String, Object> row : jdbc.queryForList("SELECT tenant_id, command_key, status,"
+                + " resource_segment, resource_released_at FROM sw_bpm_command"
+                + " WHERE command_key LIKE 'RA03A2-%' ORDER BY tenant_id, command_key")) {
+            ev.append("  [G9-object-unchanged] ").append(row).append('\n');
+        }
+        for (Map<String, Object> row : jdbc.queryForList("SELECT tenant_id, reject_scope, detail,"
+                + " command_key FROM sw_bpm_resource_reject_log WHERE detail LIKE 'RA03A2-%'"
+                + " ORDER BY tenant_id")) {
+            ev.append("  [G9-reject-unchanged] ").append(row).append('\n');
+        }
+        ev.append("recordedAt=").append(LocalDateTime.now().format(TS)).append("\nrunId=")
+                .append(runId).append("\n");
+        Files.writeString(evidenceDir.resolve("tenant-isolation.txt"), ev.toString(),
+                StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE_NEW,
+                java.nio.file.StandardOpenOption.WRITE);
+        System.out.println("[P62-EV] ra03a2 tenant isolation ok");
+    }
+
+    private long seedIsolationCommand(long tenant, String commandKey, String segment) {
+        long id = 780000L + Math.abs((long) commandKey.hashCode() % 20000L);
+        jdbc.update("INSERT INTO sw_bpm_command (id, tenant_id, command_key, command_type, channel,"
+                + " status, payload, resource_class, resource_segment, resource_units,"
+                + " completion_point, resource_released_at, create_time, update_time)"
+                + " VALUES (?, ?, ?, 'FLOW_START', 'NORMAL', 'COMPLETED', '{}', 'PROD', ?, 1,"
+                + " 'TARGET_ACTION_DONE', NULL, current_timestamp, current_timestamp)"
+                + " ON CONFLICT (id) DO NOTHING", id, tenant, commandKey, segment);
+        return id;
+    }
+
+    private void seedIsolationReject(long tenant, String marker) {
+        long id = 790000L + Math.abs((long) marker.hashCode() % 20000L);
+        jdbc.update("INSERT INTO sw_bpm_resource_reject_log (id, tenant_id, policy_version,"
+                + " resource_class, reject_scope, requested_units, reason_code, detail, command_key,"
+                + " create_time, update_time) VALUES (?, ?, 1, 'PROD', 'RATE', 1,"
+                + " 'bpm.resource_rate_exceeded', ?, ?, current_timestamp, current_timestamp)"
+                + " ON CONFLICT (id) DO NOTHING", id, tenant, marker, marker);
     }
 
     private void appendIdentities(StringBuilder ev) {
