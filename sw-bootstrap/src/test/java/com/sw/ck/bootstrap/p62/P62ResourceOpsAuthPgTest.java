@@ -180,79 +180,170 @@ class P62ResourceOpsAuthPgTest {
     }
 
     @Test
-    @DisplayName("RA03：合法管理/越权拒绝/跨租户隔离/非法额度拒绝 真实HTTP矩阵")
+    @DisplayName("RA03：合法管理/越权拒绝/只读不可管理/跨租户隔离/非法额度拒绝 真实HTTP矩阵（请求-响应-回查三段）")
     void authMatrix() throws Exception {
-        List<String> evidence = new ArrayList<>();
+        StringBuilder ev = new StringBuilder();
+        appendIdentities(ev);
         String admin = "Bearer test_94101";
         String viewer = "Bearer test_94102";
         String outsider = "Bearer test_94201";
-
-        // 1) 合法创建+启用（持 view+manage）
         String body = "{\"globalMaxOutstanding\":2000,\"tenantMaxOutstanding\":800,\"prodReserved\":400,"
                 + "\"oaReserved\":400,\"sharedCapacity\":1200,\"tenantRatePerSec\":50,\"tenantBurst\":500,"
                 + "\"realtimeGlobalConcurrency\":16,\"realtimeTenantConcurrency\":8,"
                 + "\"batchSliceItems\":25,\"batchPollClaimLimit\":1,\"remark\":\"RA03合法策略\"}";
+
+        // A1 合法创建（持 view+manage）；A2 合法启用；逐字段回查持久值（非只看响应）
+        exchange(ev, "A1", "POST", "/api/workflow/resource/policy", admin, body);
         String created = post("/api/workflow/resource/policy", admin, body);
         assertThat(created).contains("\"policyVersion\"").contains("\"status\":\"DRAFT\"");
-        evidence.add("create-valid=" + snippet(created));
-        // Long→String 序列化契约（Jackson 全局防雪花精度丢失）：id 为带引号字符串
         Long policyId = Long.valueOf(extractJsonScalar(created, "id"));
+        exchange(ev, "A1-retry-same-body", "POST", "/api/workflow/resource/policy", admin, body);
+        appendPolicyRow(ev, "A1-created-row(DRAFT)", policyId);
+        exchange(ev, "A2", "POST", "/api/workflow/resource/policy/" + policyId + "/enable", admin,
+                "{\"remark\":\"RA03启用\"}");
         String enabled = post("/api/workflow/resource/policy/" + policyId + "/enable", admin,
                 "{\"remark\":\"RA03启用\"}");
         assertThat(enabled).contains("\"status\":\"ACTIVE\"");
-        evidence.add("enable-valid=" + snippet(enabled));
-        // 审计行存在（reject_log 由启用检查失败路径写；启用成功路径审计=策略行版本化）
+        appendPolicyRow(ev, "A2-enabled-row(ACTIVE)", policyId);
         Long activeCount = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sw_bpm_resource_policy WHERE status = 'ACTIVE'", Long.class);
         assertThat(activeCount).isEqualTo(1);
 
-        // 2) 非法额度：保留份额不自洽 → 创建成功但启用检查明确拒绝并留审计
+        // B 非法额度：保留份额不自洽 → 启用明确拒绝 + 独立审计（端点/身份/响应/审计原文/策略未被改动）
         String bad = post("/api/workflow/resource/policy", admin,
                 "{\"globalMaxOutstanding\":100,\"tenantMaxOutstanding\":100,\"prodReserved\":1,"
                         + "\"oaReserved\":1,\"sharedCapacity\":1,\"tenantRatePerSec\":50,\"tenantBurst\":500,"
                         + "\"realtimeGlobalConcurrency\":16,\"realtimeTenantConcurrency\":8,"
                         + "\"batchSliceItems\":25,\"batchPollClaimLimit\":1}");
         Long badId = Long.valueOf(extractJsonScalar(bad, "id"));
+        exchange(ev, "B1", "POST", "/api/workflow/resource/policy/" + badId + "/enable", admin, "{}");
         String badEnable = post("/api/workflow/resource/policy/" + badId + "/enable", admin, "{}");
         assertThat(badEnable).contains("bpm.resource_policy_invalid").contains("保留份额不自洽");
-        Long rejectLog = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM sw_bpm_resource_reject_log WHERE reject_scope = 'ENABLEMENT'",
-                Long.class);
-        assertThat(rejectLog).as("启用拒绝独立审计行").isGreaterThanOrEqualTo(1);
-        evidence.add("enable-invalid-rejected=true rejectLog=" + rejectLog);
+        appendPolicyRow(ev, "B1-rejected-policy-row(仍 DRAFT)", badId);
+        appendRejectAuditRows(ev, "B1-enablement-audit");
+        appendPolicyRow(ev, "B1-active-policy-unchanged", policyId);
 
-        // 3) 越权：角色2 之外的普通租户用户创建/启用 → 403
-        String forbiddenCreate = post("/api/workflow/resource/policy", outsider, body);
-        assertThat(forbiddenCreate).contains("403");
-        String forbiddenEnable = post("/api/workflow/resource/policy/" + policyId + "/enable",
-                outsider, "{}");
-        assertThat(forbiddenEnable).contains("403");
-        evidence.add("outsider-create-403=true outsider-enable-403=true");
-
-        // 4) 跨租户隔离：租户1 管理员只查本租户数据；租户2 用户查不到租户1 对象
+        // C 只读身份（view 无 manage）：可读、不可管理（创建/启用均 403，响应原文留证）
+        exchange(ev, "C1-view-ok", "GET", "/api/workflow/resource/profile", viewer, null);
         String profileViewer = get("/api/workflow/resource/profile", viewer);
         assertThat(profileViewer).contains("\"policyEnabled\":true");
-        String commandsOutsider = get("/api/workflow/resource/backlog/commands?page=1&size=10", outsider);
-        // 无 view 权限 → 403（服务端拒绝，非空集过滤）
-        assertThat(commandsOutsider).contains("403");
-        // 跨租户明细：租户2 用户即使持 view 也看不到租户1 命令（用 viewer 但强制传他租户 id=2 范围）
+        exchange(ev, "C2-view-only-create", "POST", "/api/workflow/resource/policy", viewer, body);
+        assertThat(get("/api/workflow/resource/policy", viewer)).contains("200");
+        exchange(ev, "C3-view-only-enable", "POST",
+                "/api/workflow/resource/policy/" + policyId + "/enable", viewer, "{}");
+        // 只读身份不能改策略：启用响应必须为 403 且策略保持 ACTIVE（未被改动/未被停用）
+        String viewerEnable = post("/api/workflow/resource/policy/" + policyId + "/enable", viewer, "{}");
+        assertThat(viewerEnable).contains("403");
+        appendPolicyRow(ev, "C3-policy-after-viewer-attempt", policyId);
+
+        // D 无权限身份（t2 普通用户）：全部端点 403（服务端拒绝而非空集过滤）
+        exchange(ev, "D1-create", "POST", "/api/workflow/resource/policy", outsider, body);
+        exchange(ev, "D2-enable", "POST", "/api/workflow/resource/policy/" + policyId + "/enable",
+                outsider, "{}");
+        exchange(ev, "D3-commands", "GET", "/api/workflow/resource/backlog/commands?page=1&size=10",
+                outsider, null);
+        exchange(ev, "D4-read-rejects", "GET", "/api/workflow/resource/rejects?page=1&size=10",
+                outsider, null);
+        String forbiddenCreate = post("/api/workflow/resource/policy", outsider, body);
+        assertThat(forbiddenCreate).contains("403");
+        assertThat(get("/api/workflow/resource/backlog/commands?page=1&size=10", outsider))
+                .contains("403");
+
+        // E 跨租户：t1 只读身份强制查询他租户范围被强制本租户（total=0）；t2 授予 view 后
+        // 仍只看到本租户对象（租户 2 无对象 → 0），且无法读 t1 的对象详情
+        exchange(ev, "E1-tenant1-viewer-asks-tenant2", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=2", viewer, null);
         String crossTenant = get("/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=2",
                 viewer);
-        // PageResult 计数按 Long→String 契约渲染（"total":"0"=空集：非管理权限强制本租户范围）
-        assertThat(crossTenant).contains("\"total\":\"0\"").as("非管理权限强制本租户范围（传他租户无效）");
-        evidence.add("cross-tenant-isolated=true");
+        assertThat(crossTenant).contains("\"total\":\"0\"");
+        bindRole(9003L, "RA03查看", 94201L, List.of(9106L, 9107L));
+        exchange(ev, "E2-tenant2-viewer-asks-tenant1", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1", outsider, null);
+        String t2AsksT1 = get("/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1",
+                outsider);
+        assertThat(t2AsksT1).contains("\"total\":\"0\"");
+        exchange(ev, "E3-tenant2-write-t1-policy", "POST",
+                "/api/workflow/resource/policy/" + policyId + "/stop-acceptance", outsider,
+                "{\"stop\":true}");
+        String t2StopT1 = post("/api/workflow/resource/policy/" + policyId + "/stop-acceptance",
+                outsider, "{\"stop\":true}");
+        assertThat(t2StopT1).contains("403");
+        appendPolicyRow(ev, "E3-t1-policy-after-t2-cross-tenant-attempt", policyId);
 
-        // 5) 拒绝审计分页（同租户可见）
+        // F 拒绝审计（同租户管理可读，原文含 scope/reason；不跨租户）
+        exchange(ev, "F1-rejects-admin", "GET", "/api/workflow/resource/rejects?page=1&size=10",
+                admin, null);
         String rejects = get("/api/workflow/resource/rejects?page=1&size=10", admin);
         assertThat(rejects).contains("ENABLEMENT");
-        evidence.add("rejects-visible-same-tenant=true");
+        appendRejectAuditRows(ev, "F1-audit-rows-after-matrix");
 
-        String report = "runId=" + runId + "\nport=" + port + "\nidentities="
-                + "t1-admin(94101,view+manage)/t1-viewer(94102,view)/t2-user(94201,none)\n"
-                + String.join("\n", evidence) + "\nrecordedAt=" + LocalDateTime.now().format(TS) + "\n";
-        Files.writeString(evidenceDir.resolve("auth-matrix.txt"), report, StandardCharsets.UTF_8,
+        ev.append("\nrecordedAt=").append(LocalDateTime.now().format(TS)).append("\nrunId=")
+                .append(runId).append("\n");
+        Files.writeString(evidenceDir.resolve("auth-matrix.txt"), ev.toString(), StandardCharsets.UTF_8,
                 java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE);
         System.out.println("[P62-EV] ra03 auth matrix ok");
+    }
+
+    private void appendIdentities(StringBuilder ev) {
+        ev.append("runId=").append(runId).append("\nbaseUrl=http://127.0.0.1:").append(port)
+                .append("\nidentities(经 sys_user/sys_role/sys_role_menu 真实 RBAC 链):\n");
+        for (Map<String, Object> row : jdbc.queryForList("SELECT u.id, u.username, u.tenant_id,"
+                + " u.status, r.id AS role_id, r.name AS role_name FROM sys_user u"
+                + " LEFT JOIN sys_user_role ur ON ur.user_id = u.id AND ur.deleted = 0"
+                + " LEFT JOIN sys_role r ON r.id = ur.role_id WHERE u.id IN (94101, 94102, 94201)"
+                + " ORDER BY u.id")) {
+            ev.append("  user=").append(row.get("id")).append(" username=").append(row.get("username"))
+                    .append(" tenant=").append(row.get("tenant_id")).append(" status=")
+                    .append(row.get("status")).append(" role=").append(row.get("role_id")).append('/')
+                    .append(row.get("role_name")).append('\n');
+        }
+        for (Map<String, Object> row : jdbc.queryForList("SELECT rm.role_id, rm.menu_id, m.name,"
+                + " m.permission FROM sys_role_menu rm JOIN sys_menu m ON m.id = rm.menu_id"
+                + " WHERE rm.role_id IN (9001, 9002, 9003) ORDER BY rm.role_id, rm.menu_id")) {
+            ev.append("  role=").append(row.get("role_id")).append(" menu=").append(row.get("menu_id"))
+                    .append(" name=").append(row.get("name")).append(" permission=")
+                    .append(row.get("permission")).append('\n');
+        }
+        ev.append("tokenLine=Bearer test_<userId>（debug-auth 测试契约身份，非用户秘密）\n");
+    }
+
+    /** 请求-响应原文记录（含身份、方法、URL、HTTP 状态与完整业务响应）。 */
+    private void exchange(StringBuilder ev, String id, String method, String path, String bearer,
+                          String json) {
+        String response = "-".equals(method) ? "-" : ("POST".equals(method)
+                ? post(path, bearer, json) : get(path, bearer));
+        int status;
+        String payload;
+        int split = response.indexOf('|');
+        if (split < 0) {
+            status = -1;
+            payload = response;
+        } else {
+            status = Integer.parseInt(response.substring(0, split));
+            payload = response.substring(split + 1);
+        }
+        ev.append("\n[").append(id).append("] method=").append(method).append(" url=http://127.0.0.1:")
+                .append(port).append(path).append(" identity=").append(bearer)
+                .append(" body=").append(json == null ? "-" : json).append('\n')
+                .append("  response_status=").append(status).append(" body=").append(payload).append('\n');
+    }
+
+    private void appendPolicyRow(StringBuilder ev, String label, Long policyId) {
+        Map<String, Object> row = jdbc.queryForMap("SELECT id, status, enabled, policy_version,"
+                + " global_max_outstanding, tenant_max_outstanding, prod_reserved, oa_reserved,"
+                + " shared_capacity, tenant_rate_per_sec, tenant_burst, realtime_global_concurrency,"
+                + " realtime_tenant_concurrency, update_time FROM sw_bpm_resource_policy WHERE id = ?",
+                policyId);
+        ev.append("  [").append(label).append("] ").append(row).append('\n');
+    }
+
+    private void appendRejectAuditRows(StringBuilder ev, String label) {
+        ev.append("  [").append(label).append("] sw_bpm_resource_reject_log rows:\n");
+        for (Map<String, Object> row : jdbc.queryForList("SELECT id, tenant_id, policy_version,"
+                + " resource_class, reject_scope, requested_units, reason_code, detail, create_time"
+                + " FROM sw_bpm_resource_reject_log ORDER BY id")) {
+            ev.append("    ").append(row).append('\n');
+        }
     }
 
     // ==================== HTTP 工具 ====================

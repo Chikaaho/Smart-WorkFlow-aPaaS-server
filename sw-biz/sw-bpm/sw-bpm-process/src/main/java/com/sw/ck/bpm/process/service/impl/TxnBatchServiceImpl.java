@@ -101,6 +101,15 @@ public class TxnBatchServiceImpl implements TxnBatchService {
                 .eq(BpmCommandBatch::getBatchKey, request.getBatchKey())
                 .last("LIMIT 1"));
         if (existing != null) {
+            // 同键异载荷继续拒绝（RG02 合同）：批次重放只认同一受理内容——绑定动作与逐项
+            // (itemKey, recordId, quantity) 集合必须一致；不同内容不得静默返回原批次。
+            if (!existing.getActionId().equals(request.getActionId())
+                    || !sameItems(findItems(existing.getId()), request.getItems())) {
+                log.warn("批次同键异载荷拒绝: batchKey={}, existingAction={}, incomingAction={}, incomingItems={}",
+                        request.getBatchKey(), existing.getActionId(), request.getActionId(),
+                        request.getItems() == null ? null : request.getItems().size());
+                throw new BaseException(BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
+            }
             log.info("批次重放命中原批次: batchKey={}, batchId={}", existing.getBatchKey(), existing.getId());
             return toView(existing, findItems(existing.getId()), true);
         }
@@ -220,6 +229,23 @@ public class TxnBatchServiceImpl implements TxnBatchService {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "批次内项键重复: " + item.getItemKey());
             }
         }
+    }
+
+    /** 批次重放内容一致性：逐项 (itemKey, recordId, quantity) 多重集比较（顺序无关）。 */
+    private static boolean sameItems(List<BpmCommandBatchItem> stored,
+                                     List<TxnBatchSubmitRequest.Item> incoming) {
+        if (stored == null || incoming == null || stored.size() != incoming.size()) {
+            return false;
+        }
+        java.util.Map<String, String> storedMap = new java.util.TreeMap<>();
+        for (BpmCommandBatchItem item : stored) {
+            storedMap.put(item.getItemKey(), item.getRecordId() + "|" + item.getQuantity());
+        }
+        java.util.Map<String, String> incomingMap = new java.util.TreeMap<>();
+        for (TxnBatchSubmitRequest.Item item : incoming) {
+            incomingMap.put(item.getItemKey(), item.getRecordId() + "|" + item.getQuantity());
+        }
+        return storedMap.equals(incomingMap);
     }
 
     private List<BpmCommandBatchItem> findItems(Long batchId) {

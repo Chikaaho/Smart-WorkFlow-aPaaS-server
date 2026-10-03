@@ -50,6 +50,13 @@ public class ResourceAdmissionService {
     private final TransactionTemplate rejectAuditTemplate;
     private final TransactionTemplate usageEnsureTemplate;
 
+    /**
+     * 已建立计数行的租户（进程内加速）：计数行建后不再删除，稳态下受理路径零额外事务与
+     * 零唯一键冲突（RA02 时效：原实现每次受理尝试插入-捕获冲突，突发负载下每秒数十次
+     * 异常+独立事务，构成可观测的尾延迟成本）。多进程部署不属本阶段画像，届时失效。
+     */
+    private final java.util.Set<Long> ensuredTenants = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /** 准入凭证：受理冻结到命令行的段与策略版本。 */
     public record AdmissionTicket(String segment, Integer policyVersion, int units) {
     }
@@ -94,7 +101,7 @@ public class ResourceAdmissionService {
                             + policy.getTenantBurst() + "），请稍后重试");
             throw new BaseException(BpmErrorCode.RESOURCE_RATE_EXCEEDED);
         }
-        ensureUsageRows(tenantId);
+        ensureUsageRowsFast(tenantId);
         // 死锁防治（RA02 复算修正）：usage 行锁只覆盖本行原子条件 UPDATE（纳秒级持锁）；
         // 全序预锁会把全部受理串行化在 5 行上（突发 100 次/s vs 受保护 10 次/s，PG 锁等待 12—16，
         // 受保护 p99 尾尖 929ms）且持锁跨越后续命令行唯一索引等待，已移除。
@@ -102,36 +109,67 @@ public class ResourceAdmissionService {
         // segment→GLOBAL TOTAL→TENANT TOTAL 同序单行更新；调用方必须保证 admit 不在持有
         // usage 行锁时等待命令行唯一索引（admit 置于 enqueue 之后，见各受理接缝）。
 
-        String rejectScope = null;
+        String[] rejectScope = new String[1];
+        AdmissionTicket ticket = tryOccupy(tenantId, resourceClass, units, policy, rejectScope);
+        if (ticket == null && !usageRowPresent(tenantId)) {
+            // 计数行被外部清空（测试隔离重置/运维清理）时的自愈：重建行后重试一次；
+            // 真额度满时行存在，不重试、不放大为额外写入
+            forceEnsureUsageRows(tenantId);
+            rejectScope[0] = null;
+            ticket = tryOccupy(tenantId, resourceClass, units, policy, rejectScope);
+        }
+        if (ticket != null) {
+            // 受理热点路径不逐笔输出 INFO（突发画像下每秒数十笔，日志格式化与写盘进入
+            // 共享 CPU 预算；逐笔准入事实由命令行冻结字段与占用计数持久承载）
+            if (log.isDebugEnabled()) {
+                log.debug("资源准入成功: tenant={}, class={}, units={}, segment={}, policyVersion={}",
+                        tenantId, resourceClass.getCode(), units, ticket.segment(),
+                        policy.getPolicyVersion());
+            }
+            return ticket;
+        }
+        auditReject(tenantId, policy, resourceClass, units,
+                rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0],
+                "适用额度：全局 " + policy.getGlobalMaxOutstanding() + "、每租户 "
+                        + policy.getTenantMaxOutstanding() + " 工作单位，当前已满，请稍后重试");
+        throw new BaseException(BpmErrorCode.RESOURCE_QUOTA_EXCEEDED);
+    }
+
+    /** 容量裁决单次尝试：成功返回凭证；失败返回 null 并把拒绝域写入 rejectScope[0]。 */
+    private AdmissionTicket tryOccupy(Long tenantId, ResourceClassEnum resourceClass, int units,
+                                      BpmResourcePolicy policy, String[] rejectScope) {
         List<ResourceSegmentEnum> preference = ResourceSegmentEnum.preference(resourceClass);
         for (ResourceSegmentEnum segment : preference) {
             long segmentCap = segmentCapacity(policy, segment);
             if (usageMapper.incrementWithinCap("GLOBAL", 0, segment.getCode(), units, segmentCap) != 1) {
-                rejectScope = rejectScope == null ? "QUOTA_SEGMENT" : rejectScope;
+                rejectScope[0] = rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0];
                 continue;
             }
             if (usageMapper.incrementWithinCap("GLOBAL", 0, "TOTAL", units,
                     policy.getGlobalMaxOutstanding()) != 1) {
                 usageMapper.decrement("GLOBAL", 0, segment.getCode(), units);
-                rejectScope = "QUOTA_TOTAL";
+                rejectScope[0] = "QUOTA_TOTAL";
                 continue;
             }
             if (usageMapper.incrementWithinCap("TENANT", tenantId, "TOTAL", units,
                     policy.getTenantMaxOutstanding()) != 1) {
                 usageMapper.decrement("GLOBAL", 0, "TOTAL", units);
                 usageMapper.decrement("GLOBAL", 0, segment.getCode(), units);
-                rejectScope = "QUOTA_TENANT";
+                rejectScope[0] = "QUOTA_TENANT";
                 continue;
             }
-            log.info("资源准入成功: tenant={}, class={}, units={}, segment={}, policyVersion={}",
-                    tenantId, resourceClass.getCode(), units, segment.getCode(), policy.getPolicyVersion());
             return new AdmissionTicket(segment.getCode(), policy.getPolicyVersion(), units);
         }
-        auditReject(tenantId, policy, resourceClass, units,
-                rejectScope == null ? "QUOTA_SEGMENT" : rejectScope,
-                "适用额度：全局 " + policy.getGlobalMaxOutstanding() + "、每租户 "
-                        + policy.getTenantMaxOutstanding() + " 工作单位，当前已满，请稍后重试");
-        throw new BaseException(BpmErrorCode.RESOURCE_QUOTA_EXCEEDED);
+        return null;
+    }
+
+    /** 租户计数行是否存在（仅拒绝路径调用，用于区分「额度满」与「行被清空」）。 */
+    private boolean usageRowPresent(Long tenantId) {
+        Long present = usageMapper.selectCount(Wrappers.<BpmResourceUsage>lambdaQuery()
+                .eq(BpmResourceUsage::getScope, "TENANT")
+                .eq(BpmResourceUsage::getScopeKey, tenantId)
+                .eq(BpmResourceUsage::getSegment, "TOTAL"));
+        return present != null && present > 0;
     }
 
     /**
@@ -143,16 +181,38 @@ public class ResourceAdmissionService {
         if (policy == null) {
             return;
         }
-        ensureUsageRows(tenantId);
-        if (usageMapper.incrementWithinCap("GLOBAL", 0, segment, units, segmentCapacity(policy,
-                ResourceSegmentEnum.of(segment).orElse(ResourceSegmentEnum.SHARED))) != 1
-                || usageMapper.incrementWithinCap("GLOBAL", 0, "TOTAL", units,
-                policy.getGlobalMaxOutstanding()) != 1
-                || usageMapper.incrementWithinCap("TENANT", tenantId, "TOTAL", units,
-                policy.getTenantMaxOutstanding()) != 1) {
-            // 部分成功的占用在同一调用方事务内整体回滚（调用方抛错回滚）
-            throw new BaseException(BpmErrorCode.RESOURCE_QUOTA_EXCEEDED);
+        ensureUsageRowsFast(tenantId);
+        if (reoccupyAttempt(tenantId, segment, units, policy)) {
+            return;
         }
+        if (!usageRowPresent(tenantId)) {
+            forceEnsureUsageRows(tenantId);
+            if (reoccupyAttempt(tenantId, segment, units, policy)) {
+                return;
+            }
+        }
+        // 部分成功的占用在同一调用方事务内整体回滚（调用方抛错回滚）
+        throw new BaseException(BpmErrorCode.RESOURCE_QUOTA_EXCEEDED);
+    }
+
+    private boolean reoccupyAttempt(Long tenantId, String segment, int units, BpmResourcePolicy policy) {
+        long segmentCap = segmentCapacity(policy,
+                ResourceSegmentEnum.of(segment).orElse(ResourceSegmentEnum.SHARED));
+        if (usageMapper.incrementWithinCap("GLOBAL", 0, segment, units, segmentCap) != 1) {
+            return false;
+        }
+        if (usageMapper.incrementWithinCap("GLOBAL", 0, "TOTAL", units,
+                policy.getGlobalMaxOutstanding()) != 1) {
+            usageMapper.decrement("GLOBAL", 0, segment, units);
+            return false;
+        }
+        if (usageMapper.incrementWithinCap("TENANT", tenantId, "TOTAL", units,
+                policy.getTenantMaxOutstanding()) != 1) {
+            usageMapper.decrement("GLOBAL", 0, "TOTAL", units);
+            usageMapper.decrement("GLOBAL", 0, segment, units);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -174,13 +234,28 @@ public class ResourceAdmissionService {
      * 冲突只回滚内层计数行事务，调用方事务不受影响。</p>
      */
     public void ensureUsageRows(Long tenantId) {
+        // 显式调用（测试隔离重置/运维重建）总是真实重建，不走进程内加速
+        forceEnsureUsageRows(tenantId);
+    }
+
+    /** 受理路径用加速版：稳态零额外语句；行被外部清空由 admit 自愈路径兜底。 */
+    private void ensureUsageRowsFast(Long tenantId) {
+        if (ensuredTenants.contains(tenantId)) {
+            return;
+        }
+        forceEnsureUsageRows(tenantId);
+    }
+
+    /** 强制重建租户计数行（显式调用/自愈路径；幂等）。 */
+    private void forceEnsureUsageRows(Long tenantId) {
         try {
             usageEnsureTemplate.executeWithoutResult(status ->
                     usageMapper.insertNew(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(),
                             "TENANT", tenantId, "TOTAL"));
         } catch (org.springframework.dao.DuplicateKeyException alreadyExists) {
-            // 计数行已存在：幂等返回
+            // 计数行已存在：另一并发首次受理已建立（或重启后首遇），幂等返回
         }
+        ensuredTenants.add(tenantId);
     }
 
     /** 当前生效策略（enabled + ACTIVE；全局唯一，供画像与测试回读）。 */
