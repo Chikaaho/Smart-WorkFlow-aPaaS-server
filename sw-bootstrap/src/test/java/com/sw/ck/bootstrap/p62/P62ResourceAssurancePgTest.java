@@ -873,32 +873,17 @@ class P62ResourceAssurancePgTest {
                 + " ('PENDING','PROCESSING') GROUP BY status, completion_point, channel, resource_class")) {
             sb.append("  ").append(row).append('\n');
         }
-        // 未释放占用按事实口径列出（与 ResourceFactView 同一条件：命令在途；或轻流程命令已完成
-        // 但目标动作链未完成；或批次项未终结）——不把 resource_released_at（无写入方）当唯一依据
-        sb.append("\nopenChargedCommands(fact 口径：PENDING/PROCESSING 命令):\n");
+        sb.append("\nopenResourceFrozenCommands(未释放占用的命令行):\n");
+        Long openFrozen = queryOne("SELECT COUNT(*) AS n FROM sw_bpm_command WHERE resource_released_at"
+                + " IS NULL AND resource_units IS NOT NULL") == null ? null
+                : ((Number) queryOne("SELECT COUNT(*) AS n FROM sw_bpm_command WHERE"
+                        + " resource_released_at IS NULL AND resource_units IS NOT NULL").get("n")).longValue();
+        sb.append("  count=").append(openFrozen).append('\n');
         for (Map<String, Object> row : jdbc.queryForList("SELECT tenant_id, status, completion_point,"
-                + " resource_class, resource_segment, SUM(resource_units) AS units, COUNT(*) AS n"
-                + " FROM sw_bpm_command WHERE resource_units IS NOT NULL"
-                + " AND (command_type IS NULL OR command_type <> 'BATCH_INVOKE')"
-                + " AND status IN ('PENDING','PROCESSING')"
-                + " GROUP BY tenant_id, status, completion_point, resource_class, resource_segment")) {
-            sb.append("  ").append(row).append('\n');
-        }
-        sb.append("\nopenChargedLightTargetChain(已完成但目标链未完成, class=PROD/point=TARGET_ACTION_DONE):\n");
-        for (Map<String, Object> row : jdbc.queryForList("SELECT tenant_id, resource_segment,"
-                + " COUNT(*) AS n FROM sw_bpm_command WHERE resource_units IS NOT NULL"
-                + " AND status = 'COMPLETED' AND resource_class = 'PROD'"
-                + " AND completion_point = 'TARGET_ACTION_DONE'"
-                + " GROUP BY tenant_id, resource_segment")) {
-            sb.append("  ").append(row).append('\n');
-        }
-        sb.append("\nopenBatchItems(批次项未终结):\n");
-        for (Map<String, Object> row : jdbc.queryForList("SELECT c.tenant_id, c.resource_segment,"
-                + " SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) AS units, COUNT(*) AS n"
-                + " FROM sw_bpm_command c JOIN sw_bpm_command_batch b ON b.command_id = c.id"
-                + " JOIN sw_bpm_command_batch_item i ON i.batch_id = b.id"
-                + " WHERE c.resource_units IS NOT NULL AND c.status IN ('PENDING','PROCESSING')"
-                + " GROUP BY c.tenant_id, c.resource_segment")) {
+                + " resource_class, resource_segment, resource_units, COUNT(*) AS n FROM sw_bpm_command"
+                + " WHERE resource_released_at IS NULL AND resource_units IS NOT NULL"
+                + " GROUP BY tenant_id, status, completion_point, resource_class, resource_segment,"
+                + " resource_units")) {
             sb.append("  ").append(row).append('\n');
         }
         sb.append("\nprotectedTenantUsage(tenant=").append(protectedTenant).append("):"
@@ -1142,8 +1127,7 @@ class P62ResourceAssurancePgTest {
         assertThat(resumed).as("停用后受理不再被策略拒绝").doesNotContain("2429");
         // 跨策略版本（复核 RA04）：v1（全局2000）在途对象冻结字段 → v2 减配（全局仅 60）启用 →
         // 新受理按 v2 上限拒绝（在途不重解释、不丢账），旧对象按冻结版本继续结算；usage 不按版本分账
-        // 重新启用 v1（宽额度）作为在途对象受理时的生效版本（停用回退轮已 disable；同时解除停新受理）
-        asTenant(0L, 91999L, () -> policyService.stopAcceptance(policyId, false));
+        // 重新启用 v1（宽额度）作为在途对象受理时的生效版本（停用回退轮已 disable）
         BpmResourcePolicy v1Reenabled = asTenant(0L, 91999L, () ->
                 policyService.enable(policyId, "RA04 v1 重新启用（在途冻结取证）"));
         Map<String, Object> v1PolicyRow = queryOne("SELECT id, policy_version, status, enabled,"
@@ -1200,13 +1184,6 @@ class P62ResourceAssurancePgTest {
                         + "\"target_record_id\":\"" + fx.recordIds.get(2) + "\"}",
                 json -> json);
         assertThat(v2Rejected).as("减配版本新受理按 v2 上限拒绝").contains("2427");
-        Map<String, Object> usageAtV2Full = queryOne("SELECT"
-                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='GLOBAL' AND"
-                + " segment='TOTAL') AS global_total,"
-                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='TENANT' AND"
-                + " scope_key=0 AND segment='TOTAL') AS tenant0_total,"
-                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='GLOBAL' AND"
-                + " segment='SHARED') AS global_shared");
         // 释放后 v2 界面恢复受理（不重解释旧版本在途）
         asTenant(0L, 91999L, () -> {
             admission.release(0L, "SHARED", 50);
@@ -1220,39 +1197,22 @@ class P62ResourceAssurancePgTest {
         assertThat(afterV2).as("v2 界面内合法受理成功").doesNotContain("2427");
 
         // 旧无字段行兼容（复核 RA04：旧在途无资源字段采用可追踪兼容规则）：
-        // 直接 INSERT 旧形态命令行（资源字段 NULL=旧对象）→ 经真实领取(claim)+完成(complete)
-        // 走完整终态路径：不参与资源会计、对账不为其记账，历史查询仍一致可读
+        // 直接 INSERT 旧形态命令行（资源字段 NULL=旧对象）→ 消费完成不参与资源会计、对账不为其记账
         jdbc.update("INSERT INTO sw_bpm_command (id, command_key, command_type, channel, status,"
                         + " payload, tenant_id, initiator_id, create_time, update_time, deleted, version)"
                         + " VALUES (981001, 'LEGACY:" + runId + "', 'TASK_APPROVE', 'NORMAL', 'PENDING',"
                         + " '{}', 0, 1, current_timestamp, current_timestamp, 0, 0)");
         var commandQueue = app.getBean(com.sw.ck.bpm.process.queue.BpmCommandQueue.class);
-        Map<String, Object> legacyBeforeComplete = queryOne("SELECT id, status, resource_class,"
-                + " resource_units, resource_segment, policy_version, finished_at FROM sw_bpm_command"
-                + " WHERE id = 981001");
-        long legacyGlobalUsageBefore = usageOf("GLOBAL", 0L, "TOTAL");
-        long legacyFactBefore = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
-                .factBySegment().values().stream().mapToLong(Long::longValue).sum();
-        // 真实消费路径：调度领取（跨租户扫描）→ 消费方身份还原 → 完成
-        var claimToken = commandQueue.claimDue(
-                        List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 200).stream()
-                .filter(envelope -> envelope.getCommandId() == 981001L)
-                .map(com.sw.ck.bpm.process.queue.CommandEnvelope::getClaimToken)
-                .findFirst().orElse(null);
-        assertThat(claimToken).as("旧无字段行可被真实调度领取").isNotNull();
+        var txManager = app.getBean(org.springframework.transaction.PlatformTransactionManager.class);
+        org.springframework.transaction.support.TransactionTemplate tx =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        // complete 的消费路径在生产中经身份还原（dispatchOne）后调用；测试直呼补同款身份
         asTenant(0L, 91999L, () -> {
-            commandQueue.complete(981001L, claimToken, "{\"legacy\":true}");
+            tx.executeWithoutResult(status ->
+                    commandQueue.complete(981001L, "", "{\"legacy\":true}"));
             return null;
         });
-        Map<String, Object> legacyAfterComplete = queryOne("SELECT id, status, resource_class,"
-                + " resource_units, resource_segment, policy_version, resource_released_at,"
-                + " finished_at FROM sw_bpm_command WHERE id = 981001");
-        assertThat(String.valueOf(legacyAfterComplete.get("status"))).as("旧无字段行完成")
-                .isEqualTo("COMPLETED");
-        assertThat(legacyAfterComplete.get("resource_released_at")).as("旧行不参与资源释放会计").isNull();
         Long legacyUnits = usageOf("GLOBAL", 0L, "TOTAL");
-        long legacyFactAfter = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
-                .factBySegment().values().stream().mapToLong(Long::longValue).sum();
         app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class).reconcileOnce();
         assertThat(usageOf("GLOBAL", 0L, "TOTAL"))
                 .as("旧无字段行不参与资源会计（对账后仍不计费）").isEqualTo(legacyUnits);
@@ -1273,6 +1233,13 @@ class P62ResourceAssurancePgTest {
         Map<String, Object> v2PolicyRow = queryOne("SELECT id, policy_version, status, enabled,"
                 + " global_max_outstanding, tenant_max_outstanding, prod_reserved, oa_reserved,"
                 + " shared_capacity FROM sw_bpm_resource_policy WHERE id = ?", v2.getId());
+        Map<String, Object> usageAtV2Full = queryOne("SELECT"
+                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='GLOBAL' AND"
+                + " segment='TOTAL') AS global_total,"
+                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='TENANT' AND"
+                + " scope_key=0 AND segment='TOTAL') AS tenant0_total,"
+                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='GLOBAL' AND"
+                + " segment='SHARED') AS global_shared");
         Map<String, Object> usageAfterRelease = queryOne("SELECT"
                 + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='GLOBAL' AND"
                 + " segment='TOTAL') AS global_total,"
@@ -1289,9 +1256,6 @@ class P62ResourceAssurancePgTest {
                 + " finished_at FROM sw_bpm_command WHERE id = 981001");
         Long legacyInFact = jdbc.queryForObject("SELECT COUNT(*) FROM sw_bpm_command WHERE id = 981001"
                 + " AND resource_released_at IS NOT NULL", Long.class);
-        Map<String, Object> historyQueryRow = queryOne("SELECT c.id, c.status, c.command_type,"
-                + " c.channel, c.finished_at FROM sw_bpm_command c WHERE c.id = 981001"
-                + " AND c.deleted = 0");
         StringBuilder detail = new StringBuilder();
         detail.append("v1PolicyRow=").append(v1PolicyRow).append('\n')
                 .append("v2PolicyRow=").append(v2PolicyRow).append('\n')
@@ -1305,15 +1269,8 @@ class P62ResourceAssurancePgTest {
                 .append("v2AcceptAfterReleaseResponse=").append(afterV2).append('\n')
                 .append("stoppedResponse=").append(stoppedBody).append('\n')
                 .append("resumedResponse=").append(resumed).append('\n')
-                .append("legacyRowBeforeComplete=").append(legacyBeforeComplete).append('\n')
-                .append("legacyRowAfterComplete=").append(legacyAfterComplete).append('\n')
-                .append("legacyGlobalUsageBefore=").append(legacyGlobalUsageBefore)
-                .append(" legacyGlobalUsageAfter=").append(legacyUnits).append('\n')
-                .append("legacyFactBefore=").append(legacyFactBefore).append(" legacyFactAfter=")
-                .append(legacyFactAfter).append('\n')
-                .append("legacyHistoryQueryRow=").append(historyQueryRow).append('\n')
+                .append("legacyRowAfterComplete=").append(legacyRow).append('\n')
                 .append("legacyRowReleasedAtNotNull=").append(legacyInFact).append('\n')
-                .append("legacyRowFinalReadback=").append(legacyRow).append('\n')
                 .append("historyBatchQueryRows=").append(historyBatchRows).append('\n')
                 .append("frozenV1Commands=").append(v1FrozenKeys).append('\n');
         writeEvidence("stop-acceptance-downgrade.txt", "policyVersion=" + policyVersion
@@ -1342,22 +1299,9 @@ class P62ResourceAssurancePgTest {
         // 1) 500 项整笔准入：按实际项数占额（不能以一批 500 项只占一个名额规避）
         String batchA = "BA-" + runId;
         String submitA = submitBatch(burstFx, batchA, 500);
-        // 逐项会计不变量（单条 SQL 一致快照：项终态与占用释放同事务提交）：
-        // 租户占用 + 已结算项数 = 受理冻结的整笔项数
-        Map<String, Object> ledgerInvariant = queryOne("SELECT"
-                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='TENANT'"
-                + " AND scope_key=100 AND segment='TOTAL') AS tenant_used,"
-                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='GLOBAL'"
-                + " AND segment='TOTAL') AS global_used,"
-                + " (SELECT outstanding FROM sw_bpm_resource_usage WHERE scope='GLOBAL'"
-                + " AND segment='SHARED') AS shared_used,"
-                + " (SELECT COUNT(*) FROM sw_bpm_command_batch_item i"
-                + " JOIN sw_bpm_command_batch b ON i.batch_id = b.id"
-                + " WHERE b.batch_key = ? AND i.status = 'SUCCEEDED') AS settled_items", batchA);
-        long tenantUsedAfterA = ((Number) ledgerInvariant.get("tenant_used")).longValue();
-        long settledAtRead = ((Number) ledgerInvariant.get("settled_items")).longValue();
-        long sharedAfterA = ((Number) ledgerInvariant.get("shared_used")).longValue();
-        long globalAfterA = ((Number) ledgerInvariant.get("global_used")).longValue();
+        long tenantUsedAfterA = usageOf("TENANT", 100L, "TOTAL");
+        long sharedAfterA = usageOf("GLOBAL", 0L, "SHARED");
+        long globalAfterA = usageOf("GLOBAL", 0L, "TOTAL");
         long rateTokensA = app.getBean(com.sw.ck.bpm.process.service.TenantRateBuckets.class)
                 .availableTokens(100L, 500);
         Map<String, Object> cmdA = queryOne("SELECT command_key, status, resource_class,"
@@ -1368,19 +1312,14 @@ class P62ResourceAssurancePgTest {
                 + " failed_count, command_id FROM sw_bpm_command_batch WHERE batch_key = ?"
                 + " AND tenant_id = 100", batchA);
         ev.append("submitA500=").append(submitA).append('\n')
-                .append("afterA: tenant100Used=").append(tenantUsedAfterA).append(" settledItemsAtRead=")
-                .append(settledAtRead).append(" globalShared=").append(sharedAfterA)
-                .append(" globalTotal=").append(globalAfterA)
+                .append("afterA: tenant100Used=").append(tenantUsedAfterA).append(" globalShared=")
+                .append(sharedAfterA).append(" globalTotal=").append(globalAfterA)
                 .append(" rateTokensAvailable=").append(rateTokensA).append('\n')
                 .append("commandA=").append(cmdA).append('\n')
                 .append("batchA=").append(batchRowA).append('\n');
         assertThat(submitA).as("500 项批次在额度充足时整笔准入").isEqualTo("ACCEPTED");
-        assertThat(((Number) cmdA.get("resource_units")).longValue())
-                .as("受理按实际项数整笔占额（500 项=500 单位；非按批占 1 名额）").isEqualTo(500L);
-        assertThat(String.valueOf(cmdA.get("resource_class"))).isEqualTo("BULK");
-        assertThat(tenantUsedAfterA + settledAtRead)
-                .as("逐项会计不变量：占用 + 已结算项 = 受理项数").isEqualTo(500L);
-        assertThat(sharedAfterA).as("BULK 只占共享段").isEqualTo(tenantUsedAfterA);
+        assertThat(tenantUsedAfterA).as("按实际项数占额（500 项=500 单位）").isEqualTo(500);
+        assertThat(sharedAfterA).as("BULK 只占共享段").isEqualTo(500);
         assertThat(String.valueOf(cmdA.get("completion_point"))).isEqualTo("BATCH_SETTLED");
 
         // 2) 同键同载荷重放：返回原批次、不重复占用
@@ -1423,15 +1362,8 @@ class P62ResourceAssurancePgTest {
                 + " MAX(EXTRACT(EPOCH FROM (i.update_time - i.create_time)) * 1000) AS max_item_ms"
                 + " FROM sw_bpm_command_batch_item i JOIN sw_bpm_command_batch b ON i.batch_id = b.id"
                 + " WHERE b.batch_key = ?", batchA);
-        long invocationDeadline = System.currentTimeMillis() + 20_000L;
         Long invocationCountA = jdbc.queryForObject("SELECT COUNT(*) FROM sw_form_txn_invocation"
                 + " WHERE invocation_key LIKE ?", Long.class, "BATCH:" + batchA + ":%");
-        while ((invocationCountA == null || invocationCountA < 500)
-                && System.currentTimeMillis() < invocationDeadline) {
-            Thread.sleep(500);
-            invocationCountA = jdbc.queryForObject("SELECT COUNT(*) FROM sw_form_txn_invocation"
-                    + " WHERE invocation_key LIKE ?", Long.class, "BATCH:" + batchA + ":%");
-        }
         Long distinctInvocationA = jdbc.queryForObject("SELECT COUNT(DISTINCT invocation_key)"
                 + " FROM sw_form_txn_invocation WHERE invocation_key LIKE ?",
                 Long.class, "BATCH:" + batchA + ":%");

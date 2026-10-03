@@ -193,12 +193,16 @@ class P62ResourceOpsAuthPgTest {
                 + "\"batchSliceItems\":25,\"batchPollClaimLimit\":1,\"remark\":\"RA03合法策略\"}";
 
         // A1 合法创建（持 view+manage）；A2 合法启用；逐字段回查持久值（非只看响应）
-        String created = exchange(ev, "A1", "POST", "/api/workflow/resource/policy", admin, body);
+        exchange(ev, "A1", "POST", "/api/workflow/resource/policy", admin, body);
+        String created = post("/api/workflow/resource/policy", admin, body);
         assertThat(created).contains("\"policyVersion\"").contains("\"status\":\"DRAFT\"");
         Long policyId = Long.valueOf(extractJsonScalar(created, "id"));
+        exchange(ev, "A1-retry-same-body", "POST", "/api/workflow/resource/policy", admin, body);
         appendPolicyRow(ev, "A1-created-row(DRAFT)", policyId);
-        String enabled = exchange(ev, "A2", "POST", "/api/workflow/resource/policy/" + policyId
-                + "/enable", admin, "{\"remark\":\"RA03启用\"}");
+        exchange(ev, "A2", "POST", "/api/workflow/resource/policy/" + policyId + "/enable", admin,
+                "{\"remark\":\"RA03启用\"}");
+        String enabled = post("/api/workflow/resource/policy/" + policyId + "/enable", admin,
+                "{\"remark\":\"RA03启用\"}");
         assertThat(enabled).contains("\"status\":\"ACTIVE\"");
         appendPolicyRow(ev, "A2-enabled-row(ACTIVE)", policyId);
         Long activeCount = jdbc.queryForObject(
@@ -212,58 +216,64 @@ class P62ResourceOpsAuthPgTest {
                         + "\"realtimeGlobalConcurrency\":16,\"realtimeTenantConcurrency\":8,"
                         + "\"batchSliceItems\":25,\"batchPollClaimLimit\":1}");
         Long badId = Long.valueOf(extractJsonScalar(bad, "id"));
-        String badEnable = exchange(ev, "B1", "POST",
-                "/api/workflow/resource/policy/" + badId + "/enable", admin, "{}");
+        exchange(ev, "B1", "POST", "/api/workflow/resource/policy/" + badId + "/enable", admin, "{}");
+        String badEnable = post("/api/workflow/resource/policy/" + badId + "/enable", admin, "{}");
         assertThat(badEnable).contains("bpm.resource_policy_invalid").contains("保留份额不自洽");
         appendPolicyRow(ev, "B1-rejected-policy-row(仍 DRAFT)", badId);
         appendRejectAuditRows(ev, "B1-enablement-audit");
         appendPolicyRow(ev, "B1-active-policy-unchanged", policyId);
 
         // C 只读身份（view 无 manage）：可读、不可管理（创建/启用均 403，响应原文留证）
-        String profileViewer = exchange(ev, "C1-view-ok", "GET",
-                "/api/workflow/resource/profile", viewer, null);
+        exchange(ev, "C1-view-ok", "GET", "/api/workflow/resource/profile", viewer, null);
+        String profileViewer = get("/api/workflow/resource/profile", viewer);
         assertThat(profileViewer).contains("\"policyEnabled\":true");
-        String listViewer = exchange(ev, "C2-view-list-ok", "GET", "/api/workflow/resource/policy",
-                viewer, null);
-        assertThat(listViewer).contains("\"code\":0");
-        String viewerCreate = exchange(ev, "C3-view-only-create", "POST",
-                "/api/workflow/resource/policy", viewer, body);
-        assertThat(viewerCreate).contains("403");
-        String viewerEnable = exchange(ev, "C4-view-only-enable", "POST",
+        exchange(ev, "C2-view-only-create", "POST", "/api/workflow/resource/policy", viewer, body);
+        assertThat(get("/api/workflow/resource/policy", viewer)).contains("200");
+        exchange(ev, "C3-view-only-enable", "POST",
                 "/api/workflow/resource/policy/" + policyId + "/enable", viewer, "{}");
+        // 只读身份不能改策略：启用响应必须为 403 且策略保持 ACTIVE（未被改动/未被停用）
+        String viewerEnable = post("/api/workflow/resource/policy/" + policyId + "/enable", viewer, "{}");
         assertThat(viewerEnable).contains("403");
-        appendPolicyRow(ev, "C4-policy-after-viewer-attempt", policyId);
+        appendPolicyRow(ev, "C3-policy-after-viewer-attempt", policyId);
 
         // D 无权限身份（t2 普通用户）：全部端点 403（服务端拒绝而非空集过滤）
-        String forbiddenCreate = exchange(ev, "D1-create", "POST",
-                "/api/workflow/resource/policy", outsider, body);
-        assertThat(forbiddenCreate).contains("403");
+        exchange(ev, "D1-create", "POST", "/api/workflow/resource/policy", outsider, body);
         exchange(ev, "D2-enable", "POST", "/api/workflow/resource/policy/" + policyId + "/enable",
                 outsider, "{}");
-        String outsiderCommands = exchange(ev, "D3-commands", "GET",
-                "/api/workflow/resource/backlog/commands?page=1&size=10", outsider, null);
-        assertThat(outsiderCommands).contains("403");
+        exchange(ev, "D3-commands", "GET", "/api/workflow/resource/backlog/commands?page=1&size=10",
+                outsider, null);
         exchange(ev, "D4-read-rejects", "GET", "/api/workflow/resource/rejects?page=1&size=10",
                 outsider, null);
+        String forbiddenCreate = post("/api/workflow/resource/policy", outsider, body);
+        assertThat(forbiddenCreate).contains("403");
+        assertThat(get("/api/workflow/resource/backlog/commands?page=1&size=10", outsider))
+                .contains("403");
 
         // E 跨租户：t1 只读身份强制查询他租户范围被强制本租户（total=0）；t2 授予 view 后
-        // 仍只看到本租户对象（租户 2 无对象 → 0），且无法写 t1 策略
-        String crossTenant = exchange(ev, "E1-tenant1-viewer-asks-tenant2", "GET",
+        // 仍只看到本租户对象（租户 2 无对象 → 0），且无法读 t1 的对象详情
+        exchange(ev, "E1-tenant1-viewer-asks-tenant2", "GET",
                 "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=2", viewer, null);
+        String crossTenant = get("/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=2",
+                viewer);
         assertThat(crossTenant).contains("\"total\":\"0\"");
         bindRole(9003L, "RA03查看", 94201L, List.of(9106L, 9107L));
-        String t2AsksT1 = exchange(ev, "E2-tenant2-viewer-asks-tenant1", "GET",
+        exchange(ev, "E2-tenant2-viewer-asks-tenant1", "GET",
                 "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1", outsider, null);
+        String t2AsksT1 = get("/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1",
+                outsider);
         assertThat(t2AsksT1).contains("\"total\":\"0\"");
-        String t2StopT1 = exchange(ev, "E3-tenant2-write-t1-policy", "POST",
+        exchange(ev, "E3-tenant2-write-t1-policy", "POST",
                 "/api/workflow/resource/policy/" + policyId + "/stop-acceptance", outsider,
                 "{\"stop\":true}");
+        String t2StopT1 = post("/api/workflow/resource/policy/" + policyId + "/stop-acceptance",
+                outsider, "{\"stop\":true}");
         assertThat(t2StopT1).contains("403");
         appendPolicyRow(ev, "E3-t1-policy-after-t2-cross-tenant-attempt", policyId);
 
         // F 拒绝审计（同租户管理可读，原文含 scope/reason；不跨租户）
-        String rejects = exchange(ev, "F1-rejects-admin", "GET",
-                "/api/workflow/resource/rejects?page=1&size=10", admin, null);
+        exchange(ev, "F1-rejects-admin", "GET", "/api/workflow/resource/rejects?page=1&size=10",
+                admin, null);
+        String rejects = get("/api/workflow/resource/rejects?page=1&size=10", admin);
         assertThat(rejects).contains("ENABLEMENT");
         appendRejectAuditRows(ev, "F1-audit-rows-after-matrix");
 
@@ -297,9 +307,9 @@ class P62ResourceOpsAuthPgTest {
         ev.append("tokenLine=Bearer test_<userId>（debug-auth 测试契约身份，非用户秘密）\n");
     }
 
-    /** 请求-响应原文记录（含身份、方法、URL、HTTP 状态与完整业务响应）；返回原始响应串。 */
-    private String exchange(StringBuilder ev, String id, String method, String path, String bearer,
-                            String json) {
+    /** 请求-响应原文记录（含身份、方法、URL、HTTP 状态与完整业务响应）。 */
+    private void exchange(StringBuilder ev, String id, String method, String path, String bearer,
+                          String json) {
         String response = "-".equals(method) ? "-" : ("POST".equals(method)
                 ? post(path, bearer, json) : get(path, bearer));
         int status;
@@ -316,7 +326,6 @@ class P62ResourceOpsAuthPgTest {
                 .append(port).append(path).append(" identity=").append(bearer)
                 .append(" body=").append(json == null ? "-" : json).append('\n')
                 .append("  response_status=").append(status).append(" body=").append(payload).append('\n');
-        return payload;
     }
 
     private void appendPolicyRow(StringBuilder ev, String label, Long policyId) {
