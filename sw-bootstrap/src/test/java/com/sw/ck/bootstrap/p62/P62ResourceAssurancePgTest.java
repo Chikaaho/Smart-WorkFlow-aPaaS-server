@@ -153,8 +153,9 @@ class P62ResourceAssurancePgTest {
         port = Integer.parseInt(app.getEnvironment().getProperty("local.server.port"));
         seedTenant(0L, 91999L, "p62_ra_t0");
         seedTenant(100L, 92999L, "p62_ra_t100");
-        seedApprovalWorkflow(0L, 160);
-        seedApprovalWorkflow(100L, 160);
+        int approvalSeed = Integer.getInteger("p62.approval.seed", 600);
+        seedApprovalWorkflow(0L, approvalSeed);
+        seedApprovalWorkflow(100L, approvalSeed);
         writeEnvFrozen();
         System.out.println("[P62-EV] resource-assurance boot ok pgPort=" + pg.getPort()
                 + " httpPort=" + port + " runId=" + runId);
@@ -1191,6 +1192,34 @@ class P62ResourceAssurancePgTest {
                         + " AND c.status IN ('PENDING','PROCESSING')"
                         + " GROUP BY c.tenant_id, c.resource_segment")) {
             sb.append("  ").append(row).append('\n');
+        }
+        // EXPIRED 分类（提示03 RA02b1：过期合法语义=未生效且执行权终止；须逐对象可勾稽、无未解释责任）
+        sb.append("[3b] EXPIRED 命令分类（截止/过期语义；status=EXPIRED）：\n");
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT tenant_id, command_type, resource_class,"
+                        + " COUNT(*) AS expired_commands,"
+                        + " COUNT(*) FILTER (WHERE resource_released_at IS NOT NULL) AS released,"
+                        + " COUNT(*) FILTER (WHERE resource_released_at IS NULL AND resource_units IS NOT NULL)"
+                        + " AS charged_unreleased,"
+                        + " MIN(create_time) AS oldest, MAX(create_time) AS newest"
+                        + " FROM sw_bpm_command WHERE status = 'EXPIRED'"
+                        + " GROUP BY tenant_id, command_type, resource_class"
+                        + " ORDER BY tenant_id, command_type")) {
+            sb.append("  ").append(row).append('\n');
+        }
+        Long expiredCharged = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sw_bpm_command WHERE status = 'EXPIRED'"
+                        + " AND resource_released_at IS NULL AND resource_units IS NOT NULL", Long.class);
+        sb.append("  expired_charged_unreleased=").append(expiredCharged == null ? 0 : expiredCharged)
+                .append("（>0 即进入未解释责任清单，逐条列示）\n");
+        if (expiredCharged != null && expiredCharged > 0) {
+            for (Map<String, Object> row : jdbc.queryForList(
+                    "SELECT id, tenant_id, command_key, command_type, resource_units, create_time,"
+                            + " deadline_at FROM sw_bpm_command WHERE status = 'EXPIRED'"
+                            + " AND resource_released_at IS NULL AND resource_units IS NOT NULL"
+                            + " ORDER BY create_time LIMIT 50")) {
+                sb.append("    expired-charged ").append(row).append('\n');
+            }
         }
         sb.append("[4] 引擎层：pendingJobs=").append(factView.enginePendingJobs())
                 .append(" deadLetterJobs=").append(factView.engineDeadLetterJobs()).append('\n');
