@@ -109,8 +109,10 @@ class P62ResourceAssurancePgTest {
         String actionId;
         String lightProcessKey;
         String approvalProcessKey;
+        String approvalFormKey;
         List<String> recordIds = new ArrayList<>();
-        List<String> taskIds = new ArrayList<>();
+        java.util.concurrent.ConcurrentLinkedQueue<String> taskIds =
+                new java.util.concurrent.ConcurrentLinkedQueue<>();
     }
 
     @BeforeAll
@@ -175,6 +177,16 @@ class P62ResourceAssurancePgTest {
         props.put("sw.bpm.command.batch-size", "50");
         props.put("sw.bpm.command.p0-batch-size", "50");
         props.put("sw.bpm.command.stale-seconds", "60");
+        // 日志级别=仓库 dev 配置契约（application-dev.yml：root/com.sw.ck/spring-jdbc/mybatis=info；
+        // I6 G3f：行级 SQL 不进普通日志）。application.yml 的 debug 是打包缺省，dev 契约为 info——
+        // 测量环境必须与实际部署配置一致（复核05：DEBUG 控制台同步写盘是共享锁串行点，
+        // 属测量装置假象而非合同画像维度）。诊断轮可用 -Dp62.resource.debuglog=true 恢复 DEBUG。
+        boolean debugLog = Boolean.getBoolean("p62.resource.debuglog");
+        props.put("logging.level.root", debugLog ? "debug" : "info");
+        props.put("logging.level.com.sw.ck", debugLog ? "debug" : "info");
+        props.put("logging.level.org.springframework.jdbc", debugLog ? "debug" : "info");
+        props.put("logging.level.com.baomidou.mybatisplus", debugLog ? "debug" : "info");
+        props.put("logging.level.org.mybatis", debugLog ? "debug" : "info");
         return props;
     }
 
@@ -526,7 +538,7 @@ class P62ResourceAssurancePgTest {
             String[] outcome = submitLight(protectedFx);
             protectedLight.offer(LocalDateTime.now().format(TS),
                     (System.nanoTime() - begin) / 1_000_000.0, outcome[0]);
-            lightTraces.add(new LightSubmitTrace(protectedTenant, outcome[1], outcome[0],
+            lightTraces.add(new LightSubmitTrace(protectedTenant, outcome[1], outcome[2], outcome[0],
                     acceptMs, System.currentTimeMillis()));
         }));
         workers.add(pacedWorker(running, 500, 4, () -> { // 2/s
@@ -558,7 +570,7 @@ class P62ResourceAssurancePgTest {
             String[] outcome = submitLight(burstFx);
             burstLoad.offer(LocalDateTime.now().format(TS),
                     (System.nanoTime() - begin) / 1_000_000.0, outcome[0]);
-            lightTraces.add(new LightSubmitTrace(burstTenant, outcome[1], outcome[0],
+            lightTraces.add(new LightSubmitTrace(burstTenant, outcome[1], outcome[2], outcome[0],
                     acceptMs, System.currentTimeMillis()));
         }));
         Thread batchSubmitter = pacedWorker(running, 5000, 2, () -> { // 500 单位/5s=100/s
@@ -571,6 +583,54 @@ class P62ResourceAssurancePgTest {
                     acceptMs, System.currentTimeMillis()));
         });
         workers.add(batchSubmitter);
+        // 审批任务供给（复核05：正式窗口保护审批 160 种子耗尽后 494 SKIP——正式画像要求足额持续合法请求；
+        // 供给=同种子路径真实起实例产生待办任务，与受理消费解耦；SKIP 仍互斥计数，不冒充请求）
+        Thread approvalSupply = new Thread(() -> {
+            int seq = 500_000;
+            while (running.get()) {
+                try {
+                    for (TenantFixture fx : List.of(protectedFx, burstFx)) {
+                        while (running.get() && fx.taskIds.size() < 40) {
+                            final String recordId = "AP-" + fx.tenant + "-" + (seq++);
+                            asTenant(fx.tenant, fx.userId, () -> {
+                                com.sw.ck.bpm.process.dto.StartCommand cmd =
+                                        new com.sw.ck.bpm.process.dto.StartCommand();
+                                cmd.setFormKey(fx.approvalFormKey);
+                                cmd.setProcessDefKey(fx.approvalProcessKey);
+                                cmd.setRecordId(recordId);
+                                cmd.setSubmitter(fx.userId);
+                                cmd.setTenantId(fx.tenant);
+                                cmd.setSubmittedData(data("material", recordId,
+                                        "qty_available", "100000", "qty_reserved", "0"));
+                                app.getBean(com.sw.ck.bpm.process.service.ProcessStartService.class)
+                                        .start(cmd);
+                                return null;
+                            });
+                            long settleDeadline = System.currentTimeMillis() + 30_000L;
+                            while (running.get() && System.currentTimeMillis() < settleDeadline
+                                    && fx.taskIds.size() < 40) {
+                                try {
+                                    jdbc.queryForList("SELECT id_ FROM act_ru_task WHERE assignee_ = ?"
+                                                    + " ORDER BY create_time_", String.class,
+                                            String.valueOf(fx.userId)).stream()
+                                            .filter(fx.taskIds::add).count();
+                                } catch (org.springframework.jdbc.BadSqlGrammarException pending) {
+                                    // 引擎表惰性建库：下轮再查
+                                }
+                                Thread.sleep(200);
+                            }
+                        }
+                    }
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    return;
+                } catch (Exception supplyFailure) {
+                    // 供给失败按轮重试；消耗端 SKIP 互斥计数如实呈现，不中断负载
+                }
+            }
+        });
+        approvalSupply.setDaemon(true);
+        workers.add(approvalSupply);
         for (Thread worker : workers) {
             worker.start();
         }
@@ -605,30 +665,47 @@ class P62ResourceAssurancePgTest {
         burstLoad.finish();
         burstBatch.finish();
 
-        // 负载停止后收敛（120s）：已受理单动作工作全部收敛、占用计数与事实勾稽
+        // 负载停止后收敛（120s，RA02b1：必须由正常路径自动推进——调度对账/消费者，不得手调替自动）；
+        // 先观测自动收敛时间线，超时后的人工对账单列（不计入自动收敛断言）
         long convergeStart = System.currentTimeMillis();
         long convergeDeadline = convergeStart + 120_000L;
         long openBefore = openCommands();
+        StringBuilder convergeTimeline = new StringBuilder();
+        Long autoConvergeAtMs = null;
         while (System.currentTimeMillis() < convergeDeadline) {
-            if (openCommands() == 0) {
+            long open = openCommands();
+            long counter = usageOf("GLOBAL", 0L, "TOTAL");
+            long fact = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
+                    .factBySegment().values().stream().mapToLong(Long::longValue).sum();
+            convergeTimeline.append("  t+").append(System.currentTimeMillis() - convergeStart)
+                    .append("ms open=").append(open).append(" counter=").append(counter)
+                    .append(" fact=").append(fact).append('\n');
+            if (open == 0 && counter == fact && autoConvergeAtMs == null && counter == 0) {
+                autoConvergeAtMs = System.currentTimeMillis() - convergeStart;
                 break;
             }
             Thread.sleep(2000);
         }
         long openAfter = openCommands();
-        long convergeMillis = System.currentTimeMillis() - convergeStart;
+        long convergeMillis = autoConvergeAtMs != null ? autoConvergeAtMs
+                : System.currentTimeMillis() - convergeStart;
+        // 人工对账单列（仅在自动观测之后执行，用于揭示残余构成；不替代自动收敛断言）
         app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class).reconcileOnce();
         long counterTotal = usageOf("GLOBAL", 0L, "TOTAL");
         long factTotal = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
                 .factBySegment().values().stream().mapToLong(Long::longValue).sum();
+        autoConvergeMsHolder = autoConvergeAtMs;
+        convergeTimelineHolder = convergeTimeline.toString();
         String report = report(scenario, protectedRealtime, protectedLight, oaRead,
                 oaApproval, burstLoad, burstBatch);
         writeEvidence(scenario + "-report.txt", report + "\nquota-samples:\n" + quotaCsv
                 + "\nconvergence: openBefore=" + openBefore + " openAfter=" + openAfter
+                + " autoConvergeMs=" + autoConvergeMsHolder
                 + " convergeMillis=" + convergeMillis + " counterTotal=" + counterTotal
                 + " factTotal=" + factTotal
                 + " window=warmup" + WARMUP_SECONDS + "s+formal" + FORMAL_SECONDS
-                + "s shortVerify=" + isShortVerify() + " runId=" + runId);
+                + "s shortVerify=" + isShortVerify() + " runId=" + runId
+                + "\nauto-converge-timeline:\n" + convergeTimelineHolder);
         // RA02b：受理→命令→引擎任务→目标/审批完成的逐项配对（不以计数总和替代）
         writePairingEvidence(scenario, lightTraces, approvalTraces, batchTraces);
         writeConvergenceDetail(scenario, protectedTenant, convergeMillis, openBefore, openAfter,
@@ -639,12 +716,14 @@ class P62ResourceAssurancePgTest {
                 + " counterTotal=" + counterTotal + " factTotal=" + factTotal);
         shortVerifyAssertions(protectedRealtime, protectedLight, oaRead, oaApproval, burstLoad);
         assertThat(openAfter).as("负载停止后 120s 内全部收敛").isZero();
+        assertThat(autoConvergeMsHolder)
+                .as("停载后 120s 内由正常路径（调度对账/消费者）自动收敛，未经人工对账").isNotNull();
         assertThat(counterTotal).as("收敛后占用计数与事实勾稽一致（对账后）").isEqualTo(factTotal);
     }
 
     /** 单次轻流程受理追踪（受理→命令→目标动作完成配对的对象身份）。 */
-    private record LightSubmitTrace(long tenant, String recordId, String outcome,
-                                    long acceptMs, long responseMs) {
+    private record LightSubmitTrace(long tenant, String recordId, String targetRecordId,
+                                    String outcome, long acceptMs, long responseMs) {
     }
 
     /** 单次 OA 审批受理追踪（受理→命令→审批动作完成配对）。 */
@@ -669,7 +748,7 @@ class P62ResourceAssurancePgTest {
                 + "command_status,command_create,claimed_at,finished_at,resource_class,"
                 + "resource_segment,resource_units,resource_released_at,claim_wait_ms,"
                 + "accept_to_finished_ms,instance_id,instance_status,invocation_id,"
-                + "invocation_status,invocation_duration_ms,target_invocation_create,"
+                + "invocation_status,invocation_duration_ms,target_record_id,target_invocation_create,"
                 + "target_invocation_update,target_record_update_time,target_record_version,"
                 + "target_record_qty_reserved,approval_task_end,approval_instance_end\n");
         Map<String, Long> statusCounts = new LinkedHashMap<>();
@@ -695,12 +774,14 @@ class P62ResourceAssurancePgTest {
             String instanceId = inst == null ? "-" : String.valueOf(inst.get("process_instance_id"));
             Map<String, Object> inv = "-".equals(instanceId) ? null
                     : queryInvocationRow("NODE:" + instanceId + ":act-1");
-            // 目标提交点=目标事务调用行 update_time + 目标记录 update_time/version/效果值
-            // （命令 finished_at 不能替代目标提交，复核03）
+            // 目标提交点=目标事务调用行 update_time + 真实目标记录 update_time/version/效果值
+            // （复核04：目标对象必须取 target_record_id 所指行，不得错配提交行；
+            //   命令 finished_at 不能替代目标提交）
             TenantFixture fx = fixtures.get(trace.tenant());
-            Map<String, Object> targetRow = fx == null || fx.stockTable == null ? null : queryOne(
-                    "SELECT update_time, version, qty_reserved FROM " + fx.stockTable
-                            + " WHERE id = ? AND deleted = 0", trace.recordId());
+            Map<String, Object> targetRow = fx == null || fx.stockTable == null
+                    || trace.targetRecordId() == null || "-".equals(trace.targetRecordId()) ? null
+                    : queryOne("SELECT update_time, version, qty_reserved FROM " + fx.stockTable
+                            + " WHERE id = ? AND deleted = 0", trace.targetRecordId());
             if (inv != null && inv.get("update_time") != null && targetRow != null) {
                 lightTargetsWithSubmitPoint++;
             }
@@ -728,6 +809,7 @@ class P62ResourceAssurancePgTest {
                     .append(',').append(inv == null ? "-" : str(inv.get("id"))).append(',')
                     .append(inv == null ? "-" : str(inv.get("status"))).append(',')
                     .append(inv == null ? "-" : str(inv.get("duration_ms"))).append(',')
+                    .append(trace.targetRecordId() == null ? "-" : trace.targetRecordId()).append(',')
                     .append(inv == null ? "-" : str(inv.get("create_time"))).append(',')
                     .append(inv == null ? "-" : str(inv.get("update_time"))).append(',')
                     .append(targetRow == null ? "-" : str(targetRow.get("update_time"))).append(',')
@@ -783,6 +865,7 @@ class P62ResourceAssurancePgTest {
                     .append('-').append(',').append(hiTask == null ? "-" : str(hiTask.get("delete_reason_")))
                     .append(',').append('-').append(',').append('-').append(',').append('-')
                     .append(',').append('-').append(',').append('-').append(',').append('-')
+                    .append(',').append('-').append(',').append('-').append(',').append('-')
                     .append(',').append('-').append(',').append('-').append(',')
                     .append(taskEnd == null ? "-" : str(taskEnd)).append(',')
                     .append(procEnd == null ? "-" : str(procEnd)).append('\n');
@@ -836,7 +919,8 @@ class P62ResourceAssurancePgTest {
                     .append(',').append('-').append(',').append('-').append(',').append('-')
                     .append(',').append('-').append(',').append('-').append(',').append('-')
                     .append(',').append('-').append(',').append('-').append(',').append('-')
-                    .append(',').append('-').append('\n');
+                    .append(',').append('-').append(',').append('-').append(',').append('-')
+                    .append('\n');
         }
         // 脚注不写入 CSV（复核：footnote 行破坏 CSV 解析）——runId/记录时刻进 pairing-summary.txt
         Files.writeString(evidenceDir.resolve("pairing.csv"), csv.toString(),
@@ -869,6 +953,9 @@ class P62ResourceAssurancePgTest {
     private static volatile long windowWarmupBeginMs;
     private static volatile long windowFormalBeginMs;
     private static volatile long windowFormalEndMs;
+    /** 停载后正常路径自动收敛时点（null=120s未自动收敛）与时间线。 */
+    private static volatile Long autoConvergeMsHolder;
+    private static volatile String convergeTimelineHolder = "";
 
     /** CSV 字段（RFC4180：含逗号/引号/换行时加引号并转义内部引号）。 */
     private static String csv(String value) {
@@ -2041,7 +2128,8 @@ class P62ResourceAssurancePgTest {
         String material = "L-" + runId + "-" + fx.tenant + "-" + java.util.UUID.randomUUID();
         String body = "{\"material\":\"" + material + "\",\"qty_available\":\"1000\","
                 + "\"qty_reserved\":\"0\",\"target_record_id\":\"" + target + "\"}";
-        String[] result = {"-", "-"};
+        // [outcome, 受理记录id, 目标记录id]——目标效果/释放配对必须对真实目标行（复核04：3810目标行不匹配系错配提交行）
+        String[] result = {"-", "-", target};
         result[0] = post("/api/form/data/" + fx.formKey, fx.bearer, body, json -> {
             if (json != null && !json.isEmpty()) {
                 result[1] = json.startsWith("{") || json.startsWith("[") ? "-" : json;
@@ -2101,7 +2189,7 @@ class P62ResourceAssurancePgTest {
         if (fx.taskIds.isEmpty()) {
             return new String[]{"SKIP", "-"};
         }
-        String taskId = fx.taskIds.remove(0);
+        String taskId = fx.taskIds.poll();
         String body = "{\"opinion\":\"资源保障测量审批\"}";
         String outcome = post("/api/workflow/commands/tasks/" + taskId + "/approve?channel=NORMAL",
                 fx.bearer, body, json -> json != null && json.contains("commandId")
@@ -2574,6 +2662,7 @@ class P62ResourceAssurancePgTest {
         BpmProcessDefService processDefService = app.getBean(BpmProcessDefService.class);
         FormSubmitService submitService = app.getBean(FormSubmitService.class);
         String approvalFormKey = "p62_ra_todo_t" + tenant;
+        fx.approvalFormKey = approvalFormKey;
         asTenant(tenant, fx.userId, () -> {
             FormDefService formDefService = app.getBean(FormDefService.class);
             FormDefDTO approvalForm = formDefService.createDraft(approvalFormKey, "资源保障待办", null, null);
