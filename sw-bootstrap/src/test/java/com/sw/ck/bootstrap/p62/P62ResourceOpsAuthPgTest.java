@@ -136,9 +136,77 @@ class P62ResourceOpsAuthPgTest {
      * 菜单 9106/9107（permission=workflow:resource:view）与 9108（workflow:resource:manage）
      * 由 R__p62_resource_ops_menu 种子提供。
      */
+    // ==================== RA03a2-b：manage 全局授权边界（授权链/正反矩阵/服务端校验） ====================
+
+    @Test
+    @DisplayName("RA03a2-b：workflow:resource:manage=全局运维授权链——未授权零跨域/授权后可全局运维/再撤销即收回")
+    void manageGlobalBoundaryMatrix() throws Exception {
+        seedIdentities();
+        StringBuilder ev = new StringBuilder("scenario=RA03a2 manage 全局授权边界（真实HTTP+RBAC链回读）\n")
+                .append("授权链设计回读=resolveScope：isManager(持 workflow:resource:manage)→按 tenantId 参数全局查询；")
+                .append("仅 view→强制本租户。菜单 9106/9107=resource:view，9108=resource:manage（sys_menu 实际行见下）\n");
+        for (Map<String, Object> row : jdbc.queryForList("SELECT id, name, permission FROM sys_menu"
+                + " WHERE id IN (9106, 9107, 9108) ORDER BY id")) {
+            ev.append("  menu ").append(row).append('\n');
+        }
+        // H0：建全局策略（既有 94101 身份，作为对照的合法全局写）
+        String adminT1 = "Bearer test_94101";
+        String body = "{\"globalMaxOutstanding\":2000,\"tenantMaxOutstanding\":800,\"prodReserved\":400,"
+                + "\"oaReserved\":400,\"sharedCapacity\":1200,\"tenantRatePerSec\":50,\"tenantBurst\":500,"
+                + "\"realtimeGlobalConcurrency\":16,\"realtimeTenantConcurrency\":8,"
+                + "\"batchSliceItems\":25,\"batchPollClaimLimit\":1,\"remark\":\"RA03a2-b 全局边界\"}";
+        String created = exchange(ev, "H0-t1-manage-create", "POST",
+                "/api/workflow/resource/policy", adminT1, body);
+        assertThat(created).contains("\"status\":\"DRAFT\"");
+        Long policyId = Long.valueOf(extractJsonScalar(created, "id"));
+
+        // H1：t2 普通租户管理员（仅 view）——零跨域数据 + 写 403
+        seedTenantUser(2L, 94204L, "ra03-t2-candidate");
+        bindRole(9005L, "RA03查看仅", 94204L, List.of(9106L, 9107L));
+        String t2Viewer = "Bearer test_94204";
+        String crossRead = exchange(ev, "H1-t2-view-asks-tenant1", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1", t2Viewer, null);
+        assertThat(crossRead).doesNotContain("RA03A2-T1-");
+        String t2Write = exchange(ev, "H1-t2-view-write-policy-403", "POST",
+                "/api/workflow/resource/policy", t2Viewer, body);
+        assertThat(t2Write).contains("403");
+        appendPolicyRow(ev, "H1-policy-unchanged-after-t2-view-write-403", policyId);
+
+        // H2：显式授予 manage（真实 sys_role/sys_role_menu/sys_user_role 链）→ 全局运维生效
+        bindRole(9006L, "RA03全局运维", 94204L, List.of(9106L, 9107L, 9108L));
+        String t2OpsRead = exchange(ev, "H2-t2-manage-asks-tenant1", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1", t2Viewer, null);
+        assertThat(t2OpsRead).contains("\"code\":0");
+        String t2OpsWrite = exchange(ev, "H2-t2-manage-create", "POST",
+                "/api/workflow/resource/policy", t2Viewer, body.replace("RA03a2-b 全局边界",
+                        "RA03a2-b 全局边界(被授权运维)"));
+        assertThat(t2OpsWrite).contains("\"policyVersion\"").contains("\"status\":\"DRAFT\"");
+        Long opsPolicyId = Long.valueOf(extractJsonScalar(t2OpsWrite, "id"));
+        appendPolicyRow(ev, "H2-policy-created-by-granted-t2-ops", opsPolicyId);
+
+        // H3：撤销 manage（移除该角色对该菜单的授权链）→ 能力即时收回
+        jdbc.update("DELETE FROM sys_role_menu WHERE role_id = 9006 AND menu_id = 9108");
+        appendIdentities(ev);
+        String revokedRead = exchange(ev, "H3-revoked-asks-tenant1", "GET",
+                "/api/workflow/resource/backlog/commands?page=1&size=10&tenantId=1", t2Viewer, null);
+        assertThat(revokedRead).doesNotContain("RA03A2-T1-");
+        String revokedWrite = exchange(ev, "H3-revoked-write-403", "POST",
+                "/api/workflow/resource/policy/" + opsPolicyId + "/stop-acceptance", t2Viewer,
+                "{\"stop\":true}");
+        assertThat(revokedWrite).contains("403");
+        appendPolicyRow(ev, "H3-ops-policy-unchanged-after-revoke", opsPolicyId);
+        appendRejectAuditRows(ev, "H4-audit-rows-after-matrix");
+
+        ev.append("recordedAt=").append(LocalDateTime.now().format(TS)).append("\nrunId=")
+                .append(runId).append("\n");
+        Files.writeString(evidenceDir.resolve("manage-global-boundary.txt"), ev.toString(),
+                StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE_NEW,
+                java.nio.file.StandardOpenOption.WRITE);
+        System.out.println("[P62-EV] ra03a2-b manage global boundary ok");
+    }
+
     private void seedIdentities() {
-        seedTenantUser(1L, 94101L, "ra03-admin-t1");
-        seedTenantUser(1L, 94102L, "ra03-viewer-t1");
+        seedTenantUser(1L, 94101L, "ra03-admin-t1");        seedTenantUser(1L, 94102L, "ra03-viewer-t1");
         seedTenantUser(2L, 94201L, "ra03-user-t2");
         bindRole(9001L, "RA03查看", 94101L, List.of(9106L, 9107L));
         bindRole(9001L, "RA03查看", 94102L, List.of(9106L, 9107L));

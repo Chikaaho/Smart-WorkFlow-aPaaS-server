@@ -206,6 +206,12 @@ class P62ResourceAssurancePgTest {
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.putAll(overrides);
+        // 日志级别必须经系统属性进入 LoggingApplicationListener 的 environment-prepared 绑定：
+        // initializer 的 propertySource 在日志系统初始化之后加入，运行期级别不会变（实测 DEBUG 仍生效）
+        System.setProperty("logging.level.root", String.valueOf(props.get("logging.level.root")));
+        System.setProperty("logging.level.com.sw.ck", String.valueOf(props.get("logging.level.com.sw.ck")));
+        System.setProperty("logging.level.org.springframework.jdbc",
+                String.valueOf(props.get("logging.level.org.springframework.jdbc")));
         return new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");

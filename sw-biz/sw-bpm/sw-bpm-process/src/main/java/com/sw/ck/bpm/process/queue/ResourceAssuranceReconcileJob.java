@@ -59,7 +59,7 @@ public class ResourceAssuranceReconcileJob {
     public record ReconcileOutcome(int lightTargetsReleased, int countersRepaired) {
     }
 
-    @Scheduled(fixedDelayString = "${sw.bpm.resource.reconcile-interval-millis:60000}",
+    @Scheduled(fixedDelayString = "${sw.bpm.resource.reconcile-interval-millis:15000}",
             initialDelayString = "${sw.bpm.resource.reconcile-initial-delay-millis:30000}")
     public void sweep() {
         try {
