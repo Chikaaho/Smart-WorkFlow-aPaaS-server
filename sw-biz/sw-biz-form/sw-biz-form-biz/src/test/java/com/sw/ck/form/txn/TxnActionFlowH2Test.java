@@ -778,8 +778,14 @@ class TxnActionFlowH2Test {
 
         @Bean
         public com.sw.ck.form.api.port.FormTxnActionPort formTxnActionPort(TxnActionService actionService,
-                                                                         TxnActionExecutor executor) {
-            return new com.sw.ck.form.txn.port.FormTxnActionPortImpl(actionService, executor);
+                                                                         TxnActionExecutor executor,
+                                                                         com.sw.ck.form.txn.mapper.TxnInvocationMapper invocationMapper) {
+            return new com.sw.ck.form.txn.port.FormTxnActionPortImpl(actionService, executor, invocationMapper);
+        }
+
+        @Bean
+        public com.sw.ck.form.txn.guard.TxnActionRealtimeGuard txnActionRealtimeGuard() {
+            return new com.sw.ck.form.txn.guard.TxnActionRealtimeGuard();
         }
 
         @Bean

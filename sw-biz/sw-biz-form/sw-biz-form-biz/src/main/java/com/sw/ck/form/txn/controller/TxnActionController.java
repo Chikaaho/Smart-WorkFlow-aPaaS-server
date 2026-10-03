@@ -37,13 +37,16 @@ public class TxnActionController {
     private final TxnActionService actionService;
     private final TxnActionExecutor executor;
     private final C1PolicyService c1PolicyService;
+    private final com.sw.ck.form.txn.guard.TxnActionRealtimeGuard realtimeGuard;
 
     public TxnActionController(TxnActionService actionService,
                                TxnActionExecutor executor,
-                               C1PolicyService c1PolicyService) {
+                               C1PolicyService c1PolicyService,
+                               com.sw.ck.form.txn.guard.TxnActionRealtimeGuard realtimeGuard) {
         this.actionService = actionService;
         this.executor = executor;
         this.c1PolicyService = c1PolicyService;
+        this.realtimeGuard = realtimeGuard;
     }
 
     // ==================== 管理 ====================
@@ -115,7 +118,11 @@ public class TxnActionController {
     @PostMapping("/{id}/invoke")
     @PreAuthorize("@ss.hasPermi('form:action:invoke')")
     public R<TxnInvokeResult> invoke(@PathVariable String id, @RequestBody TxnInvokeRequest req) {
-        return R.ok(executor.invoke(id, req));
+        // 实时入口并发预算（P62 资源保障）：仅约束本 HTTP 实时入口，超限明确拒绝不排队；
+        // 内部异步调用方（轻流程节点/批量项）不占实时预算
+        com.sw.ck.security.holder.LoginUser operator = com.sw.ck.security.holder.LoginUserHolder.get();
+        Long tenantId = operator == null ? null : operator.getTenantId();
+        return R.ok(realtimeGuard.callWithBudget(tenantId, () -> executor.invoke(id, req)));
     }
 
     @GetMapping("/invocations/{invocationId}")

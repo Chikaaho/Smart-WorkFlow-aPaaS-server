@@ -96,7 +96,9 @@ public enum FormErrorCode implements ErrorCode {
     ACTION_RESERVATION_EXPIRED(1610, "form.action_reservation_expired", "预占已过期，不能确认"),
     ACTION_QUANTITY_INVALID(1611, "form.action_quantity_invalid", "数量不符合模型声明的精度或范围"),
     C1_WRITE_PROTECTED(1612, "form.c1_write_protected", "该字段为 C1 受保护数据，只能通过受控事务动作写入"),
-    C1_POLICY_INVALID(1613, "form.c1_policy_invalid", "现有数据不满足 C1 约束，无法启用保护");
+    C1_POLICY_INVALID(1613, "form.c1_policy_invalid", "现有数据不满足 C1 约束，无法启用保护"),
+    ACTION_REALTIME_CONCURRENCY_EXCEEDED(1614, "form.action_realtime_concurrency_exceeded",
+            "实时动作并发已达上限，请稍后重试（适用额度见响应提示）");
 
     private final int code;
     private final String errorKey;

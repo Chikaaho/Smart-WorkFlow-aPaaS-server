@@ -165,9 +165,30 @@ public class OverlapH2TestConfig {
     }
 
     @Bean
+    public com.sw.ck.bpm.process.service.ResourceAdmissionService resourceAdmissionService(
+            com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper policyMapper,
+            com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper usageMapper,
+            com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper rejectLogMapper,
+            org.springframework.transaction.PlatformTransactionManager txManager) {
+        return new com.sw.ck.bpm.process.service.ResourceAdmissionService(policyMapper, usageMapper,
+                rejectLogMapper, new com.sw.ck.bpm.process.service.TenantRateBuckets(), txManager);
+    }
+
+    @Bean
+    public com.sw.ck.bpm.process.service.ResourceReleaseService resourceReleaseService(
+            com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+            BpmCommandServiceImpl commandService,
+            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
+        return new com.sw.ck.bpm.process.service.ResourceReleaseService(admissionService,
+                commandService, jdbcTemplate);
+    }
+
+    @Bean
     public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService,
-                                                     com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper) {
-        return new StaleReadWindowQueue(commandService, effectMapper);
+                                                     com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper,
+                                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
+                                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+        return new StaleReadWindowQueue(commandService, effectMapper, releaseService, admissionService);
     }
 
     /**
@@ -180,8 +201,10 @@ public class OverlapH2TestConfig {
         public volatile com.sw.ck.bpm.process.entity.BpmCommand staleSnapshot;
 
         public StaleReadWindowQueue(BpmCommandServiceImpl commandService,
-                                    com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper) {
-            super(commandService, effectMapper);
+                                    com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper,
+                                    com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
+                                    com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+            super(commandService, effectMapper, releaseService, admissionService);
         }
 
         @Override

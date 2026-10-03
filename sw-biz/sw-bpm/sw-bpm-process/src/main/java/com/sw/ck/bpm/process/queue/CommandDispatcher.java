@@ -184,6 +184,11 @@ public class CommandDispatcher {
             commandQueue.complete(envelope.getCommandId(), envelope.getClaimToken(), result);
             log.info("命令处理完成: commandId={}, 耗时 {}ms", envelope.getCommandId(),
                     System.currentTimeMillis() - begin);
+        } catch (CommandContinuationSignal continuation) {
+            // 分片续跑：处理器已把命令重新入队（不计失败、占用不变），本次不写终态；
+            // 剩余分片由后续轮询继续（共享预算内保留其他工作的推进机会）
+            log.info("命令分片续跑让出调度权: commandId={}, reason={}",
+                    envelope.getCommandId(), continuation.getMessage());
         } catch (Exception e) {
             String reason = e instanceof BaseException base
                     ? base.getMessage() : String.valueOf(e);

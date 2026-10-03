@@ -33,13 +33,19 @@ public class FlowStartPortImpl implements FlowStartPort {
     private final BpmFormBindingService bindingService;
     private final BpmCommandQueue commandQueue;
     private final ObjectMapper objectMapper;
+    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
+    private final com.sw.ck.bpm.process.service.LightProcessClassifier lightProcessClassifier;
 
     public FlowStartPortImpl(BpmFormBindingService bindingService,
                              BpmCommandQueue commandQueue,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+                             com.sw.ck.bpm.process.service.LightProcessClassifier lightProcessClassifier) {
         this.bindingService = bindingService;
         this.commandQueue = commandQueue;
         this.objectMapper = objectMapper;
+        this.admissionService = admissionService;
+        this.lightProcessClassifier = lightProcessClassifier;
     }
 
     @Override
@@ -58,6 +64,12 @@ public class FlowStartPortImpl implements FlowStartPort {
             throw new IllegalStateException("表单流程绑定已变化: formKey=" + event.getFormKey());
         }
         String commandKey = "FLOW_START:" + event.getRecordId();
+        // 同身份先回查原结果（方向合同）：重放不重复占用额度、不重入队
+        Optional<Long> replay = commandQueue.findByKey(event.getTenantId(), commandKey)
+                .map(CommandEnvelope::getCommandId);
+        if (replay.isPresent()) {
+            return replay;
+        }
         CommandEnvelope envelope = new CommandEnvelope();
         envelope.setCommandType(CommandTypeEnum.FLOW_START);
         envelope.setChannel(resolveChannel(event.getDispatchChannel()));
@@ -65,6 +77,22 @@ public class FlowStartPortImpl implements FlowStartPort {
         envelope.setTenantId(event.getTenantId());
         envelope.setInitiatorId(Long.valueOf(event.getSubmitter()));
         envelope.setPayload(toPayload(event, resolvedProcessDefKey));
+        // 资源准入（P62 资源保障）：流程发起=生产类持久工作，1 单位；幂等回查经
+        // DuplicateKeyException 分支承载（重放回查原受理，不重复占用）。
+        // 完成点受理冻结：轻流程=TARGET_ACTION_DONE（目标完成才释放）；普通流程=FLOW_STARTED。
+        boolean light = lightProcessClassifier.isLightProcess(event.getTenantId(), resolvedProcessDefKey);
+        envelope.setCompletionPoint(light
+                ? com.sw.ck.bpm.process.service.ResourceReleaseService.COMPLETION_POINT_TARGET_DONE
+                : "FLOW_STARTED");
+        com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
+                admissionService.admit(event.getTenantId(),
+                        com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, 1, commandKey);
+        if (ticket != null) {
+            envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode());
+            envelope.setResourceUnits(1);
+            envelope.setResourceSegment(ticket.segment());
+            envelope.setPolicyVersion(ticket.policyVersion());
+        }
         try {
             return Optional.of(commandQueue.enqueue(envelope));
         } catch (DuplicateKeyException e) {

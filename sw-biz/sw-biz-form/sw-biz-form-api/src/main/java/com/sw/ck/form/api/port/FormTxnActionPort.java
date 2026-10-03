@@ -46,4 +46,23 @@ public interface FormTxnActionPort {
     record TxnActionDescriptor(String id, String formId, String actionKey, String actionType,
                                String status, Integer currentVersion) {
     }
+
+    /**
+     * 按调用键只读回查动作调用行（P62 资源保障 RG05：命令/目标关联查询；
+     * 仅暴露跨模块所需最小集合，身份明细经授权查询端点关联）。
+     * 调用方须已持合法身份与租户边界（实现按租户过滤，跨租户按 empty 处理）。
+     */
+    Optional<TxnInvocationSummary> findInvocationByKey(String invocationKey);
+
+    /**
+     * 按业务记录 id 只读回查关联调用行（P62 资源保障 RG05：轻流程受理→目标动作关联查询；
+     * 时间倒序，最多 limit 行）。调用方须已持合法身份与租户边界。
+     */
+    java.util.List<TxnInvocationSummary> listInvocationsByBizRecord(String bizRecordId, int limit);
+
+    /** 调用行只读摘要（关联查询用）。 */
+    record TxnInvocationSummary(String invocationId, String actionId, Integer actionVersion,
+                                String status, Integer errorCode, String errorMsg,
+                                String bizRecordId, java.time.LocalDateTime createTime) {
+    }
 }

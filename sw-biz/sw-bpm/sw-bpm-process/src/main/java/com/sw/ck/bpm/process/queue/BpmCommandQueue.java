@@ -87,4 +87,13 @@ public interface BpmCommandQueue {
      * 按受理标识查询（回查统一来源）。
      */
     Optional<CommandEnvelope> findById(Long commandId);
+
+    /**
+     * 分片续跑：命令本次消费按预算切片处理完毕但尚未终态，重新置回可领取
+     * （PENDING、立即重领、不计失败重试、占用不变；领取权令牌失效）。
+     * 调用后处理器须抛 {@link CommandContinuationSignal}，调度器不得再 complete/fail。
+     *
+     * @return true=已重新入队；false=命令已离开当前领取权（被回收/终结），不得续跑
+     */
+    boolean requeueForContinuation(Long commandId, String claimToken);
 }

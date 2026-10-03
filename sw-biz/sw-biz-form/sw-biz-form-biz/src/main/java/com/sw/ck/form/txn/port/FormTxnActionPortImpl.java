@@ -37,10 +37,32 @@ public class FormTxnActionPortImpl implements FormTxnActionPort {
 
     private final TxnActionService actionService;
     private final TxnActionExecutor executor;
+    private final com.sw.ck.form.txn.mapper.TxnInvocationMapper invocationMapper;
 
-    public FormTxnActionPortImpl(TxnActionService actionService, TxnActionExecutor executor) {
+    public FormTxnActionPortImpl(TxnActionService actionService, TxnActionExecutor executor,
+                                 com.sw.ck.form.txn.mapper.TxnInvocationMapper invocationMapper) {
         this.actionService = actionService;
         this.executor = executor;
+        this.invocationMapper = invocationMapper;
+    }
+
+    @Override
+    public java.util.Optional<TxnInvocationSummary> findInvocationByKey(String invocationKey) {
+        requireAuthorizedOperator();
+        if (invocationKey == null || invocationKey.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        // 租户边界由租户拦截器强制（跨租户调用行不可见，按 empty 处理）
+        com.sw.ck.form.txn.entity.TxnInvocationEntity entity = invocationMapper.selectOne(
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.form.txn.entity.TxnInvocationEntity>lambdaQuery()
+                        .eq(com.sw.ck.form.txn.entity.TxnInvocationEntity::getInvocationKey, invocationKey)
+                        .last("LIMIT 1"));
+        if (entity == null) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(new TxnInvocationSummary(entity.getId(), entity.getActionId(),
+                entity.getActionVersion(), entity.getStatus(), entity.getErrorCode(),
+                entity.getErrorMsg(), entity.getBizRecordId(), entity.getCreateTime()));
     }
 
     @Override
@@ -86,6 +108,24 @@ public class FormTxnActionPortImpl implements FormTxnActionPort {
         }
         return Optional.of(new TxnActionDescriptor(view.id(), view.formId(), view.actionKey(),
                 view.actionType(), view.status(), view.currentVersion()));
+    }
+
+    @Override
+    public java.util.List<TxnInvocationSummary> listInvocationsByBizRecord(String bizRecordId, int limit) {
+        requireAuthorizedOperator();
+        if (bizRecordId == null || bizRecordId.isBlank() || limit <= 0) {
+            return java.util.List.of();
+        }
+        return invocationMapper.selectList(
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.form.txn.entity.TxnInvocationEntity>lambdaQuery()
+                        .eq(com.sw.ck.form.txn.entity.TxnInvocationEntity::getBizRecordId, bizRecordId)
+                        .orderByDesc(com.sw.ck.form.txn.entity.TxnInvocationEntity::getCreateTime)
+                        .last("LIMIT " + Math.min(limit, 200)))
+                .stream()
+                .map(entity -> new TxnInvocationSummary(entity.getId(), entity.getActionId(),
+                        entity.getActionVersion(), entity.getStatus(), entity.getErrorCode(),
+                        entity.getErrorMsg(), entity.getBizRecordId(), entity.getCreateTime()))
+                .toList();
     }
 
     private LoginUser requireAuthorizedOperator() {

@@ -200,7 +200,7 @@ class TxnActionControllerAuthorizationTest {
         @Bean
         TxnActionController controller() {
             return new TxnActionController(mock(TxnActionService.class), mock(TxnActionExecutor.class),
-                    mock(C1PolicyService.class));
+                    mock(C1PolicyService.class), mock(com.sw.ck.form.txn.guard.TxnActionRealtimeGuard.class));
         }
 
         @Bean("ss")

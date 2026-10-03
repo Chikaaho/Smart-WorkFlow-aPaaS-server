@@ -43,10 +43,13 @@ public class CommandAcceptService {
 
     private final BpmCommandQueue commandQueue;
     private final ObjectMapper objectMapper;
+    private final ResourceAdmissionService admissionService;
 
-    public CommandAcceptService(BpmCommandQueue commandQueue, ObjectMapper objectMapper) {
+    public CommandAcceptService(BpmCommandQueue commandQueue, ObjectMapper objectMapper,
+                                ResourceAdmissionService admissionService) {
         this.commandQueue = commandQueue;
         this.objectMapper = objectMapper;
+        this.admissionService = admissionService;
     }
 
     /**
@@ -135,6 +138,23 @@ public class CommandAcceptService {
         envelope.setInitiatorId(loginUser.getUserId());
         envelope.setPayload(incomingPayload);
         envelope.setPayloadFingerprint(incomingFingerprint);
+        // 资源准入（P62 资源保障）：幂等回查之后、受理之前——同身份重放不重复占用额度；
+        // 超限拒绝抛出后本事务整体回滚，不留下可执行命令、业务写入或成功幂等占位。
+        // P0 通道=生产类（生产保留容量保护）；NORMAL=普通 OA 类。实时动作不占持久额度。
+        ResourceAdmissionService.AdmissionTicket ticket = admissionService.admit(
+                loginUser.getTenantId(),
+                channel == CommandChannelEnum.P0
+                        ? com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD
+                        : com.sw.ck.bpm.process.entity.ResourceClassEnum.OA,
+                1, commandKey);
+        if (ticket != null) {
+            envelope.setResourceClass(channel == CommandChannelEnum.P0
+                    ? com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode()
+                    : com.sw.ck.bpm.process.entity.ResourceClassEnum.OA.getCode());
+            envelope.setResourceUnits(1);
+            envelope.setResourceSegment(ticket.segment());
+            envelope.setPolicyVersion(ticket.policyVersion());
+        }
         try {
             commandQueue.enqueue(envelope);
         } catch (DuplicateKeyException e) {

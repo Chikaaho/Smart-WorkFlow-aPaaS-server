@@ -40,8 +40,11 @@ class CommandAcceptServiceTest {
     private final BpmCommandQueue commandQueue = mock(BpmCommandQueue.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService =
+            mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+
     private final CommandAcceptService service =
-            new CommandAcceptService(commandQueue, objectMapper);
+            new CommandAcceptService(commandQueue, objectMapper, admissionService);
 
     @BeforeEach
     void setUp() {

@@ -164,6 +164,9 @@ sw:
   tenant:
     ignore-tables:
       - sys_menu                           # sys_menu 为全局表，无 tenant_id 列，需排除租户拦截器
+      - sw_bpm_resource_policy             # 资源策略为治理配置（全局+显式租户条件），租户过滤由代码显式承载
+      - sw_bpm_resource_usage              # 占用计数含全局行与租户行，scope 显式定位，不做拦截器注入
+      - sw_bpm_resource_reject_log         # 拒绝审计显式按租户/权限过滤（跨租户运维需独立授权）
 
   # ---------- 外部数据源执行引擎 ----------
   external-datasource:

@@ -66,4 +66,19 @@ public class CommandEnvelope {
 
     /** 执行中超期标记（回查用）。 */
     private java.time.LocalDateTime overdueAt;
+
+    /** 资源类别（PROD/OA/BULK；受理时冻结；null=策略未启用，不参与资源会计）。 */
+    private String resourceClass;
+
+    /** 占用工作单位数（批量=项数；受理时冻结）。 */
+    private Integer resourceUnits;
+
+    /** 占用容量段（受理时冻结；PROD_RESERVED/OA_RESERVED/SHARED）。 */
+    private String resourceSegment;
+
+    /** 受理时冻结的资源策略版本。 */
+    private Integer policyVersion;
+
+    /** 占用释放时间（单位回收事实；null=仍占用）。 */
+    private java.time.LocalDateTime resourceReleasedAt;
 }

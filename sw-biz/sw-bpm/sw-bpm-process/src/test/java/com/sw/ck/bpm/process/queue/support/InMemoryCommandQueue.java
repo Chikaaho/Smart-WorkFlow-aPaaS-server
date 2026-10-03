@@ -30,6 +30,20 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
     private final AtomicLong idGen = new AtomicLong(1000);
 
     @Override
+    public boolean requeueForContinuation(Long commandId, String claimToken) {
+        BpmCommand command = store.get(commandId);
+        if (command == null || !CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())
+                || !java.util.Objects.equals(command.getClaimToken(), claimToken)) {
+            return false;
+        }
+        command.setStatus(CommandStatusEnum.PENDING.getCode());
+        command.setClaimToken(null);
+        command.setClaimedAt(null);
+        command.setNextRetryAt(null);
+        return true;
+    }
+
+    @Override
     public Long requeueFailed(CommandEnvelope envelope) {
         BpmCommand command = store.get(envelope.getCommandId());
         if (command == null || !CommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {

@@ -40,11 +40,18 @@ class CommandQueueTest {
     private final LambdaQueryChainWrapper<BpmCommand> queryChain = mock(LambdaQueryChainWrapper.class);
     private final LambdaUpdateChainWrapper<BpmCommand> updateChain = mock(LambdaUpdateChainWrapper.class);
 
-    private final PersistentBpmCommandQueue queue = new PersistentBpmCommandQueue(commandService, null);
+    private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService =
+            mock(com.sw.ck.bpm.process.service.ResourceReleaseService.class);
+    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService =
+            mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+
+    private final PersistentBpmCommandQueue queue =
+            new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService);
 
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
+        when(admissionService.findActivePolicy()).thenReturn(null);
         when(commandService.lambdaQuery()).thenReturn((LambdaQueryChainWrapper) queryChain);
         when(commandService.lambdaUpdate()).thenReturn((LambdaUpdateChainWrapper) updateChain);
         when(queryChain.eq(any(SFunction.class), any())).thenReturn(queryChain);
@@ -116,6 +123,9 @@ class CommandQueueTest {
     @DisplayName("claimDue：候选领取成功 → status=PROCESSING 出现在结果中")
     void claimDue_shouldReturnClaimedEnvelope() {
         BpmCommand candidate = command(1L);
+        // 租户公平领取的活跃租户发现查询（Mockito 单测桩：单租户 1 有到期命令）
+        when(commandService.listMaps(any(Wrapper.class)))
+                .thenReturn(List.of(java.util.Map.of("tenant_id", 1L)));
         when(queryChain.list()).thenReturn(List.of(candidate));
         when(commandService.update(any(Wrapper.class))).thenReturn(true);
 

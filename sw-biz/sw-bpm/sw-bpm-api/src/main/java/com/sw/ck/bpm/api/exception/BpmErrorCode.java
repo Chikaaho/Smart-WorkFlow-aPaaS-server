@@ -98,6 +98,18 @@ public enum BpmErrorCode implements ErrorCode {
     BATCH_NOT_FOUND(2424, "bpm.batch_not_found", "批量批次不存在或不属于当前租户"),
     BATCH_CAPABILITY_DISABLED(2425, "bpm.batch_capability_disabled", "批量事务调用能力未启用（新入口默认关闭，须旧消费者退出核清后协调开启）"),
     COMMAND_PAYLOAD_MISMATCH(2426, "bpm.command_payload_mismatch", "同一操作身份携带了不同的请求载荷，已被拒绝"),
+
+    // ==================== P62 资源保障与多租户公平（2427+） ====================
+    RESOURCE_QUOTA_EXCEEDED(2427, "bpm.resource_quota_exceeded",
+            "受理额度已满：持久工作量超出适用上限，请稍后重试或降低提交速率"),
+    RESOURCE_RATE_EXCEEDED(2428, "bpm.resource_rate_exceeded",
+            "提交速率超出每租户工作单位上限，请按适用速率重试"),
+    RESOURCE_ACCEPTANCE_STOPPED(2429, "bpm.resource_acceptance_stopped",
+            "资源策略已停新受理：已有工作按原合同继续结算，暂不接受新受理"),
+    RESOURCE_POLICY_INVALID(2430, "bpm.resource_policy_invalid",
+            "资源策略校验未通过：额度、保留份额、消费者可用性或预算相容性检查失败，已拒绝启用"),
+    RESOURCE_CONSUMER_UNAVAILABLE(2431, "bpm.resource_consumer_unavailable",
+            "必需消费者未启用：异步目标或批量消费能力不可用，已拒绝启用新受理"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================

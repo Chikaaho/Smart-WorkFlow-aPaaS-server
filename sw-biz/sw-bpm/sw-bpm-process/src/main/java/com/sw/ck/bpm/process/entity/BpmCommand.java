@@ -96,4 +96,24 @@ public class BpmCommand extends BaseEntity {
     /** 执行中超过截止的标记时间（证据字段；不据此判失败/过期）。 */
     @TableField("overdue_at")
     private LocalDateTime overdueAt;
+
+    /** 资源类别（PROD/OA/BULK；受理时冻结；NULL=旧对象不参与资源会计）。 */
+    @TableField("resource_class")
+    private String resourceClass;
+
+    /** 占用工作单位数（批量=项数，其余=1；受理时冻结）。 */
+    @TableField("resource_units")
+    private Integer resourceUnits;
+
+    /** 占用容量段（PROD_RESERVED/OA_RESERVED/SHARED；受理时冻结）。 */
+    @TableField("resource_segment")
+    private String resourceSegment;
+
+    /** 受理时冻结的资源策略版本（跨版本共享计数）。 */
+    @TableField("policy_version")
+    private Integer policyVersion;
+
+    /** 占用释放时间（单位回收事实；NULL=仍占用）。 */
+    @TableField("resource_released_at")
+    private LocalDateTime resourceReleasedAt;
 }

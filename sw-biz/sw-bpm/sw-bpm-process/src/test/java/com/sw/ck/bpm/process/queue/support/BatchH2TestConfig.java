@@ -31,17 +31,21 @@ public class BatchH2TestConfig {
     public TxnBatchServiceImpl txnBatchService(BpmCommandBatchMapper batchMapper,
                                                BpmCommandBatchItemMapper itemMapper,
                                                PersistentBpmCommandQueue queue,
-                                               FormTxnActionPort txnActionPort) {
-        return new TxnBatchServiceImpl(batchMapper, itemMapper, queue, txnActionPort);
+                                               FormTxnActionPort txnActionPort,
+                                               com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+        return new TxnBatchServiceImpl(batchMapper, itemMapper, queue, txnActionPort, admissionService);
     }
 
     @Bean
     public BatchInvokeCommandHandler batchInvokeCommandHandler(BpmCommandBatchMapper batchMapper,
                                                                BpmCommandBatchItemMapper itemMapper,
+                                                               PersistentBpmCommandQueue queue,
                                                                FormTxnActionPort txnActionPort,
                                                                CommandEffectRecorder effectRecorder,
-                                                               PlatformTransactionManager transactionManager) {
-        return new BatchInvokeCommandHandler(batchMapper, itemMapper, txnActionPort,
-                effectRecorder, transactionManager);
+                                                               PlatformTransactionManager transactionManager,
+                                                               com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
+                                                               com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+        return new BatchInvokeCommandHandler(batchMapper, itemMapper, queue, txnActionPort,
+                effectRecorder, transactionManager, releaseService, admissionService);
     }
 }

@@ -47,19 +47,28 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
 
     private final BpmCommandBatchMapper batchMapper;
     private final BpmCommandBatchItemMapper itemMapper;
+    private final BpmCommandQueue commandQueue;
     private final FormTxnActionPort txnActionPort;
     private final CommandEffectRecorder effectRecorder;
     private final TransactionTemplate txTemplate;
+    private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService;
+    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
 
     public BatchInvokeCommandHandler(BpmCommandBatchMapper batchMapper,
                                      BpmCommandBatchItemMapper itemMapper,
+                                     BpmCommandQueue commandQueue,
                                      FormTxnActionPort txnActionPort,
                                      CommandEffectRecorder effectRecorder,
-                                     org.springframework.transaction.PlatformTransactionManager transactionManager) {
+                                     org.springframework.transaction.PlatformTransactionManager transactionManager,
+                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
+                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
         this.batchMapper = batchMapper;
         this.itemMapper = itemMapper;
+        this.commandQueue = commandQueue;
         this.txnActionPort = txnActionPort;
         this.effectRecorder = effectRecorder;
+        this.releaseService = releaseService;
+        this.admissionService = admissionService;
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.txTemplate = template;
@@ -75,26 +84,64 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
         long commandId = envelope.getCommandId();
         BpmCommandBatch batch = requireBatch(envelope);
         markProcessing(batch.getId());
+        // 释放会计按命令行冻结字段执行（段/租户/策略版本）；受理人身份随信封还原
+        com.sw.ck.bpm.process.entity.BpmCommand batchCommand = batchAccountingCommand(envelope);
 
         List<BpmCommandBatchItem> pending = itemMapper.selectList(
                 Wrappers.<BpmCommandBatchItem>lambdaQuery()
                         .eq(BpmCommandBatchItem::getBatchId, batch.getId())
                         .eq(BpmCommandBatchItem::getStatus, BatchItemStatusEnum.PENDING.getCode())
                         .orderByAsc(BpmCommandBatchItem::getId));
-        log.info("批量批次开始处理: batchKey={}, batchId={}, pending={}, commandId={}",
-                batch.getBatchKey(), batch.getId(), pending.size(), commandId);
+        // 分片预算（生效策略 batchSliceItems，默认 25）：单次消费最多处理切片数项，
+        // 剩余项让出调度线程（重新入队、不计失败、占用不变），共享预算内保留
+        // 生产和 OA 的推进机会；批量项领取等待仍满足合同（≤30s，切片轮询持续推进）
+        int slice = resolveBatchSlice();
+        List<BpmCommandBatchItem> toProcess = pending.size() <= slice
+                ? pending : pending.subList(0, slice);
+        log.info("批量批次开始处理: batchKey={}, batchId={}, pending={}, slice={}, commandId={}",
+                batch.getBatchKey(), batch.getId(), pending.size(), Math.min(slice, pending.size()),
+                commandId);
 
-        for (BpmCommandBatchItem item : pending) {
+        for (BpmCommandBatchItem item : toProcess) {
             // 逐项独立事务：业务拒绝落 REJECTED 并提交计数；基础设施异常向上传播触发命令重试
-            txTemplate.execute(status -> {
-                settleOneItem(batch, item);
-                return null;
+            Boolean settledNow = txTemplate.execute(status -> {
+                boolean settled = settleOneItem(batch, item);
+                // 批量按项终态回收占用（方向合同：批量按项终态回收，失败重试不重复加账）；
+                // 仅本次实际结算的项回收（重入跳过不重复释放）
+                if (settled) {
+                    releaseService.onBatchItemTerminal(batchCommand);
+                }
+                return settled;
             });
+            log.debug("批量项结算: itemKey={}, settledNow={}", item.getItemKey(), settledNow);
+        }
+
+        if (pending.size() > toProcess.size()) {
+            // 未完让出：重新入队由后续轮询继续（下轮仍按切片推进直至收敛）
+            boolean requeued = commandQueue.requeueForContinuation(commandId, envelope.getClaimToken());
+            if (requeued) {
+                throw new CommandContinuationSignal("批量切片让出: batchKey=" + batch.getBatchKey()
+                        + ", processed=" + toProcess.size()
+                        + ", remaining=" + (pending.size() - toProcess.size()));
+            }
+            // 重新入队失败=领取权已易主：本次不写终态（当前持有者负责），避免覆盖
+            log.warn("批量切片续跑被跳过（领取权已变化）: batchKey={}", batch.getBatchKey());
+            return "{\"status\":\"YIELD_SKIPPED\"}";
         }
 
         // 结算：聚合实际项状态（重复执行安全）+ 批次状态 + 效果权威账本（同事务）
         String resultJson = txTemplate.execute(status -> settleBatch(batch, commandId, envelope));
         return resultJson;
+    }
+
+    /** 批量切片预算（生效策略；未启用策略时不切片=旧行为，默认关闭零变化）。 */
+    private int resolveBatchSlice() {
+        com.sw.ck.bpm.process.entity.BpmResourcePolicy policy =
+                admissionService.findActivePolicy();
+        if (policy == null || policy.getBatchSliceItems() == null) {
+            return Integer.MAX_VALUE;
+        }
+        return Math.max(1, policy.getBatchSliceItems());
     }
 
     @Override
@@ -105,11 +152,12 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
                 envelope.getCommandId(), reason);
     }
 
-    /** 单项处理与计数（调用方事务内；业务终态写入与批次聚合同事务一致）。 */
-    private void settleOneItem(BpmCommandBatch batch, BpmCommandBatchItem item) {
+    /** 单项处理与计数（调用方事务内；业务终态写入与批次聚合同事务一致）。
+     *  @return true=本次实际结算至终态（重入跳过返回 false，不重复释放占用） */
+    private boolean settleOneItem(BpmCommandBatch batch, BpmCommandBatchItem item) {
         BpmCommandBatchItem current = itemMapper.selectById(item.getId());
         if (current == null || !BatchItemStatusEnum.PENDING.getCode().equals(current.getStatus())) {
-            return; // 重入：已终态项不重做
+            return false; // 重入：已终态项不重做
         }
         current.setAttemptCount((current.getAttemptCount() == null ? 0 : current.getAttemptCount()) + 1);
         try {
@@ -137,6 +185,19 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
         refreshCounters(batch.getId());
         log.info("批量项已结算: batchKey={}, itemKey={}, status={}, attempt={}",
                 batch.getBatchKey(), current.getItemKey(), current.getStatus(), current.getAttemptCount());
+        return true;
+    }
+
+    /** 释放会计载体：冻结资源字段随领取信封携带（toEnvelope 映射命令行），无额外查询。 */
+    private com.sw.ck.bpm.process.entity.BpmCommand batchAccountingCommand(CommandEnvelope envelope) {
+        com.sw.ck.bpm.process.entity.BpmCommand command = new com.sw.ck.bpm.process.entity.BpmCommand();
+        command.setId(envelope.getCommandId());
+        command.setTenantId(envelope.getTenantId());
+        command.setCommandType(envelope.getCommandType() == null
+                ? null : envelope.getCommandType().getCode());
+        command.setResourceUnits(envelope.getResourceUnits());
+        command.setResourceSegment(envelope.getResourceSegment());
+        return command;
     }
 
     /** 批次结算：全部项终态后聚合状态并写命令效果权威账本（同一事务）。 */

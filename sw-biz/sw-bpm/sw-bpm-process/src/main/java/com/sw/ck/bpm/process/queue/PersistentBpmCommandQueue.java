@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -42,11 +43,17 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     private final BpmCommandService commandService;
     private final BpmCommandEffectMapper effectMapper;
+    private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService;
+    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
 
     public PersistentBpmCommandQueue(BpmCommandService commandService,
-                                     BpmCommandEffectMapper effectMapper) {
+                                     BpmCommandEffectMapper effectMapper,
+                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
+                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
         this.commandService = commandService;
         this.effectMapper = effectMapper;
+        this.releaseService = releaseService;
+        this.admissionService = admissionService;
     }
 
     @Override
@@ -61,6 +68,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         command.setRetryCount(0);
         command.setInitiatorId(envelope.getInitiatorId());
         applyTieredSemantics(command, envelope);
+        applyResourceAccounting(command, envelope);
         commandService.save(command);
         envelope.setCommandId(command.getId());
         log.info("命令已受理: commandId={}, type={}, channel={}, key={}",
@@ -90,6 +98,21 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         command.setClaimToken(null);
         command.setResult(null);
         commandService.updateById(command);
+        // FAILED 期间占用已释放：重新入队=重新占用（冻结字段不变，按当前上限裁决；
+        // 超限则重新入队被拒、命令保持 FAILED，不突破额度。批量按剩余非终态项再占用）
+        if (command.getResourceUnits() != null && command.getResourceUnits() > 0) {
+            long reoccupyUnits = CommandTypeEnum.BATCH_INVOKE.getCode().equals(command.getCommandType())
+                    ? releaseService.batchRemainingUnits(command.getId())
+                    : command.getResourceUnits();
+            command.setResourceReleasedAt(null);
+            admissionService.reoccupy(command.getTenantId(), command.getResourceSegment(),
+                    (int) reoccupyUnits);
+            commandService.lambdaUpdate()
+                    .eq(BpmCommand::getId, command.getId())
+                    .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                    .set(BpmCommand::getResourceReleasedAt, null)
+                    .update();
+        }
         envelope.setCommandId(command.getId());
         log.info("FAILED 命令已重新入队: commandId={}, key={}", command.getId(), command.getCommandKey());
         return command.getId();
@@ -119,33 +142,78 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     private List<CommandEnvelope> claimDueSuspended(List<CommandChannelEnum> channels, int limit,
                                                     LocalDateTime now) {
-        List<BpmCommand> candidates = commandService.lambdaQuery()
-                .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
-                .in(BpmCommand::getChannel, channels.stream().map(Enum::name).toList())
-                .and(wrapper -> wrapper.isNull(BpmCommand::getNextRetryAt)
-                        .or().le(BpmCommand::getNextRetryAt, now))
-                .orderByAsc(BpmCommand::getCreateTime)
-                .last("LIMIT " + limit)
-                .list();
+        // 租户公平领取（P62 资源保障）：全局 FIFO 会被单租户突发占满，活跃租户并存时
+        // 按租户切片轮流领取，保证每个活跃租户每轮都有推进机会（有界服务）；
+        // 仅单租户有到期命令时取整批额度（行为与旧实现一致）。
+        List<Long> activeTenants = commandService.listMaps(
+                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<BpmCommand>()
+                                .select("DISTINCT tenant_id")
+                                .eq("status", CommandStatusEnum.PENDING.getCode())
+                                .in("channel", channels.stream().map(Enum::name).toList())
+                                .and(wrapper -> wrapper.isNull("next_retry_at")
+                                        .or().le("next_retry_at", now)))
+                .stream()
+                .map(row -> {
+                    // H2/PG 列标签大小写与驼峰映射差异：大小写不敏感取租户列
+                    for (Map.Entry<String, Object> entry : row.entrySet()) {
+                        if ("tenant_id".equalsIgnoreCase(entry.getKey())) {
+                            return ((Number) entry.getValue()).longValue();
+                        }
+                    }
+                    throw new IllegalStateException("租户公平领取查询缺少 tenant_id 列");
+                })
+                .toList();
+        int slice = activeTenants.size() <= 1 ? limit
+                : Math.max(1, limit / activeTenants.size());
+        int batchClaimed = 0;
+        int batchClaimLimit = activeBatchPollClaimLimit();
         List<CommandEnvelope> claimed = new ArrayList<>();
-        for (BpmCommand candidate : candidates) {
-            // 一次性租约令牌：写回（complete/reject/fail）须匹配本令牌，
-            // stale 回收后旧持有者的迟到写回因令牌不匹配被拒。
-            String claimToken = java.util.UUID.randomUUID().toString();
-            LambdaUpdateWrapper<BpmCommand> claim = new LambdaUpdateWrapper<BpmCommand>()
-                    .eq(BpmCommand::getId, candidate.getId())
+        for (Long tenantId : activeTenants) {
+            List<BpmCommand> candidates = commandService.lambdaQuery()
                     .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
-                    .set(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
-                    .set(BpmCommand::getClaimedAt, now)
-                    .set(BpmCommand::getClaimToken, claimToken);
-            if (commandService.update(claim)) {
-                candidate.setStatus(CommandStatusEnum.PROCESSING.getCode());
-                candidate.setClaimedAt(now);
-                candidate.setClaimToken(claimToken);
-                claimed.add(toEnvelope(candidate));
+                    .in(BpmCommand::getChannel, channels.stream().map(Enum::name).toList())
+                    .eq(BpmCommand::getTenantId, tenantId)
+                    .and(wrapper -> wrapper.isNull(BpmCommand::getNextRetryAt)
+                            .or().le(BpmCommand::getNextRetryAt, now))
+                    .orderByAsc(BpmCommand::getCreateTime)
+                    .last("LIMIT " + slice)
+                    .list();
+            for (BpmCommand candidate : candidates) {
+                // 批量命令每轮限量领取（共享预算内推进，批量不能占完全部执行机会）
+                if (CommandTypeEnum.BATCH_INVOKE.getCode().equals(candidate.getCommandType())) {
+                    if (batchClaimed >= batchClaimLimit) {
+                        continue;
+                    }
+                    batchClaimed++;
+                }
+                // 一次性租约令牌：写回（complete/reject/fail）须匹配本令牌，
+                // stale 回收后旧持有者的迟到写回因令牌不匹配被拒。
+                String claimToken = java.util.UUID.randomUUID().toString();
+                LambdaUpdateWrapper<BpmCommand> claim = new LambdaUpdateWrapper<BpmCommand>()
+                        .eq(BpmCommand::getId, candidate.getId())
+                        .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                        .set(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
+                        .set(BpmCommand::getClaimedAt, now)
+                        .set(BpmCommand::getClaimToken, claimToken);
+                if (commandService.update(claim)) {
+                    candidate.setStatus(CommandStatusEnum.PROCESSING.getCode());
+                    candidate.setClaimedAt(now);
+                    candidate.setClaimToken(claimToken);
+                    claimed.add(toEnvelope(candidate));
+                }
             }
         }
         return claimed;
+    }
+
+    /** 每轮批量领取上限（生效策略；未启用策略时不设限=旧行为，默认关闭零变化）。 */
+    private int activeBatchPollClaimLimit() {
+        com.sw.ck.bpm.process.entity.BpmResourcePolicy policy = admissionService.findActivePolicy();
+        if (policy == null) {
+            return Integer.MAX_VALUE;
+        }
+        return policy.getBatchPollClaimLimit() != null
+                ? Math.max(1, policy.getBatchPollClaimLimit()) : 1;
     }
 
     @Override
@@ -164,7 +232,9 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                 .update();
         if (!updated) {
             log.warn("命令完成被跳过: commandId={} 已离开当前领取权（被回收/终结或租约令牌不匹配）", commandId);
+            return;
         }
+        releaseOnTerminal(commandId);
     }
 
     @Override
@@ -178,11 +248,13 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                 .set(BpmCommand::getResult, "{\"status\":\"REJECTED\"}")
                 .set(BpmCommand::getFailureReason, truncate(reason))
                 .set(BpmCommand::getFinishedAt, LocalDateTime.now())
+                .set(BpmCommand::getResourceReleasedAt, LocalDateTime.now())
                 .update();
         if (!updated) {
             log.warn("命令消费前拒绝被跳过: commandId={} 已离开当前领取权（租约令牌不匹配）", commandId);
             return;
         }
+        releaseOnTerminal(commandId);
         log.warn("命令消费前安全门禁拒绝: commandId={}, reason={}", commandId, reason);
     }
 
@@ -225,11 +297,13 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                         .set(BpmCommand::getStatus, CommandStatusEnum.FAILED.getCode())
                         .set(BpmCommand::getFailureReason, truncate(reason))
                         .set(BpmCommand::getFinishedAt, LocalDateTime.now())
+                        .set(BpmCommand::getResourceReleasedAt, LocalDateTime.now())
                         .update();
                 if (!failed) {
                     log.warn("命令终态失败改判被跳过: commandId={} 状态已变化", commandId);
                     return false;
                 }
+                releaseOnTerminal(commandId);
                 log.warn("命令终态失败: commandId={}, retries={}, reason={}", commandId, retryCount + 1, reason);
                 return false;
             }
@@ -288,7 +362,26 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         return Optional.ofNullable(commandService.getById(commandId)).map(this::toEnvelope);
     }
 
-    // ==================== P62 分级执行：身份/截止/效果权威 ====================
+    @Override
+    public boolean requeueForContinuation(Long commandId, String claimToken) {
+        // 分片续跑：不计失败重试、不清占用、立即重领；仅当前领取权可触发
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            boolean updated = commandService.lambdaUpdate()
+                    .eq(BpmCommand::getId, commandId)
+                    .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
+                    .eq(BpmCommand::getClaimToken, claimToken == null ? "" : claimToken)
+                    .set(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                    .set(BpmCommand::getNextRetryAt, LocalDateTime.now())
+                    .set(BpmCommand::getClaimedAt, null)
+                    .set(BpmCommand::getClaimToken, null)
+                    .update();
+            if (!updated) {
+                log.warn("命令分片续跑被跳过: commandId={} 已离开当前领取权", commandId);
+            }
+            return updated;
+        }
+    }
 
     private void applyTieredSemantics(BpmCommand command, CommandEnvelope envelope) {
         int seconds = envelope.getDeadlineSeconds() == 0
@@ -305,12 +398,38 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         envelope.setDeadlineAt(command.getDeadlineAt());
     }
 
+    // ==================== P62 资源保障：占用冻结/释放/再占用 ====================
+
+    /**
+     * 受理时冻结资源会计字段（准入成功才有值；策略未启用时保持 NULL，
+     * 旧对象与未启用受理不参与资源会计）。
+     */
+    private void applyResourceAccounting(BpmCommand command, CommandEnvelope envelope) {
+        command.setResourceClass(blankToNull(envelope.getResourceClass()));
+        command.setResourceUnits(envelope.getResourceUnits());
+        command.setResourceSegment(blankToNull(envelope.getResourceSegment()));
+        command.setPolicyVersion(envelope.getPolicyVersion());
+    }
+
+    /** 终态释放判定：终态写入成功后调用（同一事务），按冻结字段回收占用。 */
+    private void releaseOnTerminal(Long commandId) {
+        BpmCommand command;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            command = commandService.getById(commandId);
+        }
+        if (command != null) {
+            releaseService.onTerminal(command);
+        }
+    }
+
     /**
      * 准入截止扫描：仅 PENDING（待执行）且<strong>效果未发生</strong>（无效果权威行）的到期命令
      * 收敛为 EXPIRED。执行中（PROCESSING）不得据此判过期，由 {@link #markOverdue} 仅记超期。
      *
      * @return 本次过期条数
      */
+    @Transactional(propagation = Propagation.REQUIRED)
     public int expireDue(LocalDateTime now) {
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
@@ -333,8 +452,11 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                         .set(BpmCommand::getStatus, CommandStatusEnum.EXPIRED.getCode())
                         .set(BpmCommand::getFailureReason, "准入截止到期且未执行（效果未发生）")
                         .set(BpmCommand::getFinishedAt, now)
+                        .set(BpmCommand::getResourceReleasedAt, now)
                         .update();
                 if (updated) {
+                    // 过期=执行权终止：按冻结字段释放占用（批量按剩余非终态项）
+                    releaseService.onTerminal(candidate);
                     expired++;
                 }
             }
@@ -441,6 +563,11 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         envelope.setCompletionPoint(command.getCompletionPoint());
         envelope.setDeadlineAt(command.getDeadlineAt());
         envelope.setOverdueAt(command.getOverdueAt());
+        envelope.setResourceClass(command.getResourceClass());
+        envelope.setResourceUnits(command.getResourceUnits());
+        envelope.setResourceSegment(command.getResourceSegment());
+        envelope.setPolicyVersion(command.getPolicyVersion());
+        envelope.setResourceReleasedAt(command.getResourceReleasedAt());
         return envelope;
     }
 
