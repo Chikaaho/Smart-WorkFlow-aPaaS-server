@@ -139,18 +139,16 @@ public class ResourceAdmissionService {
     private AdmissionTicket tryOccupy(Long tenantId, ResourceClassEnum resourceClass, int units,
                                       BpmResourcePolicy policy, String[] rejectScope) {
         List<ResourceSegmentEnum> preference = ResourceSegmentEnum.preference(resourceClass);
-        boolean fallbackPreLocked = false;
-        for (int index = 0; index < preference.size(); index++) {
-            ResourceSegmentEnum segment = preference.get(index);
-            if (index > 0 && !fallbackPreLocked) {
-                // 回退到保留段前先按规范序取锁（PROD_RESERVED→OA_RESERVED）：各类别的首选段
-                // 交叉（PROD 先生产保留 / OA 先 OA 保留）会在共享段饱和时形成环，死锁由 PG 中止
-                // 一方事务并放大为受保护请求 500；规范序预锁使所有受理在备用段上同序等待。
-                fallbackPreLocked = true;
-                usageMapper.lockRow("GLOBAL", 0, ResourceSegmentEnum.PROD_RESERVED.getCode());
-                usageMapper.lockRow("GLOBAL", 0, ResourceSegmentEnum.OA_RESERVED.getCode());
-            }
+        for (ResourceSegmentEnum segment : preference) {
             long segmentCap = segmentCapacity(policy, segment);
+            // 非锁定预读：额度明显不足的段直接跳过（不发起条件更新）。条件更新在段满/并发
+            // 冲突时仍会取到行锁并等待对方事务结束，而各形态类别的段回退顺序不同
+            // （PROD 先生产保留、OA 先 OA 保留），多条路径交叉持锁会形成死锁环（PG 40P01，
+            // 被中止一方放大为受理 500）。预读把「满段的条件更新等待」降为不取锁的读。
+            if (usageSectionOverflow("GLOBAL", 0L, segment.getCode(), units, segmentCap)) {
+                rejectScope[0] = rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0];
+                continue;
+            }
             if (usageMapper.incrementWithinCap("GLOBAL", 0, segment.getCode(), units, segmentCap) != 1) {
                 rejectScope[0] = rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0];
                 continue;
@@ -171,6 +169,23 @@ public class ResourceAdmissionService {
             return new AdmissionTicket(segment.getCode(), policy.getPolicyVersion(), units);
         }
         return null;
+    }
+
+    /** 非锁定预读：段已用 + 本次单位数是否超过段上限（读失败按未超限处理，交由条件更新裁决）。 */
+    private boolean usageSectionOverflow(String scope, long scopeKey, String segment, int units,
+                                         long cap) {
+        try {
+            BpmResourceUsage row = usageMapper.selectOne(Wrappers.<BpmResourceUsage>lambdaQuery()
+                    .eq(BpmResourceUsage::getScope, scope)
+                    .eq(BpmResourceUsage::getScopeKey, scopeKey)
+                    .eq(BpmResourceUsage::getSegment, segment));
+            if (row == null || row.getOutstanding() == null) {
+                return false;
+            }
+            return row.getOutstanding() + units > cap;
+        } catch (Exception unreadable) {
+            return false;
+        }
     }
 
     /** 租户计数行是否存在（仅拒绝路径调用，用于区分「额度满」与「行被清空」）。 */

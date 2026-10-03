@@ -49,17 +49,6 @@ public interface BpmResourceUsageMapper extends BaseMapper<BpmResourceUsage> {
                   @Param("segment") String segment, @Param("fact") long fact,
                   @Param("expected") long expected);
 
-    /**
-     * 行锁（规范序预锁用）：锁定并返回计数行 id；行不存在时返回 null（不产生锁）。
-     * <p>用途：段占位回退到保留段前按规范顺序取锁，消除「PROD 先锁生产保留 / OA 先锁 OA 保留」
-     * 的交叉锁序（共享段饱和时并发受理死锁的根因）。</p>
-     */
-    @org.apache.ibatis.annotations.Select("SELECT id FROM sw_bpm_resource_usage "
-            + "WHERE scope = #{scope} AND scope_key = #{scopeKey} AND segment = #{segment} "
-            + "FOR UPDATE")
-    Long lockRow(@Param("scope") String scope, @Param("scopeKey") long scopeKey,
-                 @Param("segment") String segment);
-
     /** 惰性建立计数行（幂等；唯一键 uk_sw_bpm_resource_usage_scope 保证并发安全，
      *  冲突时调用方按 DuplicateKeyException 忽略——PG/H2 双方言可移植写法）。 */
     @Insert("INSERT INTO sw_bpm_resource_usage (id, tenant_id, scope, scope_key, segment, outstanding) "
