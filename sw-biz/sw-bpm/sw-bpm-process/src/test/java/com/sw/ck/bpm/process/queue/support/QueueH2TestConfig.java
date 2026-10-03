@@ -230,9 +230,10 @@ public class QueueH2TestConfig {
             com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper policyMapper,
             com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper rejectLogMapper,
             org.springframework.context.ApplicationContext applicationContext,
-            org.springframework.core.env.Environment environment) {
+            org.springframework.core.env.Environment environment,
+            org.springframework.transaction.PlatformTransactionManager transactionManager) {
         return new com.sw.ck.bpm.process.service.impl.ResourcePolicyServiceImpl(
-                policyMapper, rejectLogMapper, applicationContext, environment);
+                policyMapper, rejectLogMapper, applicationContext, environment, transactionManager);
     }
 
     @Bean

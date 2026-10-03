@@ -89,6 +89,12 @@ public interface BpmCommandQueue {
     Optional<CommandEnvelope> findById(Long commandId);
 
     /**
+     * 回写受理冻结的资源会计字段（准入在 enqueue 之后完成时调用；同一调用方事务，
+     * 拒绝路径随事务整体回滚，不留下无冻结字段的成功受理）。
+     */
+    void updateResourceFreeze(CommandEnvelope envelope);
+
+    /**
      * 分片续跑：命令本次消费按预算切片处理完毕但尚未终态，重新置回可领取
      * （PENDING、立即重领、不计失败重试、占用不变；领取权令牌失效）。
      * 调用后处理器须抛 {@link CommandContinuationSignal}，调度器不得再 complete/fail。

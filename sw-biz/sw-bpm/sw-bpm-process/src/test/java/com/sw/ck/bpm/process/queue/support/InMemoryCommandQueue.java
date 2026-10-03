@@ -30,6 +30,17 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
     private final AtomicLong idGen = new AtomicLong(1000);
 
     @Override
+    public void updateResourceFreeze(CommandEnvelope envelope) {
+        BpmCommand command = store.get(envelope.getCommandId());
+        if (command != null) {
+            command.setResourceClass(envelope.getResourceClass());
+            command.setResourceUnits(envelope.getResourceUnits());
+            command.setResourceSegment(envelope.getResourceSegment());
+            command.setPolicyVersion(envelope.getPolicyVersion());
+        }
+    }
+
+    @Override
     public boolean requeueForContinuation(Long commandId, String claimToken) {
         BpmCommand command = store.get(commandId);
         if (command == null || !CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())

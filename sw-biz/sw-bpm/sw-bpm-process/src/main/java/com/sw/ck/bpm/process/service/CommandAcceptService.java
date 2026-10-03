@@ -138,9 +138,17 @@ public class CommandAcceptService {
         envelope.setInitiatorId(loginUser.getUserId());
         envelope.setPayload(incomingPayload);
         envelope.setPayloadFingerprint(incomingFingerprint);
-        // 资源准入（P62 资源保障）：幂等回查之后、受理之前——同身份重放不重复占用额度；
-        // 超限拒绝抛出后本事务整体回滚，不留下可执行命令、业务写入或成功幂等占位。
-        // P0 通道=生产类（生产保留容量保护）；NORMAL=普通 OA 类。实时动作不占持久额度。
+        // 资源准入（P62 资源保障）置于 enqueue 之后：命令行 INSERT（唯一索引等待）发生在
+        // 持有任何 usage 行锁之前，断开「持 usage 锁等命令行索引」死锁环（RA02 修正）；
+        // 幂等回查已在前（重放不重复占用）；超限拒绝抛出后本事务整体回滚，命令行插入一并回滚，
+        // 不留下可执行命令、业务写入或成功幂等占位。P0=PROD；NORMAL=OA。实时动作不占持久额度。
+        try {
+            commandQueue.enqueue(envelope);
+        } catch (DuplicateKeyException e) {
+            return commandQueue.findByKey(loginUser.getTenantId(), commandKey)
+                    .map(env -> toResp(env, false))
+                    .orElseThrow(() -> e);
+        }
         ResourceAdmissionService.AdmissionTicket ticket = admissionService.admit(
                 loginUser.getTenantId(),
                 channel == CommandChannelEnum.P0
@@ -148,19 +156,14 @@ public class CommandAcceptService {
                         : com.sw.ck.bpm.process.entity.ResourceClassEnum.OA,
                 1, commandKey);
         if (ticket != null) {
+            // 冻结字段直接写已插入的命令行（同事务）；拒绝路径不会到达此处（异常即回滚）
             envelope.setResourceClass(channel == CommandChannelEnum.P0
                     ? com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode()
                     : com.sw.ck.bpm.process.entity.ResourceClassEnum.OA.getCode());
             envelope.setResourceUnits(1);
             envelope.setResourceSegment(ticket.segment());
             envelope.setPolicyVersion(ticket.policyVersion());
-        }
-        try {
-            commandQueue.enqueue(envelope);
-        } catch (DuplicateKeyException e) {
-            return commandQueue.findByKey(loginUser.getTenantId(), commandKey)
-                    .map(env -> toResp(env, false))
-                    .orElseThrow(() -> e);
+            commandQueue.updateResourceFreeze(envelope);
         }
         return toResp(envelope, true);
     }

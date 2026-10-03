@@ -95,9 +95,12 @@ public class ResourceAdmissionService {
             throw new BaseException(BpmErrorCode.RESOURCE_RATE_EXCEEDED);
         }
         ensureUsageRows(tenantId);
-        // 全序预锁（防死锁）：受理/释放/再占用/对账所有 usage 写路径按同一顺序获取行锁，
-        // 消除「受理持 usage 锁写命令行 vs 完成持命令行锁等 usage 锁」的交叉等待
-        lockUsageRowsInOrder(tenantId);
+        // 死锁防治（RA02 复算修正）：usage 行锁只覆盖本行原子条件 UPDATE（纳秒级持锁）；
+        // 全序预锁会把全部受理串行化在 5 行上（突发 100 次/s vs 受保护 10 次/s，PG 锁等待 12—16，
+        // 受保护 p99 尾尖 929ms）且持锁跨越后续命令行唯一索引等待，已移除。
+        // 防死锁契约=所有 usage 写路径（admit 补偿/release/reoccupy/对账 CAS）严格按
+        // segment→GLOBAL TOTAL→TENANT TOTAL 同序单行更新；调用方必须保证 admit 不在持有
+        // usage 行锁时等待命令行唯一索引（admit 置于 enqueue 之后，见各受理接缝）。
 
         String rejectScope = null;
         List<ResourceSegmentEnum> preference = ResourceSegmentEnum.preference(resourceClass);
@@ -141,7 +144,6 @@ public class ResourceAdmissionService {
             return;
         }
         ensureUsageRows(tenantId);
-        lockUsageRowsInOrder(tenantId);
         if (usageMapper.incrementWithinCap("GLOBAL", 0, segment, units, segmentCapacity(policy,
                 ResourceSegmentEnum.of(segment).orElse(ResourceSegmentEnum.SHARED))) != 1
                 || usageMapper.incrementWithinCap("GLOBAL", 0, "TOTAL", units,
@@ -160,7 +162,6 @@ public class ResourceAdmissionService {
         if (units <= 0) {
             return;
         }
-        lockUsageRowsInOrder(tenantId);
         usageMapper.decrement("GLOBAL", 0, segmentCode, units);
         usageMapper.decrement("GLOBAL", 0, "TOTAL", units);
         usageMapper.decrement("TENANT", tenantId, "TOTAL", units);
@@ -180,11 +181,6 @@ public class ResourceAdmissionService {
         } catch (org.springframework.dao.DuplicateKeyException alreadyExists) {
             // 计数行已存在：幂等返回
         }
-    }
-
-    /** 全序预锁：GLOBAL 行按 segment 字典序在前、租户行在后（与 Mapper ORDER BY 一致）。 */
-    private void lockUsageRowsInOrder(Long tenantId) {
-        usageMapper.lockInOrder(tenantId);
     }
 
     /** 当前生效策略（enabled + ACTIVE；全局唯一，供画像与测试回读）。 */

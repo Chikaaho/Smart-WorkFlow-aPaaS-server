@@ -363,6 +363,20 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     }
 
     @Override
+    public void updateResourceFreeze(CommandEnvelope envelope) {
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            commandService.lambdaUpdate()
+                    .eq(BpmCommand::getId, envelope.getCommandId())
+                    .set(BpmCommand::getResourceClass, blankToNull(envelope.getResourceClass()))
+                    .set(BpmCommand::getResourceUnits, envelope.getResourceUnits())
+                    .set(BpmCommand::getResourceSegment, blankToNull(envelope.getResourceSegment()))
+                    .set(BpmCommand::getPolicyVersion, envelope.getPolicyVersion())
+                    .update();
+        }
+    }
+
+    @Override
     public boolean requeueForContinuation(Long commandId, String claimToken) {
         // 分片续跑：不计失败重试、不清占用、立即重领；仅当前领取权可触发
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =

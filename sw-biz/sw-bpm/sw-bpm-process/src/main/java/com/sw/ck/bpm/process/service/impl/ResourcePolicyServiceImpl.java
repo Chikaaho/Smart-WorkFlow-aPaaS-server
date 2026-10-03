@@ -49,6 +49,8 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
     private final BpmResourceRejectLogMapper rejectLogMapper;
     private final ApplicationContext applicationContext;
     private final org.springframework.core.env.Environment environment;
+    /** 拒绝审计独立短事务：enable() 抛拒绝异常时主事务回滚，审计必须已提交留存。 */
+    private final org.springframework.transaction.support.TransactionTemplate rejectAuditTemplate;
 
     @Value("${flowable.async-executor-activate:false}")
     private boolean flowableAsyncActive;
@@ -69,11 +71,16 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
     public ResourcePolicyServiceImpl(BpmResourcePolicyMapper policyMapper,
                                      BpmResourceRejectLogMapper rejectLogMapper,
                                      ApplicationContext applicationContext,
-                                     org.springframework.core.env.Environment environment) {
+                                     org.springframework.core.env.Environment environment,
+                                     org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.policyMapper = policyMapper;
         this.rejectLogMapper = rejectLogMapper;
         this.applicationContext = applicationContext;
         this.environment = environment;
+        org.springframework.transaction.support.TransactionTemplate template =
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.rejectAuditTemplate = template;
     }
 
     @Override
@@ -302,15 +309,17 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
 
     private void rejectLog(Long id, BpmResourcePolicy policy, String scope, String detail) {
         try {
-            BpmResourceRejectLog entry = new BpmResourceRejectLog();
-            entry.setTenantId(0L);
-            entry.setPolicyVersion(policy.getPolicyVersion());
-            entry.setResourceClass(null);
-            entry.setRejectScope(scope);
-            entry.setRequestedUnits(0);
-            entry.setReasonCode(BpmErrorCode.RESOURCE_POLICY_INVALID.getErrorKey());
-            entry.setDetail("policyId=" + id + ": " + detail);
-            rejectLogMapper.insert(entry);
+            rejectAuditTemplate.executeWithoutResult(status -> {
+                BpmResourceRejectLog entry = new BpmResourceRejectLog();
+                entry.setTenantId(0L);
+                entry.setPolicyVersion(policy.getPolicyVersion());
+                entry.setResourceClass(null);
+                entry.setRejectScope(scope);
+                entry.setRequestedUnits(0);
+                entry.setReasonCode(BpmErrorCode.RESOURCE_POLICY_INVALID.getErrorKey());
+                entry.setDetail("policyId=" + id + ": " + detail);
+                rejectLogMapper.insert(entry);
+            });
         } catch (Exception e) {
             log.error("策略启用拒绝审计写入失败: policyId={}", id, e);
         }

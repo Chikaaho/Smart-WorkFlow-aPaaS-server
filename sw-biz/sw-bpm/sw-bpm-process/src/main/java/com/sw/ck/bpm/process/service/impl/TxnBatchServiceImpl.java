@@ -114,13 +114,6 @@ public class TxnBatchServiceImpl implements TxnBatchService {
                     "绑定动作未发布（当前状态 " + descriptor.status() + "）");
         }
 
-        // 资源准入（P62 资源保障）：批量按实际项数占额（每项 1 单位，整笔裁决；
-        // 不能以一批 500 项只占一个名额规避），拒绝即整笔受理失败
-        com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
-                admissionService.admit(operator.getTenantId(),
-                        com.sw.ck.bpm.process.entity.ResourceClassEnum.BULK,
-                        request.getItems().size(), "BATCH:" + request.getBatchKey());
-
         BpmCommandBatch batch = new BpmCommandBatch();
         batch.setBatchKey(request.getBatchKey());
         batch.setActionId(request.getActionId());
@@ -154,16 +147,25 @@ public class TxnBatchServiceImpl implements TxnBatchService {
         envelope.setInitiatorId(operator.getUserId());
         envelope.setTier("BULK");
         envelope.setCompletionPoint("BATCH_SETTLED");
+        envelope.setPayload("{\"batchId\":" + batch.getId()
+                + ",\"batchKey\":\"" + escape(request.getBatchKey()) + "\""
+                + ",\"actionId\":\"" + escape(request.getActionId()) + "\"}");
+        Long commandId = commandQueue.enqueue(envelope);
+
+        // 资源准入（P62 资源保障）：批量按实际项数占额（每项 1 单位，整笔裁决；
+        // 不能以一批 500 项只占一个名额规避），置于 enqueue 后断唯一索引等待环；
+        // 拒绝即整笔受理失败（异常回滚批次/项/命令行）
+        com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
+                admissionService.admit(operator.getTenantId(),
+                        com.sw.ck.bpm.process.entity.ResourceClassEnum.BULK,
+                        request.getItems().size(), "BATCH:" + request.getBatchKey());
         if (ticket != null) {
             envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.BULK.getCode());
             envelope.setResourceUnits(request.getItems().size());
             envelope.setResourceSegment(ticket.segment());
             envelope.setPolicyVersion(ticket.policyVersion());
+            commandQueue.updateResourceFreeze(envelope);
         }
-        envelope.setPayload("{\"batchId\":" + batch.getId()
-                + ",\"batchKey\":\"" + escape(request.getBatchKey()) + "\""
-                + ",\"actionId\":\"" + escape(request.getActionId()) + "\"}");
-        Long commandId = commandQueue.enqueue(envelope);
 
         batch.setCommandId(commandId);
         batchMapper.updateById(batch);

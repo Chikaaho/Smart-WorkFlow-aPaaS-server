@@ -115,16 +115,7 @@ class P62ResourceAssurancePgTest {
         Files.createDirectories(evidenceDir);
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        app = newBoot(pgUrl, Map.of(
-                "spring.datasource.dynamic.druid.initial-size", "10",
-                "spring.datasource.dynamic.druid.min-idle", "10",
-                "spring.datasource.dynamic.druid.max-active", "64",
-                "spring.datasource.dynamic.druid.max-wait", "10000",
-                "flowable.async-executor-activate", "true",
-                "flowable.process.async.executor.core-pool-size", "8",
-                "flowable.process.async.executor.max-pool-size", "8",
-                "sw.bpm.txn-batch.enabled", "true",
-                "sw.security.debug-auth.enabled", "true"));
+        app = newBoot(pgUrl, contractProps());
         jdbc = app.getBean(JdbcTemplate.class);
         port = Integer.parseInt(app.getEnvironment().getProperty("local.server.port"));
         seedTenant(0L, 91999L, "p62_ra_t0");
@@ -134,6 +125,26 @@ class P62ResourceAssurancePgTest {
         writeEnvFrozen();
         System.out.println("[P62-EV] resource-assurance boot ok pgPort=" + pg.getPort()
                 + " httpPort=" + port + " runId=" + runId);
+    }
+
+    /** 合同配置（RA01：dispatcher 100ms/批50、池64、异步ON×8 显式生效，画像/env-frozen 读生效值）。 */
+    public static Map<String, String> contractProps() {
+        Map<String, String> props = new LinkedHashMap<>();
+        props.put("spring.datasource.dynamic.druid.initial-size", "10");
+        props.put("spring.datasource.dynamic.druid.min-idle", "10");
+        props.put("spring.datasource.dynamic.druid.max-active", "64");
+        props.put("spring.datasource.dynamic.druid.max-wait", "10000");
+        props.put("flowable.async-executor-activate", "true");
+        props.put("flowable.process.async.executor.core-pool-size", "8");
+        props.put("flowable.process.async.executor.max-pool-size", "8");
+        props.put("sw.bpm.txn-batch.enabled", "true");
+        props.put("sw.security.debug-auth.enabled", "true");
+        props.put("sw.bpm.command.poll-interval-millis", "100");
+        props.put("sw.bpm.command.p0-poll-interval-millis", "100");
+        props.put("sw.bpm.command.batch-size", "50");
+        props.put("sw.bpm.command.p0-batch-size", "50");
+        props.put("sw.bpm.command.stale-seconds", "60");
+        return props;
     }
 
     private ConfigurableApplicationContext newBoot(String pgUrl, Map<String, String> overrides) {
@@ -321,6 +332,77 @@ class P62ResourceAssurancePgTest {
         sampler.setDaemon(true);
         sampler.start();
 
+        // RA02 资源采样（1s）：Druid 活跃/等待线程、PG 锁等待、进程 CPU、受保护路径慢样本数——
+        // 尾尖归因必须有连接/锁/CPU 证据（复核 RA02）
+        StringBuilder resCsv = new StringBuilder(
+                "ts,pool_active,pool_wait_thread,pool_wait_millis_max,pg_lock_waits,proc_cpu,slow_rt_10s\n");
+        Thread resSampler = new Thread(() -> {
+            long lastSlow = 0;
+            while (sampling.get()) {
+                try {
+                    Object poolActive = null;
+                    Object poolWaitThread = null;
+                    Object poolWaitMax = null;
+                    for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class)
+                            .stream().toList()) {
+                        java.util.List<Object> candidates = new ArrayList<>();
+                        if (ds.getClass().getSimpleName().contains("DynamicRouting")) {
+                            Object map = ds.getClass().getMethod("getDataSources").invoke(ds);
+                            if (map instanceof java.util.Map<?, ?> m) {
+                                candidates.addAll(m.values());
+                            }
+                        } else {
+                            candidates.add(ds);
+                        }
+                        for (Object c : candidates) {
+                            Object cur = c;
+                            for (int d = 0; cur != null && d < 6; d++) {
+                                if (cur.getClass().getSimpleName().contains("Druid")) {
+                                    poolActive = cur.getClass().getMethod("getActiveCount").invoke(cur);
+                                    poolWaitThread =
+                                            cur.getClass().getMethod("getWaitThreadCount").invoke(cur);
+                                    poolWaitMax = cur.getClass().getMethod("getMaxWait").invoke(cur);
+                                    break;
+                                }
+                                cur = unwrapField(cur, "realDataSource");
+                            }
+                            if (poolActive != null) {
+                                break;
+                            }
+                        }
+                        if (poolActive != null) {
+                            break;
+                        }
+                    }
+                    Long lockWaits = jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type='Lock'", Long.class);
+                    double cpu = ((java.lang.management.OperatingSystemMXBean)
+                            java.lang.management.ManagementFactory.getOperatingSystemMXBean())
+                            .getSystemLoadAverage();
+                    resCsv.append(LocalDateTime.now().format(TS)).append(',')
+                            .append(poolActive).append(',').append(poolWaitThread).append(',')
+                            .append(poolWaitMax).append(',').append(lockWaits).append(',')
+                            .append(String.format(Locale.ROOT, "%.2f", cpu)).append(',').append('\n');
+                } catch (Exception e) {
+                    resCsv.append("sample-error\n");
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            try {
+                writeNew(evidenceDir.resolve("resource-samples.csv"), out ->
+                        out.write(resCsv.toString().getBytes(StandardCharsets.UTF_8)));
+            } catch (Exception e) {
+                System.out.println("[P62-EV] resource csv write failed: " + e);
+            }
+        }, "p62-res-sampler");
+        resSampler.setDaemon(true);
+        resSampler.start();
+
         AtomicBoolean running = new AtomicBoolean(true);
         List<Thread> workers = new ArrayList<>();
         SampleCollector protectedRealtime = new SampleCollector("protected-realtime-samples.csv.gz");
@@ -403,6 +485,7 @@ class P62ResourceAssurancePgTest {
         }
         sampling.set(false);
         sampler.join(10_000);
+        resSampler.join(10_000);
         protectedRealtime.finish();
         protectedLight.finish();
         oaRead.finish();
@@ -497,15 +580,7 @@ class P62ResourceAssurancePgTest {
         // 实例中断（本应用上下文关闭；PG 持久事实保留）→ 新实例接管
         app.close();
         app = newBoot("jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified",
-                Map.of("spring.datasource.dynamic.druid.initial-size", "10",
-                        "spring.datasource.dynamic.druid.min-idle", "10",
-                        "spring.datasource.dynamic.druid.max-active", "64",
-                        "spring.datasource.dynamic.druid.max-wait", "10000",
-                        "flowable.async-executor-activate", "true",
-                        "flowable.process.async.executor.core-pool-size", "8",
-                        "flowable.process.async.executor.max-pool-size", "8",
-                        "sw.bpm.txn-batch.enabled", "true",
-                        "sw.security.debug-auth.enabled", "true"));
+                contractProps());
         jdbc = app.getBean(JdbcTemplate.class);
         port = Integer.parseInt(app.getEnvironment().getProperty("local.server.port"));
 
@@ -734,8 +809,16 @@ class P62ResourceAssurancePgTest {
         }
 
         void offer(String ts, double latency, String outcome) {
+            // ts=完成时刻（采样口径）；发起时刻=完成时刻-latency，CSV 双列落盘供复核复算
+            String start;
+            try {
+                start = LocalDateTime.parse(ts, TS).minusNanos((long) (latency * 1_000_000))
+                        .format(TS);
+            } catch (Exception e) {
+                start = "-";
+            }
             synchronized (lock) {
-                rows.add(new String[]{ts, String.format(Locale.ROOT, "%.1f", latency), outcome});
+                rows.add(new String[]{ts, start, String.format(Locale.ROOT, "%.1f", latency), outcome});
             }
         }
 
@@ -760,8 +843,8 @@ class P62ResourceAssurancePgTest {
             synchronized (lock) {
                 List<Double> list = new ArrayList<>();
                 for (String[] row : rows) {
-                    if (inFormal(row) && outcomeMatch.test(row[2])) {
-                        list.add(Double.parseDouble(row[1]));
+                    if (inFormal(row) && outcomeMatch.test(row[3])) {
+                        list.add(Double.parseDouble(row[2]));
                     }
                 }
                 list.sort(Double::compare);
@@ -771,13 +854,13 @@ class P62ResourceAssurancePgTest {
 
         long outcomeCount(java.util.function.Predicate<String> match) {
             synchronized (lock) {
-                return rows.stream().filter(r -> inFormal(r) && match.test(r[2])).count();
+                return rows.stream().filter(r -> inFormal(r) && match.test(r[3])).count();
             }
         }
 
         long failureCount(String legalOutcome) {
             synchronized (lock) {
-                return rows.stream().filter(r -> inFormal(r) && !legalOutcome.equals(r[2])).count();
+                return rows.stream().filter(r -> inFormal(r) && !legalOutcome.equals(r[3])).count();
             }
         }
 
@@ -785,18 +868,26 @@ class P62ResourceAssurancePgTest {
             synchronized (lock) {
                 Map<String, Long> histogram = new LinkedHashMap<>();
                 for (String[] row : rows) {
-                    histogram.merge(row[2], 1L, Long::sum);
+                    histogram.merge(row[3], 1L, Long::sum);
                 }
                 return histogram;
             }
         }
 
+        /** 全部样本行（诊断分桶用）。 */
+        java.util.List<String[]> allRows() {
+            synchronized (lock) {
+                return new ArrayList<>(rows);
+            }
+        }
+
         void finish() throws Exception {
             Map<String, Long> histogram = outcomeHistogram();
-            StringBuilder csv = new StringBuilder("ts,latency_ms,outcome\n");
+            StringBuilder csv = new StringBuilder("ts_end,ts_start,latency_ms,outcome\n");
             synchronized (lock) {
                 for (String[] row : rows) {
-                    csv.append(row[0]).append(',').append(row[1]).append(',').append(row[2]).append('\n');
+                    csv.append(row[0]).append(',').append(row[1]).append(',')
+                            .append(row[2]).append(',').append(row[3]).append('\n');
                 }
             }
             writeNew(evidenceDir.resolve(name), out ->
@@ -1196,19 +1287,38 @@ class P62ResourceAssurancePgTest {
     }
 
     private void writeEnvFrozen() throws Exception {
+        // RA01：dynamic-datasource 包裹（DynamicRouting→ItemDataSource→Druid）需先 getDataSources()
+        // 展开；取值失败必须抛错而非记 0（不凭 0 判池不存在）
         long druidMax = 0;
         for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class).stream().toList()) {
-            Object cur = ds;
-            for (int depth = 0; cur != null && depth < 6; depth++) {
-                if (cur instanceof com.alibaba.druid.pool.DruidDataSource druid) {
-                    druidMax = druid.getMaxActive();
+            java.util.List<Object> candidates = new ArrayList<>();
+            if (ds.getClass().getSimpleName().contains("DynamicRouting")) {
+                Object map = ds.getClass().getMethod("getDataSources").invoke(ds);
+                if (map instanceof java.util.Map<?, ?> m) {
+                    candidates.addAll(m.values());
+                }
+            } else {
+                candidates.add(ds);
+            }
+            for (Object candidate : candidates) {
+                Object cur = candidate;
+                for (int depth = 0; cur != null && depth < 6; depth++) {
+                    if (cur.getClass().getSimpleName().contains("Druid")) {
+                        druidMax = ((Number) cur.getClass().getMethod("getMaxActive").invoke(cur)).longValue();
+                        break;
+                    }
+                    cur = unwrapField(cur, "realDataSource");
+                }
+                if (druidMax > 0) {
                     break;
                 }
-                cur = unwrapField(cur, "realDataSource");
             }
             if (druidMax > 0) {
                 break;
             }
+        }
+        if (druidMax <= 0) {
+            throw new IllegalStateException("Druid 实际池上限读取失败（RA01：取值失败须显式失败，不得记 0）");
         }
         StringBuilder sb = new StringBuilder();
         sb.append("runId=").append(runId).append('\n');
@@ -1220,10 +1330,14 @@ class P62ResourceAssurancePgTest {
         sb.append("buildCommit=").append(System.getProperty("p62.build.commit", "")).append('\n');
         sb.append("pgVersion=").append(jdbc.queryForObject("SELECT version()", String.class)).append('\n');
         sb.append("druidMaxActive(actual)=").append(druidMax).append('\n');
-        sb.append("dispatcherPollMillis=").append(app.getEnvironment()
-                .getProperty("sw.bpm.command.poll-interval-millis")).append('\n');
-        sb.append("dispatcherBatchSize=").append(app.getEnvironment()
-                .getProperty("sw.bpm.command.batch-size")).append('\n');
+        Object poll = app.getEnvironment().getProperty("sw.bpm.command.poll-interval-millis");
+        Object batch = app.getEnvironment().getProperty("sw.bpm.command.batch-size");
+        if (poll == null || batch == null) {
+            throw new IllegalStateException("dispatcher 合同配置未生效（poll=" + poll + ", batch=" + batch
+                    + "）：RA01 要求 env-frozen 记录生效值而非 null");
+        }
+        sb.append("dispatcherPollMillis=").append(poll).append('\n');
+        sb.append("dispatcherBatchSize=").append(batch).append('\n');
         sb.append("flowableAsyncCorePool=").append(app.getEnvironment()
                 .getProperty("flowable.process.async.executor.core-pool-size")).append('\n');
         sb.append("policyContract=global2000/tenant800/prod400/oa400/shared1200/rate50/burst500/rt16/rt8\n");

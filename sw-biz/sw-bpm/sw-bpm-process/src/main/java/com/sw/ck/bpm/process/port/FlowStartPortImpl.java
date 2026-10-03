@@ -77,24 +77,26 @@ public class FlowStartPortImpl implements FlowStartPort {
         envelope.setTenantId(event.getTenantId());
         envelope.setInitiatorId(Long.valueOf(event.getSubmitter()));
         envelope.setPayload(toPayload(event, resolvedProcessDefKey));
-        // 资源准入（P62 资源保障）：流程发起=生产类持久工作，1 单位；幂等回查经
-        // DuplicateKeyException 分支承载（重放回查原受理，不重复占用）。
-        // 完成点受理冻结：轻流程=TARGET_ACTION_DONE（目标完成才释放）；普通流程=FLOW_STARTED。
+        // 资源准入置于 enqueue 之后（RA02：断「持 usage 锁等命令行唯一索引」死锁环）；
+        // 拒绝异常即整笔回滚（含命令行）。完成点受理冻结：轻流程=TARGET_ACTION_DONE；
+        // 普通流程=FLOW_STARTED。
         boolean light = lightProcessClassifier.isLightProcess(event.getTenantId(), resolvedProcessDefKey);
         envelope.setCompletionPoint(light
                 ? com.sw.ck.bpm.process.service.ResourceReleaseService.COMPLETION_POINT_TARGET_DONE
                 : "FLOW_STARTED");
-        com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
-                admissionService.admit(event.getTenantId(),
-                        com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, 1, commandKey);
-        if (ticket != null) {
-            envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode());
-            envelope.setResourceUnits(1);
-            envelope.setResourceSegment(ticket.segment());
-            envelope.setPolicyVersion(ticket.policyVersion());
-        }
         try {
-            return Optional.of(commandQueue.enqueue(envelope));
+            Optional<Long> accepted = Optional.of(commandQueue.enqueue(envelope));
+            com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
+                    admissionService.admit(event.getTenantId(),
+                            com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, 1, commandKey);
+            if (ticket != null) {
+                envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode());
+                envelope.setResourceUnits(1);
+                envelope.setResourceSegment(ticket.segment());
+                envelope.setPolicyVersion(ticket.policyVersion());
+                commandQueue.updateResourceFreeze(envelope);
+            }
+            return accepted;
         } catch (DuplicateKeyException e) {
             // 幂等：同一提交意图的重复受理返回同一结果；并发未提交可见时无法回查受理标识，
             // 此时受理事实已由并发方持久化，本次按 no-op 返回（不得伪造标识）。
