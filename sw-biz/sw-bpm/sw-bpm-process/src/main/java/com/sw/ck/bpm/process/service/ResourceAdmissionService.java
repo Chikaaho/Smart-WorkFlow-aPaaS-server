@@ -139,17 +139,7 @@ public class ResourceAdmissionService {
     private AdmissionTicket tryOccupy(Long tenantId, ResourceClassEnum resourceClass, int units,
                                       BpmResourcePolicy policy, String[] rejectScope) {
         List<ResourceSegmentEnum> preference = ResourceSegmentEnum.preference(resourceClass);
-        boolean fallbackPreLocked = false;
-        for (int index = 0; index < preference.size(); index++) {
-            ResourceSegmentEnum segment = preference.get(index);
-            if (index > 0 && !fallbackPreLocked) {
-                // 回退到保留段前先按规范序取锁（PROD_RESERVED→OA_RESERVED）：各类别的首选段
-                // 交叉（PROD 先生产保留 / OA 先 OA 保留）会在共享段饱和时形成环，死锁由 PG 中止
-                // 一方事务并放大为受保护请求 500；规范序预锁使所有受理在备用段上同序等待。
-                fallbackPreLocked = true;
-                usageMapper.lockRow("GLOBAL", 0, ResourceSegmentEnum.PROD_RESERVED.getCode());
-                usageMapper.lockRow("GLOBAL", 0, ResourceSegmentEnum.OA_RESERVED.getCode());
-            }
+        for (ResourceSegmentEnum segment : preference) {
             long segmentCap = segmentCapacity(policy, segment);
             if (usageMapper.incrementWithinCap("GLOBAL", 0, segment.getCode(), units, segmentCap) != 1) {
                 rejectScope[0] = rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0];
