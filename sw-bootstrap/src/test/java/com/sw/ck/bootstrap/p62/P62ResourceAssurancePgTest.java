@@ -122,7 +122,10 @@ class P62ResourceAssurancePgTest {
         }
         evidenceDir = Path.of(dir);
         Files.createDirectories(evidenceDir);
-        pg = EmbeddedPostgres.builder().start();
+        // 死锁取证：错误级语句进 PG 日志（并发缺陷定位需要冲突双方语句，只有错误码不足以归因）
+        pg = EmbeddedPostgres.builder()
+                .setServerConfig("log_min_error_statement", "log")
+                .start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
         app = newBoot(pgUrl, contractProps());
         jdbc = app.getBean(JdbcTemplate.class);
@@ -759,12 +762,12 @@ class P62ResourceAssurancePgTest {
             csv.append("batch,").append(trace.tenant()).append(',').append(trace.batchKey())
                     .append(',').append(trace.outcome()).append(',').append("BATCH:").append(trace.batchKey())
                     .append(',').append(cmd == null ? "NO_COMMAND(拒绝整笔回滚)" : str(cmd.get("status")))
-                    .append(',').append(str(cmd.get("create_time"))).append(',')
-                    .append(str(cmd.get("claimed_at"))).append(',').append(str(cmd.get("finished_at")))
-                    .append(',').append(str(cmd.get("resource_class"))).append(',')
-                    .append(str(cmd.get("resource_segment"))).append(',')
-                    .append(str(cmd.get("resource_units"))).append(',')
-                    .append(str(cmd.get("resource_released_at"))).append(',')
+                    .append(',').append(field(cmd, "create_time")).append(',')
+                    .append(field(cmd, "claimed_at")).append(',').append(field(cmd, "finished_at"))
+                    .append(',').append(field(cmd, "resource_class")).append(',')
+                    .append(field(cmd, "resource_segment")).append(',')
+                    .append(field(cmd, "resource_units")).append(',')
+                    .append(field(cmd, "resource_released_at")).append(',')
                     .append(millisBetween(cmd == null ? null : cmd.get("create_time"),
                             cmd == null ? null : cmd.get("claimed_at"))).append(',')
                     .append(millisBetween(cmd == null ? null : cmd.get("create_time"),
@@ -830,6 +833,11 @@ class P62ResourceAssurancePgTest {
 
     private static String str(Object value) {
         return value == null ? "-" : String.valueOf(value).replace('\n', ' ');
+    }
+
+    /** 行缺失（拒绝整笔回滚/无命令行）时的安全取列。 */
+    private static String field(Map<String, Object> row, String column) {
+        return row == null ? "-" : str(row.get(column));
     }
 
     private static Long millisBetween(Object from, Object to) {
