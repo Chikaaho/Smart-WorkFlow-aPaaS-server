@@ -136,7 +136,7 @@ class P62ResourceAssurancePgTest {
                 .setServerConfig("log_filename", "pg-server-%Y%m%d.log")
                 .setServerConfig("log_rotation_age", "0")
                 .setServerConfig("log_rotation_size", "0")
-                .setServerConfig("log_min_messages", "error")
+                .setServerConfig("log_min_messages", "info")
                 .setServerConfig("log_min_error_statement", "log")
                 .setServerConfig("log_error_verbosity", "verbose")
                 .setServerConfig("log_line_prefix", "%n|%p|%x|%a|")
