@@ -70,6 +70,11 @@ public class CommandDispatcher {
 
     private ScheduledExecutorService scheduler;
 
+    @Value("${sw.bpm.command.dispatch-workers:3}")
+    private int dispatchWorkers;
+
+    private java.util.concurrent.ExecutorService dispatchPool;
+
     /**
      * Spring 生产构造器：消费前通过正式身份 SPI 回查最新权限，避免受理时快照绕过撤权。
      */
@@ -101,6 +106,15 @@ public class CommandDispatcher {
     public void start() {
         scheduler = Executors.newScheduledThreadPool(2, runnable -> {
             Thread thread = new Thread(runnable, "bpm-command-dispatcher");
+            thread.setDaemon(true);
+            return thread;
+        });
+        // 领取与消费解耦（RA02b2 公平等待）：单线程串行消费时一次轮询 50 条的处理器耗时
+        // 串行累加（实测 p50 21ms/p99 321ms），高峰把轮询间隔拉长到数十秒，普通命令领取
+        // 等待超合同上界（普通OA≤5s）。执行并发默认 3（sw.bpm.command.dispatch-workers），
+        // 领取节奏/批量不变（100ms/批50=合同画像），批量限额与租户切片公平仍在领取侧生效。
+        dispatchPool = Executors.newFixedThreadPool(Math.max(1, dispatchWorkers), runnable -> {
+            Thread thread = new Thread(runnable, "bpm-command-worker");
             thread.setDaemon(true);
             return thread;
         });
@@ -147,8 +161,28 @@ public class CommandDispatcher {
 
     private void dispatchLane(CommandChannelEnum channel, int limit) {
         commandQueue.reclaimStale(LocalDateTime.now().minusSeconds(staleSeconds));
-        for (CommandEnvelope envelope : commandQueue.claimDue(List.of(channel), limit)) {
-            dispatchOne(envelope);
+        java.util.List<CommandEnvelope> claimed = commandQueue.claimDue(List.of(channel), limit);
+        if (claimed.isEmpty()) {
+            return;
+        }
+        if (dispatchPool == null || claimed.size() == 1) {
+            claimed.forEach(this::dispatchOne);
+            return;
+        }
+        java.util.List<java.util.concurrent.Future<?>> futures =
+                new java.util.ArrayList<>(claimed.size());
+        for (CommandEnvelope envelope : claimed) {
+            futures.add(dispatchPool.submit(() -> dispatchOne(envelope)));
+        }
+        for (java.util.concurrent.Future<?> future : futures) {
+            try {
+                future.get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                log.error("命令并行消费异常: {}", String.valueOf(e.getCause()), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
