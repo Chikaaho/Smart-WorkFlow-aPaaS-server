@@ -122,9 +122,28 @@ class P62ResourceAssurancePgTest {
         }
         evidenceDir = Path.of(dir);
         Files.createDirectories(evidenceDir);
-        // 死锁取证：错误级语句进 PG 日志（并发缺陷定位需要冲突双方语句，只有错误码不足以归因）
+        // 死锁取证：错误级语句进 PG 日志，且 PG 服务端 stderr 重定向到证据目录——
+        // JVM 侧只拿到 DETAIL 的 pid/事务/元组（环形状），拿不到各参与事务实际执行的语句；
+        // log_error_verbosity=verbose 使死锁报告携带每个进程的语句（Process <pid>: ...），
+        // log_line_prefix 带 pid+xid+application_name，用于把服务端语句映回冲突环。
+        // 注意：pg_ctl 起的 postmaster 不继承 JVM stdio（重定向只能收 pg_ctl 输出），
+        // 服务端日志必须用 logging_collector 落盘到证据目录。
         pg = EmbeddedPostgres.builder()
+                .setServerConfig("logging_collector", "on")
+                .setServerConfig("log_directory", evidenceDir.toAbsolutePath().toString())
+                .setServerConfig("log_filename", "pg-server-%Y%m%d.log")
+                .setServerConfig("log_rotation_age", "0")
+                .setServerConfig("log_rotation_size", "0")
+                .setServerConfig("log_min_messages", "error")
                 .setServerConfig("log_min_error_statement", "log")
+                .setServerConfig("log_error_verbosity", "verbose")
+                .setServerConfig("log_line_prefix", "%n|%p|%x|%a|")
+                .setServerConfig("log_lock_waits", "on")
+                .setServerConfig("deadlock_timeout", "1s")
+                .setErrorRedirector(java.lang.ProcessBuilder.Redirect.appendTo(
+                        evidenceDir.resolve("pg-server-ctl.log").toFile()))
+                .setOutputRedirector(java.lang.ProcessBuilder.Redirect.appendTo(
+                        evidenceDir.resolve("pg-server-ctl-out.log").toFile()))
                 .start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
         app = newBoot(pgUrl, contractProps());
@@ -1560,6 +1579,255 @@ class P62ResourceAssurancePgTest {
                 .append('\n');
         writeEvidence("batch-accounting.txt", ev.toString());
         System.out.println("[P62-EV] batch per-item accounting ok");
+    }
+
+    // ==================== RA02a1：借用段阻塞环（确定性交叉） ====================
+
+    /**
+     * 环事实（证据 ra02a1-deadlock/old-ring-fragment.txt）：旧正式轮四进程环
+     * 94489→94490→94497→94594→94489，受害语句为 BpmResourceUsageMapper.incrementWithinCap；
+     * 三个 usage 行被交叉持有/等待。本方法用真实受理 API + 两个外部持锁事务确定性构造同一交叉：
+     * PROD 持有自己的 PROD_RESERVED 等对方 OA_RESERVED、OA 持有 OA_RESERVED 等对方 PROD_RESERVED。
+     * 合同「借用只在段空闲时发生，需求返回时停止新增借用」要求借用尝试不得等待对方保留段：
+     * 修复前两笔受理互等成环（PG 40P01 中止一方），修复后借用探测跳过、两笔整洁拒绝。
+     * 断言在完整时间线（含 PG 服务端日志）收集之后执行，保证先取证后判定。
+     */
+    @Test
+    @DisplayName("RA02a1 借用段不得阻塞等待：对方保留段被在途事务持有时跳过（确定性交叉）")
+    void borrowSegmentContentionDoesNotDeadlock() throws Exception {
+        ensureActivePolicy();
+        StringBuilder ev = new StringBuilder();
+        ev.append("scenario=段回退借用交叉（PROD 借用 OA_RESERVED ↔ OA 借用 PROD_RESERVED）\n")
+                .append("caps=shared1200/prodReserved400/oaReserved400；SHARED 置满（首次尝试不取锁即失败），")
+                .append("保留段 399（留 1 单位使条件更新在快照上通过并进入行锁等待），")
+                .append("TOTAL/TENANT 清零以排除总量拒绝\n")
+                .append("机制=外部事务各 +1 至上限并保持未提交（受理排队在行锁上）→提交后 EPQ 复核转为超限，")
+                .append("失败的段尝试仍保留元组锁（旧环的持锁机制），随即回退到对方保留段（借用）\n");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 1200"
+                + " WHERE scope = 'GLOBAL' AND segment = 'SHARED'");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 399"
+                + " WHERE scope = 'GLOBAL' AND segment = 'PROD_RESERVED'");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 399"
+                + " WHERE scope = 'GLOBAL' AND segment = 'OA_RESERVED'");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 0"
+                + " WHERE scope = 'GLOBAL' AND segment = 'TOTAL'");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 0 WHERE scope = 'TENANT'");
+        long auditsBefore = countQuotaSegmentAudits();
+
+        javax.sql.DataSource ds = jdbc.getDataSource();
+        // 本类手工构建上下文（无 SpringExtension），@Autowired 字段不注入：显式取 bean
+        var admission = app.getBean(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+        var txTemplate = new org.springframework.transaction.support.TransactionTemplate(
+                app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        java.util.concurrent.atomic.AtomicReference<String> prodResult = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> oaResult = new java.util.concurrent.atomic.AtomicReference<>();
+        long t0 = System.currentTimeMillis();
+        java.sql.Connection holdProd = ds.getConnection();
+        java.sql.Connection holdOa = ds.getConnection();
+        Thread prod = new Thread(() -> prodResult.set(admitOutcome(admission, txTemplate, 0L,
+                com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, "RA02A1-PROD-" + runId)));
+        Thread oa = new Thread(() -> oaResult.set(admitOutcome(admission, txTemplate, 0L,
+                com.sw.ck.bpm.process.entity.ResourceClassEnum.OA, "RA02A1-OA-" + runId)));
+        boolean oaFinishedWhileBorrowHeld = false;
+        try {
+            holdProd.setAutoCommit(false);
+            holdOa.setAutoCommit(false);
+            holdProd.createStatement().executeUpdate("UPDATE sw_bpm_resource_usage SET outstanding = outstanding + 1,"
+                    + " version = version + 1 WHERE scope = 'GLOBAL' AND segment = 'PROD_RESERVED'");
+            holdOa.createStatement().executeUpdate("UPDATE sw_bpm_resource_usage SET outstanding = outstanding + 1,"
+                    + " version = version + 1 WHERE scope = 'GLOBAL' AND segment = 'OA_RESERVED'");
+            ev.append("t0(+").append(System.currentTimeMillis() - t0)
+                    .append("ms) 外部事务分别持 PROD_RESERVED / OA_RESERVED 行锁\n");
+
+            prod.start();
+            String prodWait = awaitUsageLockWaitsQuietly(1, 10_000L);
+            ev.append("t1(+").append(System.currentTimeMillis() - t0)
+                    .append("ms) PROD 受理阻塞在自有段 PROD_RESERVED（自有段允许等待）wait=")
+                    .append(prodWait).append('\n');
+
+            oa.start();
+            String oaWait = awaitUsageLockWaitsQuietly(2, 10_000L);
+            ev.append("t2(+").append(System.currentTimeMillis() - t0)
+                    .append("ms) OA 受理阻塞在自有段 OA_RESERVED（自有段允许等待）wait=")
+                    .append(oaWait).append('\n');
+
+            holdOa.commit();
+            long oaDeadline = System.currentTimeMillis() + 5_000L;
+            while (oaResult.get() == null && System.currentTimeMillis() < oaDeadline) {
+                Thread.sleep(50);
+            }
+            oaFinishedWhileBorrowHeld = oaResult.get() != null;
+            ev.append("t3(+").append(System.currentTimeMillis() - t0)
+                    .append("ms) 提交 OA_RESERVED 的 +1（对方段仍被持有）：OA ")
+                    .append(oaFinishedWhileBorrowHeld ? "已完成（借用探测未等待）" : "未完成（借用等待被持有段）")
+                    .append(" oaResult=").append(oaResult.get()).append('\n');
+
+            holdProd.commit();
+            prod.join(30_000L);
+            oa.join(30_000L);
+            ev.append("t4(+").append(System.currentTimeMillis() - t0)
+                    .append("ms) 提交 PROD_RESERVED 的 +1：prodResult=").append(prodResult.get())
+                    .append(" oaResult=").append(oaResult.get()).append('\n');
+        } finally {
+            try {
+                holdProd.rollback();
+            } catch (Exception ignored) {
+                // 已释放
+            }
+            try {
+                holdOa.rollback();
+            } catch (Exception ignored) {
+                // 已释放
+            }
+            holdProd.close();
+            holdOa.close();
+            prod.join(5_000L);
+            oa.join(5_000L);
+        }
+
+        // ---- 阶段B：TOTAL 已满时不得跨类别借用（旧环成环路径：TOTAL 失败后仍回退并等待对方段） ----
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 1200"
+                + " WHERE scope = 'GLOBAL' AND segment = 'SHARED'");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 399"
+                + " WHERE scope = 'GLOBAL' AND segment = 'PROD_RESERVED'");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 399"
+                + " WHERE scope = 'GLOBAL' AND segment = 'OA_RESERVED'");
+        jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 2000"
+                + " WHERE scope = 'GLOBAL' AND segment = 'TOTAL'");
+        java.sql.Connection holdOa2 = ds.getConnection();
+        java.util.concurrent.atomic.AtomicReference<String> prodTFull = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread prod2 = new Thread(() -> prodTFull.set(admitOutcome(admission, txTemplate, 0L,
+                com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, "RA02A1-TFULL-" + runId)));
+        boolean tfailNoHop = false;
+        long b0 = System.currentTimeMillis();
+        try {
+            holdOa2.setAutoCommit(false);
+            holdOa2.createStatement().executeUpdate("UPDATE sw_bpm_resource_usage SET version = version"
+                    + " WHERE scope = 'GLOBAL' AND segment = 'OA_RESERVED'");
+            prod2.start();
+            long bDeadline = System.currentTimeMillis() + 5_000L;
+            while (prodTFull.get() == null && System.currentTimeMillis() < bDeadline) {
+                Thread.sleep(50);
+            }
+            tfailNoHop = prodTFull.get() != null;
+            ev.append("phaseB t(+").append(System.currentTimeMillis() - b0)
+                    .append("ms) 本段有余量、TOTAL 已满且 OA_RESERVED 被持有：PROD ")
+                    .append(tfailNoHop ? "已完成（TOTAL 失败未跨类别借用）" : "未完成（TOTAL 失败后仍借用等待）")
+                    .append(" result=").append(prodTFull.get()).append('\n');
+            holdOa2.rollback();
+            prod2.join(30_000L);
+            ev.append("phaseB after release: result=").append(prodTFull.get()).append('\n');
+        } finally {
+            try {
+                holdOa2.rollback();
+            } catch (Exception ignored) {
+                // 已释放
+            }
+            holdOa2.close();
+            prod2.join(5_000L);
+        }
+        long rejectedAudits = countQuotaSegmentAudits() - auditsBefore;
+        String pgLog = readPgServerLog();
+        int deadlockMarkers = countOccurrences(pgLog, "deadlock detected") + countOccurrences(pgLog, "死锁");
+        ev.append("auditRowsDelta(QUOTA_SEGMENT/TOTAL)=").append(rejectedAudits)
+                .append("\npgServerLogDeadlockMarkers=").append(deadlockMarkers)
+                .append("（PG 服务端语句/环见 pg-server-*.log）\n");
+        writeEvidence("borrow-contention.txt", ev.toString());
+        System.out.println("[P62-EV] borrow segment contention: " + ev);
+
+        assertThat(oaFinishedWhileBorrowHeld)
+                .as("借用对方保留段不得等待（合同：借用只在段空闲时发生）").isTrue();
+        assertThat(tfailNoHop)
+                .as("TOTAL 失败不得跨类别借用等待（旧环成环路径）").isTrue();
+        assertThat(prodResult.get()).as("PROD 整洁拒绝").contains("REJECTED").doesNotContain("Deadlock");
+        assertThat(oaResult.get()).as("OA 整洁拒绝").contains("REJECTED").doesNotContain("Deadlock");
+        assertThat(prodTFull.get()).as("TOTAL 满时整洁拒绝").contains("REJECTED").doesNotContain("Deadlock");
+        assertThat(rejectedAudits).as("三笔拒绝均有 QUOTA_* 审计").isEqualTo(3L);
+        assertThat(deadlockMarkers).as("本 run PG 服务端日志不得出现死锁").isZero();
+    }
+
+    private long countQuotaSegmentAudits() {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM sw_bpm_resource_reject_log"
+                + " WHERE reject_scope IN ('QUOTA_SEGMENT','QUOTA_TOTAL')", Long.class);
+        return count == null ? 0 : count;
+    }
+
+    /** 读取 PG 服务端日志（logging_collector 落盘；文件名含日期，按通配聚合）。 */
+    private String readPgServerLog() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        try (var stream = Files.newDirectoryStream(evidenceDir, "pg-server-*.log")) {
+            for (Path file : stream) {
+                if (file.getFileName().toString().startsWith("pg-server-ctl")) {
+                    continue;
+                }
+                sb.append(Files.readString(file, StandardCharsets.UTF_8));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 受理结果（真实事务内调用准入；异常整体回滚，拒绝审计 REQUIRES_NEW 独立提交）。 */
+    private String admitOutcome(
+            com.sw.ck.bpm.process.service.ResourceAdmissionService admission,
+            org.springframework.transaction.support.TransactionTemplate txTemplate,
+            Long tenantId, com.sw.ck.bpm.process.entity.ResourceClassEnum cls, String commandKey) {
+        long started = System.currentTimeMillis();
+        String outcome;
+        try {
+            long userId = tenantId == 0L ? 91999L : 92999L;
+            outcome = asTenant(tenantId, userId, () -> txTemplate.execute(status -> {
+                var ticket = admission.admit(tenantId, cls, 1, commandKey);
+                return ticket == null ? "NO_POLICY" : "ADMITTED:" + ticket.segment();
+            }));
+        } catch (Exception e) {
+            String code = e instanceof com.sw.ck.common.exception.BaseException base
+                    ? ":" + base.getCode() : "";
+            outcome = "REJECTED:" + e.getClass().getSimpleName() + code;
+        }
+        System.out.println("[P62-EV] admit " + commandKey + " -> " + outcome
+                + " (+" + (System.currentTimeMillis() - started) + "ms)");
+        return outcome;
+    }
+
+    /** 有界轮询：PG 中阻塞在 usage 行上的会话数达到 expected；返回可读观察结果（不抛错，保证取证）。 */
+    private String awaitUsageLockWaitsQuietly(int expected, long deadlineMillis) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + deadlineMillis;
+        int last = 0;
+        while (System.currentTimeMillis() < deadline) {
+            last = usageLockWaits();
+            if (last >= expected) {
+                return "observed=" + last;
+            }
+            Thread.sleep(50);
+        }
+        return "timeout(last=" + last + ",expected=" + expected + ")";
+    }
+
+    private int usageLockWaits() {
+        Integer waits = jdbc.queryForObject("SELECT COUNT(*) FROM pg_stat_activity"
+                + " WHERE wait_event_type = 'Lock' AND query LIKE '%sw_bpm_resource_usage%'",
+                Integer.class);
+        return waits == null ? 0 : waits;
+    }
+
+    private static int countOccurrences(String text, String needle) {
+        int count = 0;
+        int index = text.indexOf(needle);
+        while (index >= 0) {
+            count++;
+            index = text.indexOf(needle, index + needle.length());
+        }
+        return count;
+    }
+
+    /** 确保存在可用策略（本类按方法选择运行；已有 ACTIVE 策略时不重复创建）。 */
+    private void ensureActivePolicy() {
+        ResourcePolicyService policyService = app.getBean(ResourcePolicyService.class);
+        List<BpmResourcePolicy> all = asTenant(0L, 91999L, policyService::listAll);
+        boolean active = all.stream().anyMatch(p -> "ACTIVE".equals(p.getStatus()));
+        if (!active) {
+            enableContractPolicy();
+        }
     }
 
     // ==================== 请求动作 ====================
