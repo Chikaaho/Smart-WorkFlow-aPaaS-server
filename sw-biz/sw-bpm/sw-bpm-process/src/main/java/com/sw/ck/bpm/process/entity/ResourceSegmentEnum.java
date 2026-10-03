@@ -50,4 +50,17 @@ public enum ResourceSegmentEnum {
             case BULK -> java.util.List.of(SHARED);
         };
     }
+
+    /**
+     * 该段是否为该类别「借用」的对方保留段（PROD 借 OA_RESERVED / OA 借 PROD_RESERVED）。
+     * 借用只在段空闲时发生：调用方对该段必须先做非阻塞空闲探测，被持有即放弃本次借用，
+     * 不得等待（对方在途事务与借用方互等会成环，且借用会挤占对方类别的保留通道）。
+     */
+    public static boolean isBorrow(ResourceClassEnum resourceClass, ResourceSegmentEnum segment) {
+        return switch (resourceClass) {
+            case PROD -> segment == OA_RESERVED;
+            case OA -> segment == PROD_RESERVED;
+            case BULK -> false;
+        };
+    }
 }

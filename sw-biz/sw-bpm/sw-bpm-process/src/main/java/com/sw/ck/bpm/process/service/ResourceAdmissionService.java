@@ -102,12 +102,12 @@ public class ResourceAdmissionService {
             throw new BaseException(BpmErrorCode.RESOURCE_RATE_EXCEEDED);
         }
         ensureUsageRowsFast(tenantId);
-        // 死锁防治（RA02 复算修正）：usage 行锁只覆盖本行原子条件 UPDATE（纳秒级持锁）；
-        // 全序预锁会把全部受理串行化在 5 行上（突发 100 次/s vs 受保护 10 次/s，PG 锁等待 12—16，
-        // 受保护 p99 尾尖 929ms）且持锁跨越后续命令行唯一索引等待，已移除。
-        // 防死锁契约=所有 usage 写路径（admit 补偿/release/reoccupy/对账 CAS）严格按
-        // segment→GLOBAL TOTAL→TENANT TOTAL 同序单行更新；调用方必须保证 admit 不在持有
-        // usage 行锁时等待命令行唯一索引（admit 置于 enqueue 之后，见各受理接缝）。
+        // 死锁防治（RA02a1，旧正式轮的 40P01 环）：usage 行锁只覆盖本行原子条件 UPDATE；
+        // 旧环由两处跨段取序反转造成——(a) 全局/租户总量失败后仍回退下一段，持总量行锁
+        // 穿越到另一类别保留段；(b) 借用对方保留段时按普通条件更新阻塞等待。两处均按
+        // 「同序 + 借用只在段空闲时发生」修正：总量（与段无关）失败立即拒绝；借用先做
+        // 非阻塞空闲探测（SKIP LOCKED），被持有即放弃。admit 仍须置于 enqueue 之后，
+        // 不持 usage 行锁等待命令行唯一索引（见各受理接缝）。
 
         String[] rejectScope = new String[1];
         AdmissionTicket ticket = tryOccupy(tenantId, resourceClass, units, policy, rejectScope);
@@ -140,23 +140,37 @@ public class ResourceAdmissionService {
                                       BpmResourcePolicy policy, String[] rejectScope) {
         List<ResourceSegmentEnum> preference = ResourceSegmentEnum.preference(resourceClass);
         for (ResourceSegmentEnum segment : preference) {
+            if (ResourceSegmentEnum.isBorrow(resourceClass, segment)
+                    && usageMapper.probeIdleRow("GLOBAL", 0, segment.getCode()) == null) {
+                // 借用只在段空闲时发生：对方保留段正被在途事务持有（非空闲）→ 放弃借用，不等待。
+                // 等待会与对方类别的在途受理互等成环（RA02a1），并让保留通道被借用请求排队挤占。
+                if (rejectScope[0] == null) {
+                    rejectScope[0] = "QUOTA_SEGMENT";
+                }
+                continue;
+            }
             long segmentCap = segmentCapacity(policy, segment);
             if (usageMapper.incrementWithinCap("GLOBAL", 0, segment.getCode(), units, segmentCap) != 1) {
-                rejectScope[0] = rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0];
+                if (rejectScope[0] == null) {
+                    rejectScope[0] = "QUOTA_SEGMENT";
+                }
                 continue;
             }
             if (usageMapper.incrementWithinCap("GLOBAL", 0, "TOTAL", units,
                     policy.getGlobalMaxOutstanding()) != 1) {
+                // 全局总量与段无关：换段不可能成功，回退只会持总量行锁穿越段序（旧环成环路径），
+                // 立即补偿并拒绝
                 usageMapper.decrement("GLOBAL", 0, segment.getCode(), units);
                 rejectScope[0] = "QUOTA_TOTAL";
-                continue;
+                break;
             }
             if (usageMapper.incrementWithinCap("TENANT", tenantId, "TOTAL", units,
                     policy.getTenantMaxOutstanding()) != 1) {
+                // 租户总量同样与段无关：补偿后立即拒绝，不跨段重试
                 usageMapper.decrement("GLOBAL", 0, "TOTAL", units);
                 usageMapper.decrement("GLOBAL", 0, segment.getCode(), units);
                 rejectScope[0] = "QUOTA_TENANT";
-                continue;
+                break;
             }
             return new AdmissionTicket(segment.getCode(), policy.getPolicyVersion(), units);
         }
