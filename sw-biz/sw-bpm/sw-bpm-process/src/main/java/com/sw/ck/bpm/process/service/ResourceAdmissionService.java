@@ -48,6 +48,7 @@ public class ResourceAdmissionService {
     private final BpmResourceRejectLogMapper rejectLogMapper;
     private final TenantRateBuckets rateBuckets;
     private final TransactionTemplate rejectAuditTemplate;
+    private final TransactionTemplate usageEnsureTemplate;
 
     /** 准入凭证：受理冻结到命令行的段与策略版本。 */
     public record AdmissionTicket(String segment, Integer policyVersion, int units) {
@@ -65,6 +66,9 @@ public class ResourceAdmissionService {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.rejectAuditTemplate = template;
+        TransactionTemplate ensureTemplate = new TransactionTemplate(transactionManager);
+        ensureTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.usageEnsureTemplate = ensureTemplate;
     }
 
     /**
@@ -91,6 +95,9 @@ public class ResourceAdmissionService {
             throw new BaseException(BpmErrorCode.RESOURCE_RATE_EXCEEDED);
         }
         ensureUsageRows(tenantId);
+        // 全序预锁（防死锁）：受理/释放/再占用/对账所有 usage 写路径按同一顺序获取行锁，
+        // 消除「受理持 usage 锁写命令行 vs 完成持命令行锁等 usage 锁」的交叉等待
+        lockUsageRowsInOrder(tenantId);
 
         String rejectScope = null;
         List<ResourceSegmentEnum> preference = ResourceSegmentEnum.preference(resourceClass);
@@ -134,6 +141,7 @@ public class ResourceAdmissionService {
             return;
         }
         ensureUsageRows(tenantId);
+        lockUsageRowsInOrder(tenantId);
         if (usageMapper.incrementWithinCap("GLOBAL", 0, segment, units, segmentCapacity(policy,
                 ResourceSegmentEnum.of(segment).orElse(ResourceSegmentEnum.SHARED))) != 1
                 || usageMapper.incrementWithinCap("GLOBAL", 0, "TOTAL", units,
@@ -152,19 +160,31 @@ public class ResourceAdmissionService {
         if (units <= 0) {
             return;
         }
+        lockUsageRowsInOrder(tenantId);
         usageMapper.decrement("GLOBAL", 0, segmentCode, units);
         usageMapper.decrement("GLOBAL", 0, "TOTAL", units);
         usageMapper.decrement("TENANT", tenantId, "TOTAL", units);
     }
 
-    /** 惰性建立租户计数行（全局行由迁移种子；重复调用幂等，唯一键冲突即已存在）。 */
+    /**
+     * 惰性建立租户计数行（全局行由迁移种子；重复调用幂等）。
+     * <p>插入在 REQUIRES_NEW 独立短事务执行：PG 下唯一键冲突会中止当前事务的后续语句，
+     * 若在调用方业务事务内直接「插入-捕获冲突」将毒化业务事务（H2 宽松、PG 严格）；
+     * 冲突只回滚内层计数行事务，调用方事务不受影响。</p>
+     */
     public void ensureUsageRows(Long tenantId) {
         try {
-            usageMapper.insertNew(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(),
-                    "TENANT", tenantId, "TOTAL");
+            usageEnsureTemplate.executeWithoutResult(status ->
+                    usageMapper.insertNew(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(),
+                            "TENANT", tenantId, "TOTAL"));
         } catch (org.springframework.dao.DuplicateKeyException alreadyExists) {
             // 计数行已存在：幂等返回
         }
+    }
+
+    /** 全序预锁：GLOBAL 行按 segment 字典序在前、租户行在后（与 Mapper ORDER BY 一致）。 */
+    private void lockUsageRowsInOrder(Long tenantId) {
+        usageMapper.lockInOrder(tenantId);
     }
 
     /** 当前生效策略（enabled + ACTIVE；全局唯一，供画像与测试回读）。 */

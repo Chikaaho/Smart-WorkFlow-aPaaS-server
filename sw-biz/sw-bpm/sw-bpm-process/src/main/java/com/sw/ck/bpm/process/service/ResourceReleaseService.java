@@ -90,11 +90,17 @@ public class ResourceReleaseService {
      */
     @Transactional
     public boolean releaseLightProcessTarget(BpmCommand command) {
-        boolean updated = commandService.lambdaUpdate()
-                .eq(BpmCommand::getId, command.getId())
-                .isNull(BpmCommand::getResourceReleasedAt)
-                .set(BpmCommand::getResourceReleasedAt, java.time.LocalDateTime.now())
-                .update();
+        // 调度/对账线程无登录态：与 reclaimStale 同口径挂起租户过滤——
+        // 命令行 tenant_id 自承载租户语义，主键定位不涉及租户裁剪
+        boolean updated;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            updated = commandService.lambdaUpdate()
+                    .eq(BpmCommand::getId, command.getId())
+                    .isNull(BpmCommand::getResourceReleasedAt)
+                    .set(BpmCommand::getResourceReleasedAt, java.time.LocalDateTime.now())
+                    .update();
+        }
         if (!updated) {
             return false;
         }

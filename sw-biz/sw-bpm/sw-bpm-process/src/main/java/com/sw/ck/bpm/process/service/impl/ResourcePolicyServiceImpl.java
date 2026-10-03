@@ -235,12 +235,29 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
         try {
             for (javax.sql.DataSource dataSource : applicationContext.getBeansOfType(javax.sql.DataSource.class)
                     .values()) {
-                if (!dataSource.getClass().getSimpleName().contains("Druid")) {
+                // dynamic-datasource 包裹（DynamicRoutingDataSource→ItemDataSource→Druid）：
+                // 路由数据源经 getDataSources() 展开内层数据源，再沿 realDataSource 解包读取实际池值
+                if (dataSource.getClass().getSimpleName().contains("DynamicRouting")) {
+                    for (Object inner : ((java.util.Collection<?>) dataSource.getClass()
+                            .getMethod("getDataSources").invoke(dataSource).getClass()
+                            .cast(dataSource.getClass().getMethod("getDataSources").invoke(dataSource)))
+                            ) {
+                        Long value = druidMaxActiveOf(inner);
+                        if (value != null) {
+                            return value;
+                        }
+                    }
                     continue;
                 }
-                Object maxActive = dataSource.getClass().getMethod("getMaxActive").invoke(dataSource);
-                if (maxActive instanceof Number number) {
-                    return number.longValue();
+                Object current = dataSource;
+                for (int depth = 0; current != null && depth < 6; depth++) {
+                    if (current.getClass().getSimpleName().contains("Druid")) {
+                        Object maxActive = current.getClass().getMethod("getMaxActive").invoke(current);
+                        if (maxActive instanceof Number number) {
+                            return number.longValue();
+                        }
+                    }
+                    current = unwrapField(current, "realDataSource");
                 }
             }
         } catch (Exception e) {
@@ -248,6 +265,30 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
         }
         Long configured = environment.getProperty("spring.datasource.dynamic.druid.max-active", Long.class);
         return configured == null ? 0 : configured;
+    }
+
+    /** 沿 realDataSource 逐层解包定位 Druid 并读取 maxActive；非 Druid 返回 null。 */
+    private static Long druidMaxActiveOf(Object cur) throws Exception {
+        for (int depth = 0; cur != null && depth < 6; depth++) {
+            if (cur.getClass().getSimpleName().contains("Druid")) {
+                Object maxActive = cur.getClass().getMethod("getMaxActive").invoke(cur);
+                if (maxActive instanceof Number number) {
+                    return number.longValue();
+                }
+            }
+            cur = unwrapField(cur, "realDataSource");
+        }
+        return null;
+    }
+
+    private static Object unwrapField(Object o, String field) {
+        try {
+            var f = o.getClass().getDeclaredField(field);
+            f.setAccessible(true);
+            return f.get(o);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private BpmResourcePolicy requirePolicy(Long id) {

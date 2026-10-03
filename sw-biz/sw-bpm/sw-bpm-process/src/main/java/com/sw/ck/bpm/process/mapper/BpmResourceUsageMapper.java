@@ -49,6 +49,17 @@ public interface BpmResourceUsageMapper extends BaseMapper<BpmResourceUsage> {
                   @Param("segment") String segment, @Param("fact") long fact,
                   @Param("expected") long expected);
 
+    /** 全序预锁（防死锁）：所有 usage 写路径必须先按本顺序锁行——
+     *  GLOBAL 行按 segment 字典序（OA_RESERVED < PROD_RESERVED < SHARED，TOTAL 最前），再租户行。
+     *  无行时返回空列表（迁移种子/惰性建立保证核心行存在；缺行路径不参与会计裁决）。 */
+    @org.apache.ibatis.annotations.Select("<script>"
+            + "SELECT id, scope, scope_key AS scopeKey, segment, outstanding FROM sw_bpm_resource_usage "
+            + "WHERE (scope = 'GLOBAL' AND scope_key = 0)"
+            + "<if test='tenantId != null'> OR (scope = 'TENANT' AND scope_key = #{tenantId})</if>"
+            + " ORDER BY scope ASC, segment ASC FOR UPDATE"
+            + "</script>")
+    java.util.List<BpmResourceUsage> lockInOrder(@Param("tenantId") Long tenantId);
+
     /** 惰性建立计数行（幂等；唯一键 uk_sw_bpm_resource_usage_scope 保证并发安全，
      *  冲突时调用方按 DuplicateKeyException 忽略——PG/H2 双方言可移植写法）。 */
     @Insert("INSERT INTO sw_bpm_resource_usage (id, tenant_id, scope, scope_key, segment, outstanding) "

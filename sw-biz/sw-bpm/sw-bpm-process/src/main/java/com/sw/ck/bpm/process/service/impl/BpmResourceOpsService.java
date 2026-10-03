@@ -130,15 +130,35 @@ public class BpmResourceOpsService {
         try {
             for (javax.sql.DataSource dataSource : applicationContext.getBeansOfType(javax.sql.DataSource.class)
                     .values()) {
-                // Druid 不在本模块编译类路径，按既有防腐口径反射回读实际池值（运行事实）
-                if (!dataSource.getClass().getSimpleName().contains("Druid")) {
-                    continue;
+                // Druid 不在本模块编译类路径；路由数据源经 getDataSources() 展开内层数据源，
+                // 再沿 realDataSource 解包反射回读实际池值（运行事实）
+                java.util.List<Object> candidates = new ArrayList<>();
+                if (dataSource.getClass().getSimpleName().contains("DynamicRouting")) {
+                    Object map = dataSource.getClass().getMethod("getDataSources").invoke(dataSource);
+                    if (map instanceof java.util.Map<?, ?> m) {
+                        candidates.addAll(m.values());
+                    }
+                } else {
+                    candidates.add(dataSource);
                 }
-                pool.put("actualPoolType", dataSource.getClass().getSimpleName());
-                pool.put("actualMaxActive", dataSource.getClass().getMethod("getMaxActive").invoke(dataSource));
-                pool.put("actualInitialSize", dataSource.getClass().getMethod("getInitialSize").invoke(dataSource));
-                pool.put("actualMinIdle", dataSource.getClass().getMethod("getMinIdle").invoke(dataSource));
-                pool.put("actualMaxWait", dataSource.getClass().getMethod("getMaxWait").invoke(dataSource));
+                for (Object candidate : candidates) {
+                    Object current = candidate;
+                    for (int depth = 0; current != null && depth < 6; depth++) {
+                        if (current.getClass().getSimpleName().contains("Druid")) {
+                            pool.put("actualPoolType", current.getClass().getSimpleName());
+                            pool.put("actualMaxActive",
+                                    current.getClass().getMethod("getMaxActive").invoke(current));
+                            pool.put("actualInitialSize",
+                                    current.getClass().getMethod("getInitialSize").invoke(current));
+                            pool.put("actualMinIdle",
+                                    current.getClass().getMethod("getMinIdle").invoke(current));
+                            pool.put("actualMaxWait",
+                                    current.getClass().getMethod("getMaxWait").invoke(current));
+                            break;
+                        }
+                        current = unwrapDataSourceField(current, "realDataSource");
+                    }
+                }
             }
         } catch (Exception e) {
             pool.put("actualPoolReadError", e.getClass().getSimpleName());
@@ -408,6 +428,16 @@ public class BpmResourceOpsService {
     private Long viewerTenantOrNull() {
         requireViewer();
         return isManager() ? null : LoginUserHolder.get().getTenantId();
+    }
+
+    private static Object unwrapDataSourceField(Object o, String field) {
+        try {
+            var f = o.getClass().getDeclaredField(field);
+            f.setAccessible(true);
+            return f.get(o);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private List<Map<String, Object>> groupRows(String sql, Object arg) {
