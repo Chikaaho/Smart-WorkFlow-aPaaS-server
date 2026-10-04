@@ -544,6 +544,26 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         return value == null || value.isBlank();
     }
 
+    /**
+     * 候选人读取（RA02a2 保护路径并发安全）：待办查询与逐条身份链接读取之间存在并发窗口——
+     * 任务在两次引擎调用之间被审批消费者完成时，身份链接已随任务删除，引擎抛
+     * FlowableObjectNotFoundException（正式窗实测 4/1180 次放大为 HTTP 500）。
+     * 读取路径不把并发消失放大为失败：按空候选返回，行内其余字段来自查询快照仍有效；
+     * 该行随后一次刷新即自然消失，不吞鉴权异常、不改审批语义。
+     */
+    private java.util.List<String> candidateUserIdsOf(String taskId) {
+        try {
+            return taskService.getIdentityLinksForTask(taskId).stream()
+                    .filter(link -> "candidate".equalsIgnoreCase(link.getType())
+                            && link.getUserId() != null && !link.getUserId().isBlank())
+                    .map(org.flowable.identitylink.api.IdentityLink::getUserId)
+                    .distinct()
+                    .toList();
+        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException concurrentlyCompleted) {
+            return java.util.List.of();
+        }
+    }
+
     private BpmTaskDTO toDto(Task task) {
         BpmTaskDTO dto = new BpmTaskDTO();
         dto.setTaskId(task.getId());
@@ -552,12 +572,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(getProcessDefinitionKey(task));
         dto.setAssignee(task.getAssignee());
-        dto.setCandidateUserIds(taskService.getIdentityLinksForTask(task.getId()).stream()
-                .filter(link -> "candidate".equalsIgnoreCase(link.getType())
-                        && link.getUserId() != null && !link.getUserId().isBlank())
-                .map(org.flowable.identitylink.api.IdentityLink::getUserId)
-                .distinct()
-                .toList());
+        dto.setCandidateUserIds(candidateUserIdsOf(task.getId()));
         dto.setCreateTime(task.getCreateTime());
         if (task.getOwner() != null) {
             dto.setOwner(task.getOwner());
