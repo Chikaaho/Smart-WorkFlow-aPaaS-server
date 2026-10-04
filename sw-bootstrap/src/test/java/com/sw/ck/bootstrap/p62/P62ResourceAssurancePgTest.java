@@ -714,7 +714,7 @@ class P62ResourceAssurancePgTest {
                 + "s shortVerify=" + isShortVerify() + " runId=" + runId
                 + "\nauto-converge-timeline:\n" + convergeTimelineHolder);
         // RA02b：受理→命令→引擎任务→目标/审批完成的逐项配对（不以计数总和替代）
-        writePairingEvidence(scenario, lightTraces, approvalTraces, batchTraces);
+        writePairingEvidence(scenario, protectedTenant, lightTraces, approvalTraces, batchTraces);
         writeConvergenceDetail(scenario, protectedTenant, convergeMillis, openBefore, openAfter,
                 counterTotal, factTotal);
         writeOccupancyResponsibility(scenario);
@@ -748,7 +748,7 @@ class P62ResourceAssurancePgTest {
      * 目标动作调用结果逐项关联；等待上界（OA 领取≤5s、批量项≤30s）按实际最大值判定；
      * 未收敛项逐项列出（不隐藏，不整体判通过）。
      */
-    private void writePairingEvidence(String scenario, List<LightSubmitTrace> lightTraces,
+    private void writePairingEvidence(String scenario, long protectedTenant, List<LightSubmitTrace> lightTraces,
                                       List<ApprovalTrace> approvalTraces,
                                       List<BatchSubmitTrace> batchTraces) throws Exception {
         StringBuilder csv = new StringBuilder("kind,tenant,key,outcome,command_key,"
@@ -759,7 +759,11 @@ class P62ResourceAssurancePgTest {
                 + "target_invocation_update,target_record_update_time,target_record_version,"
                 + "target_record_qty_reserved,approval_task_end,approval_instance_end\n");
         Map<String, Long> statusCounts = new LinkedHashMap<>();
+        // RA02b2 kind/tenant 严格分组（复核05：不得以混合项冒充审批/保护）：保护审批领取等待
+        // 只收 kind=approval 且 tenant=protectedTenant；light 领取等待按租户独立分列
+        long protectedTenantArg = protectedTenant;
         List<Double> protectedOaClaimWaits = new ArrayList<>();
+        Map<String, List<Double>> lightClaimWaitsByTenant = new LinkedHashMap<>();
         Map<String, Integer> orphanByStatus = new LinkedHashMap<>();
         int traced = 0;
         int unpaired = 0;
@@ -799,8 +803,9 @@ class P62ResourceAssurancePgTest {
             if (!"COMPLETED".equals(status) && !"FAILED".equals(status)) {
                 orphanByStatus.merge("OPEN:" + status, 1, Integer::sum);
             }
-            if (trace.tenant() == 0L && claimWait != null) {
-                protectedOaClaimWaits.add(claimWait.doubleValue());
+            if (claimWait != null) {
+                lightClaimWaitsByTenant.computeIfAbsent(String.valueOf(trace.tenant()),
+                        k -> new ArrayList<>()).add(claimWait.doubleValue());
             }
             csv.append("light,").append(trace.tenant()).append(',').append(trace.recordId())
                     .append(',').append(csv(trace.outcome())).append(',').append(commandKey).append(',')
@@ -843,7 +848,7 @@ class P62ResourceAssurancePgTest {
             String status = String.valueOf(cmd.get("status"));
             statusCounts.merge("approval-command:" + status, 1L, Long::sum);
             Long claimWait = millisBetween(cmd.get("create_time"), cmd.get("claimed_at"));
-            if (trace.tenant() == 0L && claimWait != null) {
+            if (trace.tenant() == protectedTenantArg && claimWait != null) {
                 protectedOaClaimWaits.add(claimWait.doubleValue());
             }
             if (!"COMPLETED".equals(status) && !"FAILED".equals(status)) {
@@ -943,9 +948,18 @@ class P62ResourceAssurancePgTest {
                 + "\nunpaired=" + unpaired + "\ntraceOutcomeCounts=" + statusCounts
                 + "\nlightTargetsWithSubmitPoint=" + lightTargetsWithSubmitPoint
                 + "\napprovalTargetsWithSubmitPoint=" + approvalTargetsWithSubmitPoint
-                + "\nprotectedOaClaimWaitSamples=" + protectedOaClaimWaits.size()
-                + "\nprotectedOaClaimWaitMaxMs=" + String.format(Locale.ROOT, "%.0f", maxClaimWait)
-                + " (合同上界 5000ms)\nopenOrUnpairedByStatus=" + orphanByStatus
+                + "\nprotectedTenant=" + protectedTenant
+                + "\nprotectedApprovalClaimWaitSamples=" + protectedOaClaimWaits.size()
+                + " (kind=approval AND tenant=protectedTenant，light 不混入)"
+                + "\nprotectedApprovalClaimWaitMaxMs=" + String.format(Locale.ROOT, "%.0f", maxClaimWait)
+                + " (合同上界 5000ms)"
+                + "\nlightClaimWaitByTenant=" + lightClaimWaitsByTenant.entrySet().stream()
+                        .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey,
+                                e -> "n=" + e.getValue().size() + " maxMs="
+                                        + String.format(Locale.ROOT, "%.0f",
+                                                e.getValue().stream().mapToDouble(Double::doubleValue)
+                                                        .max().orElse(0))))
+                + "\nopenOrUnpairedByStatus=" + orphanByStatus
                 + "\ncommandsCreatedAfterWindowBeginByStatus=" + commandStatuses
                 + "\n注意=unpaired 仅为「trace 有键但库中无命令行」的请求（HTTP 级失败/500 在受理前终结，"
                 + "以 -samples.csv 的 outcome 为准）；pairing.csv 无脚注行，可直接按列解析\n");
