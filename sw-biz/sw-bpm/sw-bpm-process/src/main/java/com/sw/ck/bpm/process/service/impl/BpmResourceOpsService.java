@@ -323,25 +323,25 @@ public class BpmResourceOpsService {
         List<Object> rowsArgs = new ArrayList<>(args);
         rowsArgs.add(pageSize);
         rowsArgs.add(offset);
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+        List<Map<String, Object>> rows = lowerCaseKeys(jdbcTemplate.queryForList(
                 "SELECT id, command_key, command_type, channel, status, resource_class, resource_units, "
                         + "resource_segment, policy_version, retry_count, tenant_id, initiator_id, "
                         + "create_time, claimed_at, finished_at, deadline_at, overdue_at, "
                         + "resource_released_at, failure_reason "
                         + "FROM sw_bpm_command" + where + " ORDER BY create_time DESC LIMIT ? OFFSET ?",
-                rowsArgs.toArray());
+                rowsArgs.toArray()));
         return new BpmResourceOpsViews.CommandPage(Math.max(1, page), pageSize,
                 total == null ? 0 : total, rows);
     }
 
     public BpmResourceOpsViews.CommandDetail commandDetail(long commandId) {
         requireViewer();
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+        List<Map<String, Object>> rows = lowerCaseKeys(jdbcTemplate.queryForList(
                 "SELECT id, command_key, command_type, channel, status, resource_class, resource_units, "
                         + "resource_segment, policy_version, retry_count, tenant_id, initiator_id, payload, "
                         + "result, failure_reason, create_time, claimed_at, finished_at, deadline_at, "
                         + "overdue_at, resource_released_at "
-                        + "FROM sw_bpm_command WHERE id = ? AND deleted = 0", commandId);
+                        + "FROM sw_bpm_command WHERE id = ? AND deleted = 0", commandId));
         if (rows.isEmpty()) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "命令不存在");
         }
@@ -352,14 +352,14 @@ public class BpmResourceOpsService {
         if (!isManager() && (viewer.getTenantId() == null || viewer.getTenantId() != rowTenant)) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权查看该命令");
         }
-        Map<String, Object> effect = jdbcTemplate.queryForList(
+        Map<String, Object> effect = lowerCaseKeys(jdbcTemplate.queryForList(
                 "SELECT command_id, logical_command_id, result_json, biz_ref, create_time "
-                        + "FROM sw_bpm_command_effect WHERE command_id = ?", commandId)
+                        + "FROM sw_bpm_command_effect WHERE command_id = ?", commandId))
                 .stream().findFirst().orElse(null);
-        List<Map<String, Object>> rejects = jdbcTemplate.queryForList(
+        List<Map<String, Object>> rejects = lowerCaseKeys(jdbcTemplate.queryForList(
                 "SELECT id, reject_scope, requested_units, reason_code, detail, create_time "
                         + "FROM sw_bpm_resource_reject_log WHERE command_key = ? ORDER BY create_time DESC",
-                String.valueOf(command.get("command_key")));
+                String.valueOf(command.get("command_key"))));
         List<Object> targets = new ArrayList<>();
         if ("FLOW_START".equals(String.valueOf(command.get("command_type")))) {
             String commandKey = String.valueOf(command.get("command_key"));
@@ -385,11 +385,11 @@ public class BpmResourceOpsService {
         Object[] pageArgs = scope == null
                 ? new Object[]{pageSize, offset}
                 : new Object[]{scope, pageSize, offset};
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+        List<Map<String, Object>> rows = lowerCaseKeys(jdbcTemplate.queryForList(
                 "SELECT id, tenant_id, policy_version, resource_class, reject_scope, requested_units, "
                         + "reason_code, detail, command_key, create_time "
                         + "FROM sw_bpm_resource_reject_log" + where
-                        + " ORDER BY create_time DESC LIMIT ? OFFSET ?", pageArgs);
+                        + " ORDER BY create_time DESC LIMIT ? OFFSET ?", pageArgs));
         return new BpmResourceOpsViews.RejectPage(Math.max(1, page), pageSize,
                 total == null ? 0 : total, rows);
     }
@@ -441,9 +441,27 @@ public class BpmResourceOpsService {
     }
 
     private List<Map<String, Object>> groupRows(String sql, Object arg) {
-        return arg == null
+        return lowerCaseKeys(arg == null
                 ? jdbcTemplate.queryForList(sql)
-                : jdbcTemplate.queryForList(sql, arg);
+                : jdbcTemplate.queryForList(sql, arg));
+    }
+
+    /**
+     * 列键统一小写（RA03b 显示缺陷修复）：H2（dev 隔离夹具）返回大写列标签，PG 返回小写，
+     * 消费端（运维台/契约字段）按小写键读取——大写标签在 H2 下渲染为空（状态/类别/时间全空）。
+     * 只规整视图输出的键大小写，不改变任何值。
+     */
+    private static List<Map<String, Object>> lowerCaseKeys(List<Map<String, Object>> rows) {
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> normalized = new java.util.LinkedHashMap<>(row.size());
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                normalized.put(entry.getKey() == null ? null
+                        : entry.getKey().toLowerCase(java.util.Locale.ROOT), entry.getValue());
+            }
+            out.add(normalized);
+        }
+        return out;
     }
 
     private String now() {
