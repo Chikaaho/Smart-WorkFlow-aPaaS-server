@@ -255,13 +255,8 @@ public class DynamicTableManager {
      */
     String buildColumnDef(FieldSpec field) {
         String colName = field.getPhysicalColumnName();
-        String colType;
-        if (field.getFieldType() == FieldType.DICT && field.getDictType() != null) {
-            // DICT 类型存字典值字符串
-            colType = dialect.columnType(field.getFieldType());
-        } else {
-            colType = dialect.columnType(field.getFieldType());
-        }
+        // USER/DEPT 多选列宽按多选语义选择（P63）；其余类型与单选一致
+        String colType = dialect.columnType(field.getFieldType(), field.isMultiple());
         return dialect.wrapIdentifier(colName) + " " + colType;
     }
 

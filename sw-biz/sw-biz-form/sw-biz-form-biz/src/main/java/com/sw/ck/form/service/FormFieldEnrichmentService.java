@@ -120,8 +120,10 @@ public class FormFieldEnrichmentService {
             String name = field.path("name").asText();
             String display = displayOf(field, name);
             switch (type) {
-                case "USER" -> enrichUser(effectiveData, name, display);
-                case "DEPT" -> enrichDept(effectiveData, name, display);
+                case "USER" -> enrichUser(effectiveData, name, display,
+                        field.path("multiple").asBoolean(false));
+                case "DEPT" -> enrichDept(effectiveData, name, display,
+                        field.path("multiple").asBoolean(false));
                 case "DATASOURCE" -> enrichDatasource(field, effectiveData, name, display);
                 case "TABLE" -> enrichTableRows(field, effectiveData, name, display, liveTargets);
                 case "REFERENCE" -> enrichReference(field, effectiveData, name, display, liveTargets);
@@ -293,16 +295,31 @@ public class FormFieldEnrichmentService {
 
     // ==================== 各类型增补 ====================
 
-    private void enrichUser(Map<String, Object> data, String name, String fieldDisplay) {
+    private void enrichUser(Map<String, Object> data, String name, String fieldDisplay, boolean multiple) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
         }
-        Long userId = parseId(name, fieldDisplay, value);
         UserQueryFacade facade = userQueryFacade.getIfAvailable();
         if (facade == null) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "用户服务未装配");
         }
+        if (multiple) {
+            // P63 多选：逐个 ID 校验有效后归一化为 ID 字符串列表（稳定对象身份）
+            if (!(value instanceof List<?> rawList) || rawList.isEmpty()) {
+                throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                        "字段「" + fieldDisplay + "」需要选择具体的人员");
+            }
+            List<Long> ids = rawList.stream().map(item -> parseId(name, fieldDisplay, item)).toList();
+            Optional<List<Long>> active = facade.findActiveUserIds(ids);
+            if (isUnusable(active) || active.orElseThrow().size() != ids.stream().distinct().count()) {
+                throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                        "字段「" + fieldDisplay + "」引用的人员不存在、已停用或无权访问");
+            }
+            data.put(name, ids.stream().map(String::valueOf).toList());
+            return;
+        }
+        Long userId = parseId(name, fieldDisplay, value);
         Optional<List<Long>> active = facade.findActiveUserIds(List.of(userId));
         if (isUnusable(active)) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
@@ -311,16 +328,31 @@ public class FormFieldEnrichmentService {
         data.put(name, String.valueOf(userId));
     }
 
-    private void enrichDept(Map<String, Object> data, String name, String fieldDisplay) {
+    private void enrichDept(Map<String, Object> data, String name, String fieldDisplay, boolean multiple) {
         Object value = data.get(name);
         if (isEmpty(value)) {
             return;
         }
-        Long deptId = parseId(name, fieldDisplay, value);
         DeptQueryFacade facade = deptQueryFacade.getIfAvailable();
         if (facade == null) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "部门服务未装配");
         }
+        if (multiple) {
+            // P63 多选：逐个 ID 校验有效后归一化为 ID 字符串列表（稳定对象身份）
+            if (!(value instanceof List<?> rawList) || rawList.isEmpty()) {
+                throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                        "字段「" + fieldDisplay + "」需要选择具体的部门");
+            }
+            List<Long> ids = rawList.stream().map(item -> parseId(name, fieldDisplay, item)).toList();
+            Optional<List<Long>> active = facade.findActiveDeptIds(ids);
+            if (isUnusable(active) || active.orElseThrow().size() != ids.stream().distinct().count()) {
+                throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                        "字段「" + fieldDisplay + "」引用的部门不存在、已停用或无权访问");
+            }
+            data.put(name, ids.stream().map(String::valueOf).toList());
+            return;
+        }
+        Long deptId = parseId(name, fieldDisplay, value);
         Optional<List<Long>> active = facade.findActiveDeptIds(List.of(deptId));
         if (isUnusable(active)) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
@@ -386,8 +418,10 @@ public class FormFieldEnrichmentService {
                 String subName = sub.path("name").asText();
                 String subDisplay = displayOf(sub, subName);
                 switch (subType) {
-                    case "USER" -> enrichUser(rowMap, subName, subDisplay);
-                    case "DEPT" -> enrichDept(rowMap, subName, subDisplay);
+                    case "USER" -> enrichUser(rowMap, subName, subDisplay,
+                            sub.path("multiple").asBoolean(false));
+                    case "DEPT" -> enrichDept(rowMap, subName, subDisplay,
+                            sub.path("multiple").asBoolean(false));
                     case "DATASOURCE" -> enrichDatasource(sub, rowMap, subName, subDisplay);
                     case "REFERENCE" -> enrichReference(sub, rowMap, subName, subDisplay, liveTargets);
                     default -> { }

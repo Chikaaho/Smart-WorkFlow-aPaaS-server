@@ -85,6 +85,9 @@ public class FormFieldValidator {
                 String type = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
                 boolean required = fieldNode.has("required") && fieldNode.get("required").asBoolean();
                 String dictType = fieldNode.has("dictType") ? fieldNode.get("dictType").asText() : null;
+                boolean multiple = fieldNode.has("multiple") && fieldNode.get("multiple").asBoolean();
+                String format = fieldNode.has("format") && !fieldNode.get("format").asText().isBlank()
+                        ? fieldNode.get("format").asText() : null;
                 Object defaultValue = fieldNode.has("defaultValue") && !fieldNode.get("defaultValue").isNull()
                         ? objectMapper.convertValue(fieldNode.get("defaultValue"), Object.class)
                         : null;
@@ -101,13 +104,16 @@ public class FormFieldValidator {
                             String subType = sub.has("type") ? sub.get("type").asText() : "TEXT";
                             boolean subRequired = sub.has("required") && sub.get("required").asBoolean();
                             String subDictType = sub.has("dictType") ? sub.get("dictType").asText() : null;
+                            boolean subMultiple = sub.has("multiple") && sub.get("multiple").asBoolean();
+                            String subFormat = sub.has("format") && !sub.get("format").asText().isBlank()
+                                    ? sub.get("format").asText() : null;
                             Object subDefault = sub.has("defaultValue") && !sub.get("defaultValue").isNull()
                                     ? objectMapper.convertValue(sub.get("defaultValue"), Object.class)
                                     : null;
                             String subLabel = sub.has("label") && !sub.get("label").asText().isBlank()
                                     ? sub.get("label").asText() : null;
                             subFields.add(new FieldDef(subName, subType, subRequired, subDictType, null,
-                                    subDefault, subLabel));
+                                    subDefault, subLabel, subMultiple, subFormat));
                         }
                     }
                 }
@@ -115,7 +121,7 @@ public class FormFieldValidator {
                 String label = fieldNode.has("label") && !fieldNode.get("label").asText().isBlank()
                         ? fieldNode.get("label").asText() : null;
                 fieldDefs.put(name, new FieldDef(name, type, required, dictType, subFields,
-                        defaultValue, label));
+                        defaultValue, label, multiple, format));
             }
 
             // 检查未知字段
@@ -293,7 +299,19 @@ public class FormFieldValidator {
                 }
                 case "USER", "DEPT" -> {
                     // 数字型对象 ID；存在性/启用/租户校验由 FormFieldEnrichmentService 经 Facade 执行
-                    if (!(value instanceof Number) && !(value instanceof String id && id.matches("\\d+"))) {
+                    if (def.multiple()) {
+                        // P63 多选：每个元素都是稳定对象 ID（Number 或数字串）
+                        if (!(value instanceof List<?> list) || list.isEmpty()) {
+                            throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                    "字段「" + def.displayName() + "」需要选择具体的人员或部门");
+                        }
+                        for (Object item : list) {
+                            if (!(item instanceof Number) && !(item instanceof String id && id.matches("\\d+"))) {
+                                throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                        "字段「" + def.displayName() + "」需要选择具体的人员或部门");
+                            }
+                        }
+                    } else if (!(value instanceof Number) && !(value instanceof String id && id.matches("\\d+"))) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                                 "字段「" + def.displayName() + "」需要选择具体的人员或部门");
                     }
@@ -382,7 +400,9 @@ public class FormFieldValidator {
             String dictType,
             List<FieldDef> subFields,
             Object defaultValue,
-            String label
+            String label,
+            boolean multiple,
+            String format
     ) {
         /**
          * 用户可见的字段名：优先设计者填写的显示名，缺省回退字段键（不产生空名称）。
@@ -390,6 +410,12 @@ public class FormFieldValidator {
          */
         public String displayName() {
             return label == null || label.isBlank() ? name : label;
+        }
+
+        /** 兼容既有 7 参构造（multiple=false、format=null：既有语义不变）。 */
+        public FieldDef(String name, String type, boolean required, String dictType,
+                        List<FieldDef> subFields, Object defaultValue, String label) {
+            this(name, type, required, dictType, subFields, defaultValue, label, false, null);
         }
     }
 }

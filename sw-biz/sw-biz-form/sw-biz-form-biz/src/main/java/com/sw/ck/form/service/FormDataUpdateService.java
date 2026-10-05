@@ -284,6 +284,8 @@ public class FormDataUpdateService {
                     throw new BaseException(FormErrorCode.SUBMIT_FAILED, "数据源摘要序列化失败");
                 }
             }
+            // MULTISELECT/ATTACHMENT/IMAGE 与 USER/DEPT 多选：列表值序列化为 JSON 字符串落列（与提交路径同口径）
+            value = serializeListValue(def.type(), def.multiple(), value);
 
             setParts.add("\"" + colName + "\" = ?");
             params.add(value);
@@ -424,6 +426,7 @@ public class FormDataUpdateService {
             if ("BOOL".equals(subDef.type())) {
                 val = FormFieldValidator.convertBoolValue(val);
             }
+            val = serializeListValue(subDef.type(), subDef.multiple(), val);
             columns.add(colName);
             values.add(val);
         }
@@ -468,6 +471,7 @@ public class FormDataUpdateService {
             if ("BOOL".equals(subDef.type())) {
                 val = FormFieldValidator.convertBoolValue(val);
             }
+            val = serializeListValue(subDef.type(), subDef.multiple(), val);
             setParts.add(DynamicTableSql.quote(colName) + " = ?");
             params.add(val);
         }
@@ -494,6 +498,27 @@ public class FormDataUpdateService {
         } else {
             log.debug("Updated sub-table row: table={}, rowId={}", subTableName, rowId);
         }
+    }
+
+    /**
+     * MULTISELECT/ATTACHMENT/IMAGE 与 USER/DEPT 多选：列表值序列化为 JSON 字符串落列（其余类型原值返回）。
+     * 与 {@link FormSubmitService} 提交路径同口径。
+     */
+    private Object serializeListValue(String type, boolean multiple, Object value) {
+        if (value == null) {
+            return null;
+        }
+        boolean multiselectLike = "MULTISELECT".equals(type) || "ATTACHMENT".equals(type)
+                || "IMAGE".equals(type);
+        boolean objectMulti = multiple && ("USER".equals(type) || "DEPT".equals(type));
+        if ((multiselectLike || objectMulti) && (value instanceof List<?> || value instanceof Map<?, ?>)) {
+            try {
+                return objectMapper.writeValueAsString(value);
+            } catch (JsonProcessingException e) {
+                throw new BaseException(FormErrorCode.SUBMIT_FAILED, "提交数据时系统未能完成，请稍后重试");
+            }
+        }
+        return value;
     }
 
     // —— DELETE ——

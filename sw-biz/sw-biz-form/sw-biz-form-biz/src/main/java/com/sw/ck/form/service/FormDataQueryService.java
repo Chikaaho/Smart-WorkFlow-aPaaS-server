@@ -12,6 +12,7 @@ import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
+import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.service.FormFieldEnrichmentService;
@@ -383,6 +384,103 @@ public class FormDataQueryService {
         log.debug("Record detail: formKey={}, recordId={}, subTables={}",
                 formKey, recordId, result.keySet().stream()
                         .filter(k -> tableSubFields.containsKey(k)).count());
+        return result;
+    }
+
+    /**
+     * 系统上下文读取记录全量数据（P63 跨模块读接缝；流程引擎/调度侧无登录态）。
+     * <p>
+     * 与 {@link #getRecordDetail(String, String)} 的差异：显式租户、不做字段查看权限投影
+     * 与数据范围（调用方为受信服务端上下文，对象可见性由流程侧既有授权承接）、
+     * 子表行保留稳定行 {@code id}（来源行追溯）。
+     * 裸 SQL 全部携带 {@code deleted=0 AND tenant_id=?}，表名仍走固定白名单校验。
+     * </p>
+     */
+    public Map<String, Object> getRecordDetailForSystem(Long tenantId, String formKey, String recordId) {
+        if (tenantId == null || recordId == null || recordId.isBlank()) {
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "读取表单记录缺少租户或记录标识");
+        }
+        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        if (formDef == null || !"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在或未发布");
+        }
+        String tableName = formDef.getPhysicalTableName();
+        if (tableName == null || tableName.isBlank()) {
+            throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST,
+                    "该表单尚未完成数据表初始化，请联系管理员处理");
+        }
+        validateTableName(tableName);
+
+        Map<String, FieldType> fieldTypeMap = loadFieldTypeMap(formDef.getId());
+        List<String> projectionColumns = new ArrayList<>();
+        projectionColumns.add("id");
+        for (Map.Entry<String, FieldType> entry : fieldTypeMap.entrySet()) {
+            if (entry.getValue() == FieldType.TABLE || entry.getValue() == FieldType.LABEL) {
+                continue;
+            }
+            try {
+                projectionColumns.add(ColumnValidation.physicalColumnName(entry.getKey(), entry.getValue()));
+            } catch (IllegalArgumentException e) {
+                throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                        "该表单的字段配置异常，请联系管理员处理");
+            }
+        }
+        String columns = projectionColumns.stream()
+                .map(DynamicTableSql::quote)
+                .collect(Collectors.joining(", "));
+        String sql = "SELECT " + columns + " FROM " + DynamicTableSql.quote(tableName)
+                + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+        List<Map<String, Object>> records;
+        try {
+            records = DynamicTableSql.query(jdbcTemplate, tableName, sql, recordId, tenantId);
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("System detail query failed: table={}, recordId={}", tableName, recordId, e);
+            throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询记录时系统未能完成，请稍后重试");
+        }
+        if (records == null || records.isEmpty()) {
+            throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "记录不存在或已删除");
+        }
+        Map<String, Object> result = new LinkedHashMap<>(records.get(0));
+
+        FormDefEntity formDefEntity = formDefMapper.selectById(formDef.getId());
+        if (formDefEntity != null) {
+            Map<String, String> subTableMapping = parseSubTableMapping(formDefEntity.getSubTableMapping());
+            Map<String, List<SubFieldMeta>> tableSubFields = loadTableSubFields(formDef.getId());
+            for (Map.Entry<String, String> entry : subTableMapping.entrySet()) {
+                String tableFieldName = entry.getKey();
+                String subTableName = entry.getValue();
+                if (subTableName == null || subTableName.isBlank()) continue;
+                if (!DynamicTableSql.isValidTableName(subTableName)) {
+                    log.error("Invalid sub-table name '{}' in subTableMapping", subTableName);
+                    throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                            "该表单的子表配置异常，请联系管理员处理");
+                }
+                List<String> subProjection = new ArrayList<>();
+                subProjection.add("id");
+                for (SubFieldMeta meta : tableSubFields.getOrDefault(tableFieldName, List.of())) {
+                    subProjection.add(meta.physicalCol());
+                }
+                String subColumns = subProjection.stream()
+                        .map(DynamicTableSql::quote)
+                        .collect(Collectors.joining(", "));
+                String subSql = "SELECT " + subColumns + " FROM " + DynamicTableSql.quote(subTableName)
+                        + " WHERE \"parent_record_id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?"
+                        + " ORDER BY \"create_time\" ASC";
+                List<Map<String, Object>> subRows;
+                try {
+                    subRows = DynamicTableSql.query(jdbcTemplate, subTableName, subSql, recordId, tenantId);
+                } catch (BaseException e) {
+                    throw e;
+                } catch (Exception e) {
+                    log.error("System sub-table query failed for '{}': {}", subTableName, e.getMessage(), e);
+                    throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                            "读取子表数据时系统未能完成，请稍后重试");
+                }
+                result.put(tableFieldName, subRows != null ? subRows : List.of());
+            }
+        }
         return result;
     }
 

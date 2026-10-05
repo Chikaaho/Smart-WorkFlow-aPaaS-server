@@ -115,6 +115,21 @@ public class FormDefinitionSchema implements Serializable {
          */
         private String renderAs;
 
+        /**
+         * 是否多选（仅 USER/DEPT 类型使用，P63）。
+         * 多选值=稳定对象 ID 列表，落库为 JSON 数组字符串（VARCHAR(1000)）；
+         * 缺省 false=单选（VARCHAR(64)，既有语义不变）。
+         * 发布后不得在单选/多选间切换（属类型变更，按「改类型永久封死」处理）。
+         */
+        private Boolean multiple;
+
+        /**
+         * 显示格式（仅 DATE 类型使用，P63）。
+         * 缺省 {@code "date"}=仅日期（YYYY-MM-DD → LocalDate）；{@code "datetime"}=日期时间
+         * （YYYY-MM-DD HH:mm[:ss] → LocalDateTime）。两种格式列类型均为 TIMESTAMP，缺省行为不变。
+         */
+        private String format;
+
         /** 关联目标表单 ID（仅 REFERENCE 类型使用） */
         private String targetFormId;
 

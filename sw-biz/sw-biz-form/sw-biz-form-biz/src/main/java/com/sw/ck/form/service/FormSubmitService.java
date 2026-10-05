@@ -399,10 +399,10 @@ public class FormSubmitService {
             if ("BOOL".equals(def.type())) {
                 value = FormFieldValidator.convertBoolValue(value);
             }
-            // PG 严格类型（H2 宽松语义掩盖）：DATE 字符串 → LocalDate，NUMBER 字符串 → BigDecimal
-            value = convertTypedValue(def.type(), value);
-            // MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列
-            value = serializeListValue(def.type(), value);
+            // PG 严格类型（H2 宽松语义掩盖）：DATE 字符串 → LocalDate/LocalDateTime，NUMBER 字符串 → BigDecimal
+            value = convertTypedValue(def.type(), def.format(), value);
+            // MULTISELECT/ATTACHMENT/IMAGE 与 USER/DEPT 多选：列表值序列化为 JSON 字符串落列
+            value = serializeListValue(def.type(), def.multiple(), value);
 
             userColumns.add(colName);
             userValues.add(value);
@@ -486,7 +486,13 @@ public class FormSubmitService {
                     if ("BOOL".equals(subFieldType)) {
                         val = FormFieldValidator.convertBoolValue(val);
                     }
-                    val = serializeListValue(subFieldType, val);
+                    // 既有子行路径保持原样；仅 P63 显式 format=datetime 的 DATE 做日期时间转换
+                    if ("DATE".equals(subFieldType)
+                            && "datetime".equalsIgnoreCase(subFieldDefs.get(i).format())
+                            && val instanceof String text && !text.isBlank()) {
+                        val = convertTypedValue(subFieldType, subFieldDefs.get(i).format(), val);
+                    }
+                    val = serializeListValue(subFieldType, subFieldDefs.get(i).multiple(), val);
                     subVals.add(val);
                 }
 
@@ -610,15 +616,20 @@ public class FormSubmitService {
 
     /**
      * 按字段类型把 JSON 提交值转为动态列语义类型（PG 严格强类型；
-     * DATE→java.time.LocalDate，NUMBER→java.math.BigDecimal；不可转换即失败）。
+     * DATE→java.time.LocalDate（format=datetime 时为 LocalDateTime），NUMBER→java.math.BigDecimal；
+     * 不可转换即失败）。
      */
-    private Object convertTypedValue(String type, Object value) {
+    private Object convertTypedValue(String type, String format, Object value) {
         if (value == null || value instanceof String == false) {
             return value;
         }
         String text = (String) value;
         try {
             if ("DATE".equals(type)) {
+                if ("datetime".equalsIgnoreCase(format)) {
+                    // P63 日期时间：接受 "YYYY-MM-DD HH:mm[:ss]" 与 ISO "YYYY-MM-DDTHH:mm[:ss]"
+                    return java.time.LocalDateTime.parse(text.trim().replace(' ', 'T'));
+                }
                 return java.time.LocalDate.parse(text);
             }
             if ("NUMBER".equals(type)) {
@@ -632,13 +643,16 @@ public class FormSubmitService {
     }
 
     /**
-     * MULTISELECT/ATTACHMENT/IMAGE：列表值序列化为 JSON 字符串落列（其余类型原值返回）。
+     * MULTISELECT/ATTACHMENT/IMAGE 与 USER/DEPT 多选：列表值序列化为 JSON 字符串落列（其余类型原值返回）。
      */
-    private Object serializeListValue(String type, Object value) {
+    private Object serializeListValue(String type, boolean multiple, Object value) {
         if (value == null) {
             return null;
         }
-        if ("MULTISELECT".equals(type) || "ATTACHMENT".equals(type) || "IMAGE".equals(type)) {
+        boolean multiselectLike = "MULTISELECT".equals(type) || "ATTACHMENT".equals(type)
+                || "IMAGE".equals(type);
+        boolean objectMulti = multiple && ("USER".equals(type) || "DEPT".equals(type));
+        if (multiselectLike || objectMulti) {
             if (value instanceof List<?> || value instanceof Map<?, ?>) {
                 try {
                     return objectMapper.writeValueAsString(value);

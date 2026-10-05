@@ -1020,8 +1020,8 @@ public class FormDefServiceImpl implements FormDefService {
             case IMAGE -> FieldSpec.image(name);
             case LABEL -> FieldSpec.label(name);
             case TIME -> FieldSpec.time(name);
-            case USER -> FieldSpec.user(name);
-            case DEPT -> FieldSpec.dept(name);
+            case USER -> FieldSpec.user(name, node.path("multiple").asBoolean(false));
+            case DEPT -> FieldSpec.dept(name, node.path("multiple").asBoolean(false));
             case FORMULA -> {
                 if (!node.has("expression") || node.get("expression").asText().isBlank()) {
                     throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
@@ -1084,7 +1084,11 @@ public class FormDefServiceImpl implements FormDefService {
             return;
         }
         boolean valid = switch (fieldType) {
-            case TEXT, RICH_TEXT, DICT, DATE, TIME, USER, DEPT -> defaultValue.isTextual() || defaultValue.isNumber();
+            case TEXT, RICH_TEXT, DICT, DATE, TIME -> defaultValue.isTextual() || defaultValue.isNumber();
+            // USER/DEPT 单选默认=单个 ID；多选默认=ID 数组（P63）
+            case USER, DEPT -> node.path("multiple").asBoolean(false)
+                    ? defaultValue.isArray()
+                    : defaultValue.isTextual() || defaultValue.isNumber();
             case NUMBER -> defaultValue.isNumber();
             case BOOL -> defaultValue.isBoolean();
             case MULTISELECT, ATTACHMENT, IMAGE -> defaultValue.isArray();

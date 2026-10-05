@@ -36,10 +36,18 @@ public class FieldSpec {
     /** 表格子字段列表（仅 TABLE 类型有用） */
     private final List<FieldSpec> subFields;
 
+    /** 是否多选（仅 USER/DEPT 类型有用，P63）：列宽与值序列化按多选语义处理 */
+    private final boolean multiple;
+
     // ============ 构造 ============
 
     private FieldSpec(String fieldName, FieldType fieldType, String dictType,
                       String refTargetFormId, List<FieldSpec> subFields) {
+        this(fieldName, fieldType, dictType, refTargetFormId, subFields, false);
+    }
+
+    private FieldSpec(String fieldName, FieldType fieldType, String dictType,
+                      String refTargetFormId, List<FieldSpec> subFields, boolean multiple) {
         this.fieldName = Objects.requireNonNull(fieldName, "fieldName must not be null");
         this.fieldType = Objects.requireNonNull(fieldType, "fieldType must not be null");
         this.dictType = dictType;
@@ -47,6 +55,7 @@ public class FieldSpec {
         this.subFields = subFields != null
                 ? Collections.unmodifiableList(new ArrayList<>(subFields))
                 : null;
+        this.multiple = multiple;
     }
 
     // ============ 静态工厂 ============
@@ -115,14 +124,22 @@ public class FieldSpec {
         return new FieldSpec(name, FieldType.TIME, null, null, null);
     }
 
-    /** 人员选择：值=有效用户 ID → VARCHAR(64) */
+    /** 人员选择：值=有效用户 ID → VARCHAR(64)；multiple=true → ID 列表 JSON → VARCHAR(1000) */
     public static FieldSpec user(String name) {
         return new FieldSpec(name, FieldType.USER, null, null, null);
     }
 
-    /** 部门选择：值=有效部门 ID → VARCHAR(64) */
+    public static FieldSpec user(String name, boolean multiple) {
+        return new FieldSpec(name, FieldType.USER, null, null, null, multiple);
+    }
+
+    /** 部门选择：值=有效部门 ID → VARCHAR(64)；multiple=true → ID 列表 JSON → VARCHAR(1000) */
     public static FieldSpec dept(String name) {
         return new FieldSpec(name, FieldType.DEPT, null, null, null);
+    }
+
+    public static FieldSpec dept(String name, boolean multiple) {
+        return new FieldSpec(name, FieldType.DEPT, null, null, null, multiple);
     }
 
     /** 公式：服务端重算，落 NUMERIC(20,6) 结果列；expression 在 definition 冻结 */
@@ -155,6 +172,19 @@ public class FieldSpec {
 
     public List<FieldSpec> getSubFields() {
         return subFields;
+    }
+
+    /** 是否多选（仅 USER/DEPT 类型语义化；其余类型恒 false） */
+    public boolean isMultiple() {
+        return multiple;
+    }
+
+    /** 返回标记为多选的等价规格（非 USER/DEPT 类型调用时原样返回自身） */
+    public FieldSpec asMultiple() {
+        if (multiple) {
+            return this;
+        }
+        return new FieldSpec(fieldName, fieldType, dictType, refTargetFormId, subFields, true);
     }
 
     /**
