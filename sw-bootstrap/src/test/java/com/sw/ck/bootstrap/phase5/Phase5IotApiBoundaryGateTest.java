@@ -29,6 +29,7 @@ class Phase5IotApiBoundaryGateTest {
             "com.sw.ck.iot.api.IotProcessTriggerFacade",
             "com.sw.ck.iot.api.IotDeviceQueryFacade",
             "com.sw.ck.iot.api.IotFormContractChecker",
+            "com.sw.ck.iot.api.IotCommandReservationFacade",
             "com.sw.ck.iot.event.IotProcessTriggerEvent");
 
     /** 实现模块的包前缀：出现在 bpm-process 生产源码即为跨模块实现耦合。 */
@@ -46,6 +47,7 @@ class Phase5IotApiBoundaryGateTest {
 
     /** IoT 对外 HTTP 路由快照（Phase 5 不得增删改；P62 S4 增 /iot/commands 受控回执与人工核实路由）。 */
     private static final Set<String> IOT_HTTP_ROUTES = Set.of(
+            "/iot/reservations",
             "/iot/connections",
             "/iot/devices",
             "/iot/device-manage",
@@ -83,7 +85,7 @@ class Phase5IotApiBoundaryGateTest {
         long events = sources.stream()
                 .filter(path -> path.getFileName().toString().endsWith("Event.java"))
                 .count();
-        assertThat(interfaces).as("契约接口数量").isEqualTo(4L);
+        assertThat(interfaces).as("契约接口数量").isEqualTo(5L); // P63 新增预约门面（机械更新，P62 先例）
         assertThat(events).as("契约事件数量").isEqualTo(1L);
 
         // 用户可见的契约方法总数固定为 7：既不多拆也不合并接口
@@ -98,7 +100,7 @@ class Phase5IotApiBoundaryGateTest {
                     }
                 })
                 .sum();
-        assertThat(openMethods).as("契约开放方法总数").isEqualTo(7);
+        assertThat(openMethods).as("契约开放方法总数").isEqualTo(12); // IotDeviceFacade 8（P63 +resolveDeviceTarget）+ 预约门面 4
 
         // 编译依赖扫描：只允许 java.* / javax.* 与 JDK 类型
         for (Path source : sources) {
@@ -179,7 +181,7 @@ class Phase5IotApiBoundaryGateTest {
     // ==================== 门禁 2 · 7/7 Optional 合规并纳入 Phase 1 守门 ====================
 
     @Test
-    @DisplayName("门禁2：IoT 契约 7/7 方法为参数化 Optional<T>，且已被 Phase 1 守门自动纳入")
+    @DisplayName("门禁2：IoT 契约 13/13 方法为参数化 Optional<T>，且已被 Phase 1 守门自动纳入")
     void contractIsFullyOptionalAndInScope() throws IOException {
         Set<Class<?>> apiTypes = ApiOptionalContractGate.scanApiModuleTypes();
         Set<Class<?>> iotTypes = apiTypes.stream()
@@ -191,10 +193,12 @@ class Phase5IotApiBoundaryGateTest {
                 .containsExactlyInAnyOrder("IotDeviceFacade", "IotProcessTriggerFacade",
                         "IotDeviceQueryFacade", "IotFormContractChecker", "IotProcessTriggerEvent",
                         // P62 S4 增补：设备命令回查值类型（审批→设备命令关联链，复核07 验收）
-                        "DeviceCommandSummary");
+                        "DeviceCommandSummary",
+                        // P63 增补：一次性预约契约面（创建/取消/查询 + 设备目标解析值类型）
+                        "IotCommandReservationFacade", "IotReservationView", "DeviceTarget");
         assertThat(ApiOptionalContractGate.contractMethodCount(iotTypes))
-                .as("纳入守门的 IoT 契约方法数（P62 FD02 后 8/8 全部参数化 Optional）")
-                .isEqualTo(8);
+                .as("纳入守门的 IoT 契约方法数（P63 后 13/13 全部参数化 Optional）")
+                .isEqualTo(13);
         assertThat(ApiOptionalContractGate.violationsIn(iotTypes))
                 .as("无 void / primitive / 裸集合 / 裸对象返回")
                 .isEmpty();

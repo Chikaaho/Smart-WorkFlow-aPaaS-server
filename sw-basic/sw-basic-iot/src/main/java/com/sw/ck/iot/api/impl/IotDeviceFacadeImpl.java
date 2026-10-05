@@ -78,4 +78,12 @@ public class IotDeviceFacadeImpl implements IotDeviceFacade {
         return Optional.ofNullable(
                 mqttDispatchService.dispatch(tenantId, deviceKey, commandKey, payload, approvalBizId, sourceTag));
     }
+
+    @Override
+    public Optional<DeviceTarget> resolveDeviceTarget(Long tenantId, Long deviceId) {
+        if (tenantId == null || deviceId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(iotDeviceService.resolveDeviceTarget(tenantId, deviceId));
+    }
 }

@@ -179,6 +179,11 @@ public class IotProcessTriggerListener {
         if (!Boolean.TRUE.equals(config.getBoolean("enabled"))) {
             return null;
         }
+        if ("RESERVATION".equalsIgnoreCase(config.getString("deliveryMode"))) {
+            // P63：预约下发为显式新增选择——IoT 触发路径不立即下发，预约在流程成功结束后创建
+            log.info("设备动作配置为预约下发，IoT 触发路径跳过立即下发: processKey={}", def.getProcessKey());
+            return null;
+        }
         IotDeviceFacade deviceFacade = deviceFacadeProvider.getIfAvailable();
         if (deviceFacade == null) {
             return "IoT 设备门面未装配";

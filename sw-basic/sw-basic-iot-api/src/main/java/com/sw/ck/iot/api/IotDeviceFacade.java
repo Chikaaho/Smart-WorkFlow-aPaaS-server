@@ -87,4 +87,15 @@ public interface IotDeviceFacade {
      */
     Optional<Long> dispatchByDeviceKey(Long tenantId, String deviceKey, String commandKey,
                                        String payload, String approvalBizId, String sourceTag);
+
+    /**
+     * 按管理端设备记录 ID 解析设备执行目标（P63 预约冻结用）。
+     *
+     * @return present = 设备目标（deviceKey/productId/deviceName）；设备不存在或跨租户为 empty
+     */
+    Optional<DeviceTarget> resolveDeviceTarget(Long tenantId, Long deviceId);
+
+    /** 设备执行目标（预约意图创建时冻结的稳定身份）。 */
+    record DeviceTarget(String deviceKey, String productId, String deviceName) {
+    }
 }

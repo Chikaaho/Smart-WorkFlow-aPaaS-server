@@ -95,7 +95,43 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    public com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget resolveDeviceTarget(Long tenantId, Long deviceId) {
+        if (tenantId == null || deviceId == null) {
+            return null;
+        }
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            IotDevice device = baseMapper.selectById(deviceId);
+            if (device == null || !tenantId.equals(device.getTenantId())
+                    || Integer.valueOf(1).equals(device.getDeleted())) {
+                return null;
+            }
+            return new com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget(
+                    device.getDeviceKey(), device.getProductId(), device.getDeviceName());
+        }
+    }
+
+    @Override
+    public com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget resolveDeviceTargetByKey(Long tenantId, String deviceKey) {
+        if (tenantId == null || deviceKey == null || deviceKey.isBlank()) {
+            return null;
+        }
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            IotDevice device = baseMapper.selectOne(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDevice>lambdaQuery()
+                            .eq(IotDevice::getDeviceKey, deviceKey)
+                            .eq(IotDevice::getTenantId, tenantId)
+                            .eq(IotDevice::getDeleted, 0)
+                            .last("LIMIT 1"));
+            if (device == null || !tenantId.equals(device.getTenantId())) {
+                return null;
+            }
+            return new com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget(
+                    device.getDeviceKey(), device.getProductId(), device.getDeviceName());
+        }
+    }
+
     public IotDeviceCommand dispatchCommandIdempotent(String productId, String deviceName,
                                                       String commandKey, String commandType,
                                                       String payload, String approvalBizId,

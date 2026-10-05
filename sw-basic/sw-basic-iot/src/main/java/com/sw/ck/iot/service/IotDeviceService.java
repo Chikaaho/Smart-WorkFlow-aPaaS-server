@@ -71,6 +71,16 @@ public interface IotDeviceService extends BaseService<IotDevice> {
      */
     java.util.List<com.sw.ck.iot.entity.IotDeviceCommand> findByApprovalBizId(Long tenantId, String approvalBizId);
 
+    /**
+     * 按管理端设备记录 ID 解析设备执行目标（P63 预约冻结用；显式租户，跨租户为 null）。
+     */
+    com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget resolveDeviceTarget(Long tenantId, Long deviceId);
+
+    /**
+     * 按设备业务标识解析执行目标（P63 到点认领重核；显式租户，无效/跨租户为 null）。
+     */
+    com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget resolveDeviceTargetByKey(Long tenantId, String deviceKey);
+
     IotDeviceCommand dispatchCommandIdempotent(String productId, String deviceName,
             String commandKey, String commandType, String payload, String approvalBizId,
             String idempotentKey);
