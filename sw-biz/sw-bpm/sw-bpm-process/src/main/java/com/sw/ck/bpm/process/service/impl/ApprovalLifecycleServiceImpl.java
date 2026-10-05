@@ -85,6 +85,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     private final BpmTaskDeadlineMapper deadlineMapper;
     private final BpmConsensusVoteMapper consensusVoteMapper;
     private final ParticipantSnapshotMapper participantSnapshotMapper;
+
+    /** P63 动态分支快照（可选注入）：v2 轮次汇聚分母按分支数权威计算。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper dynamicBranchSnapshotMapper;
     private final ObjectProvider<UserQueryFacade> userQueryFacade;
     private final ObjectProvider<TaskActionService> taskActionService;
     private final ObjectProvider<DynamicBranchPort> dynamicBranchPort;
@@ -861,6 +865,37 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             @Override
             public Optional<Long> total(String tenantId, String processInstanceId, String nodeKey) {
                 try {
+                    // P63 v2：分母=最新轮次有效分支数（同负责人不同部门=独立分支，DISTINCT 人数会塌缩）
+                    if (dynamicBranchSnapshotMapper != null) {
+                        QueryWrapper<com.sw.ck.bpm.process.entity.DynamicBranchSnapshot> branchQw =
+                                new QueryWrapper<>();
+                        branchQw.select("MAX(round_no) AS max_round")
+                                .eq("process_instance_id", processInstanceId)
+                                .eq("node_key", nodeKey)
+                                .eq("semantic_version", 2)
+                                .eq("deleted", 0);
+                        java.util.List<java.util.Map<String, Object>> roundRows =
+                                dynamicBranchSnapshotMapper.selectMaps(branchQw);
+                        Object maxRound = roundRows.isEmpty() ? null : roundRows.get(0).get("max_round");
+                        if (maxRound instanceof Number latestRound) {
+                            QueryWrapper<com.sw.ck.bpm.process.entity.DynamicBranchSnapshot> countQw =
+                                    new QueryWrapper<>();
+                            countQw.select("COUNT(*) AS branch_total")
+                                    .eq("process_instance_id", processInstanceId)
+                                    .eq("node_key", nodeKey)
+                                    .eq("semantic_version", 2)
+                                    .eq("round_no", latestRound.longValue())
+                                    .ne("status", "CANCELED")
+                                    .eq("deleted", 0);
+                            java.util.List<java.util.Map<String, Object>> countRows =
+                                    dynamicBranchSnapshotMapper.selectMaps(countQw);
+                            Object branchTotal = countRows.isEmpty() ? null
+                                    : countRows.get(0).get("branch_total");
+                            if (branchTotal instanceof Number branchNumber) {
+                                return Optional.of(branchNumber.longValue());
+                            }
+                        }
+                    }
                     QueryWrapper<ParticipantSnapshot> qw = new QueryWrapper<>();
                     qw.select("COUNT(DISTINCT participant_id) AS total")
                             .eq("process_instance_id", processInstanceId)

@@ -89,18 +89,145 @@ public class DynamicBranchPortConfiguration {
             }
 
             @Override
+            public Optional<List<FrozenBranchV2>> freezeRound(String tenantId, String processInstanceId,
+                                                              String nodeKey, String executionId,
+                                                              String sourceType, String sourceDesc,
+                                                              String mode, String objectType,
+                                                              List<BranchCandidateV2> candidates) {
+                long tenant = parseTenant(tenantId);
+                // 1) 同 execution 恢复/重试：复用既有轮次快照（幂等，不重算不追加）
+                List<DynamicBranchSnapshot> sameExecution = mapper.selectList(
+                        new LambdaQueryWrapper<DynamicBranchSnapshot>()
+                                .eq(DynamicBranchSnapshot::getTenantId, tenant)
+                                .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
+                                .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
+                                .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
+                                .eq(DynamicBranchSnapshot::getExecutionId, executionId)
+                                .eq(DynamicBranchSnapshot::getDeleted, 0)
+                                .orderByAsc(DynamicBranchSnapshot::getBranchIndex));
+                if (!sameExecution.isEmpty()) {
+                    return Optional.of(frozenV2Of(sameExecution));
+                }
+                // 2) 新轮次：round = 历史最大 + 1；旧轮次未完成分支收口（旧任务不可串办）
+                List<DynamicBranchSnapshot> history = mapper.selectList(
+                        new LambdaQueryWrapper<DynamicBranchSnapshot>()
+                                .eq(DynamicBranchSnapshot::getTenantId, tenant)
+                                .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
+                                .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
+                                .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
+                                .eq(DynamicBranchSnapshot::getDeleted, 0));
+                long nextRound = history.stream()
+                        .mapToLong(row -> row.getRoundNo() == null ? 0L : row.getRoundNo())
+                        .max().orElse(-1L) + 1;
+                if (!history.isEmpty()) {
+                    mapper.update(null, new LambdaUpdateWrapper<DynamicBranchSnapshot>()
+                            .eq(DynamicBranchSnapshot::getTenantId, tenant)
+                            .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
+                            .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
+                            .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
+                            .eq(DynamicBranchSnapshot::getStatus, "START")
+                            .eq(DynamicBranchSnapshot::getDeleted, 0)
+                            .set(DynamicBranchSnapshot::getStatus, "CANCELED")
+                            .set(DynamicBranchSnapshot::getCancelReason, "SUPERSEDED_BY_ROUND")
+                            .set(DynamicBranchSnapshot::getUpdateTime, java.time.LocalDateTime.now()));
+                }
+                // 3) 逐对象落行：同负责人不同部门保持独立分支；来源位置整组保留
+                List<BranchCandidateV2> ordered = new ArrayList<>(candidates == null ? List.of() : candidates);
+                ordered.sort(java.util.Comparator.comparingLong(c -> parseLongSafe(c.objectId())));
+                List<FrozenBranchV2> result = new ArrayList<>();
+                int index = 0;
+                for (BranchCandidateV2 candidate : ordered) {
+                    DynamicBranchSnapshot row = baseRow(tenant, processInstanceId, nodeKey,
+                            sourceType, sourceDesc, mode);
+                    row.setBranchIndex(index);
+                    row.setSemanticVersion(2);
+                    row.setObjectType(objectType);
+                    row.setRoundNo(nextRound);
+                    row.setExecutionId(executionId);
+                    if (candidate.skipReason() != null || candidate.assigneeId() == null) {
+                        row.setObjectId(candidate.objectId());
+                        row.setStatus("CANCELED");
+                        row.setCancelReason(candidate.skipReason() == null ? "INVALID" : candidate.skipReason());
+                        mapper.insert(row);
+                    } else {
+                        row.setObjectId(candidate.objectId());
+                        row.setLeaderId(Long.valueOf(candidate.assigneeId()));
+                        row.setSourceRefs(candidate.sourceRefsJson());
+                        row.setStatus("START");
+                        mapper.insert(row);
+                        result.add(new FrozenBranchV2(index, candidate.assigneeId(),
+                                objectType, candidate.objectId(), candidate.sourceRefsJson()));
+                    }
+                    index++;
+                }
+                return Optional.of(result);
+            }
+
+            private List<FrozenBranchV2> frozenV2Of(List<DynamicBranchSnapshot> rows) {
+                List<FrozenBranchV2> result = new ArrayList<>();
+                for (DynamicBranchSnapshot row : rows) {
+                    if ("CANCELED".equals(row.getStatus()) || row.getLeaderId() == null) {
+                        continue;
+                    }
+                    result.add(new FrozenBranchV2(row.getBranchIndex() == null ? 0 : row.getBranchIndex(),
+                            String.valueOf(row.getLeaderId()),
+                            row.getObjectType() == null ? "DEPT" : row.getObjectType(),
+                            row.getObjectId(),
+                            row.getSourceRefs()));
+                }
+                return result;
+            }
+
+            @Override
             public Optional<MutationOutcome> recordAction(String tenantId, String processInstanceId, String nodeKey,
                                                           String leaderId, String taskId, String action, String reason) {
                 long tenant = parseTenant(tenantId);
+                // P63 v2：同负责人多分支按任务绑定行区分；任务首次回调时绑定未关联的最早分支
                 DynamicBranchSnapshot current = mapper.selectOne(
                         new LambdaQueryWrapper<DynamicBranchSnapshot>()
                                 .eq(DynamicBranchSnapshot::getTenantId, tenant)
                                 .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
                                 .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
-                                .eq(DynamicBranchSnapshot::getLeaderId, Long.valueOf(leaderId))
+                                .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
+                                .eq(DynamicBranchSnapshot::getTaskId, taskId)
                                 .eq(DynamicBranchSnapshot::getDeleted, 0)
-                                .orderByAsc(DynamicBranchSnapshot::getBranchIndex)
+                                .orderByDesc(DynamicBranchSnapshot::getRoundNo)
                                 .last("LIMIT 1"));
+                if (current == null) {
+                    DynamicBranchSnapshot unbound = mapper.selectOne(
+                            new LambdaQueryWrapper<DynamicBranchSnapshot>()
+                                    .eq(DynamicBranchSnapshot::getTenantId, tenant)
+                                    .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
+                                    .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
+                                    .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
+                                    .eq(DynamicBranchSnapshot::getLeaderId, Long.valueOf(leaderId))
+                                    .isNull(DynamicBranchSnapshot::getTaskId)
+                                    .ne(DynamicBranchSnapshot::getStatus, "CANCELED")
+                                    .eq(DynamicBranchSnapshot::getDeleted, 0)
+                                    .orderByDesc(DynamicBranchSnapshot::getRoundNo)
+                                    .orderByAsc(DynamicBranchSnapshot::getBranchIndex)
+                                    .last("LIMIT 1"));
+                    if (unbound != null) {
+                        DynamicBranchSnapshot bind = new DynamicBranchSnapshot();
+                        bind.setId(unbound.getId());
+                        bind.setTaskId(taskId);
+                        bind.setUpdateTime(java.time.LocalDateTime.now());
+                        mapper.updateById(bind);
+                        unbound.setTaskId(taskId);
+                        current = unbound;
+                    }
+                }
+                if (current == null) {
+                    current = mapper.selectOne(
+                            new LambdaQueryWrapper<DynamicBranchSnapshot>()
+                                    .eq(DynamicBranchSnapshot::getTenantId, tenant)
+                                    .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
+                                    .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
+                                    .eq(DynamicBranchSnapshot::getLeaderId, Long.valueOf(leaderId))
+                                    .eq(DynamicBranchSnapshot::getDeleted, 0)
+                                    .orderByAsc(DynamicBranchSnapshot::getBranchIndex)
+                                    .last("LIMIT 1"));
+                }
                 if (current == null) {
                     // 冻结前回调（防御）：该分支尚未冻结，不凭空造分支
                     return Optional.empty();
@@ -136,7 +263,33 @@ public class DynamicBranchPortConfiguration {
             public Optional<MutationOutcome> closeRemaining(String tenantId, String processInstanceId, String nodeKey,
                                                             String reason) {
                 long tenant = parseTenant(tenantId);
-                int updated = mapper.update(null, new LambdaUpdateWrapper<DynamicBranchSnapshot>()
+                // P63 v2：负向结算只关闭最新轮次未完成分支（旧轮次行已在轮次开启时收口）
+                DynamicBranchSnapshot latest = mapper.selectOne(
+                        new LambdaQueryWrapper<DynamicBranchSnapshot>()
+                                .eq(DynamicBranchSnapshot::getTenantId, tenant)
+                                .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
+                                .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
+                                .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
+                                .eq(DynamicBranchSnapshot::getDeleted, 0)
+                                .orderByDesc(DynamicBranchSnapshot::getRoundNo)
+                                .last("LIMIT 1"));
+                int updated;
+                if (latest != null && latest.getRoundNo() != null) {
+                    updated = mapper.update(null, new LambdaUpdateWrapper<DynamicBranchSnapshot>()
+                            .eq(DynamicBranchSnapshot::getTenantId, tenant)
+                            .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
+                            .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
+                            .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
+                            .eq(DynamicBranchSnapshot::getRoundNo, latest.getRoundNo())
+                            .eq(DynamicBranchSnapshot::getStatus, "START")
+                            .eq(DynamicBranchSnapshot::getDeleted, 0)
+                            .set(DynamicBranchSnapshot::getStatus, "CANCELED")
+                            .set(DynamicBranchSnapshot::getCancelReason, reason)
+                            .set(DynamicBranchSnapshot::getUpdateTime, java.time.LocalDateTime.now()));
+                    return Optional.of(updated > 0
+                            ? MutationOutcome.APPLIED : MutationOutcome.ALREADY_APPLIED);
+                }
+                updated = mapper.update(null, new LambdaUpdateWrapper<DynamicBranchSnapshot>()
                         .eq(DynamicBranchSnapshot::getTenantId, tenant)
                         .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
                         .eq(nodeKey != null && !nodeKey.isBlank(),

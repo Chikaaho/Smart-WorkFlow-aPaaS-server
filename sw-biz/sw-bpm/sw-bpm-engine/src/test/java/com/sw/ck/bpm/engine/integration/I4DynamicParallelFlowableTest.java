@@ -177,7 +177,8 @@ class I4DynamicParallelFlowableTest {
         DynamicBranchCollectionResolver resolver = new DynamicBranchCollectionResolver(
                 processEngine.getRepositoryService(), new ObjectMapper(),
                 mock(ParticipantResolverRegistry.class), deptQueryFacade, userQueryFacade,
-                providerOf(branchPort));
+                providerOf(branchPort),
+                (tenantId, formKey, recordId) -> java.util.Optional.empty());
         DynamicBranchTaskListener listener = new DynamicBranchTaskListener(runtimeService,
                 providerOf(snapshotRecorder), providerOf(votePort), providerOf(branchPort));
 

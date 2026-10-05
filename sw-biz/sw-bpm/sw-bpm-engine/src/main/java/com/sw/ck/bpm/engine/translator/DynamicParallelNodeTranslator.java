@@ -60,7 +60,9 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
                         new BpmNodeConfigField("emptyStrategy", "空集合策略", "string", false,
                                 Map.of("values", List.of("BLOCK", "PROCEED"))),
                         new BpmNodeConfigField("invalidStrategy", "失效对象策略", "string", false,
-                                Map.of("values", List.of("BLOCK", "SKIP")))),
+                                Map.of("values", List.of("BLOCK", "SKIP"))),
+                        new BpmNodeConfigField("semanticVersion", "分支语义版本", "integer", false,
+                                Map.of("min", 2, "max", 2))),
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
                 BpmNodeCapability.RUNTIME, BpmNodeCapability.CONFIG_VALIDATE),
                 false, false, false, true));
@@ -90,7 +92,35 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
                     return true;
                 }
             })) {
-                return Optional.of(List.of(error(node, "动态并行 FIXED 来源只能配置正整数部门 ID")));
+                return Optional.of(List.of(error(node, "动态并行 FIXED 来源只能配置正整数对象 ID")));
+            }
+        }
+        // P63 语义版本 2：对象分支（USER/DEPT）+ 主字段/表格列来源形状校验；缺省=旧语义（按负责人合并）
+        Object semanticVersion = config.get("semanticVersion");
+        boolean v2;
+        try {
+            v2 = semanticVersion != null && Integer.parseInt(String.valueOf(semanticVersion)) >= 2;
+        } catch (Exception e) {
+            return Optional.of(List.of(error(node, "动态并行语义版本必须为整数")));
+        }
+        if (v2) {
+            String objectType = source.get("objectType") == null
+                    ? null : String.valueOf(source.get("objectType")).trim().toUpperCase();
+            if (!"USER".equals(objectType) && !"DEPT".equals(objectType)) {
+                return Optional.of(List.of(error(node,
+                        "动态并行 v2 来源对象类型只能是 USER 或 DEPT")));
+            }
+            String scope = source.get("scope") == null
+                    ? null : String.valueOf(source.get("scope")).trim().toUpperCase();
+            if ("TABLE".equals(scope)) {
+                if (source.get("tableField") == null || String.valueOf(source.get("tableField")).isBlank()
+                        || source.get("column") == null || String.valueOf(source.get("column")).isBlank()) {
+                    return Optional.of(List.of(error(node,
+                            "动态并行 v2 表格来源必须配置 tableField 与 column")));
+                }
+            } else if (!"MAIN".equals(scope) && scope != null) {
+                return Optional.of(List.of(error(node,
+                        "动态并行 v2 来源范围只能是 MAIN 或 TABLE")));
             }
         }
         String mode = config.get("mode") == null ? null : String.valueOf(config.get("mode"));

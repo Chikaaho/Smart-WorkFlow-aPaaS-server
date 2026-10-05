@@ -206,9 +206,9 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                         "DEPT_POST 必须配置 {deptId, postCode}（正整数部门 ID + 非空岗位编码）");
             }
         } else if (ParticipantStrategy.FORM_FIELD.equalsIgnoreCase(strategy)) {
-            String error = ParticipantStrategy.formFieldConfigError(value);
-            if (error != null) {
-                return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID, error);
+            Optional<String> error = ParticipantStrategy.formFieldConfigError(value);
+            if (error.isPresent()) {
+                return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID, error.orElseThrow());
             }
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(strategy)) {
             if (!(value instanceof String expression) || expression.isBlank()) {

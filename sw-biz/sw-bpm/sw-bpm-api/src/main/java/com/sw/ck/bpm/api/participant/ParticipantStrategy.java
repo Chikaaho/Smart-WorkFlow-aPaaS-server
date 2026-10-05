@@ -30,29 +30,29 @@ public final class ParticipantStrategy {
     /**
      * FORM_FIELD value 形状校验（设计/发布/运行共用的单一权威）。
      *
-     * @return null = 合法；非 null = 面向用户的错误说明
+     * @return present = 面向用户的错误说明；empty = 形状合法
      */
-    public static String formFieldConfigError(Object value) {
+    public static java.util.Optional<String> formFieldConfigError(Object value) {
         if (!(value instanceof Map<?, ?> mapping)) {
-            return "FORM_FIELD 必须配置 {objectType, scope, field[, tableField, column]}";
+            return java.util.Optional.of("FORM_FIELD 必须配置 {objectType, scope, field[, tableField, column]}");
         }
         String objectType = text(mapping.get("objectType"));
         if (!"USER".equalsIgnoreCase(objectType) && !"DEPT".equalsIgnoreCase(objectType)) {
-            return "FORM_FIELD.objectType 只能是 USER 或 DEPT";
+            return java.util.Optional.of("FORM_FIELD.objectType 只能是 USER 或 DEPT");
         }
         String scope = text(mapping.get("scope"));
         if (!"MAIN".equalsIgnoreCase(scope) && !"TABLE".equalsIgnoreCase(scope)) {
-            return "FORM_FIELD.scope 只能是 MAIN 或 TABLE";
+            return java.util.Optional.of("FORM_FIELD.scope 只能是 MAIN 或 TABLE");
         }
         if (text(mapping.get("field")) == null) {
-            return "FORM_FIELD.field 必须配置来源字段名";
+            return java.util.Optional.of("FORM_FIELD.field 必须配置来源字段名");
         }
         if ("TABLE".equalsIgnoreCase(scope)) {
             if (text(mapping.get("tableField")) == null || text(mapping.get("column")) == null) {
-                return "FORM_FIELD scope=TABLE 时必须配置 tableField 与 column";
+                return java.util.Optional.of("FORM_FIELD scope=TABLE 时必须配置 tableField 与 column");
             }
         }
-        return null;
+        return java.util.Optional.empty();
     }
 
     private static String text(Object value) {

@@ -4,6 +4,7 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+import com.sw.ck.form.api.facade.FormRecordReadFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import org.flowable.engine.RepositoryService;
@@ -38,17 +39,20 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
     private final DeptQueryFacade deptQueryFacade;
     private final UserQueryFacade userQueryFacade;
     private final ObjectProvider<DynamicBranchPort> branchPort;
+    private final com.sw.ck.form.api.facade.FormRecordReadFacade formRecordReadFacade;
 
     public DynamicBranchCollectionResolver(RepositoryService repositoryService,
                                            com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                                            ParticipantResolverRegistry participantResolverRegistry,
                                            DeptQueryFacade deptQueryFacade,
                                            UserQueryFacade userQueryFacade,
-                                           ObjectProvider<DynamicBranchPort> branchPort) {
+                                           ObjectProvider<DynamicBranchPort> branchPort,
+                                           com.sw.ck.form.api.facade.FormRecordReadFacade formRecordReadFacade) {
         super(repositoryService, objectMapper, participantResolverRegistry);
         this.deptQueryFacade = deptQueryFacade;
         this.userQueryFacade = userQueryFacade;
         this.branchPort = branchPort;
+        this.formRecordReadFacade = formRecordReadFacade;
     }
 
     @Override
@@ -62,6 +66,9 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
         if (tenantId == null) {
             throw new BaseException(BpmErrorCode.APPROVER_TENANT_ID_MISSING.getCode(),
                     BpmErrorCode.APPROVER_TENANT_ID_MISSING.getMessage());
+        }
+        if (isSemanticV2(config)) {
+            return resolveCollectionV2(execution, config, tenantId);
         }
         int maxBranches = maxBranches(config);
         List<Long> deptIds = resolveDeptIds(execution, config);
@@ -136,6 +143,228 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                 asString(source.get("type")), asString(source.get("value")),
                 asString(config.getOrDefault("mode", "ALL")), candidates).orElseThrow(
                         () -> new IllegalStateException("动态分支冻结未返回结果"));
+    }
+
+    /** P63 语义版本 2：对象身份分支 + 轮次 + 来源行追溯；缺省/1=旧语义。 */
+    private boolean isSemanticV2(Map<String, Object> config) {
+        Object version = config.get("semanticVersion");
+        try {
+            return version != null && Integer.parseInt(String.valueOf(version)) >= 2;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * v2 路径：按对象身份（USER/DEPT）从主字段/表格列/变量/固定值收集来源对象与位置，
+     * 经 freezeRound 以多实例根 executionId 冻结轮次；同负责人不同部门保持独立分支。
+     */
+    @SuppressWarnings("unchecked")
+    private Collection<?> resolveCollectionV2(DelegateExecution execution, Map<String, Object> config,
+                                              Long tenantId) {
+        int maxBranches = maxBranches(config);
+        Map<String, Object> source = config.get("source") instanceof Map<?, ?> raw
+                ? (Map<String, Object>) raw : Map.of();
+        boolean userObjects = "USER".equalsIgnoreCase(asString(source.get("objectType")));
+        boolean tableScope = "TABLE".equalsIgnoreCase(asString(source.get("scope")));
+
+        // 收集对象 ID → 来源位置（LinkedHashMap 保序去重）
+        LinkedHashMap<String, List<String>> objectRefs = new LinkedHashMap<>();
+        if ("FIXED".equalsIgnoreCase(asString(source.get("type")))) {
+            for (String id : splitIds(source.get("value"))) {
+                objectRefs.computeIfAbsent(id, key -> new ArrayList<>())
+                        .add(refJson("FIXED", asString(source.get("field")), null, null));
+            }
+        } else if (tableScope) {
+            String recordId = asString(execution.getVariable("recordId"));
+            String formKey = asString(execution.getVariable("formKey"));
+            FormRecordReadFacade.FormRecordData record = formRecordReadFacade
+                    .findRecord(tenantId, formKey, recordId)
+                    .orElseThrow(() -> new BaseException(BpmErrorCode.DYNAMIC_BRANCH_EMPTY.getCode(),
+                            "实例表单记录不存在或已删除，无法解析动态分支来源"));
+            List<Map<String, Object>> rows = record.tables()
+                    .getOrDefault(asString(source.get("tableField")), List.of());
+            String column = asString(source.get("column"));
+            for (Map<String, Object> row : rows) {
+                Object rowId = row.get("id");
+                collectObjectIds(row.get(column), id -> objectRefs
+                        .computeIfAbsent(id, key -> new ArrayList<>())
+                        .add(refJson("TABLE_ROW", asString(source.get("field")),
+                                asString(source.get("tableField")),
+                                rowId == null ? null : String.valueOf(rowId))));
+            }
+        } else if ("VARIABLE".equalsIgnoreCase(asString(source.get("type")))) {
+            for (String id : splitIds(execution.getVariable(asString(source.get("value"))))) {
+                objectRefs.computeIfAbsent(id, key -> new ArrayList<>())
+                        .add(refJson("VARIABLE", asString(source.get("value")), null, null));
+            }
+        } else {
+            // FORM_FIELD：从实例表单数据权威读取（含多选解码），不用发起时变量快照
+            String recordId = asString(execution.getVariable("recordId"));
+            String formKey = asString(execution.getVariable("formKey"));
+            FormRecordReadFacade.FormRecordData record = formRecordReadFacade
+                    .findRecord(tenantId, formKey, recordId)
+                    .orElseThrow(() -> new BaseException(BpmErrorCode.DYNAMIC_BRANCH_EMPTY.getCode(),
+                            "实例表单记录不存在或已删除，无法解析动态分支来源"));
+            collectObjectIds(record.fields().get(asString(source.get("value"))),
+                    id -> objectRefs.computeIfAbsent(id, key -> new ArrayList<>())
+                            .add(refJson("FIELD", asString(source.get("value")), null, null)));
+        }
+
+        if (objectRefs.size() > maxBranches) {
+            throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_LIMIT_EXCEEDED.getCode(),
+                    "动态并行来源对象数 " + objectRefs.size() + " 超过上限 " + maxBranches);
+        }
+        if (objectRefs.isEmpty()) {
+            if ("PROCEED".equalsIgnoreCase(asString(config.get("emptyStrategy")))) {
+                freezeRound(execution, config, tenantId, userObjects, List.of());
+                return List.of(); // 显式受控放行：零分支，节点直接完成
+            }
+            throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_EMPTY.getCode(),
+                    BpmErrorCode.DYNAMIC_BRANCH_EMPTY.getMessage());
+        }
+
+        // 逐对象解析办理人：USER=本人；DEPT=服务端权威解析唯一负责人
+        List<DynamicBranchPort.BranchCandidateV2> candidates = new ArrayList<>();
+        List<String> invalid = new ArrayList<>();
+        if (userObjects) {
+            List<Long> parsed = objectRefs.keySet().stream().map(Long::valueOf).toList();
+            List<Long> active = userQueryFacade.findActiveUserIds(parsed, tenantId)
+                    .orElse(List.of());
+            var activeSet = new java.util.HashSet<>(active);
+            for (Map.Entry<String, List<String>> entry : objectRefs.entrySet()) {
+                if (activeSet.contains(Long.valueOf(entry.getKey()))) {
+                    candidates.add(new DynamicBranchPort.BranchCandidateV2(entry.getKey(),
+                            entry.getKey(), null, refListJson(entry.getValue())));
+                } else {
+                    invalid.add(entry.getKey());
+                    candidates.add(new DynamicBranchPort.BranchCandidateV2(entry.getKey(),
+                            null, "OBJECT_INVALID", refListJson(entry.getValue())));
+                }
+            }
+        } else {
+            List<Long> deptIds = objectRefs.keySet().stream().map(Long::valueOf).toList();
+            var activeSet = new java.util.HashSet<>(
+                    deptQueryFacade.findActiveDeptIds(deptIds).orElse(List.of()));
+            Map<Long, Long> leaderMap = userQueryFacade.findDeptLeaderMap(deptIds, tenantId)
+                    .orElse(Map.of());
+            for (Map.Entry<String, List<String>> entry : objectRefs.entrySet()) {
+                long deptId = Long.parseLong(entry.getKey());
+                if (!activeSet.contains(deptId)) {
+                    invalid.add(entry.getKey());
+                    candidates.add(new DynamicBranchPort.BranchCandidateV2(entry.getKey(),
+                            null, "OBJECT_INVALID", refListJson(entry.getValue())));
+                } else if (!leaderMap.containsKey(deptId)) {
+                    invalid.add(entry.getKey());
+                    candidates.add(new DynamicBranchPort.BranchCandidateV2(entry.getKey(),
+                            null, "LEADER_MISSING", refListJson(entry.getValue())));
+                } else {
+                    candidates.add(new DynamicBranchPort.BranchCandidateV2(entry.getKey(),
+                            String.valueOf(leaderMap.get(deptId)), null, refListJson(entry.getValue())));
+                }
+            }
+        }
+        if (!invalid.isEmpty() && !"SKIP".equalsIgnoreCase(asString(config.get("invalidStrategy")))) {
+            throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_LEADER_MISSING.getCode(),
+                    (userObjects ? "人员 " : "部门 ") + invalid + " 失效或负责人缺失");
+        }
+        List<DynamicBranchPort.FrozenBranchV2> frozen = freezeRound(execution, config, tenantId,
+                userObjects, candidates);
+        if (frozen.size() > maxBranches) {
+            throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_LIMIT_EXCEEDED.getCode(),
+                    "动态并行分支数 " + frozen.size() + " 超过上限 " + maxBranches);
+        }
+        return frozen.stream().map(DynamicBranchPort.FrozenBranchV2::assigneeId).toList();
+    }
+
+    private List<DynamicBranchPort.FrozenBranchV2> freezeRound(DelegateExecution execution,
+                                                               Map<String, Object> config,
+                                                               Long tenantId, boolean userObjects,
+                                                               List<DynamicBranchPort.BranchCandidateV2> candidates) {
+        DynamicBranchPort port = branchPort.getIfAvailable();
+        if (port == null) {
+            throw new BaseException(BpmErrorCode.TRANSLATION_FAILED.getCode(), "动态分支冻结端口不可用");
+        }
+        Map<String, Object> source = config.get("source") instanceof Map<?, ?> raw
+                ? (Map<String, Object>) raw : Map.of();
+        // 新轮次开启时重置汇聚计票（同轮恢复复放同样安全：任务尚未建、票数应为 0）
+        execution.setVariable("consensusApprovedCount", 0);
+        execution.setVariable("consensusRejectedCount", 0);
+        return port.freezeRound(String.valueOf(tenantId), execution.getProcessInstanceId(),
+                execution.getCurrentActivityId(), execution.getId(),
+                asString(source.get("type")),
+                asString(source.get("value")),
+                asString(config.getOrDefault("mode", "ALL")),
+                userObjects ? "USER" : "DEPT", candidates).orElseThrow(
+                        () -> new IllegalStateException("动态分支轮次冻结未返回结果"));
+    }
+
+    /** 单值/多选列表/JSON 数组串统一收集稳定对象 ID。 */
+    private void collectObjectIds(Object value, java.util.function.Consumer<String> sink) {
+        for (String id : splitIds(value)) {
+            sink.accept(id);
+        }
+    }
+
+    /** 值 → 正整数 ID 列表（单值、列表、JSON 数组串、逗号分隔串）。 */
+    private List<String> splitIds(Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        List<Object> flattened = new ArrayList<>();
+        if (value instanceof String text && text.trim().startsWith("[")) {
+            try {
+                List<?> decoded = objectMapper.readValue(text,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() { });
+                flattened.addAll(decoded);
+            } catch (Exception e) {
+                flattened.add(value);
+            }
+        } else if (value instanceof Collection<?> collection) {
+            flattened.addAll(collection);
+        } else {
+            flattened.add(value);
+        }
+        List<String> ids = new ArrayList<>();
+        for (Object item : flattened) {
+            if (item == null) continue;
+            String text = String.valueOf(item).trim();
+            if (text.contains(",")) {
+                for (String part : text.split(",")) {
+                    addPositiveId(part.trim(), ids);
+                }
+            } else {
+                addPositiveId(text, ids);
+            }
+        }
+        return ids;
+    }
+
+    private void addPositiveId(String text, List<String> sink) {
+        if (text.matches("\\d+") && Long.parseLong(text) > 0 && !sink.contains(text)) {
+            sink.add(text);
+        }
+    }
+
+    private String refJson(String kind, String field, String tableField, String rowId) {
+        try {
+            LinkedHashMap<String, Object> ref = new LinkedHashMap<>();
+            ref.put("kind", kind);
+            if (field != null) ref.put("field", field);
+            if (tableField != null) ref.put("tableField", tableField);
+            if (rowId != null) ref.put("rowId", rowId);
+            return objectMapper.writeValueAsString(List.of(ref));
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
+    private String refListJson(List<String> refs) {
+        try {
+            return objectMapper.writeValueAsString(refs);
+        } catch (Exception e) {
+            return "[]";
+        }
     }
 
     /** 来源解析：FIXED=配置值；VARIABLE/FORM_FIELD=流程变量（表单记录则按键取字段）。 */

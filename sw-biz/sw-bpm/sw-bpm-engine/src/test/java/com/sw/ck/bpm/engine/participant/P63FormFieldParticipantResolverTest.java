@@ -91,15 +91,15 @@ class P63FormFieldParticipantResolverTest {
     void formFieldConfigErrorContract() {
         assertThat(ParticipantStrategy.ALL).contains("FORM_FIELD");
         assertThat(ParticipantStrategy.formFieldConfigError(
-                Map.of("objectType", "USER", "scope", "MAIN", "field", "owner"))).isNull();
+                Map.of("objectType", "USER", "scope", "MAIN", "field", "owner"))).isEmpty();
         assertThat(ParticipantStrategy.formFieldConfigError(
                 Map.of("objectType", "DEPT", "scope", "TABLE",
-                        "field", "dept_list", "tableField", "items", "column", "dept_refs"))).isNull();
-        assertThat(ParticipantStrategy.formFieldConfigError("fixed")).isNotNull();
+                        "field", "dept_list", "tableField", "items", "column", "dept_refs"))).isEmpty();
+        assertThat(ParticipantStrategy.formFieldConfigError("fixed")).isPresent();
         assertThat(ParticipantStrategy.formFieldConfigError(
-                Map.of("objectType", "ROLE", "scope", "MAIN", "field", "x"))).isNotNull();
+                Map.of("objectType", "ROLE", "scope", "MAIN", "field", "x"))).isPresent();
         assertThat(ParticipantStrategy.formFieldConfigError(
-                Map.of("objectType", "USER", "scope", "TABLE", "field", "x"))).isNotNull();
+                Map.of("objectType", "USER", "scope", "TABLE", "field", "x"))).isPresent();
     }
 
     @Test

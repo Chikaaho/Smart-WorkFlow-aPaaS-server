@@ -55,4 +55,32 @@ public interface DynamicBranchPort {
     /** 冻结后的有效分支：branchIndex 为进入节点的稳定顺序。 */
     record FrozenBranch(int branchIndex, String leaderId, String deptIds) {
     }
+
+    /**
+     * v2 轮次冻结（P63 语义版本 2）：按对象身份生成分支（USER=人、DEPT=部门→负责人），
+     * 保留全部来源位置（表格行 id / 字段引用），同负责人不同部门保持独立分支。
+     * 轮次以多实例根 executionId 标识：同 executionId 恢复/重试复用既有快照；
+     * 新 executionId（退回后合法重入）开启新轮次并重新解析，旧轮次行保留不改写，
+     * 其中未完成分支标记 CANCELED（原因 SUPERSEDED_BY_ROUND，旧任务不可串办）。
+     *
+     * @param candidates v2 候选（每对象一条；无效对象 assigneeId 为空并带 skipReason）
+     * @return present = 本轮有效分支（供多实例逐分支建任务；候选全部无效时为空列表）
+     */
+    default Optional<List<FrozenBranchV2>> freezeRound(String tenantId, String processInstanceId,
+                                                       String nodeKey, String executionId,
+                                                       String sourceType, String sourceDesc,
+                                                       String mode, String objectType,
+                                                       List<BranchCandidateV2> candidates) {
+        throw new UnsupportedOperationException("freezeRound requires P63 dynamic branch port");
+    }
+
+    /** v2 来源对象候选：无效对象以 skipReason 表达（OBJECT_INVALID / LEADER_MISSING）。 */
+    record BranchCandidateV2(String objectId, String assigneeId, String skipReason,
+                             String sourceRefsJson) {
+    }
+
+    /** v2 冻结后的有效分支：assigneeId 为该分支办理人（部门分支=负责人，人员分支=本人）。 */
+    record FrozenBranchV2(int branchIndex, String assigneeId, String objectType,
+                          String objectId, String sourceRefsJson) {
+    }
 }

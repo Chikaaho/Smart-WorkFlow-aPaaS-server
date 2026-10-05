@@ -366,7 +366,8 @@ class I4CrossTenantServiceEntryTest {
                 }
             };
             return new DynamicBranchCollectionResolver(R1Engine.REPOSITORY_SERVICE,
-                    new ObjectMapper(), null, deptQueryFacade, userQueryFacade, provider);
+                    new ObjectMapper(), null, deptQueryFacade, userQueryFacade, provider,
+                    (tenantId, formKey, recordId) -> java.util.Optional.empty());
         }
 
         @Bean

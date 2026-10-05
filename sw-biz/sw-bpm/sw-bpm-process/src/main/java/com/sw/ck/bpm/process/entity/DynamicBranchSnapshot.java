@@ -55,4 +55,28 @@ public class DynamicBranchSnapshot extends BaseEntity {
 
     @TableField("cancel_reason")
     private String cancelReason;
+
+    /** P63 语义版本：NULL=旧语义（按负责人合并）；2=对象身份分支 + 轮次 + 来源行追溯。 */
+    @TableField("semantic_version")
+    private Integer semanticVersion;
+
+    /** P63 分支对象类型：USER / DEPT。 */
+    @TableField("object_type")
+    private String objectType;
+
+    /** P63 分支对象 ID（稳定身份；同负责人不同部门保持独立行）。 */
+    @TableField("object_id")
+    private String objectId;
+
+    /** P63 办理轮次（0 起，按多实例根 executionId 区分；旧语义行恒 NULL）。 */
+    @TableField("round_no")
+    private Long roundNo;
+
+    /** P63 本轮多实例根 executionId（同 execution 恢复复用，新 execution 新轮次）。 */
+    @TableField("execution_id")
+    private String executionId;
+
+    /** P63 来源位置 JSON：[{kind: FIELD|TABLE_ROW, field, tableField, rowId}]。 */
+    @TableField("source_refs")
+    private String sourceRefs;
 }

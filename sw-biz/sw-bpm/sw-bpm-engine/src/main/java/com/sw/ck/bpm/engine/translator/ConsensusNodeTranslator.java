@@ -98,9 +98,10 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                 return Optional.of(List.of(error(node, "会签 DEPT_POST 必须配置 {deptId, postCode}")));
             }
         } else if (ParticipantStrategy.FORM_FIELD.equalsIgnoreCase(strategy)) {
-            String formFieldError = ParticipantStrategy.formFieldConfigError(participantValue);
-            if (formFieldError != null) {
-                return Optional.of(List.of(error(node, "会签 " + formFieldError)));
+            java.util.Optional<String> formFieldError =
+                    ParticipantStrategy.formFieldConfigError(participantValue);
+            if (formFieldError.isPresent()) {
+                return Optional.of(List.of(error(node, "会签 " + formFieldError.orElseThrow())));
             }
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(strategy)) {
             try { RestrictedExpressionEvaluator.value(String.valueOf(participantValue), Map.of()); }
