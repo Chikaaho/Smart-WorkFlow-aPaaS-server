@@ -205,6 +205,11 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                 return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
                         "DEPT_POST 必须配置 {deptId, postCode}（正整数部门 ID + 非空岗位编码）");
             }
+        } else if (ParticipantStrategy.FORM_FIELD.equalsIgnoreCase(strategy)) {
+            String error = ParticipantStrategy.formFieldConfigError(value);
+            if (error != null) {
+                return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID, error);
+            }
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(strategy)) {
             if (!(value instanceof String expression) || expression.isBlank()) {
                 return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,

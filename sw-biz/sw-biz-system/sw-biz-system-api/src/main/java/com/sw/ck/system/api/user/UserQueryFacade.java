@@ -79,6 +79,15 @@ public interface UserQueryFacade {
     Optional<List<Long>> findActiveUserIdsByDeptLeaders(Collection<Long> deptIds, Long tenantId);
 
     /**
+     * 逐部门解析有效负责人映射（P63：同负责人不同部门保持独立分支的权威依据）。
+     * 部门正常状态、负责人用户启用且同租户；负责人缺失/部门失效的部门不出现在结果中，
+     * 由调用方按「缺负责人」语义处置。
+     *
+     * @return present = deptId → leaderId 映射；empty = 部门集合或租户上下文缺失
+     */
+    Optional<Map<Long, Long>> findDeptLeaderMap(Collection<Long> deptIds, Long tenantId);
+
+    /**
      * 按岗位编码查询任职用户（岗位启用、任职行有效、用户启用，同租户），
      * 供流程节点运行期解析 POST 策略。
      *

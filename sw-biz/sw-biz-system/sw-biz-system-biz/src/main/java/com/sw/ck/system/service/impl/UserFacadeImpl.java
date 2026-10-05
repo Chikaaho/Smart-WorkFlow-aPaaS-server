@@ -138,6 +138,27 @@ public class UserFacadeImpl implements UserQueryFacade {
     }
 
     @Override
+    public Optional<java.util.Map<Long, Long>> findDeptLeaderMap(Collection<Long> deptIds, Long tenantId) {
+        if (deptIds == null || tenantId == null) {
+            // 部门集合或租户上下文缺失，查询未执行
+            return Optional.empty();
+        }
+        List<Long> distinct = deptIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty()) {
+            return Optional.of(java.util.Map.of());
+        }
+        java.util.Map<Long, Long> leaderByDept = new java.util.LinkedHashMap<>();
+        for (java.util.Map<String, Object> row : sysUserMapper.selectDeptLeaderMap(distinct, tenantId)) {
+            Object deptId = row.get("dept_id");
+            Object leaderId = row.get("leader_id");
+            if (deptId instanceof Number d && leaderId instanceof Number l) {
+                leaderByDept.putIfAbsent(d.longValue(), l.longValue());
+            }
+        }
+        return Optional.of(leaderByDept);
+    }
+
+    @Override
     public Optional<List<Long>> findActiveUserIdsByPostCodes(Collection<String> postCodes, Long tenantId) {
         if (postCodes == null || tenantId == null) {
             // 岗位编码集合或租户上下文缺失，查询未执行

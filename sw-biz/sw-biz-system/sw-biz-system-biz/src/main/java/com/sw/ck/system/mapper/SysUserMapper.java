@@ -60,6 +60,21 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
     List<Long> selectActiveUserIdsByDeptLeaders(@Param("deptIds") List<Long> deptIds,
                                                  @Param("tenantId") Long tenantId);
 
+    /**
+     * 逐部门负责人映射（P63）：dept_id → leader_id；仅正常状态部门 + 启用同租户负责人；
+     * 失效部门/缺负责人的部门不出现在结果中。
+     */
+    @Select({"<script>",
+            "SELECT d.id AS dept_id, d.leader_id AS leader_id FROM sys_dept d ",
+            "JOIN sys_user u ON u.id = d.leader_id AND u.deleted = 0 AND u.status = 0 ",
+            "WHERE d.deleted = 0 AND d.status = 0 AND d.leader_id IS NOT NULL ",
+            "AND d.tenant_id = #{tenantId} AND u.tenant_id = #{tenantId} AND d.id IN ",
+            "<foreach collection='deptIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
+            "</script>"})
+    @InterceptorIgnore(tenantLine = "true")
+    List<java.util.Map<String, Object>> selectDeptLeaderMap(@Param("deptIds") List<Long> deptIds,
+                                                             @Param("tenantId") Long tenantId);
+
     /** 岗位解析：启用岗位 × 有效任职行 × 启用用户，同租户。 */
     @Select({"<script>",
             "SELECT DISTINCT up.user_id FROM sys_user_post up ",
