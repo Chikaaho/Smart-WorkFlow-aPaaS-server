@@ -207,7 +207,7 @@ class P62NodeLevelGuaranteePgTest {
         // A 幂等重放：同节点键重放原结果不叠加
         FormTxnActionPort.TxnActionResult replay = asOperator(() -> txnActionPort.invoke(
                 new FormTxnActionPort.TxnActionCommand(actionA, recordId, "3",
-                        "NODE:" + processInstanceId + ":g-a", null, null)));
+                        "NODE:" + processInstanceId + ":g-a", null, null))).orElseThrow();
         assertThat(replay.status()).isEqualTo("SUCCEEDED");
         assertThat(replay.replay()).as("重放标记").isTrue();
         assertThat(reservedOn(flowTable, recordId)).as("重放不产生第二次效果").isEqualByComparingTo("3");
@@ -275,7 +275,7 @@ class P62NodeLevelGuaranteePgTest {
         // 原载荷先真实占用项幂等键（等效先前消费已完成）
         FormTxnActionPort.TxnActionResult original = asOperator(() -> txnActionPort.invoke(
                 new FormTxnActionPort.TxnActionCommand(actionId, recordW, "2",
-                        "BATCH:g3-diverge:item-w", null, null)));
+                        "BATCH:g3-diverge:item-w", null, null))).orElseThrow();
         assertThat(original.status()).isEqualTo("SUCCEEDED");
         assertThat(reservedOf(recordW)).isEqualByComparingTo("2");
 

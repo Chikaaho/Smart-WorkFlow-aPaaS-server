@@ -41,20 +41,20 @@ public class IotDeviceFacadeImpl implements IotDeviceFacade {
     }
 
     @Override
-    public java.util.List<com.sw.ck.iot.api.DeviceCommandSummary> findByApprovalBizId(
+    public java.util.Optional<java.util.List<com.sw.ck.iot.api.DeviceCommandSummary>> findByApprovalBizId(
             Long tenantId, String approvalBizId) {
         if (approvalBizId == null || approvalBizId.isBlank()) {
-            return java.util.List.of();
+            return java.util.Optional.of(java.util.List.of());
         }
         // 跨模块回查按显式租户边界执行（调用方契约传入租户，不依赖线程登录态）
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
-            return iotDeviceService.findByApprovalBizId(tenantId, approvalBizId).stream()
+            return java.util.Optional.of(iotDeviceService.findByApprovalBizId(tenantId, approvalBizId).stream()
                     .map(command -> new com.sw.ck.iot.api.DeviceCommandSummary(
                             command.getId(), command.getProductId(), command.getDeviceName(),
                             command.getCommandKey(), command.getStatus(), command.getResult(),
                             command.getUpdateTime()))
-                    .toList();
+                    .toList());
         }
     }
 

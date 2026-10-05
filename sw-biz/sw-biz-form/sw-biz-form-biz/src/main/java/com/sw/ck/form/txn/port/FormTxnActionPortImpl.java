@@ -66,7 +66,7 @@ public class FormTxnActionPortImpl implements FormTxnActionPort {
     }
 
     @Override
-    public TxnActionResult invoke(TxnActionCommand command) {
+    public java.util.Optional<TxnActionResult> invoke(TxnActionCommand command) {
         LoginUser operator = requireAuthorizedOperator();
         if (command == null || command.actionId() == null || command.actionId().isBlank()) {
             throw new BaseException(FormErrorCode.ACTION_NOT_FOUND, "动作标识不能为空");
@@ -85,9 +85,10 @@ public class FormTxnActionPortImpl implements FormTxnActionPort {
         log.info("事务动作受控调用: actionId={}, operator={}, tenant={}, key={}",
                 command.actionId(), operator.getUserId(), operator.getTenantId(), command.invocationKey());
         TxnInvokeResult result = executor.invoke(command.actionId(), request);
-        return new TxnActionResult(result.invocationId(), result.status(), result.actionVersion(),
-                result.reservationId(), result.quantity(), result.balanceAfter(), result.reservedAfter(),
-                result.errorCode(), result.errorMsg(), result.durationMs(), result.replay());
+        return java.util.Optional.of(new TxnActionResult(result.invocationId(), result.status(),
+                result.actionVersion(), result.reservationId(), result.quantity(), result.balanceAfter(),
+                result.reservedAfter(), result.errorCode(), result.errorMsg(), result.durationMs(),
+                result.replay()));
     }
 
     @Override
@@ -111,12 +112,13 @@ public class FormTxnActionPortImpl implements FormTxnActionPort {
     }
 
     @Override
-    public java.util.List<TxnInvocationSummary> listInvocationsByBizRecord(String bizRecordId, int limit) {
+    public java.util.Optional<java.util.List<TxnInvocationSummary>> listInvocationsByBizRecord(
+            String bizRecordId, int limit) {
         requireAuthorizedOperator();
         if (bizRecordId == null || bizRecordId.isBlank() || limit <= 0) {
-            return java.util.List.of();
+            return java.util.Optional.of(java.util.List.of());
         }
-        return invocationMapper.selectList(
+        return java.util.Optional.of(invocationMapper.selectList(
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.form.txn.entity.TxnInvocationEntity>lambdaQuery()
                         .eq(com.sw.ck.form.txn.entity.TxnInvocationEntity::getBizRecordId, bizRecordId)
                         .orderByDesc(com.sw.ck.form.txn.entity.TxnInvocationEntity::getCreateTime)
@@ -125,7 +127,7 @@ public class FormTxnActionPortImpl implements FormTxnActionPort {
                 .map(entity -> new TxnInvocationSummary(entity.getId(), entity.getActionId(),
                         entity.getActionVersion(), entity.getStatus(), entity.getErrorCode(),
                         entity.getErrorMsg(), entity.getBizRecordId(), entity.getCreateTime()))
-                .toList();
+                .toList());
     }
 
     private LoginUser requireAuthorizedOperator() {

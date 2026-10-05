@@ -72,22 +72,6 @@ public final class ApiOptionalContractGate {
     private static final Pattern API_ARTIFACT = Pattern.compile(
             ".*-api(-[0-9][^/]*)?\\.jar$|.*-api/(target/(test-)?classes|build/classes)/?$");
 
-    /**
-     * P62 显式登记的类型化结果/列表契约（javadoc 合同、经 P62 阶段独立验收）：
-     * {@code FormTxnActionPort#invoke} 以「失败=业务异常或显式 REJECTED 结果」表达、结果对象恒非空；
-     * {@code listInvocationsByBizRecord} / {@code findByApprovalBizId} 为空列表合法的列表回查；
-     * {@code realtimeGuardProfile} 返回恒存在的生效画像。
-     * 登记为「FQCN#方法名」精确匹配：不在登记内的方法（含同接口新增方法）仍必须 Optional<T>，
-     * 防静默扩大；删除方法后必须同步清理登记（由守门测试的回读断言兜底）。
-     * 授权来源：planning-review-tiered-execution-unified-command-07-passed.md、
-     * planning-review-resource-assurance-11-passed.md 及 Port javadoc 契约原文。
-     */
-    static final Set<String> REGISTERED_TYPED_CONTRACTS = Set.of(
-            "com.sw.ck.form.api.port.FormTxnActionPort#invoke",
-            "com.sw.ck.form.api.port.FormTxnActionPort#listInvocationsByBizRecord",
-            "com.sw.ck.form.api.port.TxnActionRuntimePort#realtimeGuardProfile",
-            "com.sw.ck.iot.api.IotDeviceFacade#findByApprovalBizId");
-
     private ApiOptionalContractGate() {
     }
 
@@ -134,9 +118,6 @@ public final class ApiOptionalContractGate {
         for (Class<?> type : types) {
             for (Method method : type.getDeclaredMethods()) {
                 if (!isContractMethod(type, method)) {
-                    continue;
-                }
-                if (REGISTERED_TYPED_CONTRACTS.contains(type.getName() + "#" + method.getName())) {
                     continue;
                 }
                 String problem = returnTypeViolation(method);

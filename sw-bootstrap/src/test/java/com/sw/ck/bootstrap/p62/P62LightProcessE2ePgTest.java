@@ -246,7 +246,7 @@ class P62LightProcessE2ePgTest {
         replay.setInvocationKey(invocationKey(processInstanceId));
         FormTxnActionPort.TxnActionResult result = asOperator(() -> txnActionPort.invoke(
                 new FormTxnActionPort.TxnActionCommand(actionId, recordId, "2",
-                        invocationKey(processInstanceId), null, null)));
+                        invocationKey(processInstanceId), null, null))).orElseThrow();
         assertThat(result.status()).isEqualTo("SUCCEEDED");
         assertThat(result.replay()).as("重放返回原结果标记").isTrue();
         assertThat(result.reservationId()).isNotBlank();

@@ -75,11 +75,11 @@ public class TxnActionRealtimeGuard implements TxnActionRuntimePort {
     }
 
     @Override
-    public RealtimeGuardProfile realtimeGuardProfile() {
+    public java.util.Optional<RealtimeGuardProfile> realtimeGuardProfile() {
         Map<Long, Integer> tenantInFlight = new HashMap<>();
         tenantPermits.forEach((tenant, permit) ->
                 tenantInFlight.put(tenant, Math.max(1, tenantMaxConcurrent) - permit.availablePermits()));
-        return new RealtimeGuardProfile(globalMaxConcurrent, tenantMaxConcurrent,
-                Math.max(1, globalMaxConcurrent) - globalPermits.availablePermits(), tenantInFlight);
+        return java.util.Optional.of(new RealtimeGuardProfile(globalMaxConcurrent, tenantMaxConcurrent,
+                Math.max(1, globalMaxConcurrent) - globalPermits.availablePermits(), tenantInFlight));
     }
 }

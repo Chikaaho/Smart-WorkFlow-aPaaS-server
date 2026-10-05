@@ -215,7 +215,8 @@ class TxnBatchCommandH2Test {
         // 修复后重试：只处理 item-2
         when(txnActionPort.invoke(ArgumentMatchers.argThat(cmd ->
                         cmd != null && cmd.invocationKey().endsWith(":item-2"))))
-                .thenReturn(succeeded(), succeeded());
+                .thenReturn(java.util.Optional.of(succeeded()),
+                        java.util.Optional.of(succeeded()));
         handler.handle(claimed);
 
         TxnBatchView recovered = batchService.get("b-resume");
@@ -282,7 +283,7 @@ class TxnBatchCommandH2Test {
     private void stubInvoke(String itemKey, FormTxnActionPort.TxnActionResult result) {
         when(txnActionPort.invoke(ArgumentMatchers.argThat(cmd ->
                         cmd != null && cmd.invocationKey().endsWith(":" + itemKey))))
-                .thenReturn(result);
+                .thenReturn(java.util.Optional.of(result));
     }
 
     private FormTxnActionPort.TxnActionResult succeeded() {

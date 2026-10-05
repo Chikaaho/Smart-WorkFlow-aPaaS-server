@@ -111,26 +111,6 @@ class ApiOptionalContractGateTest {
     }
 
     @Test
-    @DisplayName("P62 登记防腐化：每条登记的类型化契约必须实际存在且确为非 Optional；若改为 Optional 或删除必须同步清理登记")
-    void registeredTypedContractsAreRealAndStillTypedResults() {
-        Set<Class<?>> apiTypes = ApiOptionalContractGate.scanApiModuleTypes();
-        for (String entry : ApiOptionalContractGate.REGISTERED_TYPED_CONTRACTS) {
-            String[] parts = entry.split("#");
-            Class<?> type = apiTypes.stream()
-                    .filter(candidate -> candidate.getName().equals(parts[0]))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("登记项指向不存在的契约类型: " + entry));
-            Method method = Arrays.stream(type.getDeclaredMethods())
-                    .filter(candidate -> candidate.getName().equals(parts[1]))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("登记项指向不存在的方法（接口已变更，须清理登记）: " + entry));
-            assertThat(method.getReturnType())
-                    .as("登记项 %s 已返回 Optional，应删除登记交回默认守门", entry)
-                    .isNotEqualTo(Optional.class);
-        }
-    }
-
-    @Test
     @DisplayName("守门逻辑覆盖返回值形态：Optional 参数化与 raw/Void/嵌套判定")
     void gateClassifiesOptionalShapes() throws Exception {
         Method compliant = CompliantSupport.class.getMethod("value", String.class);

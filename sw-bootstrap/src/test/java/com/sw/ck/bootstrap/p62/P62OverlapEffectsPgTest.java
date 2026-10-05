@@ -281,7 +281,8 @@ class P62OverlapEffectsPgTest {
         Callable<FormTxnActionPort.TxnActionResult> invoker = () -> {
             start.await();
             return asOperator(() -> txnActionPort.invoke(
-                    new FormTxnActionPort.TxnActionCommand(actionId, recordId, "3", nodeKey, null, null)));
+                    new FormTxnActionPort.TxnActionCommand(actionId, recordId, "3", nodeKey, null, null)))
+                    .orElseThrow();
         };
         Future<FormTxnActionPort.TxnActionResult> f1 = pool.submit(invoker);
         // 两个执行者几乎同时进入（并发重叠，非顺序重放）
@@ -289,7 +290,8 @@ class P62OverlapEffectsPgTest {
             start.await();
             Thread.sleep(5);
             return asOperator(() -> txnActionPort.invoke(
-                    new FormTxnActionPort.TxnActionCommand(actionId, recordId, "3", nodeKey, null, null)));
+                    new FormTxnActionPort.TxnActionCommand(actionId, recordId, "3", nodeKey, null, null)))
+                    .orElseThrow();
         });
         Thread.sleep(50);
         start.countDown();

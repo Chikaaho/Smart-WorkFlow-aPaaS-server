@@ -234,7 +234,8 @@ class P62DeviceReceiptPgTest {
         assertThat(conflictAudits).as("冲突留审计").isEqualTo(1L);
 
         // —— BPM 关联回查（U07）：按流程实例回查命令摘要 ——
-        var summaries = asOperator(() -> iotDeviceFacade.findByApprovalBizId(TENANT, processInstanceId));
+        var summaries = asOperator(() -> iotDeviceFacade.findByApprovalBizId(TENANT, processInstanceId))
+                .orElse(java.util.List.of());
         assertThat(summaries).hasSize(1);
         DeviceCommandSummary summary = summaries.get(0);
         assertThat(summary.commandId()).isEqualTo(commandId);

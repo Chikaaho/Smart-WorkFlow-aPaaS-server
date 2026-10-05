@@ -220,7 +220,8 @@ public class BpmResourceOpsService {
             guard.put("configuredTenantMax", realtimeTenantConcurrency);
             return guard;
         }
-        TxnActionRuntimePort.RealtimeGuardProfile profile = port.realtimeGuardProfile();
+        TxnActionRuntimePort.RealtimeGuardProfile profile = port.realtimeGuardProfile()
+                .orElseThrow(() -> new IllegalStateException("实时并发闸画像不可用"));
         guard.put("available", true);
         guard.put("globalMaxConcurrent", profile.globalMaxConcurrent());
         guard.put("tenantMaxConcurrent", profile.tenantMaxConcurrent());
@@ -367,7 +368,8 @@ public class BpmResourceOpsService {
                 FormTxnActionPort port = txnActionPortProvider.getIfAvailable();
                 if (port != null) {
                     targets.addAll(port.listInvocationsByBizRecord(
-                            commandKey.substring("FLOW_START:".length()), 20));
+                            commandKey.substring("FLOW_START:".length()), 20)
+                            .orElse(java.util.List.of()));
                 }
             }
         }

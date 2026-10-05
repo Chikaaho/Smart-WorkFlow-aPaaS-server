@@ -12,8 +12,13 @@ import java.util.Map;
  */
 public interface TxnActionRuntimePort {
 
-    /** 实时并发闸有效画像（实际生效配置与当前在途）。 */
-    RealtimeGuardProfile realtimeGuardProfile();
+    /**
+     * 实时并发闸有效画像（实际生效配置与当前在途）。
+     * <p>P62 最终交付 FD02（按 Optional 合同修复）：恒返回有值
+     * {@code Optional.of(画像)}——画像由生效配置即时构造、恒可构造；
+     * Port 未装配以调用方 {@code getIfAvailable()} 判定，不用 empty 表达。</p>
+     */
+    java.util.Optional<RealtimeGuardProfile> realtimeGuardProfile();
 
     record RealtimeGuardProfile(int globalMaxConcurrent, int tenantMaxConcurrent,
                                 int globalInFlight, Map<Long, Integer> tenantInFlight) {

@@ -16,9 +16,9 @@ public class ResourceAssuranceTestConfig {
     public FormTxnActionPort stubFormTxnActionPort() {
         return new FormTxnActionPort() {
             @Override
-            public TxnActionResult invoke(TxnActionCommand command) {
-                return new TxnActionResult("inv-" + command.invocationKey(), "SUCCEEDED",
-                        1, null, null, null, null, null, null, 1L, false);
+            public java.util.Optional<TxnActionResult> invoke(TxnActionCommand command) {
+                return java.util.Optional.of(new TxnActionResult("inv-" + command.invocationKey(),
+                        "SUCCEEDED", 1, null, null, null, null, null, null, 1L, false));
             }
 
             @Override
@@ -33,9 +33,9 @@ public class ResourceAssuranceTestConfig {
             }
 
             @Override
-            public java.util.List<FormTxnActionPort.TxnInvocationSummary> listInvocationsByBizRecord(
+            public java.util.Optional<java.util.List<FormTxnActionPort.TxnInvocationSummary>> listInvocationsByBizRecord(
                     String bizRecordId, int limit) {
-                return java.util.List.of();
+                return java.util.Optional.of(java.util.List.of());
             }
         };
     }

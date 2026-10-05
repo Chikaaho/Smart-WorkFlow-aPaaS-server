@@ -435,7 +435,7 @@ class TxnActionFlowH2Test {
         LoginUser user = LoginUserHolder.get();
         user.setPermissions(java.util.List.of("form:action:invoke"));
         var result = port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
-                actionId, "stock-1", "2", "NODE:demo:1", null, null));
+                actionId, "stock-1", "2", "NODE:demo:1", null, null)).orElseThrow();
         assertThat(result.status()).isEqualTo("SUCCEEDED");
         assertThat(result.reservationId()).isNotBlank();
         assertThat(result.actionVersion()).isEqualTo(1);
@@ -443,7 +443,7 @@ class TxnActionFlowH2Test {
 
         // 同键重放：返回原结果、无第二次效果
         var replay = port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
-                actionId, "stock-1", "2", "NODE:demo:1", null, null));
+                actionId, "stock-1", "2", "NODE:demo:1", null, null)).orElseThrow();
         assertThat(replay.replay()).isTrue();
         assertThat(replay.reservationId()).isEqualTo(result.reservationId());
         assertThat(reservedOf("stock-1")).isEqualByComparingTo("2");

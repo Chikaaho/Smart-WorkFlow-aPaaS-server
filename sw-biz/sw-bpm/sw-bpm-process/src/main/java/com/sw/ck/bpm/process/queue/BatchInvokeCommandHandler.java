@@ -164,7 +164,8 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
             FormTxnActionPort.TxnActionResult result = txnActionPort.invoke(
                     new FormTxnActionPort.TxnActionCommand(batch.getActionId(), current.getRecordId(),
                             current.getQuantity(), invocationKey(batch.getBatchKey(), current.getItemKey()),
-                            null, null, batch.getActionVersion()));
+                            null, null, batch.getActionVersion())).orElseThrow(
+                    () -> new IllegalStateException("批量项动作调用无结果"));
             if ("SUCCEEDED".equals(result.status())) {
                 current.setStatus(BatchItemStatusEnum.SUCCEEDED.getCode());
                 current.setInvocationId(result.invocationId());

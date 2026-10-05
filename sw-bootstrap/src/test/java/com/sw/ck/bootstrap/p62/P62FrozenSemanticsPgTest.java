@@ -295,7 +295,7 @@ class P62FrozenSemanticsPgTest {
                 () -> executor.execute(status ->
                         port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
                                 actionId, recordId, "2", "BATCH:frozen-replay-batch:replay-item",
-                                null, null, 1))));
+                                null, null, 1)))).orElseThrow();
         assertThat(replay.status()).isEqualTo("SUCCEEDED");
         assertThat(replay.replay()).as("跨会话重放返回原结果标记").isTrue();
         assertThat(reservedOf(recordId)).as("重放不叠加预占")

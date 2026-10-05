@@ -193,8 +193,7 @@ class Phase5IotApiBoundaryGateTest {
                         // P62 S4 增补：设备命令回查值类型（审批→设备命令关联链，复核07 验收）
                         "DeviceCommandSummary");
         assertThat(ApiOptionalContractGate.contractMethodCount(iotTypes))
-                .as("纳入守门的 IoT 契约方法数（P62 增 findByApprovalBizId 后为 8；"
-                        + "该方法为登记内类型化列表契约，其余 7 个仍必须参数化 Optional）")
+                .as("纳入守门的 IoT 契约方法数（P62 FD02 后 8/8 全部参数化 Optional）")
                 .isEqualTo(8);
         assertThat(ApiOptionalContractGate.violationsIn(iotTypes))
                 .as("无 void / primitive / 裸集合 / 裸对象返回")

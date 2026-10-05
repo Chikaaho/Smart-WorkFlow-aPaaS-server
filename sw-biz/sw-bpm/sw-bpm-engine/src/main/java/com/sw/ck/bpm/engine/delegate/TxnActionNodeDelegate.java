@@ -112,9 +112,12 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
         }
         FormTxnActionPort.TxnActionResult result;
         try {
+            // FD02：Port 合同恒返回有值 Optional（失败以异常或结果 status 表达）
             result = nodeTxTemplate.execute(status ->
                     txnActionPort.invoke(new FormTxnActionPort.TxnActionCommand(
-                            actionId, recordId, quantity, invocationKey, null, null)));
+                            actionId, recordId, quantity, invocationKey, null, null)))
+                    .orElseThrow(() -> new IllegalStateException("动作调用无结果"));
+        
         } catch (org.springframework.transaction.UnexpectedRollbackException rollback) {
             // 业务拒绝（REJECTED）在动作内核"另事务"记录后回滚拒绝事务：独立短事务随之回滚
             // 属预期语义（拒绝不产生效果），回查已独立提交的拒绝记录恢复结果供 CONTINUE/BLOCK 分支

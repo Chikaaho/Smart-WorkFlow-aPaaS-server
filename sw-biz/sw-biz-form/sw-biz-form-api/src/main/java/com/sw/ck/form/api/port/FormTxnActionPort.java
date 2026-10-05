@@ -18,8 +18,14 @@ import java.util.Optional;
  */
 public interface FormTxnActionPort {
 
-    /** 受控调用已发布事务动作（幂等键沿用调用方稳定键，如 NODE:{instanceId}:{nodeId}）。 */
-    TxnActionResult invoke(TxnActionCommand command);
+    /**
+     * 受控调用已发布事务动作（幂等键沿用调用方稳定键，如 NODE:{instanceId}:{nodeId}）。
+     * <p>P62 最终交付 FD02（按 Optional 合同修复）：恒返回<strong>有值</strong>
+     * {@code Optional.of(结果)}——结果对象以 {@code status}/{@code errorCode} 表达
+     * SUCCEEDED/REJECTED/CONFLICT；动作不存在、身份缺失或参数非法以业务异常表达，
+     * 不使用 empty（empty 语义保留给"可能不存在的单对象查询"类方法）。</p>
+     */
+    java.util.Optional<TxnActionResult> invoke(TxnActionCommand command);
 
     /** 发布期绑定校验：动作存在、同租户且已发布（未发布或无权限时返回 empty）。 */
     Optional<TxnActionDescriptor> describe(String actionId);
@@ -57,8 +63,11 @@ public interface FormTxnActionPort {
     /**
      * 按业务记录 id 只读回查关联调用行（P62 资源保障 RG05：轻流程受理→目标动作关联查询；
      * 时间倒序，最多 limit 行）。调用方须已持合法身份与租户边界。
+     * <p>P62 最终交付 FD02（按 Optional 合同修复）：恒返回
+     * {@code Optional.of(非 null 列表)}，<strong>合法空集合即零行</strong>；不使用 empty。
+     * 非法入参（null/blank/limit≤0）按零行处理，不抛异常。</p>
      */
-    java.util.List<TxnInvocationSummary> listInvocationsByBizRecord(String bizRecordId, int limit);
+    java.util.Optional<java.util.List<TxnInvocationSummary>> listInvocationsByBizRecord(String bizRecordId, int limit);
 
     /** 调用行只读摘要（关联查询用）。 */
     record TxnInvocationSummary(String invocationId, String actionId, Integer actionVersion,
