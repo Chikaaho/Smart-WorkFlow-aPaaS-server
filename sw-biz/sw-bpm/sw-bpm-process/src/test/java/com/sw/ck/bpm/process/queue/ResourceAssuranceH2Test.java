@@ -97,8 +97,13 @@ class ResourceAssuranceH2Test {
     @Autowired
     private TransactionTemplate txTemplate;
 
+    /** 速率桶是 JVM 驻留态：跨用例必须复位，否则同窗口内前序用例的 admit 会使后续用例撞 2428（flaky）。 */
+    @Autowired
+    private com.sw.ck.bpm.process.service.TenantRateBuckets rateBuckets;
+
     @BeforeEach
     void setUp() {
+        rateBuckets.reset();
         jdbcTemplate.update("DELETE FROM sw_bpm_command_effect");
         jdbcTemplate.update("DELETE FROM sw_bpm_command");
         jdbcTemplate.update("DELETE FROM sw_bpm_command_batch_item");

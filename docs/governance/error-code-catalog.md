@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（144 常量 / 5 枚举）
+## 2. 全量登记（156 常量 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -99,6 +99,7 @@
 | form | `ACTION_QUANTITY_INVALID` | 1611 | `form.action_quantity_invalid` | 数量不符合模型声明的精度或范围 |
 | form | `C1_WRITE_PROTECTED` | 1612 | `form.c1_write_protected` | 该数据受关键数据保护，请通过受控事务动作写入 |
 | form | `C1_POLICY_INVALID` | 1613 | `form.c1_policy_invalid` | 现有数据不满足保护约束，暂不能启用 |
+| form | `ACTION_REALTIME_CONCURRENCY_EXCEEDED` | 1614 | `form.action_realtime_concurrency_exceeded` | 实时动作并发已达上限，请稍后重试（适用额度见响应提示） |
 | bpm | `GRAPH_MISSING_START` | 2000 | `bpm.graph_missing_start` | 图缺少开始节点 |
 | bpm | `GRAPH_MULTIPLE_START` | 2001 | `bpm.graph_multiple_start` | 图存在多个开始节点 |
 | bpm | `GRAPH_MISSING_END` | 2002 | `bpm.graph_missing_end` | 图缺少结束节点 |
@@ -160,6 +161,17 @@
 | bpm | `DYNAMIC_BRANCH_EMPTY` | 2418 | `bpm.dynamic_branch_empty` | 动态并行来源集合为空且未配置受控放行策略 |
 | bpm | `DYNAMIC_BRANCH_LEADER_MISSING` | 2419 | `bpm.dynamic_branch_leader_missing` | 动态并行存在失效部门或负责人缺失，且未配置受控跳过策略 |
 | bpm | `DYNAMIC_BRANCH_LIMIT_EXCEEDED` | 2420 | `bpm.dynamic_branch_limit_exceeded` | 动态并行分支数超过安全上限 |
+| bpm | `LIGHT_PROCESS_NODE_NOT_ALLOWED` | 2421 | `bpm.light_process_node_not_allowed` | 生产轻流程仅允许开始、结束、条件分支与事务动作节点，请移除人工等待、并行、通知或其他节点 |
+| bpm | `LIGHT_PROCESS_CYCLE` | 2422 | `bpm.light_process_cycle` | 生产轻流程不允许存在环，请检查条件分支的连线方向 |
+| bpm | `LIGHT_PROCESS_ACTION_LIMIT_EXCEEDED` | 2423 | `bpm.light_process_action_limit_exceeded` | 生产轻流程的事务动作节点最多 16 个，请拆分流程 |
+| bpm | `BATCH_NOT_FOUND` | 2424 | `bpm.batch_not_found` | 批量批次不存在或不属于当前租户 |
+| bpm | `BATCH_CAPABILITY_DISABLED` | 2425 | `bpm.batch_capability_disabled` | 批量事务调用能力未启用（新入口默认关闭，须旧消费者退出核清后协调开启） |
+| bpm | `COMMAND_PAYLOAD_MISMATCH` | 2426 | `bpm.command_payload_mismatch` | 同一操作身份携带了不同的请求载荷，已被拒绝 |
+| bpm | `RESOURCE_QUOTA_EXCEEDED` | 2427 | `bpm.resource_quota_exceeded` | 受理额度已满：持久工作量超出适用上限，请稍后重试或降低提交速率 |
+| bpm | `RESOURCE_RATE_EXCEEDED` | 2428 | `bpm.resource_rate_exceeded` | 提交速率超出每租户工作单位上限，请按适用速率重试 |
+| bpm | `RESOURCE_ACCEPTANCE_STOPPED` | 2429 | `bpm.resource_acceptance_stopped` | 资源策略已停新受理：已有工作按原合同继续结算，暂不接受新受理 |
+| bpm | `RESOURCE_POLICY_INVALID` | 2430 | `bpm.resource_policy_invalid` | 资源策略校验未通过：额度、保留份额、消费者可用性或预算相容性检查失败，已拒绝启用 |
+| bpm | `RESOURCE_CONSUMER_UNAVAILABLE` | 2431 | `bpm.resource_consumer_unavailable` | 必需消费者未启用：异步目标或批量消费能力不可用，已拒绝启用新受理 |
 | openapi | `APP_NOT_FOUND` | 3000 | `openapi.app_not_found` | 开放应用不存在 |
 | openapi | `APP_DISABLED` | 3001 | `openapi.app_disabled` | 开放应用已停用 |
 | openapi | `SIGN_INVALID` | 3002 | `openapi.signature_invalid` | 签名校验失败 |

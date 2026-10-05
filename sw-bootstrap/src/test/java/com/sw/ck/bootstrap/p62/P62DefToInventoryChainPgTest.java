@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -45,6 +46,7 @@ import java.util.concurrent.Callable;
  * （原对象生命周期随上一轮隔离环境结束，见 raw-chain-readonly.txt 的
  * destroyed/deleted 登记），逐环输出实际只读 SQL/接口原始行，不经整理改写。
  */
+@EnabledIfSystemProperty(named = "p62.g6a.evidence.dir", matches = ".+")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @DisplayName("P62 复核04 G6a：定义→版本→记录→实例→节点→动作→库存 只读原始链")
 class P62DefToInventoryChainPgTest {

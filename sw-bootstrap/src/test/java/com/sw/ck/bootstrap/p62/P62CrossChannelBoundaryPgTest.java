@@ -18,6 +18,7 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -48,6 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 原文与 payload_fingerprint 实际值（有效载荷/入口字段事实）、动作记录字段读回
  * 与前后效果计数；仅 HTTP 200 或任务已无不构成边界通过依据。
  */
+@EnabledIfSystemProperty(named = "p62.boundary.evidence.dir", matches = ".+")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @DisplayName("P62 提示04 G3b 反向边界：恢复分支不吞异载荷、不恢复他人/异动作（真实PG+真实HTTP）")

@@ -64,6 +64,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 工具上限约束，实跑采用 -Dp62.resource.warmup/-Dp62.resource.formal 缩短验证轮
  * （shortVerify=true 标注，不作为正式 10min 窗口判定值；正式窗口命令固定于回执）。</p>
  */
+@EnabledIfSystemProperty(named = "p62.runId", matches = ".+")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @DisplayName("P62 资源保障测量（真实HTTP入口，分段手动：-Dp62.resource.*=true）")
 class P62ResourceAssurancePgTest {

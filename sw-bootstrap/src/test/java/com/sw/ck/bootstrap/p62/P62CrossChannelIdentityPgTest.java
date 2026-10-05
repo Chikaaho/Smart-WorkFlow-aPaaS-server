@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -48,6 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 逐入口保留实际请求/响应原文、tenant/action/版本/逻辑键、命令与动作台账前后计数、
  * 关联结果回查输出。不重做停用冻结与旧 handler（已在 G3b 前一轮锁定）。
  */
+@EnabledIfSystemProperty(named = "p62.g3b.evidence.dir", matches = ".+")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @DisplayName("P62 复核04 G3b：跨同步/异步入口统一幂等身份（真实PG+真实HTTP）")
 class P62CrossChannelIdentityPgTest {

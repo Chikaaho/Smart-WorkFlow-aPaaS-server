@@ -44,7 +44,7 @@ class Phase5IotApiBoundaryGateTest {
             "com.sw.ck.iot.config",
             "com.sw.ck.iot.util");
 
-    /** IoT 对外 HTTP 路由快照（Phase 5 不得增删改）。 */
+    /** IoT 对外 HTTP 路由快照（Phase 5 不得增删改；P62 S4 增 /iot/commands 受控回执与人工核实路由）。 */
     private static final Set<String> IOT_HTTP_ROUTES = Set.of(
             "/iot/connections",
             "/iot/devices",
@@ -54,7 +54,8 @@ class Phase5IotApiBoundaryGateTest {
             "/iot/runtime",
             "/iot/scripts",
             "/iot/topics",
-            "/iot/hook/tencent");
+            "/iot/hook/tencent",
+            "/iot/commands");
 
     /** 0.1.3 种子合并后 IoT 独立迁移目录为空（全部并入 V0.1.0 基线）；守卫保持：
      *  本目录出现任何新 SQL 文件即失败，新增 schema 必须走基线追加路径。 */
@@ -188,10 +189,13 @@ class Phase5IotApiBoundaryGateTest {
         assertThat(iotTypes.stream().map(Class::getSimpleName).toList())
                 .as("IoT 契约类型必须被 Phase 1 守门扫描到（无白名单豁免）")
                 .containsExactlyInAnyOrder("IotDeviceFacade", "IotProcessTriggerFacade",
-                        "IotDeviceQueryFacade", "IotFormContractChecker", "IotProcessTriggerEvent");
+                        "IotDeviceQueryFacade", "IotFormContractChecker", "IotProcessTriggerEvent",
+                        // P62 S4 增补：设备命令回查值类型（审批→设备命令关联链，复核07 验收）
+                        "DeviceCommandSummary");
         assertThat(ApiOptionalContractGate.contractMethodCount(iotTypes))
-                .as("纳入守门的 IoT 契约方法数")
-                .isEqualTo(7);
+                .as("纳入守门的 IoT 契约方法数（P62 增 findByApprovalBizId 后为 8；"
+                        + "该方法为登记内类型化列表契约，其余 7 个仍必须参数化 Optional）")
+                .isEqualTo(8);
         assertThat(ApiOptionalContractGate.violationsIn(iotTypes))
                 .as("无 void / primitive / 裸集合 / 裸对象返回")
                 .isEmpty();
