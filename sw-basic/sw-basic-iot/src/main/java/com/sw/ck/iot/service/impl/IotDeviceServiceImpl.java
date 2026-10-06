@@ -159,6 +159,20 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
                                             String idempotentKey) {
         IotDevice device = getByProductAndDeviceName(productId, deviceName);
         if (device == null) {
+            // 调度线程（预约到点下发）无登录态：按幂等键前缀识别预约来源并回退显式租户解析
+            if (idempotentKey != null && idempotentKey.startsWith("RESERVATION:")) {
+                try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                             com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                    device = baseMapper.selectOne(
+                            com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDevice>lambdaQuery()
+                                    .eq(IotDevice::getProductId, productId)
+                                    .eq(IotDevice::getDeviceName, deviceName)
+                                    .eq(IotDevice::getDeleted, 0)
+                                    .last("LIMIT 1"));
+                }
+            }
+        }
+        if (device == null) {
             throw new BaseException(404, "设备不存在: productId=" + productId
                     + ", deviceName=" + deviceName);
         }
@@ -170,6 +184,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         }
 
         IotDeviceCommand command = new IotDeviceCommand();
+        command.setTenantId(device.getTenantId());
         command.setProductId(productId);
         command.setDeviceName(deviceName);
         command.setDeviceKey(device.getDeviceKey());

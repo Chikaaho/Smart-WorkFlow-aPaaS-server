@@ -49,21 +49,28 @@ public class IotReservationDispatchJob {
 
     @Scheduled(fixedDelay = 10_000L)
     public void dispatchDueReservations() {
-        LocalDateTime now = LocalDateTime.now();
-        expireOverdue(now);
-        List<IotCommandReservation> due = reservationMapper.selectDuePending(now.minusSeconds(3600), now);
-        for (IotCommandReservation reservation : due) {
-            claimAndDispatch(reservation);
+        // 调度线程无登录态：挂起租户拦截器，行自身 tenant_id 为权威过滤（显式条件）
+        com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspend();
+        try {
+            LocalDateTime nowUtc = LocalDateTime.now(java.time.ZoneOffset.UTC);
+            expireOverdue(nowUtc);
+            List<IotCommandReservation> due =
+                    reservationMapper.selectDuePending(nowUtc.minusSeconds(3600), nowUtc);
+            for (IotCommandReservation reservation : due) {
+                claimAndDispatch(reservation);
+            }
+        } finally {
+            com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.restore();
         }
     }
 
-    private void expireOverdue(LocalDateTime now) {
-        List<IotCommandReservation> overdue = reservationMapper.selectExpiredPending(now);
+    private void expireOverdue(LocalDateTime nowUtc) {
+        List<IotCommandReservation> overdue = reservationMapper.selectExpiredPending(nowUtc);
         for (IotCommandReservation reservation : overdue) {
             LocalDateTime windowEnd = reservation.getDueAtUtc()
                     .plusSeconds(reservation.getLateWindowSeconds() == null ? 0
                             : reservation.getLateWindowSeconds());
-            if (windowEnd.isBefore(now)) {
+            if (windowEnd.isBefore(nowUtc)) {
                 int updated = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
                         .set(IotCommandReservation::getStatus, "EXPIRED")
                         .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
@@ -79,6 +86,15 @@ public class IotReservationDispatchJob {
     }
 
     private void claimAndDispatch(IotCommandReservation reservation) {
+        com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspend();
+        try {
+            claimAndDispatchSuspended(reservation);
+        } finally {
+            com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.restore();
+        }
+    }
+
+    private void claimAndDispatchSuspended(IotCommandReservation reservation) {
         int claimed = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
                 .set(IotCommandReservation::getStatus, "DISPATCHING")
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())

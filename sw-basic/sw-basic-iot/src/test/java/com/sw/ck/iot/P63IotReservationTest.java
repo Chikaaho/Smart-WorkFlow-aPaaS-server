@@ -109,7 +109,7 @@ class P63IotReservationTest {
         when(reservationMapper.selectByInstance(100L, "pi-1")).thenReturn(null);
         AtomicReference<IotCommandReservation> row = new AtomicReference<>();
         inTx(() -> {
-            createIntent(LocalDateTime.now().minusHours(2));
+            createIntent(LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2));
             ArgumentCaptor<IotCommandReservation> captor = ArgumentCaptor.forClass(IotCommandReservation.class);
             verify(reservationMapper).insert(captor.capture());
             row.set(captor.getValue());
@@ -196,7 +196,7 @@ class P63IotReservationTest {
         IotDeviceService deviceService = mock(IotDeviceService.class);
         CommandQueueService queueService = mock(CommandQueueService.class);
         IotCommandReservation overdue = duePendingRow();
-        overdue.setDueAtUtc(LocalDateTime.now().minusHours(3));
+        overdue.setDueAtUtc(LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(3));
         IotCommandReservationMapper mapper = mock(IotCommandReservationMapper.class);
         when(mapper.selectExpiredPending(any())).thenReturn(List.of(overdue));
         when(mapper.selectDuePending(any(), any())).thenReturn(List.of());
@@ -233,7 +233,7 @@ class P63IotReservationTest {
         row.setCommandKey("power_off");
         row.setCommandType("PROPERTY");
         row.setPayload("{}");
-        row.setDueAtUtc(LocalDateTime.now().minusSeconds(5));
+        row.setDueAtUtc(LocalDateTime.now(java.time.ZoneOffset.UTC).minusSeconds(5));
         row.setLateWindowSeconds(60);
         return row;
     }
