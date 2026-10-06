@@ -62,6 +62,21 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
             throw new IllegalStateException("动态并行节点上下文缺失");
         }
         Map<String, Object> config = nodeConfigByKey(execution, flowElement.getId());
+        // P63 G04：轮次冻结的唯一权威是"多实例根执行首次进入"。Flowable 7.1 的
+        // executeOriginalBehavior 会在每个子实例执行上再次回调本解析器仅为取本实例元素，
+        // 此时执行树尚未冻结该子 executionId——若按子 executionId 冻结会凭空开出业务新轮
+        // 并把真实首入轮关闭（SUPERSEDED_BY_ROUND）。子实例调用一律爬升到多实例根执行，
+        // 复用既有幂等口径（v1 按 tenant+instance+node；v2 按根 executionId），不重算不关旧轮。
+        if (!execution.isMultiInstanceRoot()) {
+            DelegateExecution root = execution;
+            while (!root.isMultiInstanceRoot() && root.getParent() != null) {
+                root = root.getParent();
+            }
+            if (root.isMultiInstanceRoot()) {
+                execution = root;
+            }
+            // 找不到根（防御）：保持原路径解析，由端口层幂等兜底
+        }
         Long tenantId = parseLong(execution.getVariable("tenantId"));
         if (tenantId == null) {
             throw new BaseException(BpmErrorCode.APPROVER_TENANT_ID_MISSING.getCode(),

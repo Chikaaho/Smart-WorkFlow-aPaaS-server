@@ -158,9 +158,10 @@ class P63IotReservationTest {
                 deviceService, provider(sender), queueService);
         job.dispatchDueReservations();
 
-        ArgumentCaptor<IotDeviceCommand> expiryPatch = ArgumentCaptor.forClass(IotDeviceCommand.class);
-        verify(commandMapper, times(2)).update(isNull(), any());
-        verify(sender, times(1)).sendCommand(any(IotDeviceCommand.class));
+        // P63 修复后契约：job 不再预占 SENDING（预占会让共享发送路径 markSending 撞状态判死），
+        // 仅做窗口对齐 1 次 update；状态迁移由 sendCommand 内 markSending 统一承载。
+        verify(commandMapper, times(1)).update(isNull(), any());
+        verify(sender, times(1)).sendCommand(argThat(cmd -> cmd != null && "QUEUED".equals(cmd.getStatus())));
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(
                 (com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<?>) wrapper, "DISPATCHED")));
         assertThat(due.getCommandId()).isNull(); // patch 经 wrapper 落库，实体断言以 wrapper 为准

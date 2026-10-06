@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * IoT 预约查询与取消入口（P63）。
@@ -59,11 +60,12 @@ public class IotReservationController {
                                          @RequestBody CancelRequest request) {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         Long actorId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
-        String outcome = reservationFacade
-                .cancel(tenantId, id, actorId, request == null ? null : request.reason())
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                        org.springframework.http.HttpStatus.NOT_FOUND, "预约不存在"));
-        return R.ok(Map.of("outcome", outcome));
+        Optional<String> outcome = reservationFacade
+                .cancel(tenantId, id, actorId, request == null ? null : request.reason());
+        // empty = 租户内无此预约（含他租户主键探测）：明确 404，不进系统错误，不写任何数据
+        return outcome
+                .<R<Map<String, Object>>>map(value -> R.ok(Map.of("outcome", value)))
+                .orElseGet(() -> R.fail(404, "预约不存在"));
     }
 
     public record CancelRequest(String reason) {

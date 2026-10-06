@@ -107,8 +107,10 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
             try { RestrictedExpressionEvaluator.value(String.valueOf(participantValue), Map.of()); }
             catch (RuntimeException e) { return Optional.of(List.of(error(node, "会签 EXPRESSION 语法不合法"))); }
         }
+        // mode 缺省时 translate 按 ALL 结算（getOrDefault），校验只拒绝显式非法值；
+        // 不可变 List.contains(null) 会 NPE，必须先判空。
         String mode = config.get("mode") == null ? null : String.valueOf(config.get("mode"));
-        if (!List.of("ALL", "ANY", "RATIO", "VETO").contains(mode)) {
+        if (mode != null && !List.of("ALL", "ANY", "RATIO", "VETO").contains(mode)) {
             return Optional.of(List.of(error(node, "会签方式不合法")));
         }
         if ("RATIO".equals(mode)) {

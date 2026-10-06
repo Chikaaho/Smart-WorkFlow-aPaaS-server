@@ -149,21 +149,16 @@ public class IotReservationDispatchJob {
                 .eq(IotDeviceCommand::getId, command.getId())
                 .eq(IotDeviceCommand::getStatus, "QUEUED"));
 
-        // 立即尝试外发：窗口内不得只入队后无限期等待补偿
-        boolean claimed = commandMapper.update(null, new LambdaUpdateWrapper<IotDeviceCommand>()
-                .set(IotDeviceCommand::getStatus, "SENDING")
-                .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
-                .eq(IotDeviceCommand::getId, command.getId())
-                .eq(IotDeviceCommand::getStatus, "QUEUED")) == 1;
-        if (claimed) {
-            IotDeviceCommand sending = commandMapper.selectById(command.getId());
-            com.sw.ck.iot.util.DeferredControlUtil sender = senderProvider.getIfAvailable();
-            if (sender != null && sending != null) {
-                sender.sendCommand(sending);
-            } else if (sending != null) {
-                // 发送通道未装配：回退可重试失败（既有语义），由补偿在窗口内重试
-                commandQueueService.markFailed(sending.getId(), "发送通道未装配（sw.iot.enabled=false）");
-            }
+        // 立即尝试外发：窗口内不得只入队后无限期等待补偿。
+        // 状态迁移（QUEUED→SENDING）由共享发送路径 markSending 统一承载；
+        // 此处不得预占 SENDING，否则 sendCommand 内的 markSending 必然撞状态判死。
+        IotDeviceCommand queued = commandMapper.selectById(command.getId());
+        com.sw.ck.iot.util.DeferredControlUtil sender = senderProvider.getIfAvailable();
+        if (sender != null && queued != null) {
+            sender.sendCommand(queued);
+        } else if (queued != null) {
+            // 发送通道未装配：回退可重试失败（既有语义），由补偿在窗口内重试
+            commandQueueService.markFailed(queued.getId(), "发送通道未装配（sw.iot.enabled=false）");
         }
         int dispatched = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
                 .set(IotCommandReservation::getStatus, "DISPATCHED")
