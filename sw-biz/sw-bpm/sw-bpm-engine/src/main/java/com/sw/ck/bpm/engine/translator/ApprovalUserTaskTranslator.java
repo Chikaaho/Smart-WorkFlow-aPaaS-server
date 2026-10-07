@@ -65,8 +65,22 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
 
     private final ObjectMapper objectMapper;
 
+    /** 可选：经组织权威校验 DESIGNATED/FIXED_USER 写死 assignee 的租户归属（P63 §3.1）。 */
+    private final org.springframework.beans.factory.ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade>
+            userQueryFacadeProvider;
+
+    /** 兼容既有单测直接构造（无组织权威时跳过租户校验，保持原语义）。 */
     public ApprovalUserTaskTranslator(ObjectMapper objectMapper) {
+        this(objectMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ApprovalUserTaskTranslator(
+            ObjectMapper objectMapper,
+            org.springframework.beans.factory.ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade>
+                    userQueryFacadeProvider) {
         this.objectMapper = objectMapper;
+        this.userQueryFacadeProvider = userQueryFacadeProvider;
     }
 
     @Override
@@ -294,6 +308,9 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                 String designated = firstDesignatedUser(approverMap.get("value"));
                 if (designated != null && !designated.isBlank()
                         && isSingleValue(approverMap.get("value"))) {
+                    // P63 §3.1 fail-closed：写死 assignee 前按发布者租户权威校验用户，
+                    // 跨租户/停用/不存在一律拒绝发布（明确提示），不经运行时静默落任务。
+                    validateDesignatedUserTenant(designated);
                     userTask.setAssignee(designated);
                 }
             }
@@ -333,6 +350,41 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
             return String.valueOf(value);
         }
         return null;
+    }
+
+    /**
+     * 写死 assignee 前按发布者租户权威校验用户（P63 §3.1：跨租户或越权有明确提示）。
+     * <p>组织权威缺失（兼容直接构造）或无租户上下文（引擎内部重建场景）时保持原语义；
+     * 发布链始终携带发布者登录态，权威校验在此生效。</p>
+     */
+    private void validateDesignatedUserTenant(String userIdText) {
+        com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
+                userQueryFacadeProvider == null ? null : userQueryFacadeProvider.getIfAvailable();
+        if (userQueryFacade == null) {
+            return;
+        }
+        final long userId;
+        try {
+            userId = Long.parseLong(userIdText.trim());
+        } catch (NumberFormatException e) {
+            throw new com.sw.ck.common.exception.BaseException(
+                    BpmErrorCode.APPROVER_RESOLVE_EMPTY.getCode(),
+                    "审批人必须是数字用户 ID: " + userIdText);
+        }
+        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        Long tenantId = loginUser == null ? null : loginUser.getTenantId();
+        if (tenantId == null) {
+            return;
+        }
+        List<Long> active = userQueryFacade.findActiveUserIds(List.of(userId), tenantId)
+                .orElse(List.of());
+        if (!active.contains(userId)) {
+            log.error("DESIGNATED/FIXED_USER 审批人不在当前租户或已停用，拒绝发布: userId={}, tenantId={}",
+                    userId, tenantId);
+            throw new com.sw.ck.common.exception.BaseException(
+                    BpmErrorCode.APPROVER_RESOLVE_EMPTY.getCode(),
+                    "审批人不在当前租户或已停用: userId=" + userId);
+        }
     }
 
     private boolean isSingleValue(Object value) {

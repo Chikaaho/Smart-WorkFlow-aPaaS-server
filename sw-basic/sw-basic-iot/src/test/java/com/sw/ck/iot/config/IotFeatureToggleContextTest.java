@@ -39,7 +39,8 @@ class IotFeatureToggleContextTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(IotPropertiesAutoConfiguration.class,
                     IotAutoConfiguration.class))
-            .withUserConfiguration(IotComponentsConfiguration.class);
+            .withUserConfiguration(IotComponentsConfiguration.class)
+            .withBean(java.time.Clock.class, java.time.Clock::systemUTC);
 
     @BeforeEach
     void stubDeviceLookup() {

@@ -129,6 +129,18 @@ class P63ReservationUnknownPgTest {
                 + "VALUES (?, now(), now(), 0, ?, 0, ?, 'UNKNOWN链受控设备', 'ONLINE', 'P63PROD', ?, 'PUBLISHED', 1) "
                 + "ON CONFLICT (id) DO NOTHING", DEVICE_ID, TENANT, DEVICE_KEY, DEVICE_KEY);
 
+        // G03a 功能权威种子：产品 + 已发布物模型（power_off），预约链 fail-closed 依据
+        jdbc.update("INSERT INTO sw_iot_product (id, create_time, update_time, deleted, tenant_id, version, "
+                + "code, name, conn_type, model_status, published_model_id) "
+                + "VALUES (91590, now(), now(), 0, ?, 0, 'P63PROD', 'P63预约产品', 'MQTT', 'PUBLISHED', 91591) "
+                + "ON CONFLICT (id) DO NOTHING", TENANT);
+        jdbc.update("INSERT INTO sw_iot_thing_model (id, create_time, update_time, deleted, tenant_id, version, "
+                + "product_id, model_version, status, content_json, publish_time) "
+                + "VALUES (91591, now(), now(), 0, ?, 0, 91590, 1, 'PUBLISHED', "
+                + "'{\"properties\":[{\"id\":\"power_off\"},{\"id\":\"power_on\"}],\"events\":[],\"actions\":[]}', now()) "
+                + "ON CONFLICT (id) DO NOTHING", TENANT);
+        jdbc.update("UPDATE sw_iot_device SET product_ref_id = 91590 WHERE tenant_id = ? AND deleted = 0", TENANT);
+
         asUser(INITIATOR, () -> {
             var draft = formService.createDraft(FORM_KEY, "P63未知链表单", null, null);
             formService.saveConfig(draft.getId(),

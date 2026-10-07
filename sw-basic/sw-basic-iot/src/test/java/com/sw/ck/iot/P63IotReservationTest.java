@@ -56,7 +56,7 @@ class P63IotReservationTest {
     @BeforeEach
     void setUp() {
         reservationMapper = mock(IotCommandReservationMapper.class);
-        facade = new IotCommandReservationFacadeImpl(reservationMapper);
+        facade = new IotCommandReservationFacadeImpl(reservationMapper, mock(IotDeviceService.class), java.time.Clock.systemUTC());
         // mock insert 回填生成主键（真实链路由数据库/ID 生成器填充）
         when(reservationMapper.insert(any(IotCommandReservation.class))).thenAnswer(inv -> {
             inv.getArgument(0, IotCommandReservation.class).setId(99L);
@@ -158,7 +158,7 @@ class P63IotReservationTest {
         when(commandMapper.update(isNull(), any())).thenReturn(1);
 
         IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(sender), queueService);
+                deviceService, provider(sender), queueService, java.time.Clock.systemUTC());
         job.dispatchDueReservations();
 
         // P63 修复后契约：job 不再预占 SENDING（预占会让共享发送路径 markSending 撞状态判死），
@@ -185,7 +185,7 @@ class P63IotReservationTest {
         when(mapper.update(isNull(), any())).thenReturn(1);
 
         IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(null), queueService);
+                deviceService, provider(null), queueService, java.time.Clock.systemUTC());
         job.dispatchDueReservations();
 
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(
@@ -207,7 +207,7 @@ class P63IotReservationTest {
         when(mapper.update(isNull(), any())).thenReturn(1);
 
         IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(null), queueService);
+                deviceService, provider(null), queueService, java.time.Clock.systemUTC());
         job.dispatchDueReservations();
 
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(

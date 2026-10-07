@@ -46,13 +46,16 @@ public class DeferredControlUtil {
     private final IotDeviceService iotDeviceService;
     private final CommandQueueService commandQueueService;
     private final ObjectProvider<DeviceControlProvider> deviceControlProvider;
+    private final java.time.Clock clock;
 
     public DeferredControlUtil(IotDeviceService iotDeviceService,
                                CommandQueueService commandQueueService,
-                               ObjectProvider<DeviceControlProvider> deviceControlProvider) {
+                               ObjectProvider<DeviceControlProvider> deviceControlProvider,
+                               java.time.Clock clock) {
         this.iotDeviceService = iotDeviceService;
         this.commandQueueService = commandQueueService;
         this.deviceControlProvider = deviceControlProvider;
+        this.clock = clock;
     }
 
     /**
@@ -203,6 +206,15 @@ public class DeferredControlUtil {
      * <p>控制通道未装配时不进入 SENDING，直接记为可重试失败——绝不标记为已发送。</p>
      */
     public void sendCommand(IotDeviceCommand command) {
+        // 窗口/有效期覆盖实际外发边界（P63 §4.2）：已过有效期的命令不再进入 SENDING、
+        // 不触达控制通道，与预约窗口对齐的过期时间按同一口径收敛为 EXPIRED。
+        if (command.getExpiryTime() != null && !java.time.LocalDateTime
+                .ofInstant(clock.instant(), java.time.ZoneId.systemDefault())
+                .isBefore(command.getExpiryTime())) {
+            commandQueueService.markExpired(command.getId());
+            log.warn("命令已过有效期，不外发: id={}, expiryTime={}", command.getId(), command.getExpiryTime());
+            return;
+        }
         DeviceControlProvider provider = deviceControlProvider.getIfAvailable();
         if (provider == null) {
             commandQueueService.markFailed(command.getId(), CHANNEL_UNAVAILABLE_REASON);

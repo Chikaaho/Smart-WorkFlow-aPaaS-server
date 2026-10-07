@@ -5,12 +5,15 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.entity.IotCommandReservation;
 import com.sw.ck.iot.mapper.IotCommandReservationMapper;
+import com.sw.ck.iot.service.IotDeviceService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
@@ -18,7 +21,8 @@ import java.util.Optional;
  * IoT 命令预约门面实现（P63）。
  * <p>
  * 幂等身份 =（租户, 流程实例）唯一键：重复成功事件命中既有意图返回既有 ID。
- * 创建时刻预约时刻已过（含迟到窗口）→ 保留记录置 EXPIRED，不立即补发；
+ * 冻结前按设备产品已发布物模型校验功能权威，缺失/未发布/未声明 fail closed
+ * 沿调用方事务拒绝；创建时刻预约时刻已到/已过 → 保留记录置 EXPIRED，不立即补发；
  * 取消为条件更新（仅 PENDING），与到点认领竞争只一个结果生效并留审计。
  * </p>
  */
@@ -27,9 +31,15 @@ import java.util.Optional;
 public class IotCommandReservationFacadeImpl implements IotCommandReservationFacade {
 
     private final IotCommandReservationMapper mapper;
+    private final IotDeviceService deviceService;
+    private final Clock clock;
 
-    public IotCommandReservationFacadeImpl(IotCommandReservationMapper mapper) {
+    public IotCommandReservationFacadeImpl(IotCommandReservationMapper mapper,
+                                           IotDeviceService deviceService,
+                                           Clock clock) {
         this.mapper = mapper;
+        this.deviceService = deviceService;
+        this.clock = clock;
     }
 
     @Override
@@ -49,6 +59,9 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
                     existing.getId(), processInstanceId);
             return Optional.of(existing.getId());
         }
+        // 冻结前功能权威 fail-closed（P63 §4.1/§4.3）：设备产品已发布物模型未声明该
+        // 功能/类型不合法/缺模型一律拒绝，沿调用方成功完成事务回滚，零意图零预约副作用。
+        deviceService.validatePublishedFunction(tenantId, deviceKey, commandType, commandKey);
         IotCommandReservation row = new IotCommandReservation();
         row.setTenantId(tenantId);
         row.setProcessInstanceId(processInstanceId);
@@ -66,11 +79,11 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
         row.setTimezoneId(timezoneId);
         row.setDueLocalText(dueLocalText);
         row.setLateWindowSeconds(lateWindowSeconds);
-        // 创建时刻预约时刻已到/已过：一律保留关联记录并标为过期，不补发（P63 G06a 合同偏差
-        // 修正，主方向§4.2：迟到窗口仅适用于批准时仍未来、已合法冻结的预约——窗口内 catch-up
-        // 下发只发生在冻结为未来后到点的真实调度入口，不得在批准时点追认补发）。
-        // dueAtUtc 是 UTC 绝对时刻，统一以 UTC 时钟比较，不得混用本地时区语义。
-        boolean expired = !LocalDateTime.now(java.time.ZoneOffset.UTC).isBefore(dueAtUtc);
+        // 创建时刻预约时刻已到/已过：一律保留关联记录并标为过期，不补发（P63 G06a 合同
+        // 修正，主方向§4.2：迟到窗口仅适用于批准时仍未来、已合法冻结的预约——窗口内
+        // catch-up 下发只发生在冻结为未来后到点的真实调度入口，不得在批准时点追认补发）。
+        // dueAtUtc 是 UTC 绝对时刻，统一以注入时钟的 UTC 读数比较，不混用本地时区语义。
+        boolean expired = !LocalDateTime.now(clock.withZone(ZoneOffset.UTC)).isBefore(dueAtUtc);
         row.setStatus(expired ? "EXPIRED" : "PENDING");
         mapper.insert(row);
         return Optional.of(row.getId());

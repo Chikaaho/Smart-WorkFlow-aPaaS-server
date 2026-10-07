@@ -40,9 +40,9 @@ class DeferredControlUtilTest {
     void setUp() {
         // provider 可缺省：装配存在与否决定控制通道是否可用
         deferredControlUtil = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(deviceControlProvider));
+                provider(deviceControlProvider), java.time.Clock.systemUTC());
         deferredControlUtilWithoutProvider = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(null));
+                provider(null), java.time.Clock.systemUTC());
 
         testDevice = new IotDevice();
         testDevice.setId(1L);

@@ -1,12 +1,19 @@
 package com.sw.ck.iot.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.service.BaseServiceImpl;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotDeviceCommand;
+import com.sw.ck.iot.entity.IotProduct;
+import com.sw.ck.iot.entity.IotThingModel;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.mapper.IotDeviceMapper;
+import com.sw.ck.iot.mapper.IotProductMapper;
+import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.service.IotDeviceService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -36,9 +43,15 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
     private static final Set<String> REPORTABLE_STATUS = Set.of("SUCCESS", "FAILED");
 
     private final IotDeviceCommandMapper commandMapper;
+    private final IotProductMapper productMapper;
+    private final IotThingModelMapper thingModelMapper;
 
-    public IotDeviceServiceImpl(IotDeviceCommandMapper commandMapper) {
+    public IotDeviceServiceImpl(IotDeviceCommandMapper commandMapper,
+                                IotProductMapper productMapper,
+                                IotThingModelMapper thingModelMapper) {
         this.commandMapper = commandMapper;
+        this.productMapper = productMapper;
+        this.thingModelMapper = thingModelMapper;
     }
 
     @Override
@@ -281,6 +294,60 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
     @Override
     public IotDeviceCommand getCommand(Long commandId) {
         return commandMapper.selectById(commandId);
+    }
+
+    @Override
+    public void validatePublishedFunction(Long tenantId, String deviceKey, String commandType, String commandKey) {
+        com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget target = resolveDeviceTargetByKey(tenantId, deviceKey);
+        if (target == null) {
+            throw new BaseException(404, "设备目标已失效或跨租户: deviceKey=" + deviceKey);
+        }
+        // 沿设备行 product_ref_id → 产品 → 已发布物模型的真实权威链解析，不按冻结值放行
+        IotDevice device;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            device = baseMapper.selectOne(Wrappers.<IotDevice>lambdaQuery()
+                    .eq(IotDevice::getDeviceKey, deviceKey)
+                    .eq(IotDevice::getTenantId, tenantId)
+                    .eq(IotDevice::getDeleted, 0)
+                    .last("LIMIT 1"));
+        }
+        if (device == null || device.getProductRefId() == null) {
+            throw new BaseException(409, "设备未绑定产品或产品权威缺失，功能校验失败: deviceKey=" + deviceKey);
+        }
+        IotProduct product = productMapper.selectById(device.getProductRefId());
+        if (product == null || !tenantId.equals(product.getTenantId())
+                || product.getPublishedModelId() == null) {
+            throw new BaseException(409, "设备产品未发布物模型，无法校验功能: productId=" + target.productId());
+        }
+        IotThingModel model = thingModelMapper.selectById(product.getPublishedModelId());
+        if (model == null || !"PUBLISHED".equals(model.getStatus())
+                || !tenantId.equals(model.getTenantId())) {
+            throw new BaseException(409, "已发布物模型不存在或未处于发布态");
+        }
+        String effectiveType = commandType == null || commandType.isBlank() ? "PROPERTY" : commandType;
+        String arrayKey = switch (effectiveType) {
+            case "PROPERTY" -> "properties";
+            case "ACTION" -> "actions";
+            default -> throw new BaseException(400, "未知功能类型: " + effectiveType);
+        };
+        if (commandKey == null || commandKey.isBlank()) {
+            throw new BaseException(400, "功能键不能为空");
+        }
+        JSONObject content;
+        try {
+            content = JSON.parseObject(model.getContentJson());
+        } catch (Exception e) {
+            throw new BaseException(409, "物模型内容不可解析，功能校验失败");
+        }
+        JSONArray arr = content == null ? null : content.getJSONArray(arrayKey);
+        boolean declared = arr != null && arr.stream().anyMatch(p -> commandKey.equals(
+                ((JSONObject) p).getString("id")));
+        if (!declared) {
+            throw new BaseException(404, "功能未在已发布物模型中声明: " + arrayKey + "." + commandKey);
+        }
+        log.info("功能权威校验通过: tenantId={}, deviceKey={}, {}.{}, modelVersion={}",
+                tenantId, deviceKey, arrayKey, commandKey, model.getModelVersion());
     }
 
     /**

@@ -3,6 +3,8 @@ package com.sw.ck.iot.service;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
+import com.sw.ck.iot.mapper.IotProductMapper;
+import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.service.impl.IotDeviceServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -32,7 +34,8 @@ class IotDeviceReportResultSanitizeTest {
 
     @BeforeEach
     void setUp() {
-        service = new IotDeviceServiceImpl(commandMapper);
+        service = new IotDeviceServiceImpl(commandMapper,
+                org.mockito.Mockito.mock(IotProductMapper.class), org.mockito.Mockito.mock(IotThingModelMapper.class));
     }
 
     private IotDeviceCommand existing() {

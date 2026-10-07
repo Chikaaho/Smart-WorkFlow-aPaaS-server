@@ -111,4 +111,20 @@ public interface IotDeviceService extends BaseService<IotDevice> {
      * @return 命令记录（可能为 null）
      */
     IotDeviceCommand getCommand(Long commandId);
+
+    /**
+     * 校验设备产品已发布物模型功能权威（P63 §4.3 冻结前 fail-closed + 到点重核）。
+     * <p>
+     * 按 deviceKey+租户权威解析设备（发布态+流程接入），再沿 product_ref_id →
+     * 已发布物模型（published_model_id）真实结构校验 commandKey 是否在
+     * commandType 对应功能数组中声明；缺模型、未发布、功能未声明或类型未知一律
+     * 抛业务异常（fail closed），不因记录非空放行。
+     * </p>
+     *
+     * @param tenantId    租户
+     * @param deviceKey   设备稳定标识
+     * @param commandType 功能类型（PROPERTY→properties，ACTION→actions）
+     * @param commandKey  功能 ID/键
+     */
+    void validatePublishedFunction(Long tenantId, String deviceKey, String commandType, String commandKey);
 }
