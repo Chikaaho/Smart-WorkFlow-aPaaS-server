@@ -72,10 +72,16 @@ class ConsensusVoteConcurrencyTest {
                 .contains(1L);
 
         // 换 outcome 重投也必须被同键拦截（同人同任务一票）：present-false = 幂等重复
-        assertThat(port.record("0", "pi-i3-vote", "node_consensus", "task-1", "1001", "DISAPPROVE"))
-                .contains(false);
+        var disapproveRetry = port.record("0", "pi-i3-vote", "node_consensus", "task-1", "1001", "DISAPPROVE");
+        assertThat(disapproveRetry).contains(false);
         assertThat(port.count("0", "pi-i3-vote", "node_consensus", "DISAPPROVE"))
                 .contains(0L);
+        System.out.println("[P63-EV] g04b.concurrent-vote threads=6 approveAccepted=" + accepted
+                + " approveCount=" + port.count("0", "pi-i3-vote", "node_consensus", "APPROVE")
+                + " disapproveRetryPresent=" + disapproveRetry.isPresent()
+                + " disapproveRetryValue=" + disapproveRetry.orElse(null)
+                + " disapproveCount=" + port.count("0", "pi-i3-vote", "node_consensus", "DISAPPROVE")
+                + " settleExactlyOnce=true");
     }
 
     @Configuration(proxyBeanMethods = false)

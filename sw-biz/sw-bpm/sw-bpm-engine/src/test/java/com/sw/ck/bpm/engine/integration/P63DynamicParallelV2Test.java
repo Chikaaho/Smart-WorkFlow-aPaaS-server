@@ -163,8 +163,13 @@ class P63DynamicParallelV2Test {
         DelegateExecution execBlock = execution("exec-1");
         assertThatThrownBy(() -> blocking.resolveCollection(null, execBlock))
                 .isInstanceOf(BaseException.class)
-                .satisfies(e -> assertThat(((BaseException) e).getCode())
-                        .isEqualTo(BpmErrorCode.DYNAMIC_BRANCH_LEADER_MISSING.getCode()));
+                .satisfies(e -> {
+                    assertThat(((BaseException) e).getCode())
+                            .isEqualTo(BpmErrorCode.DYNAMIC_BRANCH_LEADER_MISSING.getCode());
+                    System.out.println("[P63-EV] g04b.exception scenario=dept-leader-missing source=DEPT/7,8,9"
+                            + " invalidStrategy=default errorCode=" + ((BaseException) e).getCode()
+                            + " result=BLOCK");
+                });
 
         // SKIP 放行：7/8 各自独立分支（同负责人 30/30），9 记 CANCELED
         DynamicBranchCollectionResolver skipping = resolver(formFacade(
@@ -173,6 +178,8 @@ class P63DynamicParallelV2Test {
         DelegateExecution execSkip = execution("exec-2");
         Object collection = skipping.resolveCollection(null, execSkip);
         assertThat((Iterable<Object>) collection).containsExactly("30", "30");
+        System.out.println("[P63-EV] g04b.exception scenario=dept-leader-missing-explicit-SKIP"
+                + " invalidStrategy=SKIP branches=[30,30] dept9=CANCELED result=old-explicit-SKIP-kept");
         assertThat(frozenRefs.get("executionId")).containsExactly("exec-2");
         org.mockito.Mockito.verify(execSkip, org.mockito.Mockito.atLeastOnce())
                 .setVariable(org.mockito.ArgumentMatchers.eq("consensusApprovedCount"), org.mockito.ArgumentMatchers.eq(0));
@@ -223,7 +230,10 @@ class P63DynamicParallelV2Test {
                 v2Config(Map.of("objectType", "USER", "scope", "TABLE", "tableField", "items",
                         "column", "handlers"), Map.of()));
         assertThatThrownBy(() -> invalid.resolveCollection(null, execution("exec-4")))
-                .isInstanceOf(BaseException.class);
+                .isInstanceOf(BaseException.class)
+                .satisfies(e -> System.out.println("[P63-EV] g04b.exception scenario=invalid-user-500"
+                        + " source=USER/TABLE/handlers invalidStrategy=default"
+                        + " errorCode=" + ((BaseException) e).getCode() + " result=BLOCK"));
     }
 
     @Test
@@ -245,13 +255,20 @@ class P63DynamicParallelV2Test {
                 v2Config(Map.of(), Map.of()));
         assertThatThrownBy(() -> blocking.resolveCollection(null, execution("exec-5")))
                 .isInstanceOf(BaseException.class)
-                .satisfies(e -> assertThat(((BaseException) e).getCode())
-                        .isEqualTo(BpmErrorCode.DYNAMIC_BRANCH_EMPTY.getCode()));
+                .satisfies(e -> {
+                    assertThat(((BaseException) e).getCode())
+                            .isEqualTo(BpmErrorCode.DYNAMIC_BRANCH_EMPTY.getCode());
+                    System.out.println("[P63-EV] g04b.exception scenario=empty-set-default"
+                            + " emptyStrategy=default errorCode=" + ((BaseException) e).getCode()
+                            + " result=BLOCK");
+                });
 
         DynamicBranchCollectionResolver proceeding = resolver(formFacade(Map.of(), Map.of()), port,
                 v2Config(Map.of(), Map.of("emptyStrategy", "PROCEED")));
         Object empty = proceeding.resolveCollection(null, execution("exec-6"));
         assertThat((Iterable<Object>) empty).isEmpty();
+        System.out.println("[P63-EV] g04b.exception scenario=empty-set-explicit-PROCEED"
+                + " emptyStrategy=PROCEED branches=[] result=old-explicit-PROCEED-kept");
     }
 
     @Test

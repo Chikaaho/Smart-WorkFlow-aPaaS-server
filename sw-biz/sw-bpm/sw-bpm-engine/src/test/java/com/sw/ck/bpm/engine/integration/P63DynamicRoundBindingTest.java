@@ -59,6 +59,8 @@ import static org.mockito.Mockito.when;
 class P63DynamicRoundBindingTest {
 
     private static ProcessEngine processEngine;
+    /** 快照记录实际值输出（G04a participant snapshot）。 */
+    private static List<String> snapshotRecorderRef;
     private static RuntimeService runtimeService;
     private static TaskService taskService;
     private static Deployment deployment;
@@ -179,6 +181,8 @@ class P63DynamicRoundBindingTest {
         });
 
         roundPort = new RecordingRoundPort();
+        List<String> snapshotLog = new ArrayList<>();
+        snapshotRecorderRef = snapshotLog;
         ConsensusVotePort votePort = new ConsensusVotePort() {
             @Override
             public Optional<Boolean> record(String tenantId, String processInstanceId, String nodeKey,
@@ -195,8 +199,11 @@ class P63DynamicRoundBindingTest {
         ConsensusSettlementPort settlementPort =
                 (tenantId, processInstanceId, nodeKey, reason) -> Optional.of(MutationOutcome.APPLIED);
         ParticipantSnapshotRecorder snapshotRecorder = (processInstanceId, nodeKey, taskId,
-                                                        participantIds, tenantId) ->
-                Optional.of(MutationOutcome.APPLIED);
+                                                        participantIds, tenantId) -> {
+            snapshotRecorderRef.add("snapshot{instance=" + processInstanceId + ", node=" + nodeKey
+                    + ", task=" + taskId + ", participants=" + participantIds + "}");
+            return Optional.of(MutationOutcome.APPLIED);
+        };
 
         processEngine = config.buildProcessEngine();
         runtimeService = processEngine.getRuntimeService();
@@ -259,6 +266,17 @@ class P63DynamicRoundBindingTest {
                     .as("台账只含 round0 的两个分支行")
                     .allSatisfy(row -> assertThat(row.round).isZero());
 
+            System.out.println("[P63-EV] g04a.first-entry instance=" + instanceId
+                    + " source=FIXED/DEPT/7,8 mode=ALL newRounds=" + roundPort.newRounds.get()
+                    + " reuseReplays=" + roundPort.reuseCalls.get() + " superseded=" + roundPort.superseded.get()
+                    + " ledger=" + roundPort.rows.stream()
+                            .map(r -> "{round=" + r.round + ",exec=" + r.executionId + ",objectId=" + r.objectId
+                                    + ",assignee=" + r.assigneeId + ",status=" + r.status + "}")
+                            .toList()
+                    + " tasks=" + tasks.stream().map(t -> "{id=" + t.getId() + ",assignee=" + t.getAssignee() + "}")
+                            .toList()
+                    + " snapshots=" + new ArrayList<>(snapshotRecorderRef));
+
             complete(instanceId, "30");
             complete(instanceId, "40");
             // 两条分支全部通过 → 动态汇聚 → 推进到 a1 审批；完成 a1 才结束实例
@@ -271,6 +289,12 @@ class P63DynamicRoundBindingTest {
                     .as("分支与审批全部完成后恰好一次结束").isZero();
             assertThat(roundPort.newRounds.get())
                     .as("办理全程不再开新轮").isEqualTo(1);
+            System.out.println("[P63-EV] g04a.first-entry-after-complete instance=" + instanceId
+                    + " newRounds=" + roundPort.newRounds.get() + " ended=true"
+                    + " finalLedger=" + roundPort.rows.stream()
+                            .map(r -> "{round=" + r.round + ",objectId=" + r.objectId
+                                    + ",status=" + r.status + "}")
+                            .toList());
         } finally {
             deleteQuietly(instanceId);
         }
@@ -306,6 +330,20 @@ class P63DynamicRoundBindingTest {
             assertThat(taskService.createTaskQuery().processInstanceId(instanceId).list())
                     .as("新轮按对象重新建立任务").extracting(Task::getAssignee)
                     .containsExactlyInAnyOrder("30", "40");
+            List<Task> reentryTasks = taskService.createTaskQuery()
+                    .processInstanceId(instanceId).list();
+            System.out.println("[P63-EV] g04a.legal-reentry instance=" + instanceId
+                    + " newRounds=" + roundPort.newRounds.get()
+                    + " distinctRounds=" + roundPort.rows.stream().mapToLong(r -> r.round).distinct().boxed().toList()
+                    + " superseded=" + roundPort.superseded.get()
+                    + " ledger=" + roundPort.rows.stream()
+                            .map(r -> "{round=" + r.round + ",objectId=" + r.objectId + ",assignee=" + r.assigneeId
+                                    + ",status=" + r.status + ",cancelReason=" + r.cancelReason + "}")
+                            .toList()
+                    + " newRoundTasks=" + reentryTasks.stream()
+                            .map(t -> "{id=" + t.getId() + ",assignee=" + t.getAssignee() + "}")
+                            .toList()
+                    + " historyPreserved=true");
         } finally {
             deleteQuietly(instanceId);
         }
