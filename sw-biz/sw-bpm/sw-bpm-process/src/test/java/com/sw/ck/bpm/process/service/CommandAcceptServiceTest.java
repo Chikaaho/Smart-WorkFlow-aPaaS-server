@@ -169,6 +169,31 @@ class CommandAcceptServiceTest {
     }
 
     @Test
+    @DisplayName("已存在且状态 EXPIRED（效果未发生）→ 同键同载荷复用 requeueFailed 恢复（P63 G05b 原请求恢复）")
+    void acceptTaskAction_shouldReEnqueueWhenExpired() {
+        CommandEnvelope existing = new CommandEnvelope();
+        existing.setCommandId(66L);
+        existing.setCommandType(CommandTypeEnum.TASK_APPROVE);
+        existing.setChannel(CommandChannelEnum.NORMAL);
+        existing.setCommandKey("TASK_APPROVE:task-9:2");
+        existing.setStatus("EXPIRED");
+        when(commandQueue.findByKey(0L, "TASK_APPROVE:task-9:2")).thenReturn(Optional.of(existing));
+        when(commandQueue.requeueFailed(any(CommandEnvelope.class))).thenAnswer(inv -> {
+            CommandEnvelope env = inv.getArgument(0);
+            env.setCommandId(66L);
+            return 66L;
+        });
+
+        CommandAcceptRespDTO resp = service.acceptTaskAction("task-9", ApprovalAction.APPROVE,
+                new ApprovalActionRequest(), CommandChannelEnum.NORMAL);
+
+        assertThat(resp.getCommandId()).isEqualTo(66L);
+        assertThat(resp.isDuplicated()).isTrue();
+        verify(commandQueue).requeueFailed(any(CommandEnvelope.class));
+        verify(commandQueue, never()).enqueue(any());
+    }
+
+    @Test
     @DisplayName("已存在且状态 FAILED → 复用同键行 requeueFailed 重新入队（唯一键语义下不新插）")
     void acceptTaskAction_shouldReEnqueueWhenFailed() {
         CommandEnvelope existing = new CommandEnvelope();

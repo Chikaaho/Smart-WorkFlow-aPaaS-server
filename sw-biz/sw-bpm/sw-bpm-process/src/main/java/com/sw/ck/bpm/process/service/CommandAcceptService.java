@@ -102,7 +102,11 @@ public class CommandAcceptService {
         String incomingFingerprint = CommandFingerprint.of(incomingPayload);
         CommandEnvelope existing = commandQueue.findByKey(loginUser.getTenantId(), commandKey)
                 .orElse(null);
-        if (existing != null && !"FAILED".equals(existing.getStatus())) {
+        // P63 G05b：EXPIRED=准入截止到期且效果未发生（expireDue 判定条件），与 FAILED 同属
+        // 可安全恢复终态——同键同载荷的原用户重提交复用同键行重置入队（原请求恢复路径），
+        // 旧过期事实保留在 failure_reason；异载荷/在途仍走下方幂等命中或明确拒绝，不默认成功。
+        if (existing != null && !"FAILED".equals(existing.getStatus())
+                && !"EXPIRED".equals(existing.getStatus())) {
             // 同键命中（提示05 G3b1）：同载荷=同一操作重放，返回原受理；异载荷=明确拒绝，
             // 不得默认成功（含受理尚未完成/运行期的首次并发冲突）。旧行缺指纹时以存储
             // payload 原文回推指纹（可解释兼容），不迁移、不默认异载荷成功。
@@ -121,8 +125,8 @@ public class CommandAcceptService {
             return toResp(existing, false);
         }
 
-        // FAILED 终态允许重新提交：唯一键 (tenant_id, command_key) 语义下复用同键行重置入队，
-        // 不走新插（同键新插必撞唯一键且事务已污染，无法再走幂等返回）
+        // FAILED / EXPIRED 终态允许重新提交：唯一键 (tenant_id, command_key) 语义下复用同键行
+        // 重置入队，不走新插（同键新插必撞唯一键且事务已污染，无法再走幂等返回）
         if (existing != null) {
             existing.setPayload(incomingPayload);
             existing.setPayloadFingerprint(incomingFingerprint);

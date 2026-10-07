@@ -156,8 +156,13 @@ class P63ReservationIntentTxPgTest {
     @Test
     @DisplayName("重放 PROCESS_APPROVED 事件只产生一个意图；表单批准时刻=冻结预约时刻（精确到秒）")
     void replayKeepsSingleIntentAndFrozenTime() {
+        // 动态未来时刻（原硬编码日期跨天后会正确地被判 EXPIRED——那是过期语义而非缺陷）
+        java.time.LocalDateTime dueLocal = java.time.LocalDateTime
+                .now(java.time.ZoneId.of("Asia/Shanghai")).plusHours(2)
+                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        String dueText = dueLocal.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         String recordId = asUser(INITIATOR, () -> submitService.submitForm(FORM_KEY,
-                data("topic", "意图重放验收", "plan_time", "2026-10-07 08:00:00"),
+                data("topic", "意图重放验收", "plan_time", dueText),
                 null, null, null));
         String processInstanceId = awaitInstanceStarted(recordId);
         publishApprovalProcessWithTz("Asia/Shanghai");
@@ -190,10 +195,13 @@ class P63ReservationIntentTxPgTest {
                         + "WHERE process_instance_id = ?", processInstanceId);
         assertThat(count).as("重放不产生第二条意图").isEqualTo(1);
         assertThat(((Number) after.get("id")).longValue()).as("意图身份复用不变").isEqualTo(intentId);
-        // 表单批准时刻=冻结预约时刻：2026-10-07 08:00:00 Asia/Shanghai = 2026-10-07 00:00:00 UTC
+        // 表单批准时刻=冻结预约时刻：due_local(Asia/Shanghai) 的 UTC 转换精确一致
+        String dueUtcExpected = java.time.LocalDateTime.ofInstant(
+                dueLocal.atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant(),
+                java.time.ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         Object dueUtc = after.get("due_at_utc");
         assertThat(String.valueOf(dueUtc)).as("冻结预约时刻与表单批准时刻精确一致")
-                .startsWith("2026-10-07 00:00:00");
+                .startsWith(dueUtcExpected);
         assertThat(intent.get("status")).isEqualTo("PENDING");
 
         System.out.println("[P63-EV] g05.replay instance=" + processInstanceId + " intent=" + intentId

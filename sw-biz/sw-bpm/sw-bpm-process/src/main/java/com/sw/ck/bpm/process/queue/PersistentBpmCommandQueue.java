@@ -84,15 +84,23 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                 .eq(BpmCommand::getCommandKey, envelope.getCommandKey())
                 .last("LIMIT 1")
                 .one();
-        if (command == null || !CommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
+        // P63 G05b：EXPIRED=准入截止到期且效果未发生（expireDue 判定），与 FAILED 同属
+        // 效果未发生的可恢复终态；原用户重提交走同键重置。过期事实不删除——保留在
+        // failure_reason 原文前缀并追加恢复标记，旧终态可追溯。
+        boolean failed = command != null && CommandStatusEnum.FAILED.getCode().equals(command.getStatus());
+        boolean expired = command != null && CommandStatusEnum.EXPIRED.getCode().equals(command.getStatus());
+        if (command == null || (!failed && !expired)) {
             throw new IllegalStateException(
-                    "requeueFailed 仅接受已存在且 FAILED 的命令: " + envelope.getCommandKey());
+                    "requeueFailed 仅接受已存在且 FAILED/EXPIRED（效果未发生）的命令: "
+                            + envelope.getCommandKey());
         }
+        String previousReason = command.getFailureReason();
         command.setStatus(CommandStatusEnum.PENDING.getCode());
         command.setPayload(envelope.getPayload());
         command.setPayloadFingerprint(blankToNull(envelope.getPayloadFingerprint()));
         command.setRetryCount(0);
-        command.setFailureReason(null);
+        command.setFailureReason(expired
+                ? previousReason + "；已由原用户重新提交恢复" : null);
         command.setNextRetryAt(null);
         command.setClaimedAt(null);
         command.setClaimToken(null);
