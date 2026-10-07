@@ -123,18 +123,16 @@ public class IotReservationDispatchJob {
         LocalDateTime windowEnd = reservation.getDueAtUtc()
                 .plusSeconds(reservation.getLateWindowSeconds() == null ? 0
                         : reservation.getLateWindowSeconds());
-        // 到点重核：按 deviceKey 权威解析执行目标（失效/跨租户 → FAILED 明确可查，不静默跳过）
-        String productId = reservation.getProductId();
-        String deviceName = reservation.getDeviceName();
-        if (productId == null || productId.isBlank() || deviceName == null || deviceName.isBlank()) {
-            com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget target =
-                    deviceService.resolveDeviceTargetByKey(reservation.getTenantId(), reservation.getDeviceKey());
-            if (target == null) {
-                throw new IllegalStateException("设备目标已失效或跨租户: deviceKey=" + reservation.getDeviceKey());
-            }
-            productId = target.productId();
-            deviceName = target.deviceName();
+        // 到点权威重核（P63 G03a 确证缺陷修复）：无论来源是否在受理时冻结 product/name，
+        // 一律按 deviceKey+预约租户重解析执行目标——设备失效/改属他租户在到点拒绝并可查，
+        // 不按冻结值跨租户入队（FORM_FIELD/VARIABLE 的既有设计语义统一到全部来源）。
+        com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget target =
+                deviceService.resolveDeviceTargetByKey(reservation.getTenantId(), reservation.getDeviceKey());
+        if (target == null) {
+            throw new IllegalStateException("设备目标已失效或跨租户: deviceKey=" + reservation.getDeviceKey());
         }
+        String productId = target.productId();
+        String deviceName = target.deviceName();
         // 入队（设备不存在/租户不符由入队路径抛出 → FAILED 可查）
         IotDeviceCommand command = deviceService.dispatchCommandIdempotent(
                 productId, deviceName,

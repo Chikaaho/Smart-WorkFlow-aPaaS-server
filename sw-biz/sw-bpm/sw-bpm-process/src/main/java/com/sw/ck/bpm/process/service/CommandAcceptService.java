@@ -102,14 +102,34 @@ public class CommandAcceptService {
         String incomingFingerprint = CommandFingerprint.of(incomingPayload);
         CommandEnvelope existing = commandQueue.findByKey(loginUser.getTenantId(), commandKey)
                 .orElse(null);
-        // P63 G05b：EXPIRED=准入截止到期且效果未发生（expireDue 判定条件），与 FAILED 同属
-        // 可安全恢复终态——同键同载荷的原用户重提交复用同键行重置入队（原请求恢复路径），
-        // 旧过期事实保留在 failure_reason；异载荷/在途仍走下方幂等命中或明确拒绝，不默认成功。
-        if (existing != null && !"FAILED".equals(existing.getStatus())
-                && !"EXPIRED".equals(existing.getStatus())) {
-            // 同键命中（提示05 G3b1）：同载荷=同一操作重放，返回原受理；异载荷=明确拒绝，
-            // 不得默认成功（含受理尚未完成/运行期的首次并发冲突）。旧行缺指纹时以存储
-            // payload 原文回推指纹（可解释兼容），不迁移、不默认异载荷成功。
+        // P63 G05b 修正：EXPIRED=准入截止到期且效果未发生，是终态——原命令行的状态、结果、
+        // 失败原因与审计永不改写。原用户同键同载荷重提交由「可辨认的恢复命令新行」承接
+        //（commandKey 追加 :R<n> 代数，恢复链可追溯）；异载荷仍 2426 明确拒绝，处理中/已
+        // 生效/UNKNOWN 的恢复命令同载荷重放只幂等命中不自动重发。FAILED 仍按 P62 既有
+        // 已核销语义复用同键行重置。
+        String acceptKey = commandKey;
+        if (existing != null) {
+            boolean failedExisting = "FAILED".equals(existing.getStatus());
+            boolean expiredExisting = "EXPIRED".equals(existing.getStatus());
+            if (!failedExisting && !expiredExisting) {
+                // 同键命中（提示05 G3b1）：同载荷=同一操作重放，返回原受理；异载荷=明确拒绝，
+                // 不得默认成功（含受理尚未完成/运行期的首次并发冲突）。旧行缺指纹时以存储
+                // payload 原文回推指纹（可解释兼容），不迁移、不默认异载荷成功。
+                String existingFingerprint = existing.getPayloadFingerprint() != null
+                        && !existing.getPayloadFingerprint().isBlank()
+                        ? existing.getPayloadFingerprint()
+                        : CommandFingerprint.of(existing.getPayload());
+                if (!incomingFingerprint.equals(existingFingerprint)) {
+                    log.warn("同键异载荷拒绝: key={}, existingCommandId={}, incomingFingerprint={}, "
+                                    + "existingFingerprint={}",
+                            commandKey, existing.getCommandId(), incomingFingerprint, existingFingerprint);
+                    throw new BaseException(
+                            com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
+                }
+                log.info("审批命令幂等命中: key={}, commandId={}", commandKey, existing.getCommandId());
+                return toResp(existing, false);
+            }
+            // FAILED / EXPIRED：同键异载荷一律明确拒绝（终态后载荷不可替换）
             String existingFingerprint = existing.getPayloadFingerprint() != null
                     && !existing.getPayloadFingerprint().isBlank()
                     ? existing.getPayloadFingerprint()
@@ -121,23 +141,45 @@ public class CommandAcceptService {
                 throw new BaseException(
                         com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
             }
-            log.info("审批命令幂等命中: key={}, commandId={}", commandKey, existing.getCommandId());
-            return toResp(existing, false);
-        }
-
-        // FAILED / EXPIRED 终态允许重新提交：唯一键 (tenant_id, command_key) 语义下复用同键行
-        // 重置入队，不走新插（同键新插必撞唯一键且事务已污染，无法再走幂等返回）
-        if (existing != null) {
-            existing.setPayload(incomingPayload);
-            existing.setPayloadFingerprint(incomingFingerprint);
-            commandQueue.requeueFailed(existing);
-            return toResp(existing, true);
+            if (failedExisting) {
+                // FAILED：唯一键 (tenant_id, command_key) 语义下复用同键行重置入队（P62 核销边界）
+                existing.setPayload(incomingPayload);
+                existing.setPayloadFingerprint(incomingFingerprint);
+                commandQueue.requeueFailed(existing);
+                return toResp(existing, true);
+            }
+            // EXPIRED 恢复链：从 :R1 起定位最新代；恢复行 FAILED→按既有语义重置该恢复行，
+            // 在途/已成功→幂等命中，恢复行也 EXPIRED→继续找下一代（每代原记录独立保留）
+            int generation = 1;
+            while (true) {
+                String recoveryKey = commandKey + ":R" + generation;
+                CommandEnvelope prior = commandQueue.findByKey(loginUser.getTenantId(), recoveryKey)
+                        .orElse(null);
+                if (prior == null) {
+                    acceptKey = recoveryKey;
+                    break;
+                }
+                if ("FAILED".equals(prior.getStatus())) {
+                    prior.setPayload(incomingPayload);
+                    prior.setPayloadFingerprint(incomingFingerprint);
+                    commandQueue.requeueFailed(prior);
+                    return toResp(prior, true);
+                }
+                if (!"EXPIRED".equals(prior.getStatus())) {
+                    log.info("审批命令恢复链幂等命中: originCommandId={}, recoveryKey={}, commandId={}, status={}",
+                            existing.getCommandId(), recoveryKey, prior.getCommandId(), prior.getStatus());
+                    return toResp(prior, false);
+                }
+                generation++;
+            }
+            log.info("EXPIRED 命令生成恢复命令: originCommandId={}, originKey={}, recoveryKey={}, userId={}",
+                    existing.getCommandId(), commandKey, acceptKey, loginUser.getUserId());
         }
 
         CommandEnvelope envelope = new CommandEnvelope();
         envelope.setCommandType(type);
         envelope.setChannel(channel);
-        envelope.setCommandKey(commandKey);
+        envelope.setCommandKey(acceptKey);
         envelope.setTenantId(loginUser.getTenantId());
         envelope.setInitiatorId(loginUser.getUserId());
         envelope.setPayload(incomingPayload);
@@ -149,7 +191,7 @@ public class CommandAcceptService {
         try {
             commandQueue.enqueue(envelope);
         } catch (DuplicateKeyException e) {
-            return commandQueue.findByKey(loginUser.getTenantId(), commandKey)
+            return commandQueue.findByKey(loginUser.getTenantId(), acceptKey)
                     .map(env -> toResp(env, false))
                     .orElseThrow(() -> e);
         }

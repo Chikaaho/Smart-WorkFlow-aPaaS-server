@@ -151,6 +151,9 @@ class P63IotReservationTest {
         command.setStatus("QUEUED");
         when(deviceService.dispatchCommandIdempotent(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(command);
+        // P63 G03a 修正后契约：到点一律按 deviceKey+租户权威重解析执行目标
+        when(deviceService.resolveDeviceTargetByKey(100L, "dev-key-1"))
+                .thenReturn(new com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget("dev-key-1", "P63PROD", "dev-key-1"));
         when(commandMapper.selectById(555L)).thenReturn(command);
         when(commandMapper.update(isNull(), any())).thenReturn(1);
 

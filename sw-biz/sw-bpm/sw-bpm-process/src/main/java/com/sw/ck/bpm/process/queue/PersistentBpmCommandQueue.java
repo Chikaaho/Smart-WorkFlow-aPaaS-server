@@ -84,23 +84,19 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                 .eq(BpmCommand::getCommandKey, envelope.getCommandKey())
                 .last("LIMIT 1")
                 .one();
-        // P63 G05b：EXPIRED=准入截止到期且效果未发生（expireDue 判定），与 FAILED 同属
-        // 效果未发生的可恢复终态；原用户重提交走同键重置。过期事实不删除——保留在
-        // failure_reason 原文前缀并追加恢复标记，旧终态可追溯。
-        boolean failed = command != null && CommandStatusEnum.FAILED.getCode().equals(command.getStatus());
-        boolean expired = command != null && CommandStatusEnum.EXPIRED.getCode().equals(command.getStatus());
-        if (command == null || (!failed && !expired)) {
+        // P63 G05b 修正：EXPIRED 是终态且永不改写（原记录/审计长期保留），恢复由
+        // CommandAcceptService 生成可辨认的恢复命令新行承接；本方法仅保留 P62 既有
+        // FAILED 重提交语义，不再接受 EXPIRED 行重置。
+        if (command == null || !CommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
             throw new IllegalStateException(
-                    "requeueFailed 仅接受已存在且 FAILED/EXPIRED（效果未发生）的命令: "
+                    "requeueFailed 仅接受已存在且 FAILED（效果未发生）的命令: "
                             + envelope.getCommandKey());
         }
-        String previousReason = command.getFailureReason();
         command.setStatus(CommandStatusEnum.PENDING.getCode());
         command.setPayload(envelope.getPayload());
         command.setPayloadFingerprint(blankToNull(envelope.getPayloadFingerprint()));
         command.setRetryCount(0);
-        command.setFailureReason(expired
-                ? previousReason + "；已由原用户重新提交恢复" : null);
+        command.setFailureReason(null);
         command.setNextRetryAt(null);
         command.setClaimedAt(null);
         command.setClaimToken(null);
@@ -183,6 +179,10 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                     .eq(BpmCommand::getTenantId, tenantId)
                     .and(wrapper -> wrapper.isNull(BpmCommand::getNextRetryAt)
                             .or().le(BpmCommand::getNextRetryAt, now))
+                    // 准入截止（P62 合同）在领取路径强校验：截止已过不得再获得执行权，
+                    // 不依赖对账线程抢先改状态；旧数据无截止字段按旧行为保持可领取。
+                    .and(wrapper -> wrapper.isNull(BpmCommand::getDeadlineAt)
+                            .or().gt(BpmCommand::getDeadlineAt, now))
                     .orderByAsc(BpmCommand::getCreateTime)
                     .last("LIMIT " + slice)
                     .list();
@@ -197,9 +197,13 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                 // 一次性租约令牌：写回（complete/reject/fail）须匹配本令牌，
                 // stale 回收后旧持有者的迟到写回因令牌不匹配被拒。
                 String claimToken = java.util.UUID.randomUUID().toString();
+                // CAS 同样携带准入截止条件：候选扫描与领取之间截止到期的命令不得被领取，
+                // 与 expireDue 的 PENDING→EXPIRED 收敛在两种先后顺序下都只产生一个合法结果。
                 LambdaUpdateWrapper<BpmCommand> claim = new LambdaUpdateWrapper<BpmCommand>()
                         .eq(BpmCommand::getId, candidate.getId())
                         .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                        .and(wrapper -> wrapper.isNull(BpmCommand::getDeadlineAt)
+                                .or().gt(BpmCommand::getDeadlineAt, now))
                         .set(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
                         .set(BpmCommand::getClaimedAt, now)
                         .set(BpmCommand::getClaimToken, claimToken);
