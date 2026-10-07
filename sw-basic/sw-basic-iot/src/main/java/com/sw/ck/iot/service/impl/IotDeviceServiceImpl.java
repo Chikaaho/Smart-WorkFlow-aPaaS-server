@@ -103,7 +103,10 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
             IotDevice device = baseMapper.selectById(deviceId);
             if (device == null || !tenantId.equals(device.getTenantId())
-                    || Integer.valueOf(1).equals(device.getDeleted())) {
+                    || Integer.valueOf(1).equals(device.getDeleted())
+                    // P63 G03a：resolve=权威解析可执行目标——同租户也须发布态+流程接入授权
+                    || !"PUBLISHED".equals(device.getManageStatus())
+                    || device.getProcessAccessEnabled() == null || device.getProcessAccessEnabled() != 1) {
                 return null;
             }
             return new com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget(
@@ -123,6 +126,9 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
                             .eq(IotDevice::getDeviceKey, deviceKey)
                             .eq(IotDevice::getTenantId, tenantId)
                             .eq(IotDevice::getDeleted, 0)
+                            // P63 G03a：到点权威重核执行授权（发布态+流程接入），拒绝可查
+                            .eq(IotDevice::getManageStatus, "PUBLISHED")
+                            .eq(IotDevice::getProcessAccessEnabled, 1)
                             .last("LIMIT 1"));
             if (device == null || !tenantId.equals(device.getTenantId())) {
                 return null;

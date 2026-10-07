@@ -188,8 +188,9 @@ class P63ReservationUnknownPgTest {
     void reservationUnknownChain() throws Exception {
         long peerBefore = peerLines();
         // 1. 预约 PENDING（已过点但在迟到窗口内）
+        // 冻结时未来 15 秒（合法未来预约，余量覆盖审批消费耗时），有界等待到点后触发真实调度入口
         String recordId = asUser(INITIATOR, () -> submitService.submitForm(FORM_KEY,
-                data("topic", "UNKNOWN链", "plan_time", dueText(java.time.Duration.ofSeconds(-5))),
+                data("topic", "UNKNOWN链", "plan_time", dueText(java.time.Duration.ofSeconds(15))),
                 null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
@@ -197,6 +198,10 @@ class P63ReservationUnknownPgTest {
                 ApprovalAction.APPROVE, req("核准预约（将SENT无回执）"), CommandChannelEnum.NORMAL));
         awaitCommandCompleted(accepted.getCommandId());
         Long reservationId = awaitIntentRow(pi);
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM sw_iot_command_reservation WHERE id = ?", String.class, reservationId))
+                .as("冻结时未来：意图 PENDING").isEqualTo("PENDING");
+        Thread.sleep(16_000); // 有界场景等待：预约时刻到达（合法冻结后的到点）
         dispatchJob.dispatchDueReservations();
 
         // 2. 对端真实受理（200）但不回执 → 命令真实停留 SENT

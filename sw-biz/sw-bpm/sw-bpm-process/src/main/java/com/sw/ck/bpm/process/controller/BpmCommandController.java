@@ -143,6 +143,39 @@ public class BpmCommandController {
     }
 
     /**
+     * P63 G05b：本用户对某任务的最新审批命令回查（仅受理人本人）。
+     * 用途：任务详情加载时呈现本人上次动作的终态（如 EXPIRED 的原因与可重试提示），
+     * 不新增持久化结构——命令行本身即权威记录；恢复链 :R<n> 行同样按键前缀命中。
+     */
+    @GetMapping("/tasks/{taskId}/latest")
+    public R<CommandStatusRespDTO> latestForTask(@PathVariable String taskId) {
+        LoginUser loginUser = LoginUserHolder.get();
+        BpmCommand command = bpmCommandService.lambdaQuery()
+                .eq(BpmCommand::getTenantId, loginUser.getTenantId())
+                .eq(BpmCommand::getInitiatorId, loginUser.getUserId())
+                .apply("(command_key LIKE {0} OR command_key LIKE {1})",
+                        "TASK_%:" + taskId + ":" + loginUser.getUserId(),
+                        "TASK_%:" + taskId + ":" + loginUser.getUserId() + ":R%")
+                .orderByDesc(BpmCommand::getId)
+                .last("LIMIT 1")
+                .one();
+        if (command == null) {
+            return R.ok(null);
+        }
+        CommandStatusRespDTO dto = new CommandStatusRespDTO();
+        dto.setCommandId(command.getId());
+        dto.setCommandType(command.getCommandType());
+        dto.setChannel(command.getChannel());
+        dto.setStatus(command.getStatus());
+        dto.setResult(command.getResult());
+        dto.setFailureReason(command.getFailureReason());
+        dto.setRetryCount(command.getRetryCount());
+        dto.setCreateTime(command.getCreateTime());
+        dto.setFinishedAt(command.getFinishedAt());
+        return R.ok(dto);
+    }
+
+    /**
      * 实际启动结果关联（B1，提示08）：DRAFT_SUBMIT 完成且携带 recordId 时，
      * 以受理时确定的唯一关联键 FLOW_START:{recordId} 解析本次业务发起的子命令
      * 只读视图（子命令与父命令同为受理发起人，越权边界不变、纯只读、不新建任何

@@ -130,6 +130,16 @@ class P63ReservationBoundaryPgTest {
                 + "device_key, name, status, product_id, device_name, manage_status, process_access_enabled) "
                 + "VALUES (?, now(), now(), 0, ?, 0, ?, 'P63边界受控设备', 'ONLINE', 'P63PROD', ?, 'PUBLISHED', 1) "
                 + "ON CONFLICT (id) DO NOTHING", DEVICE_ID, TENANT, DEVICE_KEY, DEVICE_KEY);
+        // G03a 负向对象：同租户真实存在但执行授权未开（process_access_enabled=0）
+        jdbc.update("INSERT INTO sw_iot_device (id, create_time, update_time, deleted, tenant_id, version, "
+                + "device_key, name, status, product_id, device_name, manage_status, process_access_enabled) "
+                + "VALUES (91512, now(), now(), 0, ?, 0, 'p63-noaccess-device', '无流程接入设备', 'ONLINE', "
+                + "'P63PROD', 'p63-noaccess-device', 'PUBLISHED', 0) ON CONFLICT (id) DO NOTHING", TENANT);
+        // G03a 软删对象（初始有效，用例内软删实际被预约目标）
+        jdbc.update("INSERT INTO sw_iot_device (id, create_time, update_time, deleted, tenant_id, version, "
+                + "device_key, name, status, product_id, device_name, manage_status, process_access_enabled) "
+                + "VALUES (91513, now(), now(), 0, ?, 0, 'p63-softdel-device', '软删对象设备', 'ONLINE', "
+                + "'P63PROD', 'p63-softdel-device', 'PUBLISHED', 1) ON CONFLICT (id) DO NOTHING", TENANT);
 
         asUser(INITIATOR, () -> {
             FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P63边界表单", null, null);
@@ -178,20 +188,34 @@ class P63ReservationBoundaryPgTest {
     }
 
     @Test
-    @DisplayName("批准时已过点但在迟到窗口内 → 真实调度入口 catch-up 恰好一次外发，重放不增")
-    void withinWindowCatchUpDispatchesExactlyOnce() {
+    @DisplayName("批准时预约时刻已到（即使窗口未过）→ 意图创建即 EXPIRED、零外发（G06a 合同修正）")
+    void approveAlreadyDueEvenWithinWindowExpiresWithoutDispatch() {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
         String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(-5)));
         String pi = awaitInstanceStarted(recordId);
         Map<String, Object> intent = awaitIntentRow(pi);
-        // 后台 10s 调度 tick 可能先于手动触发认领：此处接受 PENDING/DISPATCHING/DISPATCHED，
-        // 核心断言为“恰一条命令且重放不增”
-        assertThat(String.valueOf(intent.get("status"))).as("窗口内：意图未被取消/过期")
-                .isIn("PENDING", "DISPATCHING", "DISPATCHED");
+        assertThat(String.valueOf(intent.get("status")))
+                .as("批准时已到点：迟到窗口不适用，意图 EXPIRED（不补发）").isEqualTo("EXPIRED");
+        dispatchJob.dispatchDueReservations();
+        assertThat(commandsFor(pi)).as("迟到批准零外发").isZero();
+        System.out.println("[P63-EV] g06a.approve-already-due pi=" + pi
+                + " intent=EXPIRED-at-create window=3600s commands=0 late-approve-no-catchup=true");
+    }
+
+    @Test
+    @DisplayName("批准时仍未来、冻结后到点（窗内）→ 真实调度入口合法 catch-up 恰一次，重放不增")
+    void frozenFutureThenDueCatchesUpExactlyOnce() throws Exception {
+        BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
+        // 冻结时未来 2 秒（合法未来预约）；有界等待到点后触发真实调度入口
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+        String pi = awaitInstanceStarted(recordId);
+        Map<String, Object> intent = awaitIntentRow(pi);
+        assertThat(String.valueOf(intent.get("status"))).as("冻结时未来：意图 PENDING").isEqualTo("PENDING");
+        Thread.sleep(3500); // 有界场景等待：预约时刻到达（合法冻结后的到点，非代理轮询）
 
         dispatchJob.dispatchDueReservations();
         int afterFirst = commandsFor(pi);
-        assertThat(afterFirst).as("窗口内 catch-up 外发恰好一条命令").isEqualTo(1);
+        assertThat(afterFirst).as("合法冻结预约到点 catch-up 外发恰好一条命令").isEqualTo(1);
         String idempotentKey = jdbc.queryForObject(
                 "SELECT idempotent_key FROM sw_iot_device_command WHERE approval_biz_id = ?",
                 String.class, pi);
@@ -200,8 +224,8 @@ class P63ReservationBoundaryPgTest {
         dispatchJob.dispatchDueReservations();
         dispatchJob.dispatchDueReservations();
         assertThat(commandsFor(pi)).as("重复真实扫描不增外发（幂等）").isEqualTo(1);
-        System.out.println("[P63-EV] g06a.within-window pi=" + pi + " commands=" + afterFirst
-                + " idempotent_key=" + idempotentKey + " replays=2 no-growth=true");
+        System.out.println("[P63-EV] g06a.frozen-future-due pi=" + pi + " commands=" + afterFirst
+                + " idempotent_key=" + idempotentKey + " replays=2 no-growth=true frozen-future-legal=true");
     }
 
     @Test
@@ -265,6 +289,73 @@ class P63ReservationBoundaryPgTest {
         return recordId;
     }
 
+    @Test
+    @DisplayName("G03a N3：软删实际被预约目标 → 到点真实调度 FAILED 可查、零外发")
+    void softDeleteActualTargetFailsAtDue() throws Exception {
+        Long softDelId = 91513L;
+        BpmProcessDef def = publishReservationProcessWithDevice("Asia/Shanghai", 3600, softDelId);
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+        String pi = awaitInstanceStarted(recordId);
+        Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
+        assertThat(intentStatus(pi)).isEqualTo("PENDING");
+        // 到点前软删实际被预约目标
+        jdbc.update("UPDATE sw_iot_device SET deleted = 1, update_time = now() WHERE id = ?", softDelId);
+        Thread.sleep(3500); // 有界场景等待：预约时刻到达
+        dispatchJob.dispatchDueReservations();
+        assertThat(intentStatus(pi)).as("软删实际目标：到点 FAILED 可查").isEqualTo("FAILED");
+        String reason = jdbc.queryForObject(
+                "SELECT reject_reason FROM sw_iot_command_reservation WHERE id = ?", String.class, reservationId);
+        assertThat(reason).contains("设备目标已失效或跨租户");
+        assertThat(commandsFor(pi)).as("软删零外发").isZero();
+        jdbc.update("UPDATE sw_iot_device SET deleted = 0, update_time = now() WHERE id = ?", softDelId);
+        System.out.println("[P63-EV] g03a.n3-softdel-actual reservation=" + reservationId
+                + " device=" + softDelId + " FAILED-reason-queryable commands=0");
+    }
+
+    @Test
+    @DisplayName("G03a N4：同租户真实存在但执行授权未开（access=0）→ 批准 failClosed 回滚、零意图")
+    void sameTenantUnauthorizedDeviceRejectedAtApproval() {
+        BpmProcessDef def = publishReservationProcessWithDevice("Asia/Shanghai", 3600, 91512L);
+        String recordId = asUser(INITIATOR, () -> submitService.submitForm(FORM_KEY,
+                data("topic", "无权设备", "plan_time", localShanghaiText(java.time.Duration.ofMinutes(30))),
+                null, null, null));
+        String pi = awaitInstanceStarted(recordId);
+        String taskId = awaitTask(pi);
+        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+                ApprovalAction.APPROVE, req("批准无授权设备"), CommandChannelEnum.NORMAL));
+        awaitCommandTerminalFailed(accepted.getCommandId());
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sw_iot_command_reservation WHERE process_instance_id = ?",
+                Integer.class, pi)).as("同租户无权设备零意图").isZero();
+        assertThat(commandsFor(pi)).isZero();
+        System.out.println("[P63-EV] g03a.n4-same-tenant-unauthorized pi=" + pi
+                + " device=91512 access=0 approval-rolled-back intents=0 commands=0");
+    }
+
+    @Test
+    @DisplayName("G03a N5：批准后到点前撤销执行授权（access 1→0）→ 到点 FAILED 可查、零外发")
+    void accessRevokedBeforeDueFailsAtDue() throws Exception {
+        BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+        String pi = awaitInstanceStarted(recordId);
+        Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
+        assertThat(intentStatus(pi)).isEqualTo("PENDING");
+        // 到点前撤销执行授权（同租户）
+        jdbc.update("UPDATE sw_iot_device SET process_access_enabled = 0, update_time = now() WHERE id = ?",
+                DEVICE_ID);
+        Thread.sleep(3500); // 有界场景等待：预约时刻到达
+        dispatchJob.dispatchDueReservations();
+        assertThat(intentStatus(pi)).as("执行授权撤销：到点 FAILED 可查").isEqualTo("FAILED");
+        String reason = jdbc.queryForObject(
+                "SELECT reject_reason FROM sw_iot_command_reservation WHERE id = ?", String.class, reservationId);
+        assertThat(reason).contains("设备目标已失效或跨租户");
+        assertThat(commandsFor(pi)).as("授权失效零外发").isZero();
+        jdbc.update("UPDATE sw_iot_device SET process_access_enabled = 1, update_time = now() WHERE id = ?",
+                DEVICE_ID);
+        System.out.println("[P63-EV] g03a.n5-access-revoked reservation=" + reservationId
+                + " FAILED-reason-queryable commands=0");
+    }
+
     // ==================== G06b ====================
 
     @Test
@@ -295,11 +386,13 @@ class P63ReservationBoundaryPgTest {
 
     @Test
     @DisplayName("认领先手：真实调度 CAS 占用后取消明确不可取消，仅一个合法结果")
-    void claimWinsMakesCancelNotCancellable() {
+    void claimWinsMakesCancelNotCancellable() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(-4)));
+        // 冻结时未来 2 秒（合法未来预约），到点后认领
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
+        Thread.sleep(3500); // 有界场景等待：预约时刻到达
 
         dispatchJob.dispatchDueReservations();
         String claimed = intentStatus(pi);
@@ -326,9 +419,11 @@ class P63ReservationBoundaryPgTest {
     void concurrentCancelVsClaimHasExactlyOneWinner() throws Exception {
         for (int round = 1; round <= 3; round++) {
             BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
-            String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(-2)));
+            // 冻结时未来 2 秒（合法未来预约），到点后进入竞争
+            String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
             String pi = awaitInstanceStarted(recordId);
             Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
+            Thread.sleep(3500); // 有界场景等待：预约时刻到达
 
             CountDownLatch start = new CountDownLatch(1);
             final int roundNo = round;
@@ -379,7 +474,12 @@ class P63ReservationBoundaryPgTest {
             } else {
                 assertThat(finalStatus).as("认领胜→调度侧状态").isIn("DISPATCHING", "DISPATCHED");
                 assertThat(cancelResult.get()).contains(IotCommandReservationFacade.CANCEL_NOT_CANCELLABLE);
-                assertThat(commands).as("认领胜恰一条命令").isEqualTo(1);
+                // 全量负载下认领 CAS 胜后命令行插入存在毫秒级窗口：有界等待命令行出现
+                long awaitDeadline = System.currentTimeMillis() + 10_000L;
+                while (commandsFor(pi) == 0 && System.currentTimeMillis() < awaitDeadline) {
+                    Thread.sleep(100);
+                }
+                assertThat(commandsFor(pi)).as("认领胜恰一条命令（有界等待后）").isEqualTo(1);
             }
             System.out.println("[P63-EV] g06b.concurrent round=" + round + " cancel=" + cancelResult.get()
                     + " final=" + finalStatus + " commands=" + commands + " single-winner=true");
@@ -408,6 +508,38 @@ class P63ReservationBoundaryPgTest {
         asUser(INITIATOR, () -> {
             processDefService.saveDraftGraph(def.getId(), toJson(graph));
             processDefService.setIotDeviceAction(def.getId(), reservationActionJson(timezoneId, lateWindowSeconds));
+            processDefService.publish(def.getId());
+            return null;
+        });
+        return def;
+    }
+
+    /** 指定设备 ID 的预约流程发布（G03a 负向对象）。 */
+    private BpmProcessDef publishReservationProcessWithDevice(String timezoneId, int lateWindowSeconds,
+                                                              Long deviceId) {
+        BpmProcessDef def = asUser(INITIATOR, () -> processDefService
+                .createDef("P63G03a负向-" + deviceId + "-" + System.nanoTime(), FORM_KEY));
+        List<GraphElement> elements = List.of(
+                node("start", "START", null),
+                node("approver", "APPROVAL", Map.of("name", "人工审批",
+                        "approver", Map.of("type", "DESIGNATED", "value", String.valueOf(APPROVER)))),
+                node("end", "END", null),
+                edge("e1", "start", "approver"),
+                edge("e2", "approver", "end"));
+        ProcessGraph graph = ProcessGraph.builder()
+                .processKey(def.getProcessKey())
+                .name(def.getName())
+                .formKey(FORM_KEY)
+                .version(1)
+                .elements(elements)
+                .build();
+        String actionJson = "{\"enabled\":true,\"deliveryMode\":\"RESERVATION\","
+                + "\"deviceSource\":\"FIXED\",\"deviceId\":" + deviceId + ","
+                + "\"commandKey\":\"power_off\",\"reservation\":{\"dueField\":\"plan_time\","
+                + "\"timezoneId\":\"" + timezoneId + "\",\"lateWindowSeconds\":" + lateWindowSeconds + "}}";
+        asUser(INITIATOR, () -> {
+            processDefService.saveDraftGraph(def.getId(), toJson(graph));
+            processDefService.setIotDeviceAction(def.getId(), actionJson);
             processDefService.publish(def.getId());
             return null;
         });

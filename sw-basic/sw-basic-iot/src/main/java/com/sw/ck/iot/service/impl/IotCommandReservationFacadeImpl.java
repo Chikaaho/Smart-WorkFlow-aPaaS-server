@@ -66,10 +66,11 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
         row.setTimezoneId(timezoneId);
         row.setDueLocalText(dueLocalText);
         row.setLateWindowSeconds(lateWindowSeconds);
-        // 创建时刻预约时刻已过（含迟到窗口）：保留关联记录并标为过期，不立即补发。
-        // dueAtUtc 是 UTC 绝对时刻，统一换算为本地钟判定（或以 UTC 时钟比较），不得混用本地时区语义。
-        LocalDateTime windowEndUtc = dueAtUtc.plusSeconds(Math.max(0, lateWindowSeconds));
-        boolean expired = windowEndUtc.isBefore(LocalDateTime.now(java.time.ZoneOffset.UTC));
+        // 创建时刻预约时刻已到/已过：一律保留关联记录并标为过期，不补发（P63 G06a 合同偏差
+        // 修正，主方向§4.2：迟到窗口仅适用于批准时仍未来、已合法冻结的预约——窗口内 catch-up
+        // 下发只发生在冻结为未来后到点的真实调度入口，不得在批准时点追认补发）。
+        // dueAtUtc 是 UTC 绝对时刻，统一以 UTC 时钟比较，不得混用本地时区语义。
+        boolean expired = !LocalDateTime.now(java.time.ZoneOffset.UTC).isBefore(dueAtUtc);
         row.setStatus(expired ? "EXPIRED" : "PENDING");
         mapper.insert(row);
         return Optional.of(row.getId());
