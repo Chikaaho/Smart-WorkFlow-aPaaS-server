@@ -139,13 +139,31 @@ public class BpmTriggerController {
 
     // ==================== 实例维度回查 ====================
 
+    /**
+     * 解析实例标识：兼容流程实例 ID（Flowable）与 sw_bpm_instance 主键（“我发起的”列表行 ID）。
+     */
+    private String resolveProcessInstanceId(Long tenantId, String instanceId) {
+        var direct = bpmInstanceService.findByProcessInstanceId(instanceId);
+        if (direct.isPresent()) {
+            return instanceId;
+        }
+        try {
+            Long primaryKey = Long.parseLong(instanceId);
+            var byPk = bpmInstanceService.getById(primaryKey);
+            return byPk == null ? instanceId : byPk.getProcessInstanceId();
+        } catch (NumberFormatException e) {
+            return instanceId;
+        }
+    }
+
     @GetMapping("/instances/{instanceId}/trigger-execs")
     public R<List<Map<String, Object>>> listTriggerExecs(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
+        String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         List<BpmTriggerExec> rows = triggerExecMapper.selectList(
                 Wrappers.<BpmTriggerExec>lambdaQuery()
                         .eq(BpmTriggerExec::getTenantId, tenantId)
-                        .eq(BpmTriggerExec::getProcessInstanceId, instanceId)
+                        .eq(BpmTriggerExec::getProcessInstanceId, processInstanceId)
                         .orderByDesc(BpmTriggerExec::getId));
         return R.ok(rows.stream().map(this::toExecView).toList());
     }
@@ -153,10 +171,11 @@ public class BpmTriggerController {
     @GetMapping("/instances/{instanceId}/action-refs")
     public R<List<Map<String, Object>>> listActionRefs(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
+        String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         List<BpmActionRef> rows = actionRefMapper.selectList(
                 Wrappers.<BpmActionRef>lambdaQuery()
                         .eq(BpmActionRef::getTenantId, tenantId)
-                        .eq(BpmActionRef::getProcessInstanceId, instanceId)
+                        .eq(BpmActionRef::getProcessInstanceId, processInstanceId)
                         .orderByAsc(BpmActionRef::getId));
         return R.ok(rows.stream().map(this::toRefView).toList());
     }
