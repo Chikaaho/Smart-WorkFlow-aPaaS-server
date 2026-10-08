@@ -108,18 +108,9 @@ public class BpmProcessDefController {
         return R.ok(parseGraph(entity.getGraphJson()));
     }
 
-    /**
-     * 保存草稿图 —— 无条件全量覆盖 graph_json。
-     * <p>
-     * status 保持 DRAFT，不跑校验拦截（允许存残图）。
-     * </p>
-     *
-     * @param id    流程定义 ID
-     * @param graph 图 JSON（ProcessGraph）
-     */
+    /** 读取主题生成规则（V012-BUG-010）。 */
     @Transactional
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
-    /** 读取主题生成规则（V012-BUG-010）。 */
     @GetMapping("/{id}/theme-rule")
     public R<String> getThemeRule(@PathVariable Long id) {
         return R.ok(bpmProcessDefService.getThemeRule(id));
@@ -144,6 +135,17 @@ public class BpmProcessDefController {
         return R.ok(null);
     }
 
+    /**
+     * 保存草稿图 —— 无条件全量覆盖 graph_json。
+     * <p>
+     * status 保持 DRAFT，不跑校验拦截（允许存残图）。
+     * </p>
+     *
+     * @param id    流程定义 ID
+     * @param graph 图 JSON（ProcessGraph）
+     */
+    @Transactional
+    @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @PutMapping("/{id}/graph")
     public R<Void> saveDraftGraph(@PathVariable Long id,
                                   @RequestBody ProcessGraph graph) {
