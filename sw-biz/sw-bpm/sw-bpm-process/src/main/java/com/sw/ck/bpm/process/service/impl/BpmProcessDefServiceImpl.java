@@ -51,6 +51,10 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     private final BpmFormBindingService formBindingService;
     private final ObjectMapper objectMapper;
 
+    /** P64 变量/触发器/节点表单发布校验（可选装配；直接构造的既有单测无此依赖时跳过）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sw.ck.bpm.process.validator.ProcessVariableValidator processVariableValidator;
+
     public BpmProcessDefServiceImpl(BpmProcessDefMapper mapper,
                                     com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper,
                                     com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService,
@@ -297,6 +301,15 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         if (!lightProcessErrors.isEmpty()) {
             GraphValidationError first = lightProcessErrors.get(0);
             throw new BaseException(first.getErrorCode(), first.getMessage());
+        }
+
+        // 2a++. P64 变量/触发器/节点表单发布校验（ADR-P64-001 §2-§4；无新配置零校验零行为）
+        if (processVariableValidator != null) {
+            List<GraphValidationError> p64Errors = processVariableValidator.validate(graph);
+            if (p64Errors != null && !p64Errors.isEmpty()) {
+                GraphValidationError first = p64Errors.get(0);
+                throw new BaseException(first.getErrorCode(), first.getMessage());
+            }
         }
 
         // 2b. formKey 对应表单已发布（2100）

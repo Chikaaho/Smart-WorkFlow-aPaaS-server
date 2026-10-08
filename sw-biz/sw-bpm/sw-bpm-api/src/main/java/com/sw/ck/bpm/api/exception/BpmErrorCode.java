@@ -110,6 +110,21 @@ public enum BpmErrorCode implements ErrorCode {
             "资源策略校验未通过：额度、保留份额、消费者可用性或预算相容性检查失败，已拒绝启用"),
     RESOURCE_CONSUMER_UNAVAILABLE(2431, "bpm.resource_consumer_unavailable",
             "必需消费者未启用：异步目标或批量消费能力不可用，已拒绝启用新受理"),
+
+    // ==================== P64 高级编排阶段Ⅰ：数据到动作（2432+） ====================
+    NODE_FORM_NOT_BOUND(2432, "bpm.node_form_not_bound", "该任务节点未绑定业务表单，或绑定的表单已不可用"),
+    NODE_FORM_VALIDATION_FAILED(2433, "bpm.node_form_validation_failed", "节点业务表单数据校验未通过，请按字段要求填写后重新提交"),
+    NODE_FORM_ALREADY_SUBMITTED(2434, "bpm.node_form_already_submitted", "该任务的业务表单数据已最终提交，不能再次修改"),
+    VARIABLE_INVALID(2435, "bpm.variable_invalid", "BPM 变量配置无效：引用、类型、来源或聚合规则不满足发布要求"),
+    VARIABLE_SNAPSHOT_TOO_LARGE(2436, "bpm.variable_snapshot_too_large", "变量快照超出大小上限，本次判断已终止并记录，请收窄变量来源"),
+    TRIGGER_INVALID(2437, "bpm.trigger_invalid", "触发器配置无效：事件、脚本、分支或动作不满足发布要求"),
+    TRIGGER_SCRIPT_FAILED(2438, "bpm.trigger_script_failed", "判断脚本执行失败，本次判断已记录为可诊断结果，未产生任何动作"),
+    TRIGGER_RESULT_UNMATCHED(2439, "bpm.trigger_result_unmatched", "判断结果未命中任何分支（含空值返回），已按未匹配处置记录，未产生动作"),
+    TRIGGER_RESOURCE_LIMIT(2440, "bpm.trigger_resource_limit", "判断脚本超出执行资源限制（超时/语句/快照/输出），本次判断已终止并记录"),
+    ACTION_INVALID(2441, "bpm.action_invalid", "动作配置无效：目标流程、表单或映射不满足发布要求"),
+    ACTION_DISPATCH_EMPTY(2442, "bpm.action_dispatch_empty", "派发集合为空：没有有效派发对象，已阻止派发并记录原因"),
+    ACTION_DISPATCH_OVER_LIMIT(2443, "bpm.action_dispatch_over_limit", "派发集合超过单次上限，已整体拒绝（不静默截断），请收窄集合或调整配置"),
+    ACTION_TARGET_INVALID(2444, "bpm.action_target_invalid", "动作目标流程或表单不可用，无法创建关联实例"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================

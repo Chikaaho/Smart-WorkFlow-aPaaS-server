@@ -684,6 +684,12 @@ class FormDefinitionServiceTest {
                             Long deptId, String postCode, Long tenantId) {
                         return java.util.Optional.empty();
                     }
+
+                    @Override
+                    public java.util.Optional<java.util.Map<Long, Long>> findDeptLeaderMap(
+                            java.util.Collection<Long> deptIds, Long tenantId) {
+                        return java.util.Optional.empty();
+                    }
                 };
         FormDefServiceImpl resolvingService = new FormDefServiceImpl(
                 formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,

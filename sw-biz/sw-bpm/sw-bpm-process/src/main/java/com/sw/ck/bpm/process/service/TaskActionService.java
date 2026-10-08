@@ -59,6 +59,22 @@ public class TaskActionService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService;
 
+    /** P64 阶段Ⅰ：节点业务表单数据服务（可选装配；旧图/未绑定零行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.NodeFormDataService> nodeFormDataProvider;
+
+    /** P64 阶段Ⅰ：触发器受控判断执行服务（可选装配；无触发器配置零行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.TriggerExecutionService> triggerExecutionProvider;
+
+    private com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService() {
+        return nodeFormDataProvider == null ? null : nodeFormDataProvider.getIfAvailable();
+    }
+
+    private com.sw.ck.bpm.process.service.TriggerExecutionService triggerExecution() {
+        return triggerExecutionProvider == null ? null : triggerExecutionProvider.getIfAvailable();
+    }
+
     private com.sw.ck.bpm.process.service.ApprovalLifecycleService lifecycle() {
         return lifecycleProvider == null ? null : lifecycleProvider.getIfAvailable();
     }
@@ -381,6 +397,17 @@ public class TaskActionService {
                     case DISAPPROVE -> "DISAPPROVED";
                     default -> "APPROVED";
                 }, processVariables, commandId, null);
+        // — P64 阶段Ⅰ：节点业务表单合法最终提交（A01）+ 受控触发器评估（A03/A04）——
+        // 与任务完成同事务：数据/意图未可靠落库时整个办理回滚，不留半成功；触发器自身
+        // 异常不回滚业务（就地落 FAILED 可诊断行）。
+        if (!legacyInvocation && instance != null
+                && (action == ApprovalAction.APPROVE || action == ApprovalAction.DISAPPROVE)) {
+            submitNodeFormData(instance, task, effectiveRequest, loginUser);
+            com.sw.ck.bpm.process.service.TriggerExecutionService triggerService = triggerExecution();
+            if (triggerService != null) {
+                triggerService.onTaskActionCompleted(instance, task, action);
+            }
+        }
         runHandleResultFunction(task, loginUser, processVariables, action);
         log.info("审批已完成: taskId={}, processInstanceId={}, userId={}",
                 taskId, processInstanceId, loginUser.getUserId());
@@ -421,6 +448,14 @@ public class TaskActionService {
                 bpmInstanceService.updateStatus(processInstanceId, terminalStatus);
                 log.info("流程已结束，实例状态更新为 {}: processInstanceId={}",
                         terminalStatus, processInstanceId);
+
+                // — P64 阶段Ⅰ：流程合法完成触发器（仅 APPROVED；驳回/撤回/废弃不触发） —
+                if (instance != null && InstanceStatusEnum.APPROVED.getCode().equals(terminalStatus)) {
+                    com.sw.ck.bpm.process.service.TriggerExecutionService triggerService = triggerExecution();
+                    if (triggerService != null) {
+                        triggerService.onProcessCompleted(instance, terminalStatus);
+                    }
+                }
 
                 // — 发布审批结果通知事件（DISAPPROVE 使用独立语义触发器） —
                 publishProcessEvent(processInstanceId, loginUser,
@@ -579,6 +614,26 @@ public class TaskActionService {
                         && ApprovalAction.RETURN.name().equals(item.getAction()))
                 .count();
         return (int) previous + 1;
+    }
+
+    /**
+     * P64 节点业务表单合法最终提交（A01）：任务绑定节点表单且携带/存在数据时，
+     * 与任务完成同事务落 SUBMITTED；校验失败抛业务异常使整个办理回滚（无半成功）。
+     */
+    private void submitNodeFormData(BpmInstance instance, BpmTaskDTO task,
+                                    ApprovalActionRequest request, LoginUser loginUser) {
+        com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService = nodeFormDataService();
+        if (nodeFormDataService == null || instance.getDefVersion() == null) {
+            return;
+        }
+        var binding = nodeFormDataService.resolveBinding(task.getProcessDefinitionKey(),
+                instance.getDefVersion(), task.getTaskDefinitionKey());
+        if (binding.isEmpty()) {
+            return;
+        }
+        nodeFormDataService.submitFinal(instance.getProcessInstanceId(), instance.getProcessDefKey(),
+                task.getTaskDefinitionKey(), task.getTaskId(), binding.get().formKey(),
+                request.getNodeFormData(), loginUser.getUserId());
     }
 
     /** I3 §4.9：结果处理白名单函数执行（输出不改变流程走向，仅审计摘要/白名单变量）。 */

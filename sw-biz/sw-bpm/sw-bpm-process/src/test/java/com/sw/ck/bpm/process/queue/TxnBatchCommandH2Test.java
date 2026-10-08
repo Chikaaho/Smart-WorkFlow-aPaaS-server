@@ -82,6 +82,12 @@ class TxnBatchCommandH2Test {
         jdbcTemplate.update("DELETE FROM sw_bpm_command_batch");
         jdbcTemplate.update("DELETE FROM sw_bpm_command_effect");
         jdbcTemplate.update("DELETE FROM sw_bpm_command");
+        // 共享内存库（QueueH2TestConfig DB_CLOSE_DELAY=-1）跨测试类留存资源策略/占用：
+        // 资源保障类测试启用的策略与未释放占用会把后续批量受理判为额度已满（既有测试间
+        // 污染，P64 阶段Ⅰ全模块回归暴露），与命令表一并复位。
+        jdbcTemplate.update("DELETE FROM sw_bpm_resource_usage");
+        jdbcTemplate.update("DELETE FROM sw_bpm_resource_reject_log");
+        jdbcTemplate.update("UPDATE sw_bpm_resource_policy SET enabled = FALSE, stop_acceptance = FALSE");
         when(txnActionPort.describe(ACTION_ID)).thenReturn(Optional.of(
                 new FormTxnActionPort.TxnActionDescriptor(ACTION_ID, "form-1", "stock_reserve",
                         "RESERVE", "PUBLISHED", 3)));
