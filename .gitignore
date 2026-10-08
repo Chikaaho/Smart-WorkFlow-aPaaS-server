@@ -7,6 +7,10 @@ target/
 .vscode/
 .DS_Store
 *.log
+*.log.gz
+*.stdout
+*.stderr
+*.raw
 .claude/worktrees/
 dump.rdb
 /bootstrap.jar
