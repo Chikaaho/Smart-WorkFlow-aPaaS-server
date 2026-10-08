@@ -190,9 +190,10 @@ public class TriggerExecutionService {
                 return;
             }
             exec.setSnapshotText(snapshot.json());
-            BpmScriptEvaluatePort.ScriptOutcome result =
-                    scriptRunner.run(trigger.getScript(), snapshot.values(),
-                            BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS);
+            BpmScriptEvaluatePort.ScriptOutcome result = scriptRunner
+                    .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
             exec.setDurationMs(result.durationMs());
             switch (result.kind()) {
                 case BpmScriptEvaluatePort.ScriptOutcome.KIND_TIMEOUT,

@@ -78,19 +78,23 @@ class TriggerExecutionServiceTest {
         when(port.run(anyString(), any(), anyLong())).thenAnswer(invocation -> {
             String script = invocation.getArgument(0);
             if (script.contains("nonexistent()")) {
-                return new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
-                        "SCRIPT_ERROR", null, null, "引用错误: nonexistent is not defined", 5L);
+                return java.util.Optional.of(
+                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                                "SCRIPT_ERROR", null, null, "引用错误: nonexistent is not defined", 5L));
             }
             if (script.contains("'X'")) {
-                return new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
-                        "OK", "X", "STRING", null, 5L);
+                return java.util.Optional.of(
+                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                                "OK", "X", "STRING", null, 5L));
             }
             if (script.contains("true")) {
-                return new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
-                        "OK", Boolean.TRUE, "BOOLEAN", null, 5L);
+                return java.util.Optional.of(
+                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                                "OK", Boolean.TRUE, "BOOLEAN", null, 5L));
             }
-            return new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
-                    "OK", 1L, "NUMBER", null, 5L);
+            return java.util.Optional.of(
+                    new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                            "OK", 1L, "NUMBER", null, 5L));
         });
         return port;
     }

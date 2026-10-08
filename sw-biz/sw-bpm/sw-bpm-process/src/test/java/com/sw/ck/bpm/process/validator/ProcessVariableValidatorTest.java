@@ -38,7 +38,7 @@ class ProcessVariableValidatorTest {
     private final com.sw.ck.bpm.api.script.BpmScriptEvaluatePort scriptPort =
             mock(com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.class);
     { org.mockito.Mockito.when(scriptPort.validate(org.mockito.ArgumentMatchers.anyString()))
-            .thenReturn(new BpmScriptEvaluatePort.ScriptOutcome("OK", null, null, null, 0L)); }
+            .thenReturn(java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome("OK", null, null, null, 0L))); }
 
     private final ProcessVariableValidator validator = new ProcessVariableValidator(
             formDefinitionService, formBindingService, scriptPort, new ObjectMapper());
@@ -169,9 +169,9 @@ class ProcessVariableValidatorTest {
     void shouldRejectUncompilableScript() {
         stubForms();
         when(scriptPort.validate(org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new BpmScriptEvaluatePort.ScriptOutcome(
+                .thenReturn(java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
                         BpmScriptEvaluatePort.ScriptOutcome.KIND_SCRIPT_ERROR,
-                        null, null, "语法错误", 0L));
+                        null, null, "语法错误", 0L)));
         ProcessGraph graph = ProcessGraph.builder()
                 .formKey("main_form")
                 .elements(List.of(qcNode()))

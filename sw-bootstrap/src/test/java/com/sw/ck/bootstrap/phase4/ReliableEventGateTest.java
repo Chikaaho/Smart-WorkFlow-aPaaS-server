@@ -104,8 +104,8 @@ class ReliableEventGateTest {
         String relative = fqcn.replace('.', '/') + ".java";
         try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(repoRoot())) {
             java.util.List<Path> matches = files
-                    .filter(path -> path.toString().endsWith("/src/main/java/" + relative))
-                    .filter(path -> !path.toString().contains("/target/"))
+                    .filter(path -> path.toString().replace(java.io.File.separatorChar, '/').endsWith("/src/main/java/" + relative))
+                    .filter(path -> !path.toString().replace(java.io.File.separatorChar, '/').contains("/target/"))
                     .toList();
             assertTrue(matches.size() == 1,
                     "FQCN 唯一定位失败: " + fqcn + " 命中 " + matches.size() + " 个文件 " + matches);
@@ -272,7 +272,7 @@ class ReliableEventGateTest {
     private boolean hasEventListenerFor(String eventType) throws IOException {
         try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(repoRoot())) {
             return files.filter(path -> path.toString().endsWith(".java"))
-                    .filter(path -> !path.toString().contains("/target/"))
+                    .filter(path -> !path.toString().replace(java.io.File.separatorChar, '/').contains("/target/"))
                     .filter(path -> {
                         try {
                             String source = java.nio.file.Files.readString(path);

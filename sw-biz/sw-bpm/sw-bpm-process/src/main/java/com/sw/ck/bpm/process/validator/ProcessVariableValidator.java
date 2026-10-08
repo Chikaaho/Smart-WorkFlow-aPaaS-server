@@ -323,7 +323,9 @@ public class ProcessVariableValidator {
                         "触发器 " + trigger.getTriggerId() + ": 判断脚本为空"));
                 continue;
             }
-            BpmScriptEvaluatePort.ScriptOutcome scriptCheck = scriptRunner.validate(trigger.getScript());
+            BpmScriptEvaluatePort.ScriptOutcome scriptCheck = scriptRunner.validate(trigger.getScript())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "BpmScriptEvaluatePort#validate 契约恒 present，empty 属契约违约"));
             if (!scriptCheck.ok()) {
                 errors.add(error(locator, BpmErrorCode.TRIGGER_INVALID,
                         "触发器 " + trigger.getTriggerId() + " 脚本不可编译: " + scriptCheck.errorMessage()));

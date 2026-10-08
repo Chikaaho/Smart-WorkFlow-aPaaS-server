@@ -115,8 +115,10 @@ public class BpmTriggerController {
             result.put("kind", "SNAPSHOT_FAILED");
             return R.ok(result);
         }
-        BpmScriptEvaluatePort.ScriptOutcome run =
-                scriptRunner.run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS);
+        BpmScriptEvaluatePort.ScriptOutcome run = scriptRunner
+                .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS)
+                .orElseThrow(() -> new IllegalStateException(
+                        "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
         result.put("kind", run.kind());
         result.put("value", run.value());
         result.put("resultType", run.typeName());

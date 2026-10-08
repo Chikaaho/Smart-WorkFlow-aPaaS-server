@@ -124,6 +124,7 @@ class FlywayFullChainPostgresTest {
                     || "0.1.3".equals(info.getVersion().getVersion())
                     || "0.1.4".equals(info.getVersion().getVersion())
                     || "0.1.5".equals(info.getVersion().getVersion())
+                    || "0.1.6".equals(info.getVersion().getVersion())
                     || "0.1.7".equals(info.getVersion().getVersion())) {
                 incrementalSeen++;
             }
@@ -132,7 +133,7 @@ class FlywayFullChainPostgresTest {
         assertEquals(7, incrementalSeen, "V0.1.1—V0.1.7 增量应已应用");
         assertEquals(6, repeatableCount, "6 个 R__ 菜单可重复对账应已应用");
         assertEquals("0.1.7", flyway().info().current().getVersion().getVersion(),
-                "终点当前版本应为 0.1.6 增量");
+                "终点当前版本应为 0.1.7 增量");
     }
 
     @Test
@@ -146,7 +147,7 @@ class FlywayFullChainPostgresTest {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway().migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.1.7", flyway().info().current().getVersion().getVersion(), "版本应保持 0.1.6");
+        assertEquals("0.1.7", flyway().info().current().getVersion().getVersion(), "版本应保持 0.1.7");
     }
 
     @Test

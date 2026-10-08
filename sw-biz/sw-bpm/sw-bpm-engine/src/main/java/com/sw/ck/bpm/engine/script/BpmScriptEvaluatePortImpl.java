@@ -4,6 +4,7 @@ import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * {@link BpmScriptEvaluatePort} 引擎侧实现：GraalJS 运行器装配为公共端口，
@@ -19,16 +20,16 @@ public class BpmScriptEvaluatePortImpl implements BpmScriptEvaluatePort {
     }
 
     @Override
-    public ScriptOutcome run(String script, Map<String, Object> variables, long timeoutMs) {
+    public Optional<ScriptOutcome> run(String script, Map<String, Object> variables, long timeoutMs) {
         BpmScriptRunner.Result result = runner.run(script, variables, timeoutMs);
-        return new ScriptOutcome(result.kind().name(), result.value(), result.typeName(),
-                result.errorMessage(), result.durationMs());
+        return Optional.of(new ScriptOutcome(result.kind().name(), result.value(), result.typeName(),
+                result.errorMessage(), result.durationMs()));
     }
 
     @Override
-    public ScriptOutcome validate(String script) {
+    public Optional<ScriptOutcome> validate(String script) {
         BpmScriptRunner.Result result = runner.validate(script);
-        return new ScriptOutcome(result.kind().name(), result.value(), result.typeName(),
-                result.errorMessage(), result.durationMs());
+        return Optional.of(new ScriptOutcome(result.kind().name(), result.value(), result.typeName(),
+                result.errorMessage(), result.durationMs()));
     }
 }

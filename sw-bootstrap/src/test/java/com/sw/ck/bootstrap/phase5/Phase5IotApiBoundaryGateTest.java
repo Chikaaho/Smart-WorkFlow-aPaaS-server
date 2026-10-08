@@ -260,7 +260,12 @@ class Phase5IotApiBoundaryGateTest {
     private static String resolvedArtifactFileName(Class<?> type) {
         var source = type.getProtectionDomain().getCodeSource();
         assertThat(source).as("构件来源可定位: " + type.getName()).isNotNull();
-        return Path.of(source.getLocation().getPath()).getFileName().toString();
+        String path = source.getLocation().getPath();
+        // Windows code-source URL 形如 /E:/Maven/...（驱动器号前多一个前导斜杠），剥掉后再转 Path
+        if (path.startsWith("/") && path.length() > 2 && path.charAt(2) == ':') {
+            path = path.substring(1);
+        }
+        return Path.of(path).getFileName().toString();
     }
 
     // ==================== 门禁 4 · 零实现耦合 ====================
@@ -357,8 +362,8 @@ class Phase5IotApiBoundaryGateTest {
         String relative = fqcn.replace('.', '/') + ".java";
         try (var walk = Files.walk(repoRoot())) {
             List<Path> matches = walk
-                    .filter(path -> path.toString().endsWith("/src/main/java/" + relative))
-                    .filter(path -> !path.toString().contains("/target/"))
+                    .filter(path -> path.toString().replace(java.io.File.separatorChar, '/').endsWith("/src/main/java/" + relative))
+                    .filter(path -> !path.toString().replace(java.io.File.separatorChar, '/').contains("/target/"))
                     .toList();
             assertThat(matches).as("FQCN 唯一定位: " + fqcn).hasSize(1);
             return matches.get(0);

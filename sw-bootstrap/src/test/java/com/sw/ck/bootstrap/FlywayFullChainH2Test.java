@@ -104,6 +104,7 @@ class FlywayFullChainH2Test {
                     || "0.1.3".equals(info.getVersion().getVersion())
                     || "0.1.4".equals(info.getVersion().getVersion())
                     || "0.1.5".equals(info.getVersion().getVersion())
+                    || "0.1.6".equals(info.getVersion().getVersion())
                     || "0.1.7".equals(info.getVersion().getVersion())) {
                 incrementalSeen++;
             }
