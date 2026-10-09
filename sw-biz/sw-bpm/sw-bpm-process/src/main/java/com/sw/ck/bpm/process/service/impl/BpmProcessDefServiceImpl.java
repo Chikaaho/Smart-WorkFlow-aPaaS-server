@@ -399,7 +399,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         frozen.setFormKey(formKey);
         frozen.setFormVersion(resolveFormVersion(graph.getFormKey()));
         frozen.setFunctionVersions(resolveFunctionVersions(graph));
-        frozen.setGraphJson(def.getGraphJson());
+        frozen.setGraphJson(freezeNodeFormVersions(def.getGraphJson()));
         frozen.setDeploymentId(deployResult.getDeploymentId());
         frozen.setProcessDefinitionId(deployResult.getProcessDefinitionId());
         try {
@@ -452,6 +452,59 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         } catch (Exception e) {
             log.warn("读取表单版本失败: formKey={}", formKey);
             return null;
+        }
+    }
+
+    /**
+     * 发布冻结（复审05 P1-04b）：把各节点 {@code config.nodeForm} 绑定的当前已发布表单版本
+     * 写入冻结图副本（键 {@code formVersion}）。
+     * <p>
+     * 任务级绑定版本权威=发布时点冻结值：任务创建读取即已绑定，首次草稿前后与表单再发布
+     * 都不漂移；表单缺失/读取失败保持原样（运行时按旧"无绑定版本"兼容口径诊断，不阻断发布，
+     * 也不静默把不一致藏起来）。只改写冻结副本，不触碰定义行草稿图（可继续编辑再发布）。
+     * </p>
+     */
+    @SuppressWarnings("unchecked")
+    private String freezeNodeFormVersions(String graphJson) {
+        if (graphJson == null || graphJson.isBlank()) {
+            return graphJson;
+        }
+        try {
+            Map<String, Object> root = objectMapper.readValue(graphJson,
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+            Object elements = root.get("elements");
+            if (!(elements instanceof List<?> list)) {
+                return graphJson;
+            }
+            for (Object element : list) {
+                if (!(element instanceof Map<?, ?> elementMap)
+                        || !"node".equals(String.valueOf(elementMap.get("kind")))) {
+                    continue;
+                }
+                Object config = elementMap.get("config");
+                if (!(config instanceof Map<?, ?>)) {
+                    continue;
+                }
+                Object nodeForm = ((Map<String, Object>) config).get("nodeForm");
+                if (!(nodeForm instanceof Map<?, ?>)) {
+                    continue;
+                }
+                Map<String, Object> nodeFormMap = (Map<String, Object>) nodeForm;
+                Object formKeyObj = nodeFormMap.get("formKey");
+                if (formKeyObj == null || String.valueOf(formKeyObj).isBlank()) {
+                    continue;
+                }
+                java.util.Optional<FormDefDTO> def =
+                        formDefinitionService.getFormDef(String.valueOf(formKeyObj).trim());
+                if (def.isEmpty() || def.get().getFormVersion() == null) {
+                    continue;
+                }
+                nodeFormMap.put("formVersion", def.get().getFormVersion());
+            }
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            log.warn("节点表单版本发布冻结失败，保持原图: {}", e.getMessage());
+            return graphJson;
         }
     }
 

@@ -78,11 +78,12 @@ public class BpmNodeFormController {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         BpmTaskFormData data = tenantId == null ? null
                 : nodeFormDataService.findByTaskId(tenantId, taskId).orElse(null);
-        // 任务级绑定版本冻结（审查02 P1-04b）：任务数据行已建立时以该行绑定版本渲染/校验，
-        // 表单之后的再发布不改写既有任务；未建立任务行时按当前已发布版本
+        // 任务级绑定版本冻结（审查02 P1-04b；复审05 修正绑定口径）：任务数据行已建立时以该行
+        // 绑定版本渲染/校验；未建立任务行时按发布冻结图记录的绑定版本（任务创建即已绑定，
+        // 表单再发布不漂移）；冻结图无记录的历史图回退当前已发布版本（旧无绑定兼容）。
         Long boundVersion = data != null && data.getFormVersion() != null
                 ? data.getFormVersion()
-                : (binding.get().formVersion() == null ? null : Long.valueOf(binding.get().formVersion()));
+                : NodeFormDataService.parseBindingVersion(binding.get().formVersion());
         result.put("formVersion", boundVersion == null ? null : String.valueOf(boundVersion));
         // 绑定版本快照缺失：可诊断拒绝，不按最新定义静默渲染（复审03 P1-04b）
         Optional<String> definition = nodeFormDataService
@@ -136,7 +137,7 @@ public class BpmNodeFormController {
                 : objectMapper.convertValue(body, new TypeReference<Map<String, Object>>() { });
         Long id = nodeFormDataService.saveDraft(instance.getProcessInstanceId(),
                 instance.getProcessDefKey(), task.getTaskDefinitionKey(), taskId,
-                binding.get().formKey(), data);
+                binding.get().formKey(), NodeFormDataService.parseBindingVersion(binding.get().formVersion()), data);
         return R.ok(id);
     }
 

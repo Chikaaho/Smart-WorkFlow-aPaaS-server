@@ -135,7 +135,7 @@ class BpmNodeFormControllerTest {
         assertThat(controller.getTaskNodeForm("task-1").getData()).containsEntry("bound", true);
 
         when(nodeFormDataService.saveDraft(eq("pi-1"), eq("def_main"), eq("node_qc"), eq("task-1"),
-                any(), any())).thenReturn(1L);
+                any(), any(), any())).thenReturn(1L);
         R<Long> draft = controller.saveDraft("task-1", Map.of("data", Map.of("f", 1)));
         assertThat(draft.getData()).isEqualTo(1L);
     }
@@ -151,7 +151,7 @@ class BpmNodeFormControllerTest {
 
         assertThat(controller.getTaskNodeForm("task-1").getData()).containsEntry("bound", true);
 
-        when(nodeFormDataService.saveDraft(any(), any(), any(), any(), any(), any())).thenReturn(9L);
+        when(nodeFormDataService.saveDraft(any(), any(), any(), any(), any(), any(), any())).thenReturn(9L);
         assertThat(controller.saveDraft("task-1", Map.of("data", Map.of())).getData()).isEqualTo(9L);
     }
 

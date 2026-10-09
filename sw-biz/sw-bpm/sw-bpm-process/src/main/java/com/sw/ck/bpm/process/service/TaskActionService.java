@@ -633,6 +633,7 @@ public class TaskActionService {
         }
         nodeFormDataService.submitFinal(instance.getProcessInstanceId(), instance.getProcessDefKey(),
                 task.getTaskDefinitionKey(), task.getTaskId(), binding.get().formKey(),
+                com.sw.ck.bpm.process.service.NodeFormDataService.parseBindingVersion(binding.get().formVersion()),
                 request.getNodeFormData(), loginUser.getUserId());
     }
 

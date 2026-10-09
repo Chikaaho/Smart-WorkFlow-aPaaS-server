@@ -117,9 +117,15 @@ public class NodeFormDataService {
             throw new BaseException(BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),
                     "节点绑定的业务表单不可用: " + formKey);
         }
-        return Optional.of(new NodeFormBinding(formKey,
-                def.get().getFormVersion() == null ? null : String.valueOf(def.get().getFormVersion()),
-                def.get().getName()));
+        // 任务级绑定版本冻结（复审05 P1-04b）：版本以发布冻结图中记录的 formVersion 为准
+        // （发布时点冻结，任务创建/首次草稿/表单再发布前后都不漂移）；
+        // 冻结图无记录（历史图/未冻结）时回退当前已发布版本（旧无绑定兼容口径）。
+        Object frozenVersionObj = nodeForm.get("formVersion");
+        String frozenVersion = frozenVersionObj == null ? null : String.valueOf(frozenVersionObj).trim();
+        String formVersion = frozenVersion == null || frozenVersion.isBlank()
+                ? (def.get().getFormVersion() == null ? null : String.valueOf(def.get().getFormVersion()))
+                : frozenVersion;
+        return Optional.of(new NodeFormBinding(formKey, formVersion, def.get().getName()));
     }
 
     /** 加载冻结图：defVersion 可定位版本行时用冻结 graph_json，否则回退当前定义图。 */
@@ -184,7 +190,7 @@ public class NodeFormDataService {
      */
     @Transactional
     public Long saveDraft(String processInstanceId, String processDefKey, String nodeKey, String taskId,
-                          String formKey, Map<String, Object> data) {
+                          String formKey, Long bindingFormVersion, Map<String, Object> data) {
         Long tenantId = currentTenantId();
         BpmTaskFormData existing = findByTaskId(tenantId, taskId).orElse(null);
         if (existing != null && STATUS_SUBMITTED.equals(existing.getStatus())) {
@@ -199,7 +205,7 @@ public class NodeFormDataService {
             row.setTaskId(taskId);
             row.setRoundNo(currentRound(processInstanceId));
             row.setFormKey(formKey);
-            row.setFormVersion(boundFormVersion(null, formKey));
+            row.setFormVersion(boundFormVersion(null, bindingFormVersion, formKey));
             row.setStatus(STATUS_DRAFT);
             row.setDataText(json);
             try {
@@ -211,7 +217,7 @@ public class NodeFormDataService {
         }
         existing.setDataText(json);
         // 绑定版本冻结：草稿保存不随表单再发布改写既有任务的版本
-        existing.setFormVersion(boundFormVersion(existing, formKey));
+        existing.setFormVersion(boundFormVersion(existing, bindingFormVersion, formKey));
         taskFormDataMapper.updateById(existing);
         return existing.getId();
     }
@@ -223,7 +229,7 @@ public class NodeFormDataService {
      */
     @Transactional
     public Long submitFinal(String processInstanceId, String processDefKey, String nodeKey, String taskId,
-                            String formKey, Map<String, Object> data, Long actorId) {
+                            String formKey, Long bindingFormVersion, Map<String, Object> data, Long actorId) {
         Long tenantId = currentTenantId();
         BpmTaskFormData existing = findByTaskId(tenantId, taskId).orElse(null);
         if (existing != null && STATUS_SUBMITTED.equals(existing.getStatus())) {
@@ -234,7 +240,7 @@ public class NodeFormDataService {
                 ? (existing == null ? Map.of() : parseData(existing.getDataText()))
                 : data;
         if (data != null) {
-            List<String> errors = validateNodeFormData(formKey, boundFormVersion(existing, formKey), effective);
+            List<String> errors = validateNodeFormData(formKey, boundFormVersion(existing, bindingFormVersion, formKey), effective);
             if (!errors.isEmpty()) {
                 throw new BaseException(BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getCode(),
                         BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getMessage() + ": " + String.join("; ", errors));
@@ -253,7 +259,7 @@ public class NodeFormDataService {
             row.setTaskId(taskId);
             row.setRoundNo(currentRound(processInstanceId));
             row.setFormKey(formKey);
-            row.setFormVersion(boundFormVersion(null, formKey));
+            row.setFormVersion(boundFormVersion(null, bindingFormVersion, formKey));
             row.setStatus(STATUS_SUBMITTED);
             row.setDataText(json);
             row.setSubmittedBy(actorId);
@@ -274,7 +280,7 @@ public class NodeFormDataService {
         existing.setSubmitTime(LocalDateTime.now());
         // 绑定版本冻结：最终提交沿用任务绑定版本（草稿建立时点/当前发布版本），
         // 表单之后的再发布不改写本任务已绑定的字段与校验语义
-        existing.setFormVersion(boundFormVersion(existing, formKey));
+        existing.setFormVersion(boundFormVersion(existing, bindingFormVersion, formKey));
         taskFormDataMapper.updateById(existing);
         return existing.getId();
     }
@@ -300,12 +306,31 @@ public class NodeFormDataService {
         return formDefinitionService.getFormDefinitionSnapshot(formKey, formVersion.intValue());
     }
 
-    /** 任务级绑定版本：既有行（草稿/已提交）冻结其版本；新行取当前已发布版本。 */
-    private Long boundFormVersion(BpmTaskFormData existing, String formKey) {
+    /**
+     * 任务级绑定版本：既有行（草稿/已提交）冻结其版本；新行取绑定版本
+     * （=发布冻结图记录的 formVersion，复审05 P1-04b：任务创建即绑定，首次草稿前后
+     * 表单再发布都不漂移）；两者均缺省时回退当前已发布版本（旧无绑定兼容口径）。
+     */
+    private Long boundFormVersion(BpmTaskFormData existing, Long bindingFormVersion, String formKey) {
         if (existing != null && existing.getFormVersion() != null) {
             return existing.getFormVersion();
         }
+        if (bindingFormVersion != null) {
+            return bindingFormVersion;
+        }
         return frozenFormVersion(formKey);
+    }
+
+    /** 解析绑定版本串（发布冻结图给出的数字/字符串；缺省或非法返回 null）。 */
+    public static Long parseBindingVersion(String formVersion) {
+        if (formVersion == null || formVersion.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.valueOf(formVersion.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**

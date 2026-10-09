@@ -14,7 +14,7 @@ import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmTriggerExecMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmVariableSnapshotService;
-import com.sw.ck.bpm.process.service.CommandRetryService;
+import com.sw.ck.bpm.process.service.ActionRefRecoveryService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.bpm.process.service.TriggerExecutionService;
 import com.sw.ck.common.exception.BaseException;
@@ -22,6 +22,7 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUserHolder;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -53,8 +54,7 @@ public class BpmTriggerController {
     private final BpmScriptEvaluatePort scriptRunner;
     private final BpmTriggerExecMapper triggerExecMapper;
     private final BpmActionRefMapper actionRefMapper;
-    private final com.sw.ck.bpm.process.queue.BpmCommandQueue commandQueue;
-    private final CommandRetryService commandRetryService;
+    private final ActionRefRecoveryService actionRefRecoveryService;
 
     public BpmTriggerController(BpmTaskFacade bpmTaskFacade,
                                 BpmInstanceService bpmInstanceService,
@@ -63,8 +63,7 @@ public class BpmTriggerController {
                                 BpmScriptEvaluatePort scriptRunner,
                                 BpmTriggerExecMapper triggerExecMapper,
                                 BpmActionRefMapper actionRefMapper,
-                                com.sw.ck.bpm.process.queue.BpmCommandQueue commandQueue,
-                                CommandRetryService commandRetryService) {
+                                ActionRefRecoveryService actionRefRecoveryService) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.nodeFormDataService = nodeFormDataService;
@@ -72,8 +71,7 @@ public class BpmTriggerController {
         this.scriptRunner = scriptRunner;
         this.triggerExecMapper = triggerExecMapper;
         this.actionRefMapper = actionRefMapper;
-        this.commandQueue = commandQueue;
-        this.commandRetryService = commandRetryService;
+        this.actionRefRecoveryService = actionRefRecoveryService;
     }
 
     // ==================== 预览（只读，无副作用） ====================
@@ -181,8 +179,11 @@ public class BpmTriggerController {
     }
 
     /**
-     * 失败意图重试：复用同键命令重置为 PENDING（requeueFailed）；已成功意图拒绝。
+     * 动作意图受控恢复（复审05 P1-06b）：按 ORCH/FLOW_START 持久状态给出可诊断结果或
+     * 受控恢复动作（不再 500 死路）。已成功启动（目标实例存在）一律拒绝。
+     * 权限：实例查看权（workflow:instance:view）；租户边界由登录态强制。
      */
+    @PreAuthorize("@ss.hasPermi('workflow:instance:view')")
     @PostMapping("/action-refs/{refId}/retry")
     public R<Map<String, Object>> retryActionRef(@PathVariable Long refId) {
         Long tenantId = requireTenantId();
@@ -190,24 +191,16 @@ public class BpmTriggerController {
         if (ref == null || !tenantId.equals(ref.getTenantId())) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "动作意图不存在");
         }
-        // 重试门槛按持久事实：目标实例已存在=已成功启动，拒绝重试；STARTING 且实例未建
-        // （FLOW_START 失败/未完成窗口）为合法恢复路径。
-        if ("STARTED".equals(ref.getStatus())
-                || ("STARTING".equals(ref.getStatus())
-                && resolveTargetInstanceId(ref) != null)) {
+        // 重试门槛按持久事实：目标实例已存在=已成功启动，拒绝恢复
+        if ("STARTED".equals(ref.getStatus()) || resolveTargetInstanceId(ref) != null) {
             throw new BaseException(BpmErrorCode.ACTION_INVALID.getCode(),
                     "动作意图已成功启动，无需重试");
         }
-        var envelope = commandQueue.findByKey(tenantId, ref.getCommandKey())
-                .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(),
-                        "原命令不存在: " + ref.getCommandKey()));
-        Long reused = commandRetryService.requeueFailed(envelope);
-        ref.setStatus("INTENT_SUBMITTED");
-        ref.setErrorText(null);
-        actionRefMapper.updateById(ref);
+        ActionRefRecoveryService.RetryOutcome outcome = actionRefRecoveryService.retry(ref);
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("commandId", reused);
-        result.put("status", "INTENT_SUBMITTED");
+        result.put("commandId", outcome.commandId());
+        result.put("status", outcome.status());
+        result.put("message", outcome.message());
         return R.ok(result);
     }
 

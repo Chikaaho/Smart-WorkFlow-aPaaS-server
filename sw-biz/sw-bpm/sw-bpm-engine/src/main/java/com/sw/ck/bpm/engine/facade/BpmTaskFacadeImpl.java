@@ -156,28 +156,29 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     /**
-     * 并发会签任务可能同时更新同一 Flowable execution。第一次提交发生乐观锁竞争时，
-     * 重新读取任务并只重试一次；若竞争者已经处理该任务，则转换为可预期的 2305，
-     * 不把正常的幂等竞争暴露成 HTTP 500。
+     * 并发会签任务可能同时更新同一 Flowable execution。<b>同事务内二次执行必须禁止</b>
+     * （复审05 P1-04a，X7 双击活性实证）：首次提交的语句已在当前事务内执行，
+     * 乐观锁异常发生在刷盘阶段时，重试会把已执行的副作用（完成/多实例延续/新任务）
+     * 重复提交一次——表现为下游节点被激活两次。
+     * <p>
+     * 现语义：冲突时先判定竞争者是否已实际完成该任务——任务已不存在 = 正常幂等竞争，
+     * 转换为可预期的 2305；任务仍在 = 冲突来自同实例的并发写（另一命令未提交的
+     * 副作用窗口），本事务整体回滚（异常向上传播），由命令层在新事务中受控重试，
+     * 不在本事务内重放。
+     * </p>
      */
     private void completeWithOptimisticRetry(String taskId, Map<String, Object> variables) {
         try {
             completeWithoutRetry(taskId, variables);
-            return;
-        } catch (FlowableOptimisticLockingException first) {
+        } catch (FlowableOptimisticLockingException conflict) {
             if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
                 throw alreadyHandled(taskId);
             }
-            log.info("BPM task optimistic lock conflict, retrying once: taskId={}", taskId);
-        }
-
-        try {
-            completeWithoutRetry(taskId, variables);
-        } catch (FlowableOptimisticLockingException second) {
-            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
-                throw alreadyHandled(taskId);
-            }
-            throw second;
+            // 任务仍在：不得在本事务内二次执行（半提交重放会重复副作用）；
+            // 抛出原始冲突，让当前事务整体回滚并由命令层受控重试新事务。
+            log.info("BPM task optimistic lock conflict with task still active; "
+                    + "propagating for whole-transaction rollback and controlled retry: taskId={}", taskId);
+            throw conflict;
         }
     }
 
