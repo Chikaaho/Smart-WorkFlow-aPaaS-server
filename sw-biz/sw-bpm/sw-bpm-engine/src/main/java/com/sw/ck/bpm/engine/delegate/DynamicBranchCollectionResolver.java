@@ -2,6 +2,7 @@ package com.sw.ck.bpm.engine.delegate;
 
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
+import com.sw.ck.bpm.api.variable.BpmVariableReadPort;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
@@ -40,6 +41,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
     private final UserQueryFacade userQueryFacade;
     private final ObjectProvider<DynamicBranchPort> branchPort;
     private final com.sw.ck.form.api.facade.FormRecordReadFacade formRecordReadFacade;
+    private final ObjectProvider<BpmVariableReadPort> bpmVariableReadPort;
 
     public DynamicBranchCollectionResolver(RepositoryService repositoryService,
                                            com.fasterxml.jackson.databind.ObjectMapper objectMapper,
@@ -47,12 +49,14 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                                            DeptQueryFacade deptQueryFacade,
                                            UserQueryFacade userQueryFacade,
                                            ObjectProvider<DynamicBranchPort> branchPort,
-                                           com.sw.ck.form.api.facade.FormRecordReadFacade formRecordReadFacade) {
+                                           com.sw.ck.form.api.facade.FormRecordReadFacade formRecordReadFacade,
+                                           ObjectProvider<BpmVariableReadPort> bpmVariableReadPort) {
         super(repositoryService, objectMapper, participantResolverRegistry);
         this.deptQueryFacade = deptQueryFacade;
         this.userQueryFacade = userQueryFacade;
         this.branchPort = branchPort;
         this.formRecordReadFacade = formRecordReadFacade;
+        this.bpmVariableReadPort = bpmVariableReadPort;
     }
 
     @Override
@@ -209,9 +213,15 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                                 rowId == null ? null : String.valueOf(rowId))));
             }
         } else if ("VARIABLE".equalsIgnoreCase(asString(source.get("type")))) {
-            for (String id : splitIds(execution.getVariable(asString(source.get("value"))))) {
+            String varId = asString(source.get("value"));
+            Object raw = execution.getVariable(varId);
+            if (raw == null) {
+                // P64：流程变量缺省时回退业务 BPM 变量快照（同一冻结图 + 有效轮次的读取时点）
+                raw = readBpmVariable(execution, varId);
+            }
+            for (String id : splitIds(raw)) {
                 objectRefs.computeIfAbsent(id, key -> new ArrayList<>())
-                        .add(refJson("VARIABLE", asString(source.get("value")), null, null));
+                        .add(refJson("VARIABLE", varId, null, null));
             }
         } else {
             // FORM_FIELD：从实例表单数据权威读取（含多选解码），不用发起时变量快照
@@ -318,6 +328,31 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
     private void collectObjectIds(Object value, java.util.function.Consumer<String> sink) {
         for (String id : splitIds(value)) {
             sink.accept(id);
+        }
+    }
+
+    /**
+     * 流程变量缺省时经 {@link BpmVariableReadPort} 回退读取业务 BPM 变量。
+     * 端口未接线或解析不可用一律返回 null：保持"空集合由 emptyStrategy 处置"的原语义，
+     * 不把业务侧解析失败伪装成非空集合。
+     */
+    private Object readBpmVariable(DelegateExecution execution, String varId) {
+        BpmVariableReadPort port = bpmVariableReadPort == null
+                ? null : bpmVariableReadPort.getIfAvailable();
+        if (port == null || varId == null || varId.isBlank()) {
+            return null;
+        }
+        String processInstanceId = asString(execution.getVariable("processInstanceId"));
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            processInstanceId = execution.getProcessInstanceId();
+        }
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            return null;
+        }
+        try {
+            return port.readVariable(processInstanceId, varId).orElse(null);
+        } catch (Exception e) {
+            return null;
         }
     }
 

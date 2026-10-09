@@ -285,18 +285,19 @@ public class NodeFormDataService {
      * 读取任务节点表单绑定版本对应的 definition（任务级绑定快照，审查02 P1-04b）。
      * <p>
      * 任务数据行一经建立即冻结其 formVersion（发布时点的已发布版本）；该表单后续再发布
-     * 不改写既有任务的字段与校验语义：优先读取该版本快照，快照缺失（历史数据）回退当前定义。
+     * 不改写既有任务的字段与校验语义。语义（复审03 P1-04b 澄清，按真实分支区分）：
      * </p>
+     * <ul>
+     *   <li>formVersion 为空 = 无绑定版本的历史任务行：<b>明确</b>回退当前已发布定义（调用方按“未绑定”对待）；</li>
+     *   <li>formVersion 非空 = 任务已绑定版本：只读该版本快照；快照缺失<b>不再静默回退最新定义</b>，
+     *       返回 empty 由调用方给出可诊断拒绝（绑定版本快照缺失）。</li>
+     * </ul>
      */
     public Optional<String> loadBoundDefinition(String formKey, Long formVersion) {
-        if (formVersion != null) {
-            Optional<String> snapshot = formDefinitionService
-                    .getFormDefinitionSnapshot(formKey, formVersion.intValue());
-            if (snapshot.isPresent()) {
-                return snapshot;
-            }
+        if (formVersion == null) {
+            return formDefinitionService.getFormDefinition(formKey);
         }
-        return formDefinitionService.getFormDefinition(formKey);
+        return formDefinitionService.getFormDefinitionSnapshot(formKey, formVersion.intValue());
     }
 
     /** 任务级绑定版本：既有行（草稿/已提交）冻结其版本；新行取当前已发布版本。 */
@@ -323,7 +324,10 @@ public class NodeFormDataService {
         List<String> errors = new ArrayList<>();
         Optional<String> definitionJson = loadBoundDefinition(formKey, formVersion);
         if (definitionJson.isEmpty()) {
-            errors.add("表单定义不可用: " + formKey);
+            // 绑定版本快照缺失：可诊断拒绝，不按最新定义静默校验（复审03 P1-04b）
+            errors.add(formVersion == null
+                    ? "表单定义不可用: " + formKey
+                    : "表单绑定版本快照缺失: " + formKey + "@v" + formVersion + "（不按最新定义静默校验，请管理员修复快照）");
             return errors;
         }
         List<Map<String, Object>> fields;

@@ -20,6 +20,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * P64 判断脚本隔离执行池（审查02 P1-02a/P1-02b 实现修订）。
@@ -30,8 +31,10 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>全局并发上限 = 常驻 worker 池上限（{@code sw.bpm.script.workers}，默认 2）；</li>
  *   <li>单租户并发上限 = {@code sw.bpm.script.tenant-workers}（默认 1）；</li>
- *   <li>有限排队：获取许可最多等待 {@code sw.bpm.script.queue-wait-ms}（默认 50ms），
- *       满额立即判 RESOURCE_LIMIT（"判断执行繁忙"）——可诊断、可恢复（命令重试/重新办理），无无界等待。</li>
+ *   <li>有限排队 = <b>等候数量硬上限</b>（{@code sw.bpm.script.queue-capacity} 全局默认 8、
+ *       {@code sw.bpm.script.tenant-queue-capacity} 单租户默认 4；0 = 不允许等候，满额立即繁忙）
+ *       叠加等候时限 {@code sw.bpm.script.queue-wait-ms}（默认 50ms）：数量上限内才准入等候，
+ *       时限内未取得许可判 RESOURCE_LIMIT（"判断执行繁忙"）——可诊断、可恢复，无无界等待。</li>
  * </ul>
  * HTTP 办理、命令消费、预览共用本池，即共用同一组全局/租户上限与队列。
  * </p>
@@ -54,42 +57,88 @@ public class ScriptWorkerPool {
     @Value("${sw.bpm.script.queue-wait-ms:50}")
     private long queueWaitMs;
 
+    /** 全局等候数量硬上限（0 = 不允许等候，满额立即繁忙）。 */
+    @Value("${sw.bpm.script.queue-capacity:8}")
+    private int queueCapacity;
+
+    /** 单租户等候数量硬上限（0 = 不允许等候，满额立即繁忙）。 */
+    @Value("${sw.bpm.script.tenant-queue-capacity:4}")
+    private int tenantQueueCapacity;
+
     private final Semaphore globalPermits = new Semaphore(2);
     private final Map<Long, Semaphore> tenantPermits = new ConcurrentHashMap<>();
     private final Map<String, Worker> liveWorkers = new ConcurrentHashMap<>();
 
+    /** 当前在等候许可的请求数（全局/单租户），受数量上限约束。 */
+    private final AtomicInteger globalQueueCount = new AtomicInteger();
+    private final Map<Long, AtomicInteger> tenantQueueCounts = new ConcurrentHashMap<>();
+
     /** 最近一次 worker 启动握手自报的 JVM 堆上限（运行观测：确认 -Xmx{@link #HEAP_CAP} 实际生效）。 */
     private volatile long lastSpawnMaxHeapBytes = -1L;
 
-    /** 测试接缝：覆盖池参数（绕过 @Value）。 */
+    /** 最近一次启动的 worker 进程 pid（运行观测：OOM/超时后实际退出核验）。 */
+    private volatile long lastSpawnPid = -1L;
+
+    /** 测试接缝：覆盖池参数（绕过 @Value）；等候数量上限沿用默认配置。 */
     public void configure(int workers, int tenantWorkers, long waitMs) {
+        configure(workers, tenantWorkers, waitMs, queueCapacity, tenantQueueCapacity);
+    }
+
+    /** 测试接缝：覆盖池参数与等候数量上限（绕过 @Value）；全局许可重置为 workers 个。 */
+    public void configure(int workers, int tenantWorkers, long waitMs, int globalQueue, int tenantQueue) {
         this.maxWorkers = workers;
         this.tenantMaxWorkers = tenantWorkers;
         this.queueWaitMs = waitMs;
-        this.globalPermits.release(Math.max(0, workers - this.globalPermits.availablePermits()));
+        this.queueCapacity = globalQueue;
+        this.tenantQueueCapacity = tenantQueue;
+        this.globalPermits.drainPermits();
+        this.globalPermits.release(Math.max(1, workers));
     }
 
     /**
      * 提交判断到隔离 worker。
      *
-     * @return 引擎结果；满额为 RESOURCE_LIMIT（繁忙，可恢复）
+     * @return 引擎结果；等候队列满或时限内未取得许可为 RESOURCE_LIMIT（繁忙，可恢复）
      */
     public BpmScriptRunner.Result evaluate(String script, Map<String, Object> variables,
                                           long timeoutMs, Long tenantId) {
+        long tenantKey = tenantId == null ? 0L : tenantId;
         Semaphore tenantPermit = tenantPermits.computeIfAbsent(
-                tenantId == null ? 0L : tenantId,
+                tenantKey,
                 key -> new Semaphore(Math.max(1, tenantMaxWorkers)));
         boolean tenantAcquired = false;
         boolean globalAcquired = false;
         Worker worker = null;
         long begin = System.currentTimeMillis();
         try {
-            if (!tenantPermit.tryAcquire(queueWaitMs, TimeUnit.MILLISECONDS)) {
-                return busy(begin, "租户并发已达上限 " + Math.max(1, tenantMaxWorkers) + "（tenant=" + tenantId + "）");
+            // 单租户并发：满额时按“租户等候数量上限”准入等候（0 = 立即繁忙）
+            if (!tenantPermit.tryAcquire()) {
+                if (!admitToQueue(tenantQueueCounts, tenantKey, tenantQueueCapacity)) {
+                    return busy(begin, "租户等候队列已满（上限 " + tenantQueueCapacity + "，tenant=" + tenantId + "）");
+                }
+                try {
+                    if (!tenantPermit.tryAcquire(queueWaitMs, TimeUnit.MILLISECONDS)) {
+                        return busy(begin, "租户并发已达上限 " + Math.max(1, tenantMaxWorkers)
+                                + "（tenant=" + tenantId + "，等候 " + queueWaitMs + "ms 未获得许可）");
+                    }
+                } finally {
+                    releaseQueueSlot(tenantQueueCounts, tenantKey);
+                }
             }
             tenantAcquired = true;
-            if (!globalPermits.tryAcquire(queueWaitMs, TimeUnit.MILLISECONDS)) {
-                return busy(begin, "全局判断并发已达池上限 " + Math.max(1, maxWorkers));
+            // 全局并发：同规则（全局等候上限 0 = 立即繁忙）
+            if (!globalPermits.tryAcquire()) {
+                if (!admitGlobalQueue()) {
+                    return busy(begin, "全局等候队列已满（上限 " + queueCapacity + "）");
+                }
+                try {
+                    if (!globalPermits.tryAcquire(queueWaitMs, TimeUnit.MILLISECONDS)) {
+                        return busy(begin, "全局判断并发已达池上限 " + Math.max(1, maxWorkers)
+                                + "（等候 " + queueWaitMs + "ms 未获得许可）");
+                    }
+                } finally {
+                    globalQueueCount.decrementAndGet();
+                }
             }
             globalAcquired = true;
             worker = acquireWorker();
@@ -107,6 +156,45 @@ public class ScriptWorkerPool {
             }
             if (tenantAcquired) {
                 tenantPermit.release();
+            }
+        }
+    }
+
+    /** 等候数量准入：数量上限内 CAS 占位成功返回 true；上限 0 或已满返回 false（立即繁忙）。 */
+    private boolean admitToQueue(Map<Long, AtomicInteger> counts, Long key, int capacity) {
+        if (capacity <= 0) {
+            return false;
+        }
+        AtomicInteger counter = counts.computeIfAbsent(key, k -> new AtomicInteger());
+        while (true) {
+            int current = counter.get();
+            if (current >= capacity) {
+                return false;
+            }
+            if (counter.compareAndSet(current, current + 1)) {
+                return true;
+            }
+        }
+    }
+
+    private void releaseQueueSlot(Map<Long, AtomicInteger> counts, Long key) {
+        AtomicInteger counter = counts.get(key);
+        if (counter != null) {
+            counter.decrementAndGet();
+        }
+    }
+
+    private boolean admitGlobalQueue() {
+        if (queueCapacity <= 0) {
+            return false;
+        }
+        while (true) {
+            int current = globalQueueCount.get();
+            if (current >= queueCapacity) {
+                return false;
+            }
+            if (globalQueueCount.compareAndSet(current, current + 1)) {
+                return true;
             }
         }
     }
@@ -142,6 +230,7 @@ public class ScriptWorkerPool {
         created.claim();
         liveWorkers.put(created.id(), created);
         lastSpawnMaxHeapBytes = created.maxHeapBytes();
+        lastSpawnPid = created.pid();
         log.info("P64 判断 worker 就绪: maxHeapBytes={}（宿主确认 -Xmx{} 生效）", lastSpawnMaxHeapBytes, HEAP_CAP);
         return created;
     }
@@ -169,10 +258,36 @@ public class ScriptWorkerPool {
         return lastSpawnMaxHeapBytes;
     }
 
+    /** 运行观测：最近一次启动的 worker 进程 pid（OOM/超时后以 ProcessHandle 核验实际退出）。 */
+    long lastSpawnPid() {
+        return lastSpawnPid;
+    }
+
     /** 运行观测：指定租户当前已占用的判断许可数（并发上限验证用）。 */
     int heldTenantPermits(Long tenantId) {
         Semaphore permits = tenantPermits.get(tenantId == null ? 0L : tenantId);
         return permits == null ? 0 : Math.max(1, tenantMaxWorkers) - permits.availablePermits();
+    }
+
+    /** 运行观测：全局当前等候许可的请求数（等候数量上限验证用）。 */
+    int queuedGlobalCount() {
+        return globalQueueCount.get();
+    }
+
+    /** 运行观测：指定租户当前等候许可的请求数（租户等候数量上限验证用）。 */
+    int queuedTenantCount(Long tenantId) {
+        AtomicInteger counter = tenantQueueCounts.get(tenantId == null ? 0L : tenantId);
+        return counter == null ? 0 : counter.get();
+    }
+
+    /** 运行观测：生效的全局等候数量上限（含 0=不允许等候）。 */
+    int queueCapacity() {
+        return queueCapacity;
+    }
+
+    /** 运行观测：生效的单租户等候数量上限（含 0=不允许等候）。 */
+    int tenantQueueCapacity() {
+        return tenantQueueCapacity;
     }
 
     /** 单个 worker 进程句柄。 */
@@ -241,6 +356,10 @@ public class ScriptWorkerPool {
 
         String id() {
             return id;
+        }
+
+        long pid() {
+            return process.pid();
         }
 
         long maxHeapBytes() {

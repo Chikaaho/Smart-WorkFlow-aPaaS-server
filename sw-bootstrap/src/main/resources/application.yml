@@ -165,7 +165,9 @@ sw:
     script:
       workers: ${SW_BPM_SCRIPT_WORKERS:2}                                   # 全局并发上限=常驻 worker JVM 数（每个 -Xmx128m 隔离执行空间）
       tenant-workers: ${SW_BPM_SCRIPT_TENANT_WORKERS:1}                     # 单租户并发上限；HTTP 办理/命令消费/预览共用本池
-      queue-wait-ms: ${SW_BPM_SCRIPT_QUEUE_WAIT_MS:50}                      # 有限排队等待上限，满额判“繁忙（可恢复）”，无无界等待
+      queue-wait-ms: ${SW_BPM_SCRIPT_QUEUE_WAIT_MS:50}                      # 等候时限，时限内未获许可判“繁忙（可恢复）”，无无界等待
+      queue-capacity: ${SW_BPM_SCRIPT_QUEUE_CAPACITY:8}                     # 全局等候数量硬上限（0=不允许等候，满额立即繁忙）
+      tenant-queue-capacity: ${SW_BPM_SCRIPT_TENANT_QUEUE_CAPACITY:4}       # 单租户等候数量硬上限（0=不允许等候，满额立即繁忙）
 
   # ---------- 多租户（列级隔离） ----------
   tenant:

@@ -79,6 +79,9 @@ class NodeFormDataServiceTest {
         when(formDefinitionService.getFormDef("qc_form")).thenReturn(Optional.of(def));
         when(formDefinitionService.getFormDefinition("qc_form"))
                 .thenReturn(Optional.of(QC_DEFINITION));
+        // 绑定版本 v3 快照可用（绑定版本快照缺失分支由 shouldRejectDiagnosablyWhenBoundSnapshotMissing 覆盖）
+        when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 3))
+                .thenReturn(Optional.of(QC_DEFINITION));
     }
 
     @Test
@@ -392,9 +395,47 @@ class NodeFormDataServiceTest {
         assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
         assertThat(store.get("task-1").getStatus()).isEqualTo("SUBMITTED");
 
-        // 读取（办理/回看渲染）同取绑定版本快照；无快照的历史版本回退当前定义
+        // 读取（办理/回看渲染）同取绑定版本快照；绑定版本快照缺失不再静默回退当前定义（复审03 P1-04b）
         assertThat(service.loadBoundDefinition("qc_form", 3L).orElse("")).contains("ng_count");
         when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 2)).thenReturn(Optional.empty());
-        assertThat(service.loadBoundDefinition("qc_form", 2L).orElse("")).contains("ng_reason");
+        assertThat(service.loadBoundDefinition("qc_form", 2L))
+                .as("绑定版本快照缺失应可诊断（不回退最新定义）").isEmpty();
+        // 无绑定版本（历史任务行 formVersion 为空）才明确回退当前定义
+        assertThat(service.loadBoundDefinition("qc_form", null).orElse("")).contains("ng_reason");
+    }
+
+    @Test
+    @DisplayName("绑定版本快照缺失：最终提交可诊断拒绝且零持久改写（状态/数据/版本保持草稿）")
+    void shouldRejectDiagnosablyWhenBoundSnapshotMissing() {
+        stubForm();
+        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+                .thenAnswer(invocation -> {
+                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    row.setId(1L);
+                    store.put(row.getTaskId(), row);
+                    return 1;
+                });
+        when(taskFormDataMapper.selectOne(any())).thenAnswer(invocation -> store.get("task-1"));
+        when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of());
+
+        // 草稿建立：任务绑定当前发布版本 v3
+        service.saveDraft("pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 1));
+        assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
+        String draftJson = store.get("task-1").getDataText();
+
+        // v3 快照缺失（历史/清理异常）：提交不得按最新定义静默校验
+        when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 3)).thenReturn(Optional.empty());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.submitFinal(
+                        "pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                        Map.of("verdict", "PASS", "ng_count", 1), 2L))
+                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+                .hasMessageContaining("绑定版本快照缺失")
+                .hasMessageContaining("qc_form@v3");
+        // 零持久改写：仍为草稿、数据未变、版本未漂移
+        assertThat(store.get("task-1").getStatus()).isEqualTo("DRAFT");
+        assertThat(store.get("task-1").getDataText()).isEqualTo(draftJson);
+        assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
     }
 }

@@ -84,9 +84,25 @@ public class BpmNodeFormController {
                 ? data.getFormVersion()
                 : (binding.get().formVersion() == null ? null : Long.valueOf(binding.get().formVersion()));
         result.put("formVersion", boundVersion == null ? null : String.valueOf(boundVersion));
-        result.put("definition", nodeFormDataService
-                .loadBoundDefinition(binding.get().formKey(), boundVersion)
-                .orElse(null));
+        // 绑定版本快照缺失：可诊断拒绝，不按最新定义静默渲染（复审03 P1-04b）
+        Optional<String> definition = nodeFormDataService
+                .loadBoundDefinition(binding.get().formKey(), boundVersion);
+        if (definition.isEmpty()) {
+            throw new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),
+                    boundVersion == null
+                            ? "节点表单当前定义不可用: " + binding.get().formKey()
+                            : "任务节点表单绑定版本快照缺失: " + binding.get().formKey() + "@v" + boundVersion
+                            + "（不按最新定义静默渲染，请管理员修复快照）");
+        }
+        // 契约形状：definition 为结构化对象（fields 供办理页渲染），不是 JSON 字符串
+        try {
+            result.put("definition", objectMapper.readValue(definition.get(),
+                    new TypeReference<Map<String, Object>>() { }));
+        } catch (Exception e) {
+            throw new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),
+                    "节点表单定义解析失败: " + binding.get().formKey() + "@v" + boundVersion
+                            + "（" + e.getMessage() + "）");
+        }
         if (data != null) {
             result.put("status", data.getStatus());
             result.put("data", nodeFormDataService.parseData(data.getDataText()));
