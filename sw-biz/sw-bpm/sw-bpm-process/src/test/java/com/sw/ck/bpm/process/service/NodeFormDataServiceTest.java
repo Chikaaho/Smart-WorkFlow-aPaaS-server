@@ -283,4 +283,118 @@ class NodeFormDataServiceTest {
         assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
         assertThat(store.get("task-1").getDataText()).contains("\"verdict\":\"PASS\"");
     }
+
+    @Test
+    @DisplayName("校验失败零半提交：非法最终提交不改变草稿行（状态/数据/绑定版本原样）")
+    void shouldLeaveDraftUntouchedWhenFinalSubmitRejected() {
+        stubForm();
+        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+                .thenAnswer(invocation -> {
+                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    row.setId(1L);
+                    store.put(row.getTaskId(), row);
+                    return 1;
+                });
+        when(taskFormDataMapper.selectOne(any())).thenAnswer(invocation -> store.get("task-1"));
+        when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of());
+
+        service.saveDraft("pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 1));
+        com.sw.ck.bpm.process.entity.BpmTaskFormData draft = store.get("task-1");
+        String draftJson = draft.getDataText();
+        Long draftVersion = draft.getFormVersion();
+
+        // 非法最终提交（必填缺失）：拒绝且草稿行零改写（无半成功状态）
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.submitFinal(
+                        "pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                        Map.of("verdict", "PASS"), 2L))
+                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+                .hasMessageContaining("必填");
+
+        assertThat(draft.getStatus()).isEqualTo("DRAFT");
+        assertThat(draft.getDataText()).isEqualTo(draftJson);
+        assertThat(draft.getFormVersion()).isEqualTo(draftVersion);
+        assertThat(draft.getSubmittedBy()).isNull();
+    }
+
+    @Test
+    @DisplayName("已最终提交的任务：草稿保存拒绝改写（2434），已提交事实保持")
+    void shouldRejectDraftAfterSubmitted() {
+        stubForm();
+        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+                .thenAnswer(invocation -> {
+                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    row.setId(1L);
+                    store.put(row.getTaskId(), row);
+                    return 1;
+                });
+        when(taskFormDataMapper.selectOne(any())).thenAnswer(invocation -> store.get("task-1"));
+        when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of());
+
+        service.submitFinal("pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 1), 2L);
+        String submittedJson = store.get("task-1").getDataText();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.saveDraft(
+                        "pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                        Map.of("verdict", "FAIL", "ng_count", 9)))
+                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+
+        assertThat(store.get("task-1").getStatus()).isEqualTo("SUBMITTED");
+        assertThat(store.get("task-1").getDataText()).isEqualTo(submittedJson);
+    }
+
+    @Test
+    @DisplayName("办理前表单再发布：最终提交仍按任务绑定版本快照校验并保留绑定版本")
+    void shouldValidateAgainstBoundVersionSnapshotAfterRepublish() {
+        stubForm();
+        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+                .thenAnswer(invocation -> {
+                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    row.setId(1L);
+                    store.put(row.getTaskId(), row);
+                    return 1;
+                });
+        when(taskFormDataMapper.selectOne(any())).thenAnswer(invocation -> store.get("task-1"));
+        when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of());
+
+        // 草稿建立：任务绑定 v3
+        service.saveDraft("pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 1));
+        assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
+
+        // 办理前表单再发布为 v5（字段集合变化）；v3 快照保留
+        FormDefDTO republished = new FormDefDTO();
+        republished.setFormKey("qc_form");
+        republished.setStatus("PUBLISHED");
+        republished.setFormVersion(5);
+        when(formDefinitionService.getFormDef("qc_form")).thenReturn(Optional.of(republished));
+        when(formDefinitionService.getFormDefinition("qc_form")).thenReturn(Optional.of(
+                "{\"fields\":[{\"name\":\"verdict\",\"type\":\"TEXT\"},"
+                        + "{\"name\":\"ng_reason\",\"type\":\"TEXT\",\"required\":true}]}"));
+        when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 3))
+                .thenReturn(Optional.of(QC_DEFINITION));
+
+        // 最终提交按绑定版本 v3 快照校验：v5 新字段即未知字段，v3 必填仍强制
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.submitFinal(
+                        "pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                        Map.of("verdict", "PASS", "ng_reason", "x"), 2L))
+                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+                .hasMessageContaining("未知字段: ng_reason");
+
+        // 合法提交：版本保持绑定的 v3，不漂移到 v5
+        Long id = service.submitFinal("pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 1), 2L);
+        assertThat(id).isEqualTo(store.get("task-1").getId());
+        assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
+        assertThat(store.get("task-1").getStatus()).isEqualTo("SUBMITTED");
+
+        // 读取（办理/回看渲染）同取绑定版本快照；无快照的历史版本回退当前定义
+        assertThat(service.loadBoundDefinition("qc_form", 3L).orElse("")).contains("ng_count");
+        when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 2)).thenReturn(Optional.empty());
+        assertThat(service.loadBoundDefinition("qc_form", 2L).orElse("")).contains("ng_reason");
+    }
 }

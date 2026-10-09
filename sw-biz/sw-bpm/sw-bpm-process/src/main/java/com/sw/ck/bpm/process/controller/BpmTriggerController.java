@@ -190,7 +190,11 @@ public class BpmTriggerController {
         if (ref == null || !tenantId.equals(ref.getTenantId())) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "动作意图不存在");
         }
-        if ("STARTED".equals(ref.getStatus())) {
+        // 重试门槛按持久事实：目标实例已存在=已成功启动，拒绝重试；STARTING 且实例未建
+        // （FLOW_START 失败/未完成窗口）为合法恢复路径。
+        if ("STARTED".equals(ref.getStatus())
+                || ("STARTING".equals(ref.getStatus())
+                && resolveTargetInstanceId(ref) != null)) {
             throw new BaseException(BpmErrorCode.ACTION_INVALID.getCode(),
                     "动作意图已成功启动，无需重试");
         }
@@ -274,10 +278,22 @@ public class BpmTriggerController {
         item.put("targetFormKey", row.getTargetFormKey());
         item.put("targetRecordId", row.getTargetRecordId());
         item.put("targetInstanceId", resolveTargetInstanceId(row));
-        item.put("status", row.getStatus());
+        item.put("status", resolveDisplayStatus(row));
         item.put("errorText", row.getErrorText());
         item.put("createTime", row.getCreateTime());
         return item;
+    }
+
+    /**
+     * 展示状态解析（审查02 P1-06b）：STARTING=目标记录已建且 FLOW_START 已受理（启动中），
+     * 目标实例由既有消费链异步创建；回查按持久事实解析——实例已存在才展示 STARTED，
+     * 不以受理冒称目标已启动。STARTING 展示为启动中，FLOW_START 失败窗口保持可诊断。
+     */
+    private String resolveDisplayStatus(BpmActionRef row) {
+        if (!"STARTING".equals(row.getStatus())) {
+            return row.getStatus();
+        }
+        return resolveTargetInstanceId(row) == null ? "STARTING" : "STARTED";
     }
 
     /**

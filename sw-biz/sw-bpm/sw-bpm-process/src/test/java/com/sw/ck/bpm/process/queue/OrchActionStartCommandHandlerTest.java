@@ -66,7 +66,7 @@ class OrchActionStartCommandHandlerTest {
     }
 
     @Test
-    @DisplayName("正常消费：同事务建目标记录并回填 STARTED")
+    @DisplayName("正常消费：同事务建目标记录并回填 STARTING（受理启动中，实例未建不冒称已启动）")
     void shouldCreateRecordAndMarkStarted() throws Exception {
         when(actionRefMapper.selectById(1L)).thenReturn(ref(1L, "INTENT_SUBMITTED", null));
         String payload = "{\"refId\":1,\"targetFormKey\":\"target_form\",\"data\":{\"owner\":\"11\"}}";
@@ -82,7 +82,7 @@ class OrchActionStartCommandHandlerTest {
         String result = handler.handle(envelope(payload));
 
         assertThat(result).contains("STARTED").contains("rec-target-1");
-        verify(actionRefMapper).updateById(ref(1L, "STARTED", "rec-target-1"));
+        verify(actionRefMapper).updateById(ref(1L, "STARTING", "rec-target-1"));
     }
 
     @Test
@@ -93,6 +93,19 @@ class OrchActionStartCommandHandlerTest {
         String result = handler.handle(envelope("{\"refId\":1}"));
 
         assertThat(result).contains("SKIP_DUPLICATE").contains("rec-target-1");
+        org.mockito.Mockito.verifyNoInteractions(formDataSubmitFacade);
+    }
+
+    @Test
+    @DisplayName("启动中窗口重放：STARTING 且目标记录已建即跳过，FLOW_START 未完成/失败不重复建目标")
+    void shouldSkipReplayWhileTargetStarting() throws Exception {
+        when(actionRefMapper.selectById(1L)).thenReturn(ref(1L, "STARTING", "rec-target-1"));
+
+        String result = handler.handle(envelope("{\"refId\":1}"));
+
+        assertThat(result).contains("SKIP_DUPLICATE").contains("rec-target-1");
+        verify(actionRefMapper, org.mockito.Mockito.never())
+                .updateById(org.mockito.ArgumentMatchers.any(BpmActionRef.class));
         org.mockito.Mockito.verifyNoInteractions(formDataSubmitFacade);
     }
 
@@ -111,11 +124,11 @@ class OrchActionStartCommandHandlerTest {
         assertThatThrownBy(() -> handler.handle(envelope(payload)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("目标表单暂不可用");
-        // 恢复重投：同 commandKey 幂等键重试成功；ref 由 INTENT_SUBMITTED 收敛 STARTED
+        // 恢复重投：同 commandKey 幂等键重试成功；ref 收敛 STARTING（实例由消费链异步创建）
         String result = handler.handle(envelope(payload));
 
         assertThat(result).contains("STARTED").contains("rec-target-1");
-        verify(actionRefMapper).updateById(ref(1L, "STARTED", "rec-target-1"));
+        verify(actionRefMapper).updateById(ref(1L, "STARTING", "rec-target-1"));
         // 同一幂等键共受理两次（1 失败 + 1 成功），成功路径只回填一条目标记录
         verify(formDataSubmitFacade, org.mockito.Mockito.times(2)).submit(eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),

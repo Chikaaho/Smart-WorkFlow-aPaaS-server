@@ -525,6 +525,35 @@ class TriggerExecutionServiceTest {
     }
 
     @Test
+    @DisplayName("受理失败零残留：命令入队失败即删除意图行，不留无命令孤儿")
+    void shouldDeleteIntentWhenEnqueueFails() {
+        BpmInstance instance = instance();
+        stubGraph(instance, trigger("TASK_SUBMITTED", "node_qc", "return 1;",
+                List.of(branch("b1", "NUMBER", "1", eachAction(50)))));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(actionRefMapper.selectOne(any())).thenReturn(null);
+        // 受理成功后意图行持库内主键：入队失败须精确删除该行
+        when(actionRefMapper.insert(any(BpmActionRef.class))).thenAnswer(invocation -> {
+            BpmActionRef row = invocation.getArgument(0);
+            row.setId(777L);
+            return 1;
+        });
+        when(commandQueue.enqueue(any()))
+                .thenThrow(new IllegalStateException("命令队列表暂不可用"));
+
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+
+        // 意图行删除（零残留），失败经 exec 留痕可诊断；不冒称受理成功
+        ArgumentCaptor<Long> deletedId = ArgumentCaptor.forClass(Long.class);
+        verify(actionRefMapper, atLeastOnce()).deleteById(deletedId.capture());
+        assertThat(deletedId.getValue()).as("删除的应为刚插入的意图行").isEqualTo(777L);
+        ArgumentCaptor<BpmTriggerExec> execCaptor = ArgumentCaptor.forClass(BpmTriggerExec.class);
+        verify(triggerExecMapper, atLeastOnce()).updateById(execCaptor.capture());
+        assertThat(execCaptor.getValue().getErrorText()).contains("派发失败");
+    }
+
+    @Test
     @DisplayName("TASK_SUBMITTED 仅命中配置节点：其他节点任务完成不评估")
     void shouldNotEvaluateTriggersOnOtherNodeTask() {
         BpmInstance instance = instance();

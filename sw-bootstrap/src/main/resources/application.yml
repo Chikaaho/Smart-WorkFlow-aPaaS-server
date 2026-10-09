@@ -160,6 +160,13 @@ sw:
   notify:
     enabled: true
 
+  # ---------- BPM 判断脚本隔离执行（P64 阶段Ⅰ，A03 受控判断） ----------
+  bpm:
+    script:
+      workers: ${SW_BPM_SCRIPT_WORKERS:2}                                   # 全局并发上限=常驻 worker JVM 数（每个 -Xmx128m 隔离执行空间）
+      tenant-workers: ${SW_BPM_SCRIPT_TENANT_WORKERS:1}                     # 单租户并发上限；HTTP 办理/命令消费/预览共用本池
+      queue-wait-ms: ${SW_BPM_SCRIPT_QUEUE_WAIT_MS:50}                      # 有限排队等待上限，满额判“繁忙（可恢复）”，无无界等待
+
   # ---------- 多租户（列级隔离） ----------
   tenant:
     ignore-tables:

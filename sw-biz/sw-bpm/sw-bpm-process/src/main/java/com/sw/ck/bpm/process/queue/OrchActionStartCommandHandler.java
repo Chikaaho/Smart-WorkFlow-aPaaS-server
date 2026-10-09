@@ -52,9 +52,10 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
             throw new IllegalStateException("动作意图行缺失: refId=" + refId
                     + ", commandKey=" + envelope.getCommandKey());
         }
-        // 幂等：已成功意图回查原结果，重复投递/恢复后不重复启动
-        if ("STARTED".equals(ref.getStatus()) && ref.getTargetRecordId() != null) {
-            log.info("动作意图幂等跳过: commandKey={}, recordId={} 已启动",
+        // 幂等：已成功/启动中意图回查原结果，重复投递/恢复后不重复启动
+        if (("STARTED".equals(ref.getStatus()) || "STARTING".equals(ref.getStatus()))
+                && ref.getTargetRecordId() != null) {
+            log.info("动作意图幂等跳过: commandKey={}, recordId={} 已受理启动",
                     envelope.getCommandKey(), ref.getTargetRecordId());
             return "{\"status\":\"SKIP_DUPLICATE\",\"recordId\":\"" + ref.getTargetRecordId() + "\"}";
         }
@@ -68,7 +69,10 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
                 .orElseThrow(() -> new IllegalStateException("目标表单记录创建未返回标识: "
                         + targetFormKey));
         ref.setTargetRecordId(recordId);
-        ref.setStatus("STARTED");
+        // 状态语义（审查02 P1-06b）：STARTING=目标记录已建且 FLOW_START 已受理，目标实例
+        // 尚未由既有消费链异步创建完成；"STARTED"由回查层按目标实例持久事实解析展示，
+        // 不在受理事务内冒称目标已启动。
+        ref.setStatus("STARTING");
         actionRefMapper.updateById(ref);
         log.info("关联实例动作已启动: commandKey={}, targetFormKey={}, recordId={}",
                 envelope.getCommandKey(), targetFormKey, recordId);

@@ -104,6 +104,64 @@ class BpmTriggerControllerTest {
     }
 
     @Test
+    @DisplayName("状态语义：STARTING 且实例未建显示 STARTING（不冒称已启动）；实例已建解析 STARTED")
+    void shouldResolveStartingDisplayByInstanceFact() {
+        when(bpmInstanceService.findByProcessInstanceId("pi-1"))
+                .thenReturn(Optional.of(new BpmInstance()));
+        BpmActionRef starting = ref();
+        starting.setStatus("STARTING");
+        BpmActionRef started = ref();
+        started.setStatus("STARTING");
+        started.setTargetRecordId("rec-done-2");
+        when(actionRefMapper.selectList(any())).thenReturn(List.of(starting, started));
+        BpmInstance target = new BpmInstance();
+        target.setProcessInstanceId("pi-target-9");
+        when(bpmInstanceService.findByBusinessKey("rec-target-1")).thenReturn(Optional.empty());
+        when(bpmInstanceService.findByBusinessKey("rec-done-2")).thenReturn(Optional.of(target));
+
+        R<List<Map<String, Object>>> result = controller.listActionRefs("pi-1");
+
+        assertThat(result.getData()).hasSize(2);
+        assertThat(result.getData().get(0)).containsEntry("status", "STARTING");
+        assertThat(result.getData().get(1)).containsEntry("status", "STARTED");
+    }
+
+    @Test
+    @DisplayName("重试门槛按持久事实：STARTING 但实例已建拒绝重试")
+    void shouldRejectRetryWhenInstanceAlreadyExists() {
+        BpmActionRef starting = ref();
+        starting.setStatus("STARTING");
+        when(actionRefMapper.selectById(1L)).thenReturn(starting);
+        BpmInstance target = new BpmInstance();
+        target.setProcessInstanceId("pi-target-9");
+        when(bpmInstanceService.findByBusinessKey("rec-target-1")).thenReturn(Optional.of(target));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.retryActionRef(1L))
+                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+                .hasMessageContaining("已成功启动");
+        verify(commandRetryService, never()).requeueFailed(any());
+    }
+
+    @Test
+    @DisplayName("FLOW_START 未完成/失败窗口：STARTING 且实例未建允许重试，重置为待受理")
+    void shouldAllowRetryWhileInstanceNotYetCreated() {
+        BpmActionRef starting = ref();
+        starting.setStatus("STARTING");
+        when(actionRefMapper.selectById(1L)).thenReturn(starting);
+        when(bpmInstanceService.findByBusinessKey("rec-target-1")).thenReturn(Optional.empty());
+        CommandEnvelope envelope = new CommandEnvelope();
+        envelope.setCommandId(77L);
+        envelope.setCommandKey(starting.getCommandKey());
+        when(commandQueue.findByKey(9L, starting.getCommandKey())).thenReturn(Optional.of(envelope));
+        when(commandRetryService.requeueFailed(envelope)).thenReturn(77L);
+
+        R<Map<String, Object>> result = controller.retryActionRef(1L);
+
+        assertThat(result.getData()).containsEntry("status", "INTENT_SUBMITTED");
+        assertThat(starting.getStatus()).isEqualTo("INTENT_SUBMITTED");
+    }
+
+    @Test
     @DisplayName("失败意图重试：复用同键命令且不读冻结图配置（关入口后仍可恢复）")
     void shouldRetryFailedRefWithoutGraphDependency() {
         BpmActionRef failed = ref();

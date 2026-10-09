@@ -199,7 +199,7 @@ public class NodeFormDataService {
             row.setTaskId(taskId);
             row.setRoundNo(currentRound(processInstanceId));
             row.setFormKey(formKey);
-            row.setFormVersion(frozenFormVersion(formKey));
+            row.setFormVersion(boundFormVersion(null, formKey));
             row.setStatus(STATUS_DRAFT);
             row.setDataText(json);
             try {
@@ -210,7 +210,8 @@ public class NodeFormDataService {
             }
         }
         existing.setDataText(json);
-        existing.setFormVersion(frozenFormVersion(formKey));
+        // 绑定版本冻结：草稿保存不随表单再发布改写既有任务的版本
+        existing.setFormVersion(boundFormVersion(existing, formKey));
         taskFormDataMapper.updateById(existing);
         return existing.getId();
     }
@@ -233,7 +234,7 @@ public class NodeFormDataService {
                 ? (existing == null ? Map.of() : parseData(existing.getDataText()))
                 : data;
         if (data != null) {
-            List<String> errors = validateNodeFormData(formKey, effective);
+            List<String> errors = validateNodeFormData(formKey, boundFormVersion(existing, formKey), effective);
             if (!errors.isEmpty()) {
                 throw new BaseException(BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getCode(),
                         BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getMessage() + ": " + String.join("; ", errors));
@@ -252,7 +253,7 @@ public class NodeFormDataService {
             row.setTaskId(taskId);
             row.setRoundNo(currentRound(processInstanceId));
             row.setFormKey(formKey);
-            row.setFormVersion(frozenFormVersion(formKey));
+            row.setFormVersion(boundFormVersion(null, formKey));
             row.setStatus(STATUS_SUBMITTED);
             row.setDataText(json);
             row.setSubmittedBy(actorId);
@@ -271,7 +272,9 @@ public class NodeFormDataService {
         existing.setDataText(json);
         existing.setSubmittedBy(actorId);
         existing.setSubmitTime(LocalDateTime.now());
-        existing.setFormVersion(frozenFormVersion(formKey));
+        // 绑定版本冻结：最终提交沿用任务绑定版本（草稿建立时点/当前发布版本），
+        // 表单之后的再发布不改写本任务已绑定的字段与校验语义
+        existing.setFormVersion(boundFormVersion(existing, formKey));
         taskFormDataMapper.updateById(existing);
         return existing.getId();
     }
@@ -279,13 +282,46 @@ public class NodeFormDataService {
     // ==================== 校验 ====================
 
     /**
+     * 读取任务节点表单绑定版本对应的 definition（任务级绑定快照，审查02 P1-04b）。
+     * <p>
+     * 任务数据行一经建立即冻结其 formVersion（发布时点的已发布版本）；该表单后续再发布
+     * 不改写既有任务的字段与校验语义：优先读取该版本快照，快照缺失（历史数据）回退当前定义。
+     * </p>
+     */
+    public Optional<String> loadBoundDefinition(String formKey, Long formVersion) {
+        if (formVersion != null) {
+            Optional<String> snapshot = formDefinitionService
+                    .getFormDefinitionSnapshot(formKey, formVersion.intValue());
+            if (snapshot.isPresent()) {
+                return snapshot;
+            }
+        }
+        return formDefinitionService.getFormDefinition(formKey);
+    }
+
+    /** 任务级绑定版本：既有行（草稿/已提交）冻结其版本；新行取当前已发布版本。 */
+    private Long boundFormVersion(BpmTaskFormData existing, String formKey) {
+        if (existing != null && existing.getFormVersion() != null) {
+            return existing.getFormVersion();
+        }
+        return frozenFormVersion(formKey);
+    }
+
+    /**
      * 按发布 definition 校验节点表单数据（必填/类型/字典值域/USER/DEPT 存在性/TABLE 子行）。
      *
      * @return 错误列表；空 = 通过
      */
     public List<String> validateNodeFormData(String formKey, Map<String, Object> data) {
+        return validateNodeFormData(formKey, null, data);
+    }
+
+    /**
+     * 按任务绑定版本的 definition 校验（formVersion 为空取当前定义）。
+     */
+    public List<String> validateNodeFormData(String formKey, Long formVersion, Map<String, Object> data) {
         List<String> errors = new ArrayList<>();
-        Optional<String> definitionJson = formDefinitionService.getFormDefinition(formKey);
+        Optional<String> definitionJson = loadBoundDefinition(formKey, formVersion);
         if (definitionJson.isEmpty()) {
             errors.add("表单定义不可用: " + formKey);
             return errors;

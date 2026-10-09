@@ -75,11 +75,18 @@ public class BpmNodeFormController {
         result.put("bound", true);
         result.put("formKey", binding.get().formKey());
         result.put("formName", binding.get().formName());
-        result.put("formVersion", binding.get().formVersion());
-        result.put("definition", nodeFormDataService.loadFormDefinition(binding.get().formKey()));
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         BpmTaskFormData data = tenantId == null ? null
                 : nodeFormDataService.findByTaskId(tenantId, taskId).orElse(null);
+        // 任务级绑定版本冻结（审查02 P1-04b）：任务数据行已建立时以该行绑定版本渲染/校验，
+        // 表单之后的再发布不改写既有任务；未建立任务行时按当前已发布版本
+        Long boundVersion = data != null && data.getFormVersion() != null
+                ? data.getFormVersion()
+                : (binding.get().formVersion() == null ? null : Long.valueOf(binding.get().formVersion()));
+        result.put("formVersion", boundVersion == null ? null : String.valueOf(boundVersion));
+        result.put("definition", nodeFormDataService
+                .loadBoundDefinition(binding.get().formKey(), boundVersion)
+                .orElse(null));
         if (data != null) {
             result.put("status", data.getStatus());
             result.put("data", nodeFormDataService.parseData(data.getDataText()));

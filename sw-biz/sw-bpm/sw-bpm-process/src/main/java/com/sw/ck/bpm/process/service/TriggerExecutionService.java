@@ -411,6 +411,11 @@ public class TriggerExecutionService {
                 }
             }, () -> notes.add("动作 " + action.getActionId() + " 项 " + item.itemKey()
                     + ": 并发重复受理已由幂等键吸收"));
+        } catch (Exception e) {
+            // 受理失败零残留（审查02 P1-06b）：意图行与命令同事务，命令未落即删除意图行，
+            // 不留下无命令可恢复的孤儿 INTENT_SUBMITTED；失败经派发留痕可诊断
+            actionRefMapper.deleteById(ref.getId());
+            throw e;
         }
         actionRefMapper.updateById(ref);
     }

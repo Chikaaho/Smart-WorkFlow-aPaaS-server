@@ -93,7 +93,7 @@ class BpmScriptRunnerTest {
     }
 
     @Test
-    @DisplayName("wall clock 截止强制中断：重宿主交互循环先撞 5s watcher 判 TIMEOUT，无遗留执行")
+    @DisplayName("wall clock 截止强制中断：重宿主交互循环先撞 500ms watcher（本用例实际值，默认 5s）判 TIMEOUT，无遗留执行")
     void shouldInterruptOnWallClockTimeout() {
         // 大字符串变量使每次宿主往返（JSON 重建 eval）耗时远超语句计数增速：
         // 循环在 500k 语句内耗尽 wall clock，验证 watcher close(true) 路径可独立到达。
