@@ -13,15 +13,22 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
  * {@link BpmVariableSnapshotService} 运行快照解析单测（ADR-P64-001 §2）。
  * <p>
  * 覆盖：MAIN_FORM 标量/ROWS、NODE_FORM 集合并集去重与多任务标量冲突、ROWS 拼接来源追踪、
- * SYSTEM 白名单、必填缺失、类型不隐式转换。
+ * SYSTEM 白名单、必填缺失、类型不隐式转换；来源权限（读取主体=调用方租户、
+ * 读取对象=实例自身绑定、非法/未知来源拒绝且零读取、白名单外排除且零读取）。
  * </p>
  */
 @DisplayName("P64 变量运行快照解析测试")
@@ -197,5 +204,92 @@ class BpmVariableSnapshotServiceTest {
 
         assertThat(result.values().get("v_maybe")).isNull();
         assertThat(result.missingRequired()).containsExactly("v_need");
+    }
+
+    // ─── 复审06/提示05 P1-05a：来源权限（主体、来源绑定、非法拒绝、无越权取值） ───
+
+    @Test
+    @DisplayName("来源权限：未知来源拒绝且不读任何来源（无越权取值）")
+    void shouldRejectUnknownVariableSourceWithoutFetch() {
+        List<ProcessVariableDef> defs = List.of(def("v_bad", "STRING", "OTHER_FORM", "secret"));
+
+        BpmVariableSnapshotService.SnapshotResult result = service.buildSnapshot(
+                9L, instance(), defs, List.of("v_bad"), "node1", 1L);
+
+        assertThat(result.errors()).anyMatch(error -> error.contains("未知变量来源"));
+        assertThat(result.values()).doesNotContainKey("v_bad");
+        verifyNoInteractions(formRecordReadFacade, nodeFormDataService);
+    }
+
+    @Test
+    @DisplayName("来源权限：NODE_FORM 缺 sourceNodeKey 拒绝且不读取节点表单")
+    void shouldRejectNodeFormSourceWithoutNodeKeyWithoutFetch() {
+        List<ProcessVariableDef> defs = List.of(def("v_qc", "STRING", "NODE_FORM", "verdict"));
+
+        BpmVariableSnapshotService.SnapshotResult result = service.buildSnapshot(
+                9L, instance(), defs, List.of("v_qc"), "node1", 1L);
+
+        assertThat(result.errors()).anyMatch(error -> error.contains("NODE_FORM 来源缺少 sourceNodeKey"));
+        assertThat(result.values()).doesNotContainKey("v_qc");
+        verify(nodeFormDataService, never()).listSubmitted(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("来源权限：MAIN_FORM 主体=调用方租户、对象=实例自身绑定（定义不可改写读取对象）")
+    void shouldBindMainFormReadToCallerTenantAndInstanceBinding() {
+        BpmInstance bound = instance();
+        bound.setFormKey("main_form_bound");
+        bound.setBusinessKey("rec-bound-42");
+        when(formRecordReadFacade.findRecord(9L, "main_form_bound", "rec-bound-42")).thenReturn(Optional.of(
+                new FormRecordReadFacade.FormRecordData("main_form_bound", "rec-bound-42",
+                        Map.of("title", "工单A"), Map.of())));
+        List<ProcessVariableDef> defs = List.of(def("v_title", "STRING", "MAIN_FORM", "title"));
+
+        BpmVariableSnapshotService.SnapshotResult result = service.buildSnapshot(
+                9L, bound, defs, List.of("v_title"), "node1", 1L);
+
+        assertThat(result.values().get("v_title")).isEqualTo("工单A");
+        // 恰一次读取，且读取对象=实例自身 formKey/businessKey（定义只有字段名，无表单/记录选择权）
+        verify(formRecordReadFacade).findRecord(9L, "main_form_bound", "rec-bound-42");
+        verifyNoMoreInteractions(formRecordReadFacade);
+        verifyNoInteractions(nodeFormDataService);
+    }
+
+    @Test
+    @DisplayName("来源权限：NODE_FORM 读取限定本实例（租户+实例ID+节点+轮次），不读他实例")
+    void shouldScopeNodeFormReadToOwnInstance() throws Exception {
+        BpmTaskFormData row = new BpmTaskFormData();
+        row.setTaskId("t-own");
+        row.setDataText("{\"handlers\":[\"2\"]}");
+        stubParseData();
+        when(nodeFormDataService.listSubmitted(eq(9L), eq("pi-1"), eq("node_qc"), eq(2L)))
+                .thenReturn(List.of(row));
+        ProcessVariableDef setDef = ProcessVariableDef.builder()
+                .varId("v_handlers").type("USER_SET").source("NODE_FORM")
+                .sourceNodeKey("node_qc").sourceFormField("handlers")
+                .aggregation("UNION").nullable(false).build();
+
+        BpmVariableSnapshotService.SnapshotResult result = service.buildSnapshot(
+                9L, instance(), List.of(setDef), List.of("v_handlers"), "node_qc", 2L);
+
+        assertThat(result.values().get("v_handlers")).isEqualTo(List.of("2"));
+        verify(nodeFormDataService).listSubmitted(9L, "pi-1", "node_qc", 2L);
+        verify(nodeFormDataService, never()).listSubmitted(
+                any(), argThat((String id) -> !"pi-1".equals(id)), any(), any());
+        verify(nodeFormDataService, never()).listSubmitted(
+                argThat((Long tenant) -> !Long.valueOf(9L).equals(tenant)), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("来源权限：SYSTEM 白名单外字段排除（null+必填缺失）且零读取")
+    void shouldExcludeSystemFieldOutOfWhitelist() {
+        List<ProcessVariableDef> defs = List.of(def("v_pass", "STRING", "SYSTEM", "dbPassword"));
+
+        BpmVariableSnapshotService.SnapshotResult result = service.buildSnapshot(
+                9L, instance(), defs, List.of("v_pass"), "node1", 1L);
+
+        assertThat(result.values()).containsEntry("v_pass", null);
+        assertThat(result.missingRequired()).containsExactly("v_pass");
+        verifyNoInteractions(formRecordReadFacade, nodeFormDataService);
     }
 }
