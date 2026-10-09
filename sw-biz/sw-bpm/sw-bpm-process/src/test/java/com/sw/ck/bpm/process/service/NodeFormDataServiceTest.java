@@ -186,4 +186,101 @@ class NodeFormDataServiceTest {
         com.sw.ck.bpm.api.dto.ProcessGraph fallback = service.loadGraph("def_main", null);
         assertThat(fallback.getProcessKey()).isEqualTo("current-draft");
     }
+
+    @Test
+    @DisplayName("任务/轮次数据隔离：新旧轮次任务各持独立数据行，互不串写")
+    void shouldIsolateDataByTaskAndRound() {
+        stubForm();
+        when(userProvider.getIfAvailable()).thenReturn(userQueryFacade);
+        when(userQueryFacade.findActiveUserIds(any(), eq(9L)))
+                .thenReturn(Optional.of(List.of(11L)));
+        when(dictProvider.getIfAvailable()).thenReturn(null);
+
+        // 行内存储按 taskId 定位（currentTask 显式指向当前查询任务），模拟 (tenant_id, task_id) 唯一行
+        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
+        java.util.concurrent.atomic.AtomicReference<String> currentTask =
+                new java.util.concurrent.atomic.AtomicReference<>("task-1");
+        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+                .thenAnswer(invocation -> {
+                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    row.setId((long) (store.size() + 1));
+                    store.put(row.getTaskId(), row);
+                    return 1;
+                });
+        when(taskFormDataMapper.selectOne(any())).thenAnswer(invocation ->
+                store.get(currentTask.get()));
+        when(taskFormDataMapper.selectList(any())).thenAnswer(invocation ->
+                new java.util.ArrayList<>(store.values()));
+
+        // 第 1 轮：task-1 草稿→最终提交
+        when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of());
+        service.saveDraft("pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 1));
+        Long submittedId = service.submitFinal("pi-1", "def_main", "node_qc", "task-1",
+                "qc_form", Map.of("verdict", "PASS", "ng_count", 1), 2L);
+
+        // 退回后第 2 轮：task-2 独立草稿（查询指向新任务）
+        com.sw.ck.bpm.process.entity.ApprovalActionRecord returnRecord =
+                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        returnRecord.setAction("RETURN");
+        when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of(returnRecord));
+        currentTask.set("task-2");
+        service.saveDraft("pi-1", "def_main", "node_qc", "task-2", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 0));
+
+        assertThat(store).hasSize(2);
+        var round1 = store.get("task-1");
+        var round2 = store.get("task-2");
+        assertThat(round1.getRoundNo()).isEqualTo(1L);
+        assertThat(round1.getStatus()).isEqualTo("SUBMITTED");
+        assertThat(round1.getFormVersion()).isEqualTo(3L);
+        assertThat(round1.getSubmittedBy()).isEqualTo(2L);
+        assertThat(round2.getRoundNo()).isEqualTo(2L);
+        assertThat(round2.getStatus()).isEqualTo("DRAFT");
+        assertThat(round2.getId()).isNotEqualTo(submittedId);
+        // 按任务读取互不串扰
+        assertThat(service.findByTaskId(9L, "task-1")).isPresent();
+        assertThat(service.findByTaskId(9L, "task-2")).isPresent();
+        // 轮次隔离：第 1 轮已提交事实与第 2 轮草稿并存，行身份（taskId/roundNo/status）互不覆盖
+        assertThat(round1.getStatus()).isNotEqualTo(round2.getStatus());
+        assertThat(round1.getDataText()).isNotEqualTo(round2.getDataText());
+    }
+
+    @Test
+    @DisplayName("表单版本冻结：提交时锁定 form_version，表单重新发布不改写已提交行")
+    void shouldFreezeFormVersionAtSubmission() {
+        stubForm();
+        when(userProvider.getIfAvailable()).thenReturn(userQueryFacade);
+        when(userQueryFacade.findActiveUserIds(any(), eq(9L)))
+                .thenReturn(Optional.of(List.of(11L)));
+        when(dictProvider.getIfAvailable()).thenReturn(null);
+        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+                .thenAnswer(invocation -> {
+                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    row.setId(1L);
+                    store.put(row.getTaskId(), row);
+                    return 1;
+                });
+        when(taskFormDataMapper.selectOne(any())).thenAnswer(invocation ->
+                store.get("task-1"));
+        when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of());
+
+        service.submitFinal("pi-1", "def_main", "node_qc", "task-1", "qc_form",
+                Map.of("verdict", "PASS", "ng_count", 0), 2L);
+        assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
+
+        // 表单重新发布到 v5：已提交行按提交时点 v3 冻结，重放读取不改写
+        FormDefDTO republished = new FormDefDTO();
+        republished.setFormKey("qc_form");
+        republished.setStatus("PUBLISHED");
+        republished.setFormVersion(5);
+        when(formDefinitionService.getFormDef("qc_form")).thenReturn(Optional.of(republished));
+
+        Long replayId = service.submitFinal("pi-1", "def_main", "node_qc", "task-1",
+                "qc_form", null, 2L);
+        assertThat(replayId).isEqualTo(store.get("task-1").getId());
+        assertThat(store.get("task-1").getFormVersion()).isEqualTo(3L);
+        assertThat(store.get("task-1").getDataText()).contains("\"verdict\":\"PASS\"");
+    }
 }

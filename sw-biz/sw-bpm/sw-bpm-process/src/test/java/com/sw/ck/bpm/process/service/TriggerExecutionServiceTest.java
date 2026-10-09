@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -403,5 +404,200 @@ class TriggerExecutionServiceTest {
                 assertThat(envelope.getCommandKey())
                         .startsWith("P64ACT:TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1:act-1:")
                         .doesNotContain("task-1"));
+    }
+
+    @Test
+    @DisplayName("START_SINGLE 单发一项：映射 sourceVarId/literal 进入载荷")
+    void shouldDispatchStartSingleWithVariableAndLiteralMappings() {
+        BpmInstance instance = instance();
+        ActionConfig single = ActionConfig.builder()
+                .actionId("act-single").name("s").type("START_SINGLE")
+                .targetProcessDefKey("def_target").targetFormKey("target_form")
+                .mapping(List.of(
+                        ActionConfig.ActionMapping.builder()
+                                .targetField("reason").sourceVarId("v_verdict").build(),
+                        ActionConfig.ActionMapping.builder()
+                                .targetField("channel").literal("P64").build()))
+                .build();
+        when(nodeFormDataService.loadGraph("def_main", 2)).thenReturn(ProcessGraph.builder()
+                .processKey("def_main")
+                .variables(List.of(ProcessVariableDef.builder()
+                        .varId("v_verdict").type("STRING").source("NODE_FORM")
+                        .sourceField("field_verdict").build()))
+                .triggers(List.of(trigger("TASK_SUBMITTED", "node_qc", "return 'X';",
+                        List.of(branch("b1", "STRING", "X", single)))))
+                .build());
+        when(nodeFormDataService.currentRound("pi-1")).thenReturn(1L);
+        when(variableSnapshotService.buildSnapshot(any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(new BpmVariableSnapshotService.SnapshotResult(
+                        Map.of("v_verdict", "REWORK"), "{}", false, List.of(), List.of()));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(commandQueue.enqueue(any())).thenReturn(201L);
+        when(actionRefMapper.selectOne(any())).thenReturn(null);
+
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+
+        verify(commandQueue, times(1)).enqueue(any());
+        ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
+        verify(actionRefMapper).insert(refCaptor.capture());
+        assertThat(refCaptor.getValue().getItemKey()).isEqualTo("SINGLE");
+        assertThat(refCaptor.getValue().getPayloadJson())
+                .contains("\"reason\":\"REWORK\"")
+                .contains("\"channel\":\"P64\"");
+    }
+
+    @Test
+    @DisplayName("START_GROUPED 按 ROWS 列值分组：同值行合并为单组，映射取代表行字段")
+    void shouldGroupRowsByColumnForStartGrouped() {
+        BpmInstance instance = instance();
+        ActionConfig grouped = ActionConfig.builder()
+                .actionId("act-group").name("g").type("START_GROUPED")
+                .sourceVariable("v_rows").groupBy("line")
+                .targetProcessDefKey("def_target").targetFormKey("target_form")
+                .mapping(List.of(ActionConfig.ActionMapping.builder()
+                        .targetField("line").itemField("line").build()))
+                .build();
+        when(nodeFormDataService.loadGraph("def_main", 2)).thenReturn(ProcessGraph.builder()
+                .processKey("def_main")
+                .variables(List.of(ProcessVariableDef.builder()
+                        .varId("v_rows").type("ROWS").source("NODE_FORM")
+                        .sourceField("field_table").aggregation("CONCAT").build()))
+                .triggers(List.of(trigger("NODE_ROUND_COMPLETED", "node_qc", "return true;",
+                        List.of(branch("b1", "BOOLEAN", "true", grouped)))))
+                .build());
+        when(nodeFormDataService.currentRound("pi-1")).thenReturn(1L);
+        // 三行中两行 line=L1、一行 line=L2 → 分组后 2 项
+        when(variableSnapshotService.buildSnapshot(any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(new BpmVariableSnapshotService.SnapshotResult(
+                        Map.of("v_rows", List.of(
+                                Map.of("id", 1, "line", "L1"),
+                                Map.of("id", 2, "line", "L1"),
+                                Map.of("id", 3, "line", "L2"))),
+                                "{}", false, List.of(), List.of()));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(commandQueue.enqueue(any())).thenReturn(301L);
+        when(actionRefMapper.selectOne(any())).thenReturn(null);
+
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+
+        ArgumentCaptor<CommandEnvelope> envelopeCaptor = ArgumentCaptor.forClass(CommandEnvelope.class);
+        verify(commandQueue, times(2)).enqueue(envelopeCaptor.capture());
+        assertThat(envelopeCaptor.getAllValues()).extracting(CommandEnvelope::getCommandKey)
+                .containsExactlyInAnyOrder(
+                        "P64ACT:TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1:act-group:L1",
+                        "P64ACT:TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1:act-group:L2");
+        ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
+        verify(actionRefMapper, times(2)).insert(refCaptor.capture());
+        assertThat(refCaptor.getAllValues()).anySatisfy(ref ->
+                assertThat(ref.getPayloadJson()).contains("\"line\":\"L1\""));
+    }
+
+    @Test
+    @DisplayName("同键并发受理：载荷一致吸收为幂等；异载荷留冲突痕迹不冒称成功")
+    void shouldDetectPayloadFingerprintConflictOnConcurrentEnqueue() {
+        BpmInstance instance = instance();
+        stubGraph(instance, trigger("TASK_SUBMITTED", "node_qc", "return 1;",
+                List.of(branch("b1", "NUMBER", "1", eachAction(50)))));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(actionRefMapper.selectOne(any())).thenReturn(null);
+        // 首项：异载荷冲突；其余：同载荷幂等
+        com.sw.ck.bpm.process.queue.CommandEnvelope conflicting =
+                new com.sw.ck.bpm.process.queue.CommandEnvelope();
+        conflicting.setPayload("{\"data\":{\"owner\":\"999\"}}");
+        conflicting.setPayloadFingerprint(
+                com.sw.ck.bpm.process.queue.CommandFingerprint.of(conflicting.getPayload()));
+        when(commandQueue.findByKey(any(), anyString()))
+                .thenReturn(Optional.of(conflicting));
+        when(commandQueue.enqueue(any()))
+                .thenThrow(new org.springframework.dao.DuplicateKeyException("dup"))
+                .thenReturn(401L, 402L);
+
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+
+        ArgumentCaptor<BpmTriggerExec> execCaptor = ArgumentCaptor.forClass(BpmTriggerExec.class);
+        verify(triggerExecMapper, atLeastOnce()).updateById(execCaptor.capture());
+        assertThat(execCaptor.getValue().getErrorText()).contains("同身份异载荷冲突");
+        // 其余两项正常受理
+        verify(commandQueue, times(3)).enqueue(any());
+    }
+
+    @Test
+    @DisplayName("TASK_SUBMITTED 仅命中配置节点：其他节点任务完成不评估")
+    void shouldNotEvaluateTriggersOnOtherNodeTask() {
+        BpmInstance instance = instance();
+        stubGraph(instance, trigger("TASK_SUBMITTED", "node_qc", "return 1;",
+                List.of(branch("b1", "NUMBER", "1", eachAction(50)))));
+
+        service.onTaskActionCompleted(instance, task("node_other"), ApprovalAction.APPROVE);
+
+        verify(triggerExecMapper, never()).insert(any(BpmTriggerExec.class));
+        verify(commandQueue, never()).enqueue(any());
+    }
+
+    @Test
+    @DisplayName("NUMBER 数值相等/BOOLEAN 精确匹配；NUMBER 非同值不命中")
+    void shouldMatchNumberAndBooleanBranchesExactly() {
+        BpmInstance instance = instance();
+        stubGraph(instance, trigger("TASK_SUBMITTED", "node_qc", "return 1;",
+                List.of(branch("b1", "NUMBER", "1.0", eachAction(50)))));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(commandQueue.enqueue(any())).thenReturn(501L);
+        when(actionRefMapper.selectOne(any())).thenReturn(null);
+
+        // 脚本返回 NUMBER 1，分支匹配值 "1.0"：按数值相等命中
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+        ArgumentCaptor<BpmTriggerExec> execCaptor = ArgumentCaptor.forClass(BpmTriggerExec.class);
+        verify(triggerExecMapper).insert(execCaptor.capture());
+        assertThat(execCaptor.getValue().getStatus()).isEqualTo("MATCHED");
+        assertThat(execCaptor.getValue().getMatchedBranchId()).isEqualTo("b1");
+
+        // BOOLEAN false 分支：脚本返回 true 不命中
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        BpmInstance instance2 = instance();
+        stubGraph(instance2, trigger("TASK_SUBMITTED", "node_qc", "return true;",
+                List.of(branch("b2", "BOOLEAN", "false", eachAction(50)))));
+        service.onTaskActionCompleted(instance2, task("node_qc"), ApprovalAction.APPROVE);
+        verify(triggerExecMapper, times(2)).insert(execCaptor.capture());
+        assertThat(execCaptor.getValue().getStatus()).isEqualTo("UNMATCHED");
+        assertThat(execCaptor.getValue().getMatchedBranchId()).isNull();
+    }
+
+    @Test
+    @DisplayName("关入口收敛：冻结版本实例继续按原触发配置运行，新版本零触发")
+    void shouldKeepFrozenTriggerForOldVersionAndSilenceNewVersion() {
+        BpmInstance legacyInstance = instance();
+        BpmInstance newInstance = instance();
+        newInstance.setDefVersion(3);
+        TriggerConfig legacyTrigger = trigger("TASK_SUBMITTED", "node_qc", "return 1;",
+                List.of(branch("b1", "NUMBER", "1", eachAction(50))));
+        // v2 = 冻结图仍含触发器；v3 = 关闭后新发布图无触发器
+        when(nodeFormDataService.loadGraph("def_main", 2)).thenReturn(ProcessGraph.builder()
+                .processKey("def_main")
+                .variables(List.of(ProcessVariableDef.builder()
+                        .varId("v_set").type("USER_SET").source("MAIN_FORM")
+                        .sourceField("handlers").aggregation("UNION").nullable(false).build()))
+                .triggers(List.of(legacyTrigger)).build());
+        when(nodeFormDataService.loadGraph("def_main", 3)).thenReturn(ProcessGraph.builder()
+                .processKey("def_main").build());
+        when(nodeFormDataService.currentRound("pi-1")).thenReturn(1L);
+        when(variableSnapshotService.buildSnapshot(any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(new BpmVariableSnapshotService.SnapshotResult(
+                        Map.of("v_set", List.of("11")), "{}", false, List.of(), List.of()));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(commandQueue.enqueue(any())).thenReturn(601L);
+        when(actionRefMapper.selectOne(any())).thenReturn(null);
+
+        service.onTaskActionCompleted(legacyInstance, task("node_qc"), ApprovalAction.APPROVE);
+        verify(commandQueue, times(1)).enqueue(any());
+
+        service.onTaskActionCompleted(newInstance, task("node_qc"), ApprovalAction.APPROVE);
+        // 仍只 1 次：新版本实例不触发（关闭边界对新增实例生效）
+        verify(commandQueue, times(1)).enqueue(any());
+        verify(triggerExecMapper, times(1)).insert(any(BpmTriggerExec.class));
     }
 }

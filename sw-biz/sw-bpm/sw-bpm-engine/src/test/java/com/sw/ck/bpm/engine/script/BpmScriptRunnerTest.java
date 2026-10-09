@@ -92,10 +92,83 @@ class BpmScriptRunnerTest {
         assertThat(result.kind()).isEqualTo(BpmScriptRunner.Result.Kind.RESOURCE_LIMIT);
     }
 
-    // 说明：watcher 超时（TIMEOUT）路径无法在纯 JS 单测中与语句上限隔离——
-    // 任何足够长的 JS 循环都会先触发 500k 语句上限（两类均落 FAILED+诊断，
-    // 业务语义一致）；watcher 强制中断作为运行时防线保留，真超时归由资源超限
-    // 同口径记录（ADR-P64-001 §3 资源边界）。
+    @Test
+    @DisplayName("wall clock 截止强制中断：重宿主交互循环先撞 5s watcher 判 TIMEOUT，无遗留执行")
+    void shouldInterruptOnWallClockTimeout() {
+        // 大字符串变量使每次宿主往返（JSON 重建 eval）耗时远超语句计数增速：
+        // 循环在 500k 语句内耗尽 wall clock，验证 watcher close(true) 路径可独立到达。
+        Map<String, Object> variables = vars("big", "x".repeat(60_000));
+        String script = "let r; while (true) { r = 流程变量取值('big'); }";
+        long begin = System.currentTimeMillis();
+        BpmScriptRunner.Result result = runner.run(script, variables, 500L);
+        long elapsed = System.currentTimeMillis() - begin;
+        assertThat(result.kind()).isEqualTo(BpmScriptRunner.Result.Kind.TIMEOUT);
+        assertThat(result.errorMessage()).contains("超时");
+        // 截止（≥500ms）生效且远早于语句上限/无限等待；上下文已收敛（run 返回即关闭）
+        assertThat(elapsed).isBetween(400L, 300_000L);
+    }
+
+    @Test
+    @DisplayName("脚本内存耗尽（超宿主堆分配）判 RESOURCE_LIMIT，上下文正常关闭")
+    void shouldClassifyGuestHeapExhaustionAsResourceLimit() {
+        // 数组持续持有 1MB 字符串：总内存需求无界，语句需求有界（500k 语句 ≈ 125k 次 ≈ 125GB），
+        // 任何测试堆配置下宿主堆耗尽先于语句上限；guest OOM 由 Graal 转为
+        // PolyglotException（isResourceExhausted）→ RESOURCE_LIMIT。
+        BpmScriptRunner.Result result = runner.run(
+                "const a = []; while (true) { a.push('x'.repeat(1000000)); }", vars(), 60_000L);
+        assertThat(result.kind()).isEqualTo(BpmScriptRunner.Result.Kind.RESOURCE_LIMIT);
+        // 运行器返回即收敛：同一 runner 可继续正常执行（上下文无遗留）
+        BpmScriptRunner.Result after = runner.run("return 1;", vars());
+        assertThat(after.kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
+    }
+
+    @Test
+    @DisplayName("输出序列化超 4KiB 判 RESOURCE_LIMIT")
+    void shouldCapOutputAt4KiB() {
+        BpmScriptRunner.Result result = runner.run("return 'x'.repeat(100000);", vars());
+        assertThat(result.kind()).isEqualTo(BpmScriptRunner.Result.Kind.RESOURCE_LIMIT);
+        assertThat(result.errorMessage()).contains("4");
+    }
+
+    @Test
+    @DisplayName("脚本实际读取变量决定结果：同脚本不同变量值产出不同分支结果")
+    void shouldDriveResultByVariableValue() {
+        String script = "const v = 流程变量取值('verdict');"
+                + " if (v === 'REWORK') { return 'REWORK'; } return 'NORMAL';";
+        BpmScriptRunner.Result rework = runner.run(script, vars("verdict", "REWORK"));
+        assertThat(rework.kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
+        assertThat(rework.value()).isEqualTo("REWORK");
+        BpmScriptRunner.Result normal = runner.run(script, vars("verdict", "PASS"));
+        assertThat(normal.kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
+        assertThat(normal.value()).isEqualTo("NORMAL");
+    }
+
+    @Test
+    @DisplayName("并发评估隔离：多线程共用同一 runner，各上下文变量互不串扰")
+    void shouldEvaluateConcurrentlyWithoutInterference() throws Exception {
+        int threads = 4;
+        int roundsPerThread = 10;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        java.util.List<java.util.concurrent.Callable<Boolean>> tasks = new java.util.ArrayList<>();
+        for (int t = 0; t < threads; t++) {
+            final String expected = "T" + t;
+            final String script = "return 流程变量取值('who');";
+            tasks.add(() -> {
+                for (int i = 0; i < roundsPerThread; i++) {
+                    BpmScriptRunner.Result result = runner.run(script, vars("who", expected));
+                    if (result.kind() != BpmScriptRunner.Result.Kind.OK
+                            || !expected.equals(result.value())) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+        }
+        java.util.List<java.util.concurrent.Future<Boolean>> futures =
+                pool.invokeAll(tasks);
+        pool.shutdown();
+        assertThat(futures).allSatisfy(future -> assertThat(future.get()).isTrue());
+    }
 
     @Test
     @DisplayName("语法校验：合法脚本体通过，语法错误/缺函数体拒绝")

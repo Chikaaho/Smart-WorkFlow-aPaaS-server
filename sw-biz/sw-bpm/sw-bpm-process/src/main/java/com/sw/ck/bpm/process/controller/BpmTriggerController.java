@@ -273,11 +273,27 @@ public class BpmTriggerController {
         item.put("targetDefKey", row.getTargetDefKey());
         item.put("targetFormKey", row.getTargetFormKey());
         item.put("targetRecordId", row.getTargetRecordId());
-        item.put("targetInstanceId", row.getTargetInstanceId());
+        item.put("targetInstanceId", resolveTargetInstanceId(row));
         item.put("status", row.getStatus());
         item.put("errorText", row.getErrorText());
         item.put("createTime", row.getCreateTime());
         return item;
+    }
+
+    /**
+     * 关联实例解析：目标实例由 FLOW_START 命令异步二段创建，ref 行的 target_instance_id
+     * 不在意图受理事务内回填；回查按 target_record_id（= 目标 business_key）动态解析。
+     */
+    private String resolveTargetInstanceId(BpmActionRef row) {
+        if (row.getTargetInstanceId() != null && !row.getTargetInstanceId().isBlank()) {
+            return row.getTargetInstanceId();
+        }
+        if (row.getTargetRecordId() == null || row.getTargetRecordId().isBlank()) {
+            return null;
+        }
+        return bpmInstanceService.findByBusinessKey(row.getTargetRecordId())
+                .map(BpmInstance::getProcessInstanceId)
+                .orElse(null);
     }
 
     private Long requireTenantId() {

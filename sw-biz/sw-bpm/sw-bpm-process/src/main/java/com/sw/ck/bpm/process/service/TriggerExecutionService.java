@@ -386,6 +386,7 @@ public class TriggerExecutionService {
         envelope.setTenantId(tenantId);
         envelope.setInitiatorId(instance.getInitiatorId());
         envelope.setPayload(payloadJson);
+        envelope.setPayloadFingerprint(com.sw.ck.bpm.process.queue.CommandFingerprint.of(payloadJson));
         envelope.setCompletionPoint("ACTION_STARTED");
         try {
             Long commandId = commandQueue.enqueue(envelope);
@@ -393,7 +394,23 @@ public class TriggerExecutionService {
             notes.add("动作 " + action.getActionId() + " 项 " + item.itemKey()
                     + ": 意图已受理 commandId=" + commandId);
         } catch (DuplicateKeyException e) {
-            notes.add("动作 " + action.getActionId() + " 项 " + item.itemKey() + ": 并发重复受理已由幂等键吸收");
+            // 同键并发受理：载荷一致才可吸收为幂等命中；异载荷显式冲突留痕，不冒称成功
+            commandQueue.findByKey(tenantId, commandKey).ifPresentOrElse(existing -> {
+                String incoming = com.sw.ck.bpm.process.queue.CommandFingerprint.of(payloadJson);
+                String stored = existing.getPayloadFingerprint() != null
+                        && !existing.getPayloadFingerprint().isBlank()
+                        ? existing.getPayloadFingerprint()
+                        : com.sw.ck.bpm.process.queue.CommandFingerprint.of(existing.getPayload());
+                if (incoming.equals(stored)) {
+                    notes.add("动作 " + action.getActionId() + " 项 " + item.itemKey()
+                            + ": 并发重复受理已由幂等键吸收");
+                } else {
+                    notes.add("动作 " + action.getActionId() + " 项 " + item.itemKey()
+                            + ": 同身份异载荷冲突（payload_fingerprint 不一致），未吸收为幂等命中");
+                    ref.setErrorText("同身份异载荷冲突: commandKey=" + commandKey);
+                }
+            }, () -> notes.add("动作 " + action.getActionId() + " 项 " + item.itemKey()
+                    + ": 并发重复受理已由幂等键吸收"));
         }
         actionRefMapper.updateById(ref);
     }

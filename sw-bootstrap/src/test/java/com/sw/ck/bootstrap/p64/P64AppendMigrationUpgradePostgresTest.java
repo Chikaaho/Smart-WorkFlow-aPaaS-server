@@ -68,17 +68,23 @@ class P64AppendMigrationUpgradePostgresTest {
         Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).target("0.1.6").load().migrate();
 
-        // 2) 非空存量：旧流程定义 + 运行实例（升级前真实业务行）
+        // 2) 非空存量：旧流程定义 + 运行实例 + 任务级审批动作行（升级前真实业务行）
+        String legacyGraphJson = "{\"processKey\":\"legacy_def_p64\",\"elements\":["
+                + "{\"kind\":\"node\",\"id\":\"start\",\"config\":{}},"
+                + "{\"kind\":\"node\",\"id\":\"end\",\"config\":{}}]}";
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("INSERT INTO sw_bpm_process_def (id, tenant_id, process_key, name, "
                     + "form_key, def_version, status, graph_json) VALUES "
                     + "(9001, 9, 'legacy_def_p64', '存量定义', 'legacy_form', 2, 'PUBLISHED', "
-                    + "'{\"processKey\":\"legacy_def_p64\"}')");
+                    + "'" + legacyGraphJson.replace("'", "''") + "')");
             stmt.executeUpdate("INSERT INTO sw_bpm_instance (id, tenant_id, process_instance_id, "
                     + "process_def_key, business_key, form_key, initiator_id, status) VALUES "
                     + "(9002, 9, 'legacy-pi-1', 'legacy_def_p64', 'legacy-rec-1', 'legacy_form', "
                     + "7, 'RUNNING')");
+            stmt.executeUpdate("INSERT INTO sw_bpm_approval_action (id, tenant_id, process_instance_id, "
+                    + "node_key, task_id, actor_id, action) VALUES "
+                    + "(9003, 9, 'legacy-pi-1', 'node_legacy', 'legacy-task-1', 7, 'APPROVE')");
         }
 
         // 3) 追加升级到链尾（V0.1.7）
@@ -98,7 +104,7 @@ class P64AppendMigrationUpgradePostgresTest {
 
             // 存量行原义保持（A12：受影响旧定义和实际实例原义保持）
             try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT process_key, name, status, def_version FROM sw_bpm_process_def "
+                    "SELECT process_key, name, status, def_version, graph_json FROM sw_bpm_process_def "
                             + "WHERE id = 9001");
                  ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next(), "存量定义应保留");
@@ -106,6 +112,8 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals("存量定义", rs.getString(2));
                 assertEquals("PUBLISHED", rs.getString(3));
                 assertEquals(2, rs.getInt(4));
+                // 冻结图逐字节不变：运行实例升级后按同一冻结图继续（原义完成的数据前提）
+                assertEquals(legacyGraphJson, rs.getString(5), "存量定义 graph_json 应逐字节不变");
             }
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT process_instance_id, business_key, status FROM sw_bpm_instance "
@@ -115,6 +123,24 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals("legacy-pi-1", rs.getString(1));
                 assertEquals("legacy-rec-1", rs.getString(2));
                 assertEquals("RUNNING", rs.getString(3));
+            }
+            // 任务级动作行原义保持（任务/轮次事实不受迁移影响）
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT task_id, actor_id, action FROM sw_bpm_approval_action WHERE id = 9003");
+                 ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next(), "存量任务动作行应保留");
+                assertEquals("legacy-task-1", rs.getString(1));
+                assertEquals(7, rs.getInt(2));
+                assertEquals("APPROVE", rs.getString(3));
+            }
+            // 升级不写入新表：存量数据零迁移、零改写（追加式升级）
+            try (Statement st2 = conn.createStatement();
+                 ResultSet rs = st2.executeQuery(
+                         "SELECT (SELECT COUNT(*) FROM sw_bpm_task_form_data) + "
+                                 + "(SELECT COUNT(*) FROM sw_bpm_trigger_exec) + "
+                                 + "(SELECT COUNT(*) FROM sw_bpm_action_ref)")) {
+                assertTrue(rs.next());
+                assertEquals(0, rs.getInt(1), "三张新表在升级后应为空（零迁移写回）");
             }
 
             // 迁移历史恰一条 0.1.7 且成功

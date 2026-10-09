@@ -53,6 +53,10 @@ public class BpmNodeFormController {
 
     /**
      * 读取任务节点业务表单：绑定 + definition + 当前数据（草稿或已提交）。
+     * <p>
+     * 越权边界（与 {@code TaskActionService} 办理校验同语义，fail closed）：
+     * 任务办理人（assignee/candidate）或实例发起人可读；写入（草稿）仅限办理人。
+     * </p>
      */
     @GetMapping("/tasks/{taskId}/node-form")
     public R<Map<String, Object>> getTaskNodeForm(@PathVariable String taskId) {
@@ -60,6 +64,7 @@ public class BpmNodeFormController {
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
         BpmInstance instance = bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在"));
+        assertNodeFormReadable(task, instance);
         Map<String, Object> result = new LinkedHashMap<>();
         Optional<NodeFormDataService.NodeFormBinding> binding = nodeFormDataService.resolveBinding(
                 task.getProcessDefinitionKey(), instance.getDefVersion(), task.getTaskDefinitionKey());
@@ -87,7 +92,7 @@ public class BpmNodeFormController {
     }
 
     /**
-     * 保存草稿（DRAFT；已最终提交的任务拒绝改写）。
+     * 保存草稿（DRAFT；已最终提交的任务拒绝改写；仅任务办理人可写）。
      */
     @PostMapping("/tasks/{taskId}/node-form/draft")
     public R<Long> saveDraft(@PathVariable String taskId,
@@ -96,6 +101,7 @@ public class BpmNodeFormController {
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
         BpmInstance instance = bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在"));
+        assertNodeFormWritable(task);
         Optional<NodeFormDataService.NodeFormBinding> binding = nodeFormDataService.resolveBinding(
                 task.getProcessDefinitionKey(), instance.getDefVersion(), task.getTaskDefinitionKey());
         if (binding.isEmpty()) {
@@ -132,9 +138,53 @@ public class BpmNodeFormController {
             item.put("formVersion", row.getFormVersion());
             item.put("status", row.getStatus());
             item.put("data", nodeFormDataService.parseData(row.getDataText()));
-            item.put("submittedBy", row.getSubmittedBy());
-            item.put("submitTime", row.getSubmitTime());
-            return item;
-        }).toList());
+        item.put("submittedBy", row.getSubmittedBy());
+        item.put("submitTime", row.getSubmitTime());
+        return item;
+    }).toList());
+    }
+
+    // ==================== 越权边界 ====================
+
+    /** 当前登录用户 ID（未登录= null）。 */
+    private Long currentUserId() {
+        return LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
+    }
+
+    /**
+     * 读取边界：任务办理人（assignee/candidate）或实例发起人；无法判定时 fail closed。
+     */
+    private void assertNodeFormReadable(BpmTaskDTO task, BpmInstance instance) {
+        Long userId = currentUserId();
+        if (userId == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED);
+        }
+        boolean assigned = String.valueOf(userId).equals(task.getAssignee());
+        boolean canHandle = bpmTaskFacade.canHandle(task.getTaskId(), String.valueOf(userId))
+                .orElse(Boolean.FALSE);
+        boolean initiator = instance.getInitiatorId() != null && userId.equals(instance.getInitiatorId());
+        if (!assigned && !canHandle && !initiator) {
+            log.warn("节点表单读取越权拒绝: taskId={}, assignee={}, currentUserId={}",
+                    task.getTaskId(), task.getAssignee(), userId);
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权查看该任务节点表单");
+        }
+    }
+
+    /**
+     * 写入边界（草稿/最终提交）：仅任务办理人；无法判定时 fail closed（与办理校验同语义）。
+     */
+    private void assertNodeFormWritable(BpmTaskDTO task) {
+        Long userId = currentUserId();
+        if (userId == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED);
+        }
+        boolean assigned = String.valueOf(userId).equals(task.getAssignee());
+        boolean canHandle = bpmTaskFacade.canHandle(task.getTaskId(), String.valueOf(userId))
+                .orElse(Boolean.FALSE);
+        if (!assigned && !canHandle) {
+            log.warn("节点表单写入越权拒绝: taskId={}, assignee={}, currentUserId={}",
+                    task.getTaskId(), task.getAssignee(), userId);
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权填写该任务节点表单");
+        }
     }
 }
