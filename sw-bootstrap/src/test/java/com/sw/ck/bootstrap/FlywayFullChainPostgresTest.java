@@ -167,7 +167,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立基线库应成功");
-        assertEquals(14, first.migrationsExecuted, "基线库应含 14 条，实际: " + first.migrationsExecuted);
+        assertEquals(17, first.migrationsExecuted, "基线库应含 17 条（V0.1.0—V0.1.9 + 7 R__），实际: " + first.migrationsExecuted);
 
         try (Connection conn = DriverManager.getConnection(tamperedUrl, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {
