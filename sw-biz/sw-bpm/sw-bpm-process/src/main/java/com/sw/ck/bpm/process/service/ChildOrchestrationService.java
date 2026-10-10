@@ -304,6 +304,14 @@ public class ChildOrchestrationService {
 
     /** 有效完成 + 所需回写提交（A06：稳定行身份 + 版本守卫，允许字段受控）。 */
     private void applyWriteback(BpmChildItem item, BpmChildBatch batch, BpmInstance child) {
+        applyWriteback(item, batch, child, false);
+    }
+
+    /**
+     * @param recovery 恢复重放（人工决策后按当前权威版本应用，不设冻结版本守卫）
+     */
+    private void applyWriteback(BpmChildItem item, BpmChildBatch batch, BpmInstance child,
+                                boolean recovery) {
         ActionConfig action = parseConfig(batch.getConfigJson());
         ActionConfig.WriteBackConfig wb = action == null ? null : action.getWriteBack();
         if (wb == null) {
@@ -389,7 +397,7 @@ public class ChildOrchestrationService {
             FormDataWritebackFacade.WritebackResult outcome = writebackFacade.applyWriteback(
                     new FormDataWritebackFacade.WritebackRequest(child.getTenantId(),
                             parent.getFormKey(), batch.getSourceRecordId(), null, null,
-                            batch.getSourceRecordVersion(), mainFields, child.getInitiatorId())).orElse(null);
+                            (recovery ? null : batch.getSourceRecordVersion()), mainFields, child.getInitiatorId())).orElse(null);
             if (outcome == null || FormDataWritebackFacade.WritebackResult.NOT_FOUND
                     .equals(outcome.status())) {
                 item.setStatus(BpmChildItem.STATUS_FAILED);
@@ -447,9 +455,27 @@ public class ChildOrchestrationService {
         return matched;
     }
 
+    /**
+     * 恢复重放辅助：清空冻结来源行集合中的版本（保留行身份），
+     * 使回写按当前权威版本应用（人工决策后的受控恢复）。
+     */
+    private String clearFrozenVersions(String sourceRowsJson) {
+        if (sourceRowsJson == null || sourceRowsJson.isBlank()) {
+            return sourceRowsJson;
+        }
+        try {
+            List<Map<String, Object>> rows = objectMapper.readValue(sourceRowsJson,
+                    new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+            rows.forEach(row -> row.put("version", null));
+            return safeJson(rows);
+        } catch (Exception e) {
+            log.warn("来源行版本清理失败（保持原冻结值）: error={}", e.getMessage());
+            return sourceRowsJson;
+        }
+    }
+
     /** 本项授权来源行集合（source_rows_json 优先；旧行回退单值 source_row_id）。 */
-    private Set<String> authorizedRowIds(BpmChildItem item) {
-        Set<String> ids = new LinkedHashSet<>();
+    private Set<String> authorizedRowIds(BpmChildItem item) {        Set<String> ids = new LinkedHashSet<>();
         String json = item.getSourceRowsJson();
         if (json != null && !json.isBlank()) {
             try {
@@ -560,7 +586,8 @@ public class ChildOrchestrationService {
      */
     private void settleBatch(Long batchId) {
         BpmChildBatch batch = batchMapper.selectById(batchId);
-        if (batch == null || !BpmChildBatch.STATUS_WAITING.equals(batch.getStatus())) {
+        if (batch == null || !(BpmChildBatch.STATUS_WAITING.equals(batch.getStatus())
+                || BpmChildBatch.STATUS_BLOCKED.equals(batch.getStatus()))) {
             return;
         }
         List<BpmChildItem> items = itemMapper.selectList(Wrappers.<BpmChildItem>lambdaQuery()
@@ -597,7 +624,7 @@ public class ChildOrchestrationService {
         if (settled) {
             int updated = batchMapper.update(null, Wrappers.<BpmChildBatch>lambdaUpdate()
                     .eq(BpmChildBatch::getId, batchId)
-                    .eq(BpmChildBatch::getStatus, BpmChildBatch.STATUS_WAITING)
+                    .in(BpmChildBatch::getStatus, BpmChildBatch.STATUS_WAITING, BpmChildBatch.STATUS_BLOCKED)
                     .set(BpmChildBatch::getStatus, BpmChildBatch.STATUS_SETTLED)
                     .set(BpmChildBatch::getSettledCount, successes)
                     .set(BpmChildBatch::getSettledAt, LocalDateTime.now()));
@@ -611,7 +638,7 @@ public class ChildOrchestrationService {
         if (POLICY_ALL.equals(policy) && open == 0 && firstBlockReason != null) {
             batchMapper.update(null, Wrappers.<BpmChildBatch>lambdaUpdate()
                     .eq(BpmChildBatch::getId, batchId)
-                    .eq(BpmChildBatch::getStatus, BpmChildBatch.STATUS_WAITING)
+                    .in(BpmChildBatch::getStatus, BpmChildBatch.STATUS_WAITING, BpmChildBatch.STATUS_BLOCKED)
                     .set(BpmChildBatch::getStatus, BpmChildBatch.STATUS_BLOCKED)
                     .set(BpmChildBatch::getBlockReason, truncate(firstBlockReason, 500)));
             log.info("子流程批次阻断: batchKey={}, reason={}", batch.getBatchKey(), firstBlockReason);
@@ -799,11 +826,10 @@ public class ChildOrchestrationService {
         }
         // 恢复重放：清空冻结版本守卫（按当前权威版本应用，人工决策后生效）
         item.setSourceRowVersion(null);
-        applyWriteback(item, batch, child);
+        item.setSourceRowsJson(clearFrozenVersions(item.getSourceRowsJson()));
+        applyWriteback(item, batch, child, true);
         itemMapper.updateById(item);
-        if (BpmChildBatch.STATUS_WAITING.equals(batch.getStatus())) {
-            settleBatch(batch.getId());
-        }
+        settleBatch(batch.getId());
         return new WritebackRetryOutcome(item.getStatus(),
                 BpmChildItem.STATUS_WRITTEN.equals(item.getStatus())
                         ? "回写已按当前版本应用" : "回写仍被挂起: " + item.getErrorText());

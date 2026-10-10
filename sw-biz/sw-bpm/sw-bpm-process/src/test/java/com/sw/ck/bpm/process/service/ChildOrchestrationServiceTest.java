@@ -332,6 +332,48 @@ class ChildOrchestrationServiceTest {
     }
 
     @Test
+    @DisplayName("回写冲突受控恢复（多行冻结集合）：重放清空 source_rows_json 内冻结版本，按当前权威版本应用")
+    void retryWritebackClearsFrozenVersionsInRowSet() {
+        BpmChildBatch batch = waitingBatch("ALL", 1, null);
+        batch.setExpectedCount(1);
+        BpmChildItem conflict = dispatchedItem(batch.getId(), "row-b", "row-b", 4L);
+        conflict.setId(998L);
+        conflict.setStatus(BpmChildItem.STATUS_CONFLICT);
+        conflict.setErrorText("回写与父记录当前版本冲突");
+        conflict.setSourceRowsJson("[{\"rowId\":\"row-b\",\"version\":4}]");
+        when(itemMapper.selectById(conflict.getId())).thenReturn(conflict);
+        when(itemMapper.selectList(any())).thenReturn(List.of(conflict));
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        when(bpmInstanceService.findByBusinessKey("rec-row-b")).thenReturn(Optional.of(child("rec-row-b")));
+        when(nodeFormDataService.listSubmittedByNode(eq(9L), anyString(), eq("node_result")))
+                .thenReturn(List.of(submitted(2L,
+                        "{\"result_table\":[{\"id\":\"row-b\",\"feedback\":\"OK\"}]}")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 9L)));
+        when(itemMapper.update(any(), any())).thenReturn(1);
+        when(batchMapper.update(any(), any())).thenReturn(1);
+
+        ChildOrchestrationService.WritebackRetryOutcome outcome =
+                service.retryWriteback(9L, conflict.getId(), 7L);
+
+        assertThat(outcome.status()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
+        ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
+                ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
+        verify(writebackFacade, org.mockito.Mockito.times(2)).applyWriteback(captor.capture());
+        assertThat(captor.getAllValues().get(0).rowId()).isEqualTo("row-b");
+        assertThat(captor.getAllValues().get(0).expectedRowVersion()).isNull();
+        // 主记录写回同样按当前权威版本应用（恢复重放不设冻结守卫）
+        assertThat(captor.getAllValues().get(1).tableField()).isNull();
+        assertThat(captor.getAllValues().get(1).expectedRowVersion()).isNull();
+        // 冻结集合内版本同样被清理（保留行身份）
+        assertThat(conflict.getSourceRowsJson()).contains("row-b").doesNotContain("4");
+        // 恢复成功后重新结算（BLOCKED 批次在全项成功后可结算）
+        verify(batchMapper).update(any(), any());
+    }
+
+    @Test
     @DisplayName("回写冲突受控恢复：仅 CONFLICT 项可按当前版本重放；重放后重新结算")
     void retryWritebackReplaysConflictItemWithCurrentVersion() {
         BpmChildBatch batch = waitingBatch("ALL", 1, null);
