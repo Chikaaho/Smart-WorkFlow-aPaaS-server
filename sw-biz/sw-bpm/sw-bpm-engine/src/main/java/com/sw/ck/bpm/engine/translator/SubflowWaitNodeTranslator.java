@@ -93,8 +93,10 @@ public class SubflowWaitNodeTranslator implements NodeTypeTranslator {
         // 令牌到达时回调编排域端口，引用批次已全部结算则立即唤醒，否则挂起
         FlowableListener listener = new FlowableListener();
         listener.setEvent("start");
-        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION);
-        listener.setImplementation("${" + WAIT_LISTENER_BEAN + "}");
+        // 类委托（Flowable 反射实例化，经静态桥接转发到 Spring 单例）：
+        // 避免表达式 bean 解析在部分引擎配置下不可用
+        listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_CLASS);
+        listener.setImplementation(com.sw.ck.bpm.engine.listener.SubflowWaitListener.class.getName());
         receiveTask.getExecutionListeners().add(listener);
         return receiveTask;
     }

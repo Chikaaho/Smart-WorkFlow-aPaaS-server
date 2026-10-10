@@ -23,7 +23,7 @@ class SubflowWaitNodeTranslatorTest {
     private final SubflowWaitNodeTranslator translator = new SubflowWaitNodeTranslator();
 
     @Test
-    @DisplayName("翻译为 ReceiveTask 并挂载 start 执行监听（subflowWaitListener）")
+    @DisplayName("翻译为 ReceiveTask 并挂载 start 执行监听（类委托）")
     void translatesToReceiveTaskWithStartListener() {
         GraphElement node = GraphElement.builder()
                 .id("wait_1")
@@ -42,7 +42,7 @@ class SubflowWaitNodeTranslatorTest {
         assertThat(receiveTask.getExecutionListeners()).hasSize(1);
         assertThat(receiveTask.getExecutionListeners().get(0).getEvent()).isEqualTo("start");
         assertThat(receiveTask.getExecutionListeners().get(0).getImplementation())
-                .isEqualTo("${subflowWaitListener}");
+                .isEqualTo("com.sw.ck.bpm.engine.listener.SubflowWaitListener");
     }
 
     @Test
