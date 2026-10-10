@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
@@ -76,6 +77,18 @@ class PostDelegateParticipantResolverTest {
         NodeParticipantContext missingTenant = context("P_LEAD");
         missingTenant.setTenantId(null);
         assertThat(withFacade.resolve(missingTenant).orElseThrow()).containsExactly("11");
+    }
+
+    @Test
+    @DisplayName("委托链越界传播：超4跳/循环/空缺异常原样上抛 → 参与人解析失败，节点不产生任务不推进")
+    void facadeFailurePropagatesSoNodeDoesNotAdvance() {
+        when(facade.resolvePostActors(eq(9L), eq(List.of("P_LEAD")), eq((Long) null)))
+                .thenThrow(new IllegalStateException(
+                        "岗位委托链超过最大 4 跳，解析终止，请修正委托配置"));
+
+        assertThatThrownBy(() -> resolver.resolve(context("P_LEAD")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("超过最大 4 跳");
     }
 
     private NodeParticipantContext context(Object strategyValue) {

@@ -179,6 +179,25 @@ public class BpmTodoController {
     }
 
     /**
+     * 候选领取（P64 阶段Ⅱ A07/A11）：候选组任务唯一合法办理入口——先领取、后查看/办理。
+     * <p>
+     * 仅候选人可领取；领取即竞争定胜负（其余候选链接移除，失败方待办不再可见、
+     * 无办理权）。领取后任务 assignee=本人，详情/节点表单/办理沿既有 assignee 权限链，
+     * 不放宽任何读取授权。
+     * </p>
+     */
+    @Transactional
+    @PostMapping("/{taskId}/claim")
+    public R<Void> claim(@PathVariable String taskId) {
+        LoginUser loginUser = LoginUserHolder.get();
+        bpmTaskFacade.claimTask(taskId, String.valueOf(loginUser.getUserId()))
+                .orElseThrow(() -> new IllegalStateException(
+                        "BpmTaskFacade#claimTask 契约恒 present，empty 属契约违约"));
+        log.info("候选任务已领取: taskId={}, userId={}", taskId, loginUser.getUserId());
+        return R.ok();
+    }
+
+    /**
      * 任务详情。
      * <p>
      * 运行期任务优先（待办视角）；已完成任务回落已完成历史查询（已办视角，只读，
@@ -393,6 +412,9 @@ public class BpmTodoController {
         TodoTaskRespDTO dto = new TodoTaskRespDTO();
         dto.setTaskId(task.getTaskId());
         dto.setProcessInstanceId(task.getProcessInstanceId());
+        // P64 阶段Ⅱ：待办查询含候选组任务（candidateOrAssigned），assignee 为空即候选任务，
+        // 前端展示「领取」入口而非直接办理按钮
+        dto.setCandidate(task.getAssignee() == null);
 
         if (task.getCreateTime() != null) {
             dto.setCreateTime(LocalDateTime.ofInstant(

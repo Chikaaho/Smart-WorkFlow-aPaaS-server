@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -408,6 +409,376 @@ class ChildOrchestrationServiceTest {
         ChildOrchestrationService.WritebackRetryOutcome skipped =
                 service.retryWriteback(9L, written.getId(), 7L);
         assertThat(skipped.status()).isEqualTo("SKIP");
+    }
+
+    // ==================== P64 二级提示02：合法K阈值 / NONE真实结算 / 取消终态失权 / 行身份边界 / 护栏 ====================
+
+    @Test
+    @DisplayName("COUNT 合法K（未达阈值）：成功数 < K 不结算、不唤醒等待节点（失败不凑数）")
+    void countPolicy_belowKDoesNotSettleOrSignal() {
+        BpmChildBatch batch = waitingBatch("COUNT", 2, null);
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        when(itemMapper.selectList(any())).thenReturn(List.of(
+                writtenItem(batch.getId(), "row-a"),
+                dispatchedItem(batch.getId(), "row-b", "row-b", 4L)));
+
+        service.settleForTest(batch.getId());
+
+        verify(batchMapper, never()).update(any(), any());
+        verify(bpmRuntimeFacade, never()).signalWaitNode(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("COUNT 合法K（失败不凑数）：FAILED+WRITTEN 成功数1 < K=2 → 不结算不唤醒")
+    void countPolicy_failureDoesNotCountTowardK() {
+        BpmChildBatch batch = waitingBatch("COUNT", 2, null);
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        when(itemMapper.selectList(any())).thenReturn(List.of(
+                failedItem(batch.getId(), "row-a", "子流程终态 REJECTED，不计有效完成"),
+                writtenItem(batch.getId(), "row-b")));
+
+        service.settleForTest(batch.getId());
+
+        verify(batchMapper, never()).update(any(), any());
+        verify(bpmRuntimeFacade, never()).signalWaitNode(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("COUNT 达到K且所需回写成功：只结算推进一次；此后迟到完成记 LATE，不改已用结果、不重复回写/唤醒")
+    void countPolicy_reachesKSettlesOnceAndLateNeverRetouchesUsedResults() {
+        BpmChildBatch batch = waitingBatch("COUNT", 1, null);
+        BpmChildBatch settled = settledBatch("COUNT", 1);
+        settled.setId(batch.getId());
+        // 时点序列：终态A循环(WAITING) → 结算读批(WAITING) → 迟到B循环(SETTLED)
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch, batch, settled);
+        BpmChildItem itemA = dispatchedItem(batch.getId(), "row-a", "row-a", 3L);
+        BpmChildItem itemB = dispatchedItem(batch.getId(), "row-b", "row-b", 4L);
+        // 终态循环(1) + 结算读项(2) + 迟到终态循环(3)：模拟 DB 按 status=DISPATCHED 过滤的时点状态
+        when(itemMapper.selectList(any()))
+                .thenReturn(List.of(itemA, itemB), List.of(itemA, itemB), List.of(itemB));
+        BpmInstance childA = child("rec-a");
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(submitted(1L, "{\"result_table\":[{\"id\":\"row-a\",\"feedback\":\"OK-A\"}],\"summary_text\":\"done-A\"}")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 5L)));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+        when(itemMapper.update(any(), any())).thenReturn(1);
+
+        service.onChildProcessTerminal(childA, "APPROVED");
+
+        // 达 K=1：结算一次（状态守卫 UPDATE + 唤醒恰一次），成功数=1
+        verify(batchMapper, times(1)).update(any(), any());
+        verify(bpmRuntimeFacade, times(1)).signalWaitNode(eq("p1"), eq("wait_1"));
+        String usedWritebackJson = itemA.getWritebackJson();
+        assertThat(itemA.getStatus()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
+
+        // 迟到完成：LATE 留痕；不再回写、不再结算/唤醒、已用结果不被改写
+        service.onChildProcessTerminal(child("rec-b"), "APPROVED");
+
+        assertThat(itemB.getStatus()).isEqualTo(BpmChildItem.STATUS_LATE);
+        assertThat(itemB.getWritebackJson()).isNotBlank();
+        verify(writebackFacade, times(2)).applyWriteback(any()); // 仅 itemA 行级+主记录
+        verify(batchMapper, times(1)).update(any(), any());
+        verify(bpmRuntimeFacade, times(1)).signalWaitNode(anyString(), anyString());
+        assertThat(itemA.getWritebackJson()).isEqualTo(usedWritebackJson);
+        assertThat(itemA.getStatus()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
+    }
+
+    @Test
+    @DisplayName("NONE：冻结登记为 WAITING（可靠意图提交前不推进）；登记完成后经真实结算通道结算一次")
+    void nonePolicy_settleChannelThroughRealServiceAfterItemsRegistered() {
+        when(batchMapper.selectCount(any())).thenReturn(0L);
+        when(batchMapper.selectOne(any())).thenReturn(null);
+        when(writebackFacade.readVersion(eq(9L), eq("parent_form"), eq("rec-1"), isNull(), isNull()))
+                .thenReturn(Optional.of(7L));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.getArgument(0, BpmChildBatch.class).setId(300L);
+            return 1;
+        }).when(batchMapper).insert(any(BpmChildBatch.class));
+        when(batchMapper.updateById(any(BpmChildBatch.class))).thenReturn(1);
+
+        BpmInstance parent = parent();
+        BpmChildBatch batch = service.freezeBatch(parent, "trg",
+                childAction("act", "NONE", null), "TRG:p1:trg:1:1", 2, 1L, "parent_form", 9L);
+
+        // 派发意图提交（冻结登记）≠ 结算：批次保持 WAITING，结算只经显式 settleIfNone 通道
+        assertThat(batch.getStatus()).isEqualTo(BpmChildBatch.STATUS_WAITING);
+        verify(batchMapper, never()).update(any(), any());
+
+        when(batchMapper.selectById(300L)).thenReturn(batch);
+        when(itemMapper.selectList(any())).thenReturn(List.of(
+                dispatchedItem(300L, "row-a", "row-a", 3L),
+                dispatchedItem(300L, "row-b", "row-b", 4L)));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(batchMapper.update(any(), any())).thenReturn(1);
+
+        service.settleIfNone(batch);
+
+        verify(batchMapper, times(1)).update(any(), any());
+        verify(bpmRuntimeFacade, times(1)).signalWaitNode(eq("p1"), eq("wait_1"));
+    }
+
+    @Test
+    @DisplayName("NONE：结算后迟到反馈版本化留痕（writeback_json/source/time），不应用回写、不覆盖父完成快照")
+    void nonePolicy_lateFeedbackVersionedTraceOnly() {
+        BpmChildBatch settled = waitingBatch("NONE", null, null);
+        settled.setId(301L);
+        settled.setStatus(BpmChildBatch.STATUS_SETTLED);
+        when(batchMapper.selectById(301L)).thenReturn(settled);
+        BpmChildItem late = dispatchedItem(301L, "row-a", "row-a", 3L);
+        when(itemMapper.selectList(any())).thenReturn(List.of(late));
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(submitted(1L, "{\"result_table\":[{\"id\":\"row-a\",\"feedback\":\"迟到值\"}],\"summary_text\":\"late\"}")));
+
+        service.onChildProcessTerminal(child("rec-a"), "APPROVED");
+
+        assertThat(late.getStatus()).isEqualTo(BpmChildItem.STATUS_LATE);
+        assertThat(late.getWritebackJson()).contains("迟到值");
+        assertThat(late.getWritebackSource()).contains("child=").contains("batch=");
+        assertThat(late.getWritebackTime()).isNotNull();
+        verify(writebackFacade, never()).applyWriteback(any());
+        verify(bpmRuntimeFacade, never()).signalWaitNode(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("取消终态实值捕获：批次 CANCELLED、未完成项 REFUSED、失权原因可读（非 verify update(any)）")
+    void cancelCapturesRealTerminalStateValues() {
+        BpmChildBatch batch = waitingBatch("ALL", 2, null);
+        when(batchMapper.selectList(any())).thenReturn(List.of(batch));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+        when(itemMapper.update(any(), any())).thenReturn(1);
+
+        service.cancelBatchesForParent(parent(), "RETURNED");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildBatch>> batchCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(batchMapper).update(isNull(), batchCaptor.capture());
+        assertThat(((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+                batchCaptor.getValue()).getParamNameValuePairs().values())
+                .contains(BpmChildBatch.STATUS_CANCELLED)
+                .anySatisfy(value -> String.valueOf(value).contains("失去写回推进权"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildItem>> itemCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(itemMapper).update(isNull(), itemCaptor.capture());
+        assertThat(((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+                itemCaptor.getValue()).getParamNameValuePairs().values())
+                .contains(BpmChildItem.STATUS_REFUSED)
+                .anySatisfy(value -> String.valueOf(value).contains("失去向当前轮次写回/推进的资格"));
+    }
+
+    @Test
+    @DisplayName("旧批次回调失权：已取消批次的迟到终态 → REFUSED+留痕，回写0、唤醒0；新轮次批次不受污染照常结算")
+    void terminalOnCancelledBatchLosesRightsAndNewRoundUnaffected() {
+        BpmChildBatch cancelledOld = waitingBatch("ALL", 2, null);
+        cancelledOld.setId(400L);
+        cancelledOld.setStatus(BpmChildBatch.STATUS_CANCELLED);
+        BpmChildItem oldItem = dispatchedItem(400L, "row-a", "row-a", 3L);
+        when(batchMapper.selectById(400L)).thenReturn(cancelledOld);
+        when(itemMapper.selectList(any())).thenReturn(List.of(oldItem));
+        when(nodeFormDataService.listSubmittedByNode(eq(9L), anyString(), eq("node_result")))
+                .thenReturn(List.of(submitted(1L, "{\"result_table\":[{\"id\":\"row-a\",\"feedback\":\"旧轮次结果\"}]}")));
+
+        service.onChildProcessTerminal(child("rec-a"), "APPROVED");
+
+        assertThat(oldItem.getStatus()).isEqualTo(BpmChildItem.STATUS_REFUSED);
+        assertThat(oldItem.getWritebackJson()).contains("旧轮次结果");
+        verify(writebackFacade, never()).applyWriteback(any());
+        verify(bpmRuntimeFacade, never()).signalWaitNode(anyString(), anyString());
+
+        // 新轮次（round=2）WAITING 批次：同父新子完成照常回写+结算推进，旧对象不被触碰
+        BpmChildBatch newRound = waitingBatch("ALL", null, null);
+        newRound.setId(401L);
+        newRound.setRoundNo(2L);
+        newRound.setExpectedCount(1);
+        BpmChildItem newItem = dispatchedItem(401L, "row-b", "row-b", 4L);
+        when(batchMapper.selectById(401L)).thenReturn(newRound);
+        when(itemMapper.selectList(any())).thenReturn(List.of(newItem));
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(submitted(2L, "{\"result_table\":[{\"id\":\"row-b\",\"feedback\":\"NEW\"}],\"summary_text\":\"r2\"}")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 6L)));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+
+        service.onChildProcessTerminal(child("rec-b"), "APPROVED");
+
+        assertThat(newItem.getStatus()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
+        assertThat(newItem.getWritebackJson()).contains("NEW");
+        verify(writebackFacade, times(2)).applyWriteback(any()); // 仅新轮次行级+主记录
+        verify(bpmRuntimeFacade, times(1)).signalWaitNode(eq("p1"), eq("wait_1"));
+    }
+
+    @Test
+    @DisplayName("行身份边界（排序改变）：提交行序倒置仍按冻结行ID+逐行版本回写，不错行不串版本")
+    void rowWritebackFollowsStableRowIdentityRegardlessOfSubmissionOrder() {
+        BpmChildBatch batch = waitingBatch("ALL", null, null);
+        batch.setExpectedCount(1);
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        BpmChildItem item = dispatchedItem(batch.getId(), "group-owner", null, null);
+        // 冻结授权行集：row-a v3、row-b v4（父表后续按 row-b,row-a 展示/排序）
+        item.setSourceRowsJson("[{\"rowId\":\"row-a\",\"version\":3},{\"rowId\":\"row-b\",\"version\":4}]");
+        when(itemMapper.selectList(any())).thenReturn(List.of(item));
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(submitted(1L, """
+                        {"result_table":[{"id":"row-b","feedback":"OK-B"},
+                                         {"id":"row-a","feedback":"OK-A"}],
+                         "summary_text":"done"}""")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 5L)));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+        when(itemMapper.update(any(), any())).thenReturn(1);
+
+        service.onChildProcessTerminal(child("rec-group"), "APPROVED");
+
+        ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
+                ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
+        verify(writebackFacade, times(3)).applyWriteback(captor.capture());
+        List<FormDataWritebackFacade.WritebackRequest> rowRequests = captor.getAllValues().stream()
+                .filter(request -> request.tableField() != null).toList();
+        assertThat(rowRequests).extracting(FormDataWritebackFacade.WritebackRequest::rowId)
+                .containsExactlyInAnyOrder("row-a", "row-b");
+        assertThat(rowRequests).filteredOn(request -> "row-a".equals(request.rowId()))
+                .singleElement()
+                .satisfies(request -> {
+                    assertThat(request.expectedRowVersion()).isEqualTo(3L);
+                    assertThat(request.fields()).containsEntry("feedback", "OK-A");
+                });
+        assertThat(rowRequests).filteredOn(request -> "row-b".equals(request.rowId()))
+                .singleElement()
+                .satisfies(request -> {
+                    assertThat(request.expectedRowVersion()).isEqualTo(4L);
+                    assertThat(request.fields()).containsEntry("feedback", "OK-B");
+                });
+    }
+
+    @Test
+    @DisplayName("行身份边界（重复提交）：同一行在结果表格重复出现仅回写一次，不产生重复副作用")
+    void duplicateRowInResultWritesBackOncePerRow() {
+        BpmChildBatch batch = waitingBatch("ALL", 1, null);
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        BpmChildItem item = dispatchedItem(batch.getId(), "row-a", "row-a", 3L);
+        when(itemMapper.selectList(any())).thenReturn(List.of(item));
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(submitted(1L, """
+                        {"result_table":[{"id":"row-a","feedback":"first"},
+                                         {"id":"row-a","feedback":"second"}],
+                         "summary_text":"done"}""")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 5L)));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+        when(itemMapper.update(any(), any())).thenReturn(1);
+
+        service.onChildProcessTerminal(child("rec-a"), "APPROVED");
+
+        ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
+                ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
+        verify(writebackFacade, times(2)).applyWriteback(captor.capture()); // 1行级+1主记录
+        assertThat(captor.getAllValues().stream().filter(r -> r.tableField() != null)).hasSize(1);
+        assertThat(captor.getAllValues().get(0).fields()).containsEntry("feedback", "first");
+    }
+
+    @Test
+    @DisplayName("行身份边界（旧轮次）：旧轮次提交不覆盖当前权威结果，回写取当前轮次提交值且只应用一次")
+    void staleRoundResultDoesNotOverwriteCurrentRoundWriteback() {
+        BpmChildBatch batch = waitingBatch("ALL", 1, null);
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        BpmChildItem item = dispatchedItem(batch.getId(), "row-a", "row-a", 3L);
+        when(itemMapper.selectList(any())).thenReturn(List.of(item));
+        // 同节点两轮提交：round=1 旧值在前、round=2 当前值在后 → latestSubmitted 取当前轮次
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(
+                        submitted(1L, "{\"result_table\":[{\"id\":\"row-a\",\"feedback\":\"旧轮次\"}],\"summary_text\":\"old\"}"),
+                        submitted(2L, "{\"result_table\":[{\"id\":\"row-a\",\"feedback\":\"当前轮次\"}],\"summary_text\":\"new\"}")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 5L)));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+        when(itemMapper.update(any(), any())).thenReturn(1);
+
+        service.onChildProcessTerminal(child("rec-a"), "APPROVED");
+
+        ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
+                ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
+        verify(writebackFacade, times(2)).applyWriteback(captor.capture());
+        assertThat(captor.getAllValues().get(0).fields()).containsEntry("feedback", "当前轮次");
+        assertThat(captor.getAllValues().get(1).fields()).containsEntry("summary", "new");
+    }
+
+    @Test
+    @DisplayName("重复终态回调：项已 WRITTEN 后同子实例再次回调 → 零回写零唤醒，不重复已生效结果")
+    void duplicateTerminalCallbackDoesNotDoubleWriteback() {
+        BpmChildBatch batch = waitingBatch("ALL", 1, null);
+        batch.setExpectedCount(1);
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        BpmChildItem item = dispatchedItem(batch.getId(), "row-a", "row-a", 3L);
+        // 时点序列：首次终态循环 → 结算读项（仍命中该项）→ 二次终态循环（DB 已无 DISPATCHED 项）
+        when(itemMapper.selectList(any())).thenReturn(List.of(item), List.of(item), List.of());
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(submitted(1L, "{\"result_table\":[{\"id\":\"row-a\",\"feedback\":\"OK\"}],\"summary_text\":\"done\"}")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 5L)));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+        when(itemMapper.update(any(), any())).thenReturn(1);
+
+        service.onChildProcessTerminal(child("rec-a"), "APPROVED");
+        service.onChildProcessTerminal(child("rec-a"), "APPROVED");
+
+        verify(writebackFacade, times(2)).applyWriteback(any()); // 仅首次：行级+主记录
+        verify(bpmRuntimeFacade, times(1)).signalWaitNode(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("根链护栏：同业务根链自动发起实例数达 1000 → 冻结拒绝（CHILD_CHAIN_OVER_LIMIT），不新增批次/项/意图")
+    void rootChainOverLimitRejectsFreezeWithoutBatchOrIntents() {
+        BpmInstance parent = parent();
+        when(itemMapper.selectList(any())).thenReturn(List.of());
+        when(batchMapper.selectCount(any())).thenReturn(1000L);
+
+        assertThatThrownBy(() -> service.freezeBatch(parent, "trg",
+                childAction("act_all", "ALL", null), "TRG:p1:trg:1:1", 3, 1L, "parent_form", 9L))
+                .isInstanceOfSatisfying(BaseException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(BpmErrorCode.CHILD_CHAIN_OVER_LIMIT.getCode()));
+
+        verify(batchMapper, never()).insert(any(BpmChildBatch.class));
+        verify(itemMapper, never()).insert(any(BpmChildItem.class));
+        verify(bpmRuntimeFacade, never()).signalWaitNode(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("嵌套硬上限8：配置抬高到10仍按硬钳8拒绝（父批次深度7→本次深度8），不新增批次/项")
+    void hardNestingCapEightBlocksEvenWithRaisedConfig() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "configuredMaxNesting", 10);
+        BpmChildItem parentItem = itemWithBatch(7);
+        when(itemMapper.selectList(any())).thenReturn(List.of(parentItem));
+        when(batchMapper.selectCount(any())).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.freezeBatch(parent(), "trg",
+                childAction("act_all", "ALL", null), "TRG:x:1", 2, 1L, "parent_form", 9L))
+                .isInstanceOfSatisfying(BaseException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(BpmErrorCode.CHILD_NESTING_OVER_LIMIT.getCode()));
+
+        verify(batchMapper, never()).insert(any(BpmChildBatch.class));
+        verify(itemMapper, never()).insert(any(BpmChildItem.class));
     }
 
     // ==================== 工具 ====================

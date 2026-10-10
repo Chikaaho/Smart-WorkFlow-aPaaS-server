@@ -138,6 +138,50 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
+    public Optional<MutationOutcome> claimTask(String taskId, String userId) {
+        if (isBlank(taskId) || isBlank(userId)) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+                    "任务标识或用户标识缺失，无法领取");
+        }
+        synchronized (lockFor(taskId)) {
+            Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
+            if (task == null) {
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务不存在或已被处理: " + taskId);
+            }
+            if (task.getAssignee() != null && !task.getAssignee().isBlank()) {
+                // 竞争单结果：先到先得，后领取方确定性失败且不产生任何状态变化
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务已被领取: 当前办理人 " + task.getAssignee());
+            }
+            boolean candidate = taskService.createTaskQuery().taskId(taskId)
+                    .taskCandidateOrAssigned(userId).singleResult() != null;
+            if (!candidate) {
+                throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.FORBIDDEN.getCode(),
+                        "无权领取该任务（当前用户不是候选）");
+            }
+            taskService.claim(taskId, userId);
+            // 领取即收窄：移除其余候选链接，失败方待办不再可见、办理权随候选链接移除
+            for (org.flowable.identitylink.api.IdentityLink link
+                    : taskService.getIdentityLinksForTask(taskId)) {
+                if (!org.flowable.identitylink.api.IdentityLinkType.CANDIDATE.equals(link.getType())) {
+                    continue;
+                }
+                if (link.getUserId() != null && !userId.equals(link.getUserId())) {
+                    taskService.deleteUserIdentityLink(taskId, link.getUserId(),
+                            org.flowable.identitylink.api.IdentityLinkType.CANDIDATE);
+                }
+                if (link.getGroupId() != null) {
+                    taskService.deleteGroupIdentityLink(taskId, link.getGroupId(),
+                            org.flowable.identitylink.api.IdentityLinkType.CANDIDATE);
+                }
+            }
+        }
+        log.info("BPM task claimed by candidate: taskId={}, userId={}", taskId, userId);
+        return Optional.of(MutationOutcome.APPLIED);
+    }
+
+    @Override
     public Optional<MutationOutcome> completeAsUser(String taskId, String userId, Map<String, Object> variables) {
         Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
         String lockKey = snapshot == null ? "task:" + taskId

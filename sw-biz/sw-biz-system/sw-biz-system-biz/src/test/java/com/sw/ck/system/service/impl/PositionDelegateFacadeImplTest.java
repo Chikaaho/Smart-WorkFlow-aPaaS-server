@@ -121,6 +121,52 @@ class PositionDelegateFacadeImplTest {
         assertThat(result.orElseThrow().userIds()).containsExactly(11L, 12L);
     }
 
+    @Test
+    @DisplayName("超4跳拒绝（运行期纵深防御）：1→2→3→4→5 链解析终止抛可诊断异常，不产出办理人")
+    void chainOverFourHopsRejectedAtRuntime() {
+        when(postMapper.selectOne(any())).thenReturn(post(1L, "P_LEAD"));
+        when(postMapper.selectById(4L)).thenReturn(post(4L, "P_D4"));
+        when(postMapper.selectById(5L)).thenReturn(post(5L, "P_D5"));
+        // 逐跳 ORG 查询（deptId=null 无 DEPT 前置）：1→2、2→3、3→4、4→5
+        when(delegateMapper.selectOne(any())).thenReturn(
+                rule(1L, 2L, "ORG", null),
+                rule(2L, 3L, "ORG", null),
+                rule(3L, 4L, "ORG", null),
+                rule(4L, 5L, "ORG", null));
+
+        assertThatThrownBy(() -> facade.resolvePostActors(9L, List.of("P_LEAD"), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("超过最大 4 跳");
+    }
+
+    @Test
+    @DisplayName("跨租户越权拒绝：受托岗位属其他租户 → 关系失效异常处置，不自动回退、不产出办理人")
+    void crossTenantTargetPostRejectedAtRuntime() {
+        when(postMapper.selectOne(any())).thenReturn(post(1L, "P_LEAD"));
+        SysPost foreign = post(2L, "P_REVIEW");
+        foreign.setTenantId(666L);
+        when(postMapper.selectById(2L)).thenReturn(foreign);
+        when(delegateMapper.selectOne(any())).thenReturn(rule(1L, 2L, "ORG", null));
+
+        assertThatThrownBy(() -> facade.resolvePostActors(9L, List.of("P_LEAD"), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("越权")
+                .hasMessageContaining("不自动回退");
+    }
+
+    @Test
+    @DisplayName("运行期循环拒绝：1→2、2→1 沿链回到已访问岗位 → 循环异常，不产出办理人")
+    void runtimeCycleDetectedInWalkChain() {
+        when(postMapper.selectOne(any())).thenReturn(post(1L, "P_LEAD"));
+        when(delegateMapper.selectOne(any())).thenReturn(
+                rule(1L, 2L, "ORG", null),
+                rule(2L, 1L, "ORG", null));
+
+        assertThatThrownBy(() -> facade.resolvePostActors(9L, List.of("P_LEAD"), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("循环");
+    }
+
     private SysPost post(Long id, String code) {
         SysPost post = new SysPost();
         post.setId(id);

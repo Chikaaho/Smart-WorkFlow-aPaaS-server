@@ -617,4 +617,58 @@ class BpmTodoControllerTest {
             assertThat(result.getData().getRecords().get(0).getEndTime()).isNull();
         }
     }
+
+    @Nested
+    @DisplayName("POST /workflow/tasks/{taskId}/claim（P64 阶段Ⅱ候选领取）")
+    class ClaimTests {
+
+        @Test
+        @DisplayName("候选领取 → 委托 Facade.claimTask 当前登录人，返回成功")
+        void claim_shouldDelegateToFacadeWithLoginUser() {
+            setLoginUser();
+            when(bpmTaskFacade.claimTask("task-001", "2"))
+                    .thenReturn(java.util.Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED));
+
+            R<Void> result = controller.claim("task-001");
+
+            assertThat(result.getCode()).isZero();
+            verify(bpmTaskFacade).claimTask("task-001", "2");
+        }
+
+        @Test
+        @DisplayName("非候选领取 → Facade 抛越权异常原样传播")
+        void claim_nonCandidate_shouldPropagateForbidden() {
+            setLoginUser();
+            when(bpmTaskFacade.claimTask("task-001", "2"))
+                    .thenThrow(new BaseException(
+                            com.sw.ck.common.exception.CommonErrorCode.FORBIDDEN.getCode(),
+                            "无权领取该任务（当前用户不是候选）"));
+
+            assertThatThrownBy(() -> controller.claim("task-001"))
+                    .isInstanceOf(BaseException.class)
+                    .hasMessageContaining("无权领取该任务");
+        }
+
+        @Test
+        @DisplayName("待办列表候选标记：assignee 为空 → candidate=true；已认领 → candidate=false")
+        void todo_shouldExposeCandidateFlag() {
+            setLoginUser();
+            BpmTaskDTO assigned = createTask("task-001");
+            BpmTaskDTO candidate = createTask("task-002");
+            candidate.setAssignee(null);
+
+            when(bpmTaskFacade.queryTodoPage(eq("1"), eq("2"), anyInt(), anyInt()))
+                    .thenReturn(java.util.Optional.of(List.of(assigned, candidate)));
+            when(bpmTaskFacade.countTodo("1", "2")).thenReturn(java.util.Optional.of(2L));
+            when(bpmTaskFacade.getVariable(anyString(), eq("formKey")))
+                    .thenReturn(java.util.Optional.of("test_form"));
+            when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
+
+            R<PageResult<TodoTaskRespDTO>> result = controller.todo(new PageParam());
+
+            assertThat(result.getCode()).isZero();
+            assertThat(result.getData().getRecords().get(0).getCandidate()).isFalse();
+            assertThat(result.getData().getRecords().get(1).getCandidate()).isTrue();
+        }
+    }
 }

@@ -29,11 +29,14 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -193,6 +196,45 @@ class TriggerExecutionServiceChildDispatchTest {
         assertThat(prefilledRowIds)
                 .anySatisfy(ids -> assertThat(ids).containsExactly("row-1", "row-2"))
                 .anySatisfy(ids -> assertThat(ids).containsExactly("row-3"));
+    }
+
+    @Test
+    @DisplayName("派发上限护栏：集合规模超过 maxDispatch → 整体拒绝（OVER_LIMIT），不冻结批次、不登记意图（越界不新增可靠意图/实例）")
+    void childDispatchOverCapRejectedWithoutFreezeOrIntents() {
+        BpmInstance instance = instance();
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graph());
+        when(nodeFormDataService.currentRound("p1")).thenReturn(1L);
+        when(bpmTaskFacade.queryByProcessInstance("p1")).thenReturn(Optional.of(List.of()));
+        when(variableSnapshotService.buildSnapshot(eq(9L), any(), any(), any(), any(), anyLong()))
+                .thenReturn(snapshot(Map.of("var_rows", List.of(
+                        Map.of("id", "row-1", "owner", "2", "feedback", ""),
+                        Map.of("id", "row-2", "owner", "2", "feedback", ""),
+                        Map.of("id", "row-3", "owner", "3", "feedback", "")))));
+
+        ActionConfig capped = childAction();
+        capped.setMaxDispatch(2);
+        ProcessGraph graph = graph();
+        graph.getTriggers().get(0).getBranches().get(0)
+                .setActions(List.of(capped));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graph);
+
+        service.onTaskActionCompleted(instance, task("node_1"), ApprovalAction.APPROVE);
+
+        // 越界：冻结从未发生、意图零新增，拒绝原因可诊断
+        verify(orchestration, never()).freezeBatch(any(), anyString(), any(), anyString(),
+                anyInt(), anyLong(), any(), anyLong());
+        verify(actionRefMapper, never()).insert(any(BpmActionRef.class));
+        ArgumentCaptor<com.sw.ck.bpm.process.entity.BpmTriggerExec> execCaptor =
+                ArgumentCaptor.forClass(com.sw.ck.bpm.process.entity.BpmTriggerExec.class);
+        verify(triggerExecMapper, atLeastOnce()).updateById(execCaptor.capture());
+        java.util.List<String> notes = execCaptor.getAllValues().stream()
+                .map(com.sw.ck.bpm.process.entity.BpmTriggerExec::getErrorText)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        assertThat(notes).anySatisfy(text -> {
+            assertThat(text).contains("超过上限");
+            assertThat(text).contains("OVER_LIMIT");
+        });
     }
 
     /** 分组（按 owner）+ 行级回写配置的父图（子记录表格预填断言用）。 */

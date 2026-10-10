@@ -647,10 +647,16 @@ public class ChildOrchestrationService {
 
     // ==================== 等待节点唤醒 ====================
 
-    /** 等待节点到达（由 SubflowWaitPortImpl 单实现适配器调用；本类不再直接实现端口以避免注入歧义）。 */
-    public void onWaitNodeArrival(Long tenantId, String processInstanceId, String activityId) {
+    /**
+     * 等待节点到达（由 SubflowWaitPortImpl 单实现适配器调用；本类不再直接实现端口以避免注入歧义）。
+     *
+     * @return present = 处置结果（APPLIED 本次已唤醒；ALREADY_APPLIED 合法无操作：保持挂起/
+     *         无等待引用/唤醒目标不在运行期）；empty = 父实例或租户上下文缺失，无法核对
+     */
+    public Optional<com.sw.ck.bpm.api.result.MutationOutcome> onWaitNodeArrival(
+            Long tenantId, String processInstanceId, String activityId) {
         // 令牌到达：引用批次已全部终态则立即唤醒，否则挂起等待结算侧信号
-        signalIfNoOpenBatches(tenantId, processInstanceId, activityId);
+        return signalIfNoOpenBatches(tenantId, processInstanceId, activityId);
     }
 
     /** 批次结算后按父图等待节点引用检查唤醒（只推进一次由节点唤醒幂等保证）。 */
@@ -685,17 +691,18 @@ public class ChildOrchestrationService {
     }
 
     /** 引用批次全部终态时唤醒指定等待节点（幂等；无等待执行流由门面吸收）。 */
-    private void signalIfNoOpenBatches(Long tenantId, String parentInstanceId, String activityId) {
+    private Optional<com.sw.ck.bpm.api.result.MutationOutcome> signalIfNoOpenBatches(
+            Long tenantId, String parentInstanceId, String activityId) {
         BpmInstance parent = bpmInstanceService.findByProcessInstanceId(parentInstanceId)
                 .orElse(null);
         if (parent == null) {
-            return;
+            return Optional.empty();
         }
         ProcessGraph graph = nodeFormDataService.loadGraph(parent.getProcessDefKey(),
                 parent.getDefVersion());
         Set<String> references = waitReferences(graph, activityId);
         if (references.isEmpty()) {
-            return;
+            return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
         }
         boolean anyWaiting = references.stream().anyMatch(actionId ->
                 batchMapper.selectCount(Wrappers.<BpmChildBatch>lambdaQuery()
@@ -706,13 +713,19 @@ public class ChildOrchestrationService {
         if (anyWaiting) {
             log.info("等待节点保持挂起（存在 WAITING 批次）: parent={}, activityId={}",
                     parentInstanceId, activityId);
-            return;
+            return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
         }
-        bpmRuntimeFacade.signalWaitNode(parentInstanceId, activityId).ifPresentOrElse(
-                outcome -> log.info("等待节点唤醒结果: parent={}, activityId={}, outcome={}",
-                        parentInstanceId, activityId, outcome),
-                () -> log.info("等待节点唤醒目标不在运行期: parent={}, activityId={}",
-                        parentInstanceId, activityId));
+        return bpmRuntimeFacade.signalWaitNode(parentInstanceId, activityId)
+                .map(outcome -> {
+                    log.info("等待节点唤醒结果: parent={}, activityId={}, outcome={}",
+                            parentInstanceId, activityId, outcome);
+                    return outcome;
+                })
+                .or(() -> {
+                    log.info("等待节点唤醒目标不在运行期: parent={}, activityId={}",
+                            parentInstanceId, activityId);
+                    return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
+                });
     }
 
     /** 等待节点引用的动作集合（配置为空 = 本图全部 CHILD 动作）。 */

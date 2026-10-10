@@ -93,6 +93,23 @@ class PositionDelegateServiceImplTest {
     }
 
     @Test
+    @DisplayName("超4跳配置拒绝：1→5 且在役链 5→4→3→2→6 已四跳 → 保存拒绝（不可部署配置）")
+    void chainOverFourHopsRejectedAtConfig() {
+        when(postMapper.selectById(5L)).thenReturn(post(5L, "P_D5", 1));
+        when(delegateMapper.selectCount(any())).thenReturn(0L);
+        // requireNoCycle 逐跳走链：hop1(源5)→[5→4]、hop2(4)→[4→3]、hop3(3)→[3→2]、hop4(2)→[2→6]
+        when(delegateMapper.selectList(any())).thenReturn(
+                List.of(row(5L, 4L)),
+                List.of(row(4L, 3L)),
+                List.of(row(3L, 2L)),
+                List.of(row(2L, 6L)));
+
+        assertThatThrownBy(() -> service.create(delegate(1L, 5L, "ORG", null)))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("超过最大 4 跳");
+    }
+
+    @Test
     @DisplayName("停用关系保存放行校验；启用（changeStatus）时重新执行重叠与循环校验")
     void changeStatusRevalidatesOnEnable() {
         // DISABLED 保存：跳过重叠/循环校验
@@ -135,6 +152,11 @@ class PositionDelegateServiceImplTest {
     private SysPostDelegate existingRow() {
         SysPostDelegate row = delegate(1L, 2L, "ORG", null);
         row.setId(50L);
+        return row;
+    }
+
+    private SysPostDelegate row(Long source, Long target) {
+        SysPostDelegate row = delegate(source, target, "ORG", null);
         return row;
     }
 }

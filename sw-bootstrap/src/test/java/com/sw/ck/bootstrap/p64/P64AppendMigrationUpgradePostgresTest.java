@@ -49,6 +49,11 @@ class P64AppendMigrationUpgradePostgresTest {
             "classpath:db/migration/system/postgresql"
     };
 
+    /** 包内共享：全链迁移位置（回退边界观察测试复用同一在役配置）。 */
+    static String[] appLocations() {
+        return APP_LOCATIONS.clone();
+    }
+
     private String serverUrl;
     private String dbUrl;
     private String dbUser;

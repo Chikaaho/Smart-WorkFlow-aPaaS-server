@@ -55,7 +55,12 @@ public class SubflowWaitListener implements ExecutionListener {
             return;
         }
         port.onWaitNodeArrival(parseTenant(execution.getTenantId()),
-                execution.getProcessInstanceId(), execution.getCurrentActivityId());
+                        execution.getProcessInstanceId(), execution.getCurrentActivityId())
+                .ifPresentOrElse(
+                        outcome -> log.debug("等待节点到达处置: activityId={}, outcome={}",
+                                execution.getCurrentActivityId(), outcome),
+                        () -> log.debug("等待节点到达上下文缺失（父实例/租户不可核对）: activityId={}",
+                                execution.getCurrentActivityId()));
     }
 
     private Long parseTenant(String tenantId) {
