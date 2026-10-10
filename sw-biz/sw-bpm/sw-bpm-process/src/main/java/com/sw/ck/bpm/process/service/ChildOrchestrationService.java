@@ -7,7 +7,6 @@ import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
-import com.sw.ck.bpm.api.orchestration.SubflowWaitPort;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmChildItem;
 import com.sw.ck.bpm.process.entity.BpmInstance;
@@ -55,7 +54,7 @@ import java.util.Set;
  */
 @Slf4j
 @Service
-public class ChildOrchestrationService implements SubflowWaitPort {
+public class ChildOrchestrationService {
 
     /** 父子嵌套硬上限（根为第 0 层）。 */
     public static final int HARD_MAX_NESTING = 8;
@@ -518,7 +517,7 @@ public class ChildOrchestrationService implements SubflowWaitPort {
 
     // ==================== 等待节点唤醒 ====================
 
-    @Override
+    /** 等待节点到达（由 SubflowWaitPortImpl 单实现适配器调用；本类不再直接实现端口以避免注入歧义）。 */
     public void onWaitNodeArrival(Long tenantId, String processInstanceId, String activityId) {
         // 令牌到达：引用批次已全部终态则立即唤醒，否则挂起等待结算侧信号
         signalIfNoOpenBatches(tenantId, processInstanceId, activityId);

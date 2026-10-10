@@ -316,7 +316,12 @@ public class ScriptWorkerPool {
 
         static Worker spawn(ScriptWorkerPool pool, ObjectMapper mapper) throws IOException {
             String javaBin = ProcessHandle.current().info().command().orElse("java");
-            String classpath = System.getProperty("java.class.path");
+            // Windows/命令行上限与 Spring Boot fat-jar 场景下 java.class.path 可能超长或不可直接
+            // 复用于子进程：支持显式覆盖（pathing jar 或精简类路径），缺省保持原语义。
+            String override = System.getProperty("sw.bpm.script.worker-classpath",
+                    System.getenv("SW_BPM_SCRIPT_WORKER_CLASSPATH"));
+            String classpath = override != null && !override.isBlank()
+                    ? override : System.getProperty("java.class.path");
             List<String> command = new ArrayList<>(List.of(javaBin, "-Xms32m", "-Xmx" + HEAP_CAP,
                     "-Dfile.encoding=UTF-8", "-cp", classpath,
                     ScriptWorkerMain.class.getName()));
