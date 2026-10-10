@@ -11,6 +11,8 @@ import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmChildItem;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
+import com.sw.ck.bpm.process.entity.BpmActionRef;
+import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildBatchMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildItemMapper;
 import com.sw.ck.common.exception.BaseException;
@@ -66,6 +68,7 @@ public class ChildOrchestrationService {
     private static final String POLICY_COUNT = "COUNT";
     private static final String POLICY_NONE = "NONE";
 
+    private final BpmActionRefMapper actionRefMapper;
     private final BpmChildBatchMapper batchMapper;
     private final BpmChildItemMapper itemMapper;
     private final NodeFormDataService nodeFormDataService;
@@ -78,13 +81,15 @@ public class ChildOrchestrationService {
     @Value("${sw.bpm.orchestration.max-nesting:3}")
     private int configuredMaxNesting;
 
-    public ChildOrchestrationService(BpmChildBatchMapper batchMapper,
+    public ChildOrchestrationService(BpmActionRefMapper actionRefMapper,
+                                     BpmChildBatchMapper batchMapper,
                                      BpmChildItemMapper itemMapper,
                                      NodeFormDataService nodeFormDataService,
                                      BpmInstanceService bpmInstanceService,
                                      BpmRuntimeFacade bpmRuntimeFacade,
                                      FormDataWritebackFacade writebackFacade,
                                      ObjectMapper objectMapper) {
+        this.actionRefMapper = actionRefMapper;
         this.batchMapper = batchMapper;
         this.itemMapper = itemMapper;
         this.nodeFormDataService = nodeFormDataService;
@@ -235,6 +240,25 @@ public class ChildOrchestrationService {
                 .eq(BpmChildItem::getTenantId, child.getTenantId())
                 .eq(BpmChildItem::getTargetRecordId, child.getBusinessKey())
                 .eq(BpmChildItem::getStatus, BpmChildItem.STATUS_DISPATCHED));
+        if (items.isEmpty()) {
+            // 批次项的 target_record_id 由消费链异步回填，完成事件可能先到达：
+            // 按动作意图（target_record_id=子实例 businessKey）反查批次项并回填关联
+            List<BpmActionRef> refs = actionRefMapper.selectList(Wrappers.<BpmActionRef>lambdaQuery()
+                    .eq(BpmActionRef::getTenantId, child.getTenantId())
+                    .eq(BpmActionRef::getTargetRecordId, child.getBusinessKey()));
+            if (refs.isEmpty()) {
+                return;
+            }
+            List<Long> refIds = refs.stream().map(BpmActionRef::getId).toList();
+            items = itemMapper.selectList(Wrappers.<BpmChildItem>lambdaQuery()
+                    .eq(BpmChildItem::getTenantId, child.getTenantId())
+                    .in(BpmChildItem::getActionRefId, refIds)
+                    .eq(BpmChildItem::getStatus, BpmChildItem.STATUS_DISPATCHED));
+            for (BpmChildItem item : items) {
+                item.setTargetRecordId(child.getBusinessKey());
+                item.setTargetInstanceId(child.getProcessInstanceId());
+            }
+        }
         if (items.isEmpty()) {
             return;
         }

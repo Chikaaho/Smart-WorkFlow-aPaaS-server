@@ -58,6 +58,7 @@ class ChildOrchestrationServiceTest {
                 BpmChildItem.class);
     }
 
+    private com.sw.ck.bpm.process.mapper.BpmActionRefMapper actionRefMapper;
     private BpmChildBatchMapper batchMapper;
     private BpmChildItemMapper itemMapper;
     private NodeFormDataService nodeFormDataService;
@@ -68,13 +69,14 @@ class ChildOrchestrationServiceTest {
 
     @BeforeEach
     void setUp() {
+        actionRefMapper = mock(com.sw.ck.bpm.process.mapper.BpmActionRefMapper.class);
         batchMapper = mock(BpmChildBatchMapper.class);
         itemMapper = mock(BpmChildItemMapper.class);
         nodeFormDataService = mock(NodeFormDataService.class);
         bpmInstanceService = mock(BpmInstanceService.class);
         bpmRuntimeFacade = mock(BpmRuntimeFacade.class);
         writebackFacade = mock(FormDataWritebackFacade.class);
-        service = new ChildOrchestrationService(batchMapper, itemMapper, nodeFormDataService,
+        service = new ChildOrchestrationService(actionRefMapper, batchMapper, itemMapper, nodeFormDataService,
                 bpmInstanceService, bpmRuntimeFacade, writebackFacade, new ObjectMapper());
         // parseData 为实例方法：以真实 Jackson 语义应答（与实现口径一致）
         com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
