@@ -29,6 +29,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -110,10 +111,10 @@ class TriggerExecutionServiceChildDispatchTest {
 
         service.onTaskActionCompleted(instance, task("node_1"), ApprovalAction.APPROVE);
 
-        // 批次冻结一次、两项登记、意图登记两条
+        // 批次冻结一次、两项登记（各自冻结本项来源行集合）、意图登记两条
         verify(orchestration).freezeBatch(any(), eq("trg"), any(), anyString(), eq(2),
                 eq(1L), eq("parent_form"), eq(9L));
-        verify(orchestration, times(2)).registerItem(eq(batch), any(), anyString(), anyString(),
+        verify(orchestration, times(2)).registerItem(eq(batch), any(), anyString(), anyList(),
                 anyString(), anyString(), anyString(), eq("parent_form"), eq(9L));
         ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
         verify(actionRefMapper, times(2)).insert(refCaptor.capture());
@@ -144,6 +145,95 @@ class TriggerExecutionServiceChildDispatchTest {
         service.onTaskActionCompleted(instance, task("node_1"), ApprovalAction.APPROVE);
 
         verify(orchestration).settleIfNone(batch);
+    }
+
+    @Test
+    @DisplayName("CHILD 分组行级回写：登记冻结本组来源行集合，子记录表格预填本项授权行（仅本实例的行）")
+    void childDispatchPrefillsAuthorizedSourceRowsIntoChildRecord() throws Exception {
+        BpmInstance instance = instance();
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithRowWriteBack());
+        when(nodeFormDataService.currentRound("p1")).thenReturn(1L);
+        when(bpmTaskFacade.queryByProcessInstance("p1")).thenReturn(Optional.of(List.of()));
+        when(variableSnapshotService.buildSnapshot(eq(9L), any(), any(), any(), any(), anyLong()))
+                .thenReturn(snapshot(Map.of("var_rows", List.of(
+                        Map.of("id", "row-1", "owner", "2", "feedback", ""),
+                        Map.of("id", "row-2", "owner", "2", "feedback", ""),
+                        Map.of("id", "row-3", "owner", "3", "feedback", "")))));
+
+        BpmChildBatch batch = new BpmChildBatch();
+        batch.setTenantId(9L);
+        batch.setId(99L);
+        batch.setBatchKey("CHILD:y");
+        batch.setWaitPolicy("ALL");
+        when(orchestration.freezeBatch(any(), anyString(), any(), anyString(), eq(2), anyLong(),
+                any(), eq(9L))).thenReturn(batch);
+        when(orchestration.loadBatch(eq(9L), eq(99L))).thenReturn(batch);
+
+        service.onTaskActionCompleted(instance, task("node_1"), ApprovalAction.APPROVE);
+
+        // 分组项 2：owner=2 组含 row-1/row-2（多行），owner=3 组含 row-3
+        ArgumentCaptor<List<String>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(orchestration, times(2)).registerItem(eq(batch), any(), anyString(),
+                rowsCaptor.capture(), anyString(), anyString(), anyString(), eq("parent_form"), eq(9L));
+        assertThat(rowsCaptor.getAllValues())
+                .anySatisfy(rows -> assertThat(rows).containsExactly("row-1", "row-2"))
+                .anySatisfy(rows -> assertThat(rows).containsExactly("row-3"));
+
+        // 子记录预填：结果表格仅含本项授权来源行（组外行不进入该子记录）
+        ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
+        verify(actionRefMapper, times(2)).insert(refCaptor.capture());
+        ObjectMapper mapper = new ObjectMapper();
+        List<List<String>> prefilledRowIds = new java.util.ArrayList<>();
+        for (BpmActionRef ref : refCaptor.getAllValues()) {
+            Map<String, Object> payload = mapper.readValue(ref.getPayloadJson(), Map.class);
+            Map<String, Object> data = (Map<String, Object>) payload.get("data");
+            List<Map<String, Object>> table = (List<Map<String, Object>>) data.get("result_table");
+            prefilledRowIds.add(table.stream().map(row -> String.valueOf(row.get("src_row_id"))).toList());
+        }
+        assertThat(prefilledRowIds)
+                .anySatisfy(ids -> assertThat(ids).containsExactly("row-1", "row-2"))
+                .anySatisfy(ids -> assertThat(ids).containsExactly("row-3"));
+    }
+
+    /** 分组（按 owner）+ 行级回写配置的父图（子记录表格预填断言用）。 */
+    private ProcessGraph graphWithRowWriteBack() {
+        ProcessGraph graph = new ProcessGraph();
+        graph.setFormKey("parent_form");
+        TriggerConfig trigger = TriggerConfig.builder()
+                .triggerId("trg")
+                .event("NODE_ROUND_COMPLETED")
+                .nodeKey("node_1")
+                .script("return true;")
+                .branches(List.of(TriggerConfig.TriggerBranch.builder()
+                        .branchId("b1")
+                        .matchType("BOOLEAN")
+                        .matchValue("true")
+                        .actions(List.of(groupedChildAction()))
+                        .build()))
+                .build();
+        graph.setTriggers(List.of(trigger));
+        return graph;
+    }
+
+    private ActionConfig groupedChildAction() {
+        return ActionConfig.builder()
+                .actionId("act_child")
+                .type("START_GROUPED")
+                .orchestration("CHILD")
+                .waitPolicy("ALL")
+                .sourceVariable("var_rows")
+                .groupBy("owner")
+                .targetProcessDefKey("child_def")
+                .targetFormKey("child_form")
+                .writeBack(ActionConfig.WriteBackConfig.builder()
+                        .resultNodeKey("node_result")
+                        .tableField("result_table")
+                        .rowKeyField("src_row_id")
+                        .parentTableField("hosts")
+                        .fields(List.of(ActionConfig.FieldMapping.builder()
+                                .fromField("feedback").toField("feedback").build()))
+                        .build())
+                .build();
     }
 
     private BpmInstance instance() {

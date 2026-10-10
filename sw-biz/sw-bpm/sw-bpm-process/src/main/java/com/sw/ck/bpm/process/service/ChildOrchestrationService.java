@@ -183,25 +183,36 @@ public class ChildOrchestrationService {
     }
 
     /**
-     * 登记批次项（派发项冻结；同键幂等吸收）。行级派发冻结来源行当前版本（回写冲突检测基准）。
+     * 登记批次项（派发项冻结；同键幂等吸收）。冻结本项授权来源行集合与各自当前版本
+     * （行级回写冲突检测基准）：分组项含组内多行、单发行含本行，回写只接受集合内行。
      */
     public void registerItem(BpmChildBatch batch, Long actionRefId, String itemKey,
-                             String sourceRowId, String summary, String targetDefKey,
+                             List<String> sourceRowIds, String summary, String targetDefKey,
                              String targetFormKey, String parentFormKey, Long tenantId) {
-        Long sourceRowVersion = null;
-        if (sourceRowId != null && parentFormKey != null) {
-            ActionConfig action = parseConfig(batch.getConfigJson());
-            String parentTableField = action != null && action.getWriteBack() != null
-                    ? action.getWriteBack().getParentTableField() : null;
-            sourceRowVersion = writebackFacade.readVersion(tenantId, parentFormKey,
-                    batch.getSourceRecordId(), parentTableField, sourceRowId).orElse(null);
+        List<String> rows = sourceRowIds == null ? List.of() : sourceRowIds.stream()
+                .filter(id -> id != null && !id.isBlank() && !"null".equals(id))
+                .distinct().toList();
+        ActionConfig action = parseConfig(batch.getConfigJson());
+        String parentTableField = action != null && action.getWriteBack() != null
+                ? action.getWriteBack().getParentTableField() : null;
+        List<Map<String, Object>> frozenRows = new ArrayList<>();
+        for (String rowId : rows) {
+            Long version = parentFormKey == null ? null : writebackFacade.readVersion(tenantId,
+                    parentFormKey, batch.getSourceRecordId(), parentTableField, rowId).orElse(null);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("rowId", rowId);
+            row.put("version", version);
+            frozenRows.add(row);
         }
         BpmChildItem item = new BpmChildItem();
         item.setBatchId(batch.getId());
         item.setItemKey(truncate(itemKey, 120));
         item.setActionRefId(actionRefId);
-        item.setSourceRowId(sourceRowId == null ? null : truncate(sourceRowId, 60));
-        item.setSourceRowVersion(sourceRowVersion);
+        String representative = rows.isEmpty() ? null : rows.get(0);
+        item.setSourceRowId(representative == null ? null : truncate(representative, 60));
+        item.setSourceRowVersion(frozenRows.isEmpty() ? null
+                : (Long) frozenRows.get(0).get("version"));
+        item.setSourceRowsJson(frozenRows.isEmpty() ? null : safeJson(frozenRows));
         item.setSourceSummary(summary);
         item.setTargetDefKey(targetDefKey);
         item.setTargetFormKey(targetFormKey);
@@ -310,15 +321,16 @@ public class ChildOrchestrationService {
         Map<String, Object> data = nodeFormDataService.parseData(result.getDataText());
         Map<String, Object> recorded = new LinkedHashMap<>();
 
-        // 行级回写（稳定行身份 + 派发版本守卫）
+        // 行级回写（稳定行身份集合 + 逐行派发版本守卫；只接受本项授权来源行）
         if (wb.getTableField() != null && !wb.getTableField().isBlank()) {
-            Map<String, Object> rowFields = resolveRowFields(wb, data, item);
-            if (rowFields == null) {
+            Map<String, Map<String, Object>> rowFieldsMap = resolveRowFieldMap(wb, data, item);
+            if (rowFieldsMap == null) {
                 item.setStatus(BpmChildItem.STATUS_FAILED);
-                item.setErrorText("必需回写缺失：子结果未包含来源行 " + item.getSourceRowId());
+                item.setErrorText("必需回写缺失：子结果未包含本项授权来源行 "
+                        + authorizedRowIds(item));
                 return;
             }
-            if (!rowFields.isEmpty()) {
+            if (!rowFieldsMap.isEmpty()) {
                 BpmInstance parent = bpmInstanceService
                         .findByProcessInstanceId(batch.getParentInstanceId()).orElse(null);
                 if (parent == null || parent.getFormKey() == null) {
@@ -326,30 +338,36 @@ public class ChildOrchestrationService {
                     item.setErrorText("父实例不可用，回写被拒绝");
                     return;
                 }
-                FormDataWritebackFacade.WritebackResult outcome = writebackFacade.applyWriteback(
-                        new FormDataWritebackFacade.WritebackRequest(child.getTenantId(),
-                                parent.getFormKey(), batch.getSourceRecordId(),
-                                wb.getParentTableField(), item.getSourceRowId(),
-                                item.getSourceRowVersion(), rowFields, child.getInitiatorId())).orElse(null);
-                if (outcome == null) {
-                    item.setStatus(BpmChildItem.STATUS_FAILED);
-                    item.setErrorText("回写目标上下文缺失（表单/记录不可用）");
-                    return;
+                Map<String, Long> versionByRow = rowVersions(item);
+                Map<String, Object> rowsRecorded = new LinkedHashMap<>();
+                for (Map.Entry<String, Map<String, Object>> entry : rowFieldsMap.entrySet()) {
+                    FormDataWritebackFacade.WritebackResult outcome = writebackFacade.applyWriteback(
+                            new FormDataWritebackFacade.WritebackRequest(child.getTenantId(),
+                                    parent.getFormKey(), batch.getSourceRecordId(),
+                                    wb.getParentTableField(), entry.getKey(),
+                                    versionByRow.get(entry.getKey()), entry.getValue(),
+                                    child.getInitiatorId())).orElse(null);
+                    if (outcome == null) {
+                        item.setStatus(BpmChildItem.STATUS_FAILED);
+                        item.setErrorText("回写目标上下文缺失（表单/记录不可用）");
+                        return;
+                    }
+                    if (FormDataWritebackFacade.WritebackResult.NOT_FOUND.equals(outcome.status())) {
+                        item.setStatus(BpmChildItem.STATUS_FAILED);
+                        item.setErrorText("回写目标来源行不可用或越权，回写被拒绝: "
+                                + entry.getKey());
+                        return;
+                    }
+                    if (FormDataWritebackFacade.WritebackResult.VERSION_CONFLICT.equals(outcome.status())) {
+                        // 冲突挂起：可诊断、有权恢复，不覆盖任何现有值
+                        item.setStatus(BpmChildItem.STATUS_CONFLICT);
+                        item.setErrorText("回写与来源行 " + entry.getKey() + " 当前版本冲突（当前权威版本 "
+                                + outcome.rowVersion() + "），已挂起等待有权处置");
+                        return;
+                    }
+                    rowsRecorded.put(entry.getKey(), entry.getValue());
                 }
-                if (FormDataWritebackFacade.WritebackResult.NOT_FOUND.equals(outcome.status())) {
-                    item.setStatus(BpmChildItem.STATUS_FAILED);
-                    item.setErrorText("回写目标来源行不可用或越权，回写被拒绝: "
-                            + item.getSourceRowId());
-                    return;
-                }
-                if (FormDataWritebackFacade.WritebackResult.VERSION_CONFLICT.equals(outcome.status())) {
-                    // 冲突挂起：可诊断、有权恢复，不覆盖任何现有值
-                    item.setStatus(BpmChildItem.STATUS_CONFLICT);
-                    item.setErrorText("回写与来源行当前版本冲突（当前权威版本 "
-                            + outcome.rowVersion() + "），已挂起等待有权处置");
-                    return;
-                }
-                recorded.put("row", rowFields);
+                recorded.put("rows", rowsRecorded);
             }
         }
 
@@ -392,32 +410,93 @@ public class ChildOrchestrationService {
         item.setWritebackSource(writebackSource(child, batch));
     }
 
-    /** 子结果表格中匹配稳定来源行的允许列值；来源行缺失返回 null（必需回写不满足）。 */
-    private Map<String, Object> resolveRowFields(ActionConfig.WriteBackConfig wb,
-                                                 Map<String, Object> data, BpmChildItem item) {
+    /**
+     * 子结果表格中匹配本项授权来源行集合的允许列值：返回 rowId → 允许字段映射
+     * （结果表格无任何授权行时返回 null，按必需回写缺失处理；集合外行一律忽略）。
+     */
+    private Map<String, Map<String, Object>> resolveRowFieldMap(ActionConfig.WriteBackConfig wb,
+                                                                Map<String, Object> data,
+                                                                BpmChildItem item) {
+        Set<String> authorized = authorizedRowIds(item);
         Object tableValue = data.get(wb.getTableField());
         if (!(tableValue instanceof List<?> rows)) {
             return wb.getFields() == null || wb.getFields().isEmpty() ? Map.of() : null;
         }
-        Map<String, Object> matched = null;
+        Map<String, Map<String, Object>> matched = new LinkedHashMap<>();
         for (Object rowObject : rows) {
-            if (rowObject instanceof Map<?, ?> row
-                    && item.getSourceRowId() != null
-                    && item.getSourceRowId().equals(String.valueOf(row.get(wb.getRowKeyField())))) {
-                matched = new LinkedHashMap<>((Map<String, Object>) row);
-                break;
+            if (!(rowObject instanceof Map<?, ?> row)) {
+                continue;
             }
+            Object rawId = row.get(wb.getRowKeyField());
+            String rowId = rawId == null ? null : String.valueOf(rawId);
+            if (rowId == null || rowId.isBlank() || !authorized.contains(rowId)
+                    || matched.containsKey(rowId)) {
+                continue;
+            }
+            Map<String, Object> fields = new LinkedHashMap<>();
+            if (wb.getFields() != null) {
+                for (ActionConfig.FieldMapping mapping : wb.getFields()) {
+                    fields.put(mapping.getToField(), row.get(mapping.getFromField()));
+                }
+            }
+            matched.put(rowId, fields);
         }
-        if (matched == null) {
+        if (matched.isEmpty()) {
             return null;
         }
-        Map<String, Object> fields = new LinkedHashMap<>();
-        if (wb.getFields() != null) {
-            for (ActionConfig.FieldMapping mapping : wb.getFields()) {
-                fields.put(mapping.getToField(), matched.get(mapping.getFromField()));
+        return matched;
+    }
+
+    /** 本项授权来源行集合（source_rows_json 优先；旧行回退单值 source_row_id）。 */
+    private Set<String> authorizedRowIds(BpmChildItem item) {
+        Set<String> ids = new LinkedHashSet<>();
+        String json = item.getSourceRowsJson();
+        if (json != null && !json.isBlank()) {
+            try {
+                List<Map<String, Object>> rows = objectMapper.readValue(json,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                rows.forEach(row -> {
+                    Object value = row.get("rowId");
+                    if (value != null && !String.valueOf(value).isBlank()) {
+                        ids.add(String.valueOf(value));
+                    }
+                });
+            } catch (Exception e) {
+                log.warn("批次项来源行集合解析失败（回退单值身份）: itemId={}, error={}",
+                        item.getId(), e.getMessage());
             }
         }
-        return fields;
+        if (ids.isEmpty() && item.getSourceRowId() != null && !item.getSourceRowId().isBlank()) {
+            ids.add(item.getSourceRowId());
+        }
+        return ids;
+    }
+
+    /** 本项授权来源行 → 派发冻结版本（冲突检测基准；缺省 null 不设版本守卫）。 */
+    private Map<String, Long> rowVersions(BpmChildItem item) {
+        Map<String, Long> versions = new LinkedHashMap<>();
+        String json = item.getSourceRowsJson();
+        if (json != null && !json.isBlank()) {
+            try {
+                List<Map<String, Object>> rows = objectMapper.readValue(json,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                for (Map<String, Object> row : rows) {
+                    Object id = row.get("rowId");
+                    Object version = row.get("version");
+                    if (id == null) {
+                        continue;
+                    }
+                    versions.put(String.valueOf(id), version == null ? null
+                            : Long.valueOf(String.valueOf(version)));
+                }
+            } catch (Exception e) {
+                log.warn("批次项来源行版本解析失败: itemId={}, error={}", item.getId(), e.getMessage());
+            }
+        }
+        if (versions.isEmpty() && item.getSourceRowId() != null) {
+            versions.put(item.getSourceRowId(), item.getSourceRowVersion());
+        }
+        return versions;
     }
 
     /** 版本化结果快照（迟到/取消留痕；不应用）。 */

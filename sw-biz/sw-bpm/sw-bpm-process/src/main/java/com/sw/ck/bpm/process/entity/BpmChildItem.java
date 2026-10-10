@@ -41,6 +41,13 @@ public class BpmChildItem extends BaseEntity {
     @TableField("source_row_version")
     private Long sourceRowVersion;
 
+    /**
+     * 本项冻结的授权来源行集合 [{rowId, version}]（JSON；分组项含多行）。
+     * 行级回写只接受集合内行——子流程只取得本实例授权来源行。
+     */
+    @TableField("source_rows_json")
+    private String sourceRowsJson;
+
     /** 冻结项摘要（来源追踪 JSON）。 */
     @TableField("source_summary")
     private String sourceSummary;

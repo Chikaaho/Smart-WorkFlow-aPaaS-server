@@ -103,8 +103,12 @@ public class TriggerExecutionService {
         return childOrchestrationProvider == null ? null : childOrchestrationProvider.getIfAvailable();
     }
 
-    /** 派发项（集合项冻结身份）。 */
-    private record ActionItem(String itemKey, Map<String, Object> summary, Map<String, Object> itemValues) {
+    /**
+     * 派发项（集合项冻结身份）。{@code rows} 为本项覆盖的全部来源行
+     * （分组项含组内多行；单发/SINGLE 为空）——CHILD 项据此冻结授权来源行集合并预填子记录表格。
+     */
+    private record ActionItem(String itemKey, Map<String, Object> summary,
+                              Map<String, Object> itemValues, List<Map<String, Object>> rows) {
     }
 
     // ==================== 事件入口（加入调用方事务） ====================
@@ -392,17 +396,19 @@ public class TriggerExecutionService {
         ref.setStatus("INTENT_SUBMITTED");
         actionRefMapper.insert(ref);
 
-        // 阶段Ⅱ（P64 A05/A06）：CHILD 项登记（冻结来源行身份与版本；转办/重试不增加预期数）
+        // 阶段Ⅱ（P64 A05/A06）：CHILD 项登记（冻结本项授权来源行集合与版本；转办/重试不增加预期数）
         if (frozen != null) {
             ChildOrchestrationService orchestration = childOrchestration();
             if (orchestration != null) {
-                String sourceRowId = "ROW".equals(String.valueOf(item.summary().get("type")))
-                        ? String.valueOf(item.itemValues().getOrDefault("id", "")).trim()
-                        : null;
+                List<String> sourceRowIds = item.rows().stream()
+                        .map(row -> row.get("id"))
+                        .filter(java.util.Objects::nonNull)
+                        .map(String::valueOf)
+                        .map(String::trim)
+                        .filter(id -> !id.isEmpty() && !"null".equals(id))
+                        .toList();
                 orchestration.registerItem(orchestration.loadBatch(tenantId, frozen.batchId()),
-                        ref.getId(), item.itemKey(),
-                        sourceRowId == null || sourceRowId.isEmpty()
-                                || "null".equals(sourceRowId) ? null : sourceRowId,
+                        ref.getId(), item.itemKey(), sourceRowIds,
                         safeJson(item.summary()),
                         action.getTargetProcessDefKey(), action.getTargetFormKey(),
                         instance.getFormKey(), tenantId);
@@ -421,6 +427,27 @@ public class TriggerExecutionService {
                     value = item.itemValues().get(mapping.getItemField());
                 }
                 data.put(mapping.getTargetField(), value);
+            }
+        }
+        // CHILD 行级回写：子记录预填本项授权来源行（仅本实例的行；子流程只取得授权来源行）
+        if (action.isChild() && action.getWriteBack() != null
+                && action.getWriteBack().getTableField() != null
+                && !action.getWriteBack().getTableField().isBlank()
+                && action.getWriteBack().getRowKeyField() != null
+                && !action.getWriteBack().getRowKeyField().isBlank()
+                && !data.containsKey(action.getWriteBack().getTableField())) {
+            List<Map<String, Object>> prefillRows = new ArrayList<>();
+            for (Map<String, Object> row : item.rows()) {
+                Object rowId = row.get("id");
+                if (rowId == null || String.valueOf(rowId).isBlank()) {
+                    continue;
+                }
+                Map<String, Object> prefill = new LinkedHashMap<>();
+                prefill.put(action.getWriteBack().getRowKeyField(), String.valueOf(rowId));
+                prefillRows.add(prefill);
+            }
+            if (!prefillRows.isEmpty()) {
+                data.put(action.getWriteBack().getTableField(), prefillRows);
             }
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -494,7 +521,7 @@ public class TriggerExecutionService {
         List<ActionItem> items = new ArrayList<>();
         if ("START_SINGLE".equals(type)) {
             Map<String, Object> emptyValues = Map.of();
-            items.add(new ActionItem("SINGLE", Map.of("type", "SINGLE"), emptyValues));
+            items.add(new ActionItem("SINGLE", Map.of("type", "SINGLE"), emptyValues, List.of()));
             return items;
         }
         Object source = action.getSourceVariable() == null ? null : snapshot.get(action.getSourceVariable());
@@ -510,11 +537,12 @@ public class TriggerExecutionService {
                         Map<String, Object> rowValues = new LinkedHashMap<>((Map<String, Object>) row);
                         Object rowId = rowValues.get("id");
                         String itemKey = rowId == null ? "ROW#" + index : String.valueOf(rowId);
-                        items.add(new ActionItem(itemKey, Map.of("type", "ROW", "index", index), rowValues));
+                        items.add(new ActionItem(itemKey, Map.of("type", "ROW", "index", index),
+                                rowValues, List.of(rowValues)));
                     } else {
                         String id = String.valueOf(item);
                         items.add(new ActionItem(id, Map.of("type", "OBJECT", "id", id),
-                                Map.of("id", id)));
+                                Map.of("id", id), List.of()));
                     }
                 }
             }
@@ -523,7 +551,7 @@ public class TriggerExecutionService {
         if ("START_GROUPED".equals(type)) {
             String groupBy = action.getGroupBy() == null ? "id" : action.getGroupBy();
             if (source instanceof List<?> list) {
-                Map<String, Map<String, Object>> groups = new LinkedHashMap<>();
+                Map<String, List<Map<String, Object>>> groups = new LinkedHashMap<>();
                 for (Object item : list) {
                     if (item == null) {
                         continue;
@@ -532,15 +560,16 @@ public class TriggerExecutionService {
                         Map<String, Object> rowValues = new LinkedHashMap<>((Map<String, Object>) row);
                         Object key = rowValues.get(groupBy);
                         String groupKey = key == null ? "" : String.valueOf(key);
-                        groups.putIfAbsent(groupKey, rowValues);
+                        groups.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(rowValues);
                     } else {
                         String id = String.valueOf(item);
-                        groups.putIfAbsent(id, new LinkedHashMap<>(Map.of("id", id)));
+                        groups.computeIfAbsent(id, k -> new ArrayList<>())
+                                .add(new LinkedHashMap<>(Map.of("id", id)));
                     }
                 }
-                groups.forEach((groupKey, values) -> items.add(new ActionItem(
+                groups.forEach((groupKey, rows) -> items.add(new ActionItem(
                         groupKey == null || groupKey.isBlank() ? "GROUP" : groupKey,
-                        Map.of("type", "GROUP", "groupBy", groupBy), values)));
+                        Map.of("type", "GROUP", "groupBy", groupBy), rows.get(0), rows)));
             }
             return items;
         }

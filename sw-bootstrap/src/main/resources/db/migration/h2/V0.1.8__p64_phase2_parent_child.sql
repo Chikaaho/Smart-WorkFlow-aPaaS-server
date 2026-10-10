@@ -48,6 +48,7 @@ create index idx_sw_bpm_child_batch_root on sw_bpm_child_batch (tenant_id, root_
 --         LATE（批次已结算后的迟到完成，独立留痕不覆盖已用快照）/
 --         REFUSED（父取消/退回后失去写回推进权，留痕）/ FAILED（发起链失败且不可恢复）/ CANCELLED。
 -- source_row_id/source_row_version: 稳定来源行身份与派发时版本（父表排序改变不错行）；
+-- source_rows_json: 本项冻结的授权来源行集合 [{rowId, version}]（分组项含多行；行级回写只接受集合内行）；
 -- writeback_json/writeback_source: 回写值与来源（子实例/节点/轮次/任务可追溯）。
 create table sw_bpm_child_item (
     id bigint not null primary key,
@@ -63,6 +64,7 @@ create table sw_bpm_child_item (
     action_ref_id bigint,
     source_row_id varchar(64),
     source_row_version bigint,
+    source_rows_json text,
     source_summary text,
     target_def_key varchar(128),
     target_form_key varchar(128),

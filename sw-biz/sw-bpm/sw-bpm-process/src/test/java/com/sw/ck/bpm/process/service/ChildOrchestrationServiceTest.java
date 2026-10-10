@@ -185,6 +185,55 @@ class ChildOrchestrationServiceTest {
     }
 
     @Test
+    @DisplayName("分组项多行回写：按冻结授权来源行集合逐行回写（各自版本守卫），集合外行忽略不写错行")
+    void groupedItemWritesBackAllAuthorizedRowsOnly() {
+        BpmChildBatch batch = waitingBatch("ALL", null, null);
+        batch.setExpectedCount(1);
+        when(batchMapper.selectById(batch.getId())).thenReturn(batch);
+        BpmChildItem item = dispatchedItem(batch.getId(), "group-owner2", null, null);
+        item.setSourceRowsJson("[{\"rowId\":\"row-a\",\"version\":3},{\"rowId\":\"row-b\",\"version\":4}]");
+        when(itemMapper.selectList(any())).thenReturn(List.of(item));
+        BpmInstance child = child("rec-group");
+        when(nodeFormDataService.listSubmittedByNode(9L, "pi-child", "node_result"))
+                .thenReturn(List.of(submitted(1L, """
+                        {"result_table":[{"id":"row-a","feedback":"OK-A"},
+                                         {"id":"row-b","feedback":"OK-B"},
+                                         {"id":"row-other","feedback":"越权尝试"}],
+                         "summary_text":"done"}""")));
+        when(bpmInstanceService.findByProcessInstanceId("p1")).thenReturn(Optional.of(parent()));
+        when(nodeFormDataService.loadGraph("parent_def", 1)).thenReturn(graphWithWaitNode());
+        when(writebackFacade.applyWriteback(any())).thenReturn(Optional.of(
+                new FormDataWritebackFacade.WritebackResult(
+                        FormDataWritebackFacade.WritebackResult.WRITTEN, 5L)));
+        when(batchMapper.update(any(), any())).thenReturn(1);
+        when(itemMapper.update(any(), any())).thenReturn(1);
+
+        service.onChildProcessTerminal(child, "APPROVED");
+
+        // 两行各一次行级回写 + 一次主记录回写；集合外 row-other 不产生回写
+        ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
+                ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
+        verify(writebackFacade, org.mockito.Mockito.times(3)).applyWriteback(captor.capture());
+        List<FormDataWritebackFacade.WritebackRequest> rowRequests = captor.getAllValues().stream()
+                .filter(request -> request.tableField() != null).toList();
+        assertThat(rowRequests).hasSize(2);
+        assertThat(rowRequests).extracting(FormDataWritebackFacade.WritebackRequest::rowId)
+                .containsExactly("row-a", "row-b");
+        assertThat(rowRequests).extracting(FormDataWritebackFacade.WritebackRequest::expectedRowVersion)
+                .containsExactly(3L, 4L);
+        assertThat(rowRequests.get(0).fields()).containsEntry("feedback", "OK-A");
+        assertThat(rowRequests.get(1).fields()).containsEntry("feedback", "OK-B");
+
+        ArgumentCaptor<BpmChildItem> itemCaptor = ArgumentCaptor.forClass(BpmChildItem.class);
+        verify(itemMapper).updateById(itemCaptor.capture());
+        assertThat(itemCaptor.getValue().getStatus()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
+        assertThat(itemCaptor.getValue().getWritebackJson())
+                .contains("\"row-a\"").contains("\"row-b\"").doesNotContain("row-other");
+        verify(batchMapper).update(any(), any());
+        verify(bpmRuntimeFacade).signalWaitNode(eq("p1"), eq("wait_1"));
+    }
+
+    @Test
     @DisplayName("等待策略 ANY：首个有效完成即结算一次；此后迟到完成记 LATE 且不应用回写")
     void anyPolicySettlesOnceAndLateCompletionRecordedOnly() {
         BpmChildBatch batch = waitingBatch("ANY", 2, null);
