@@ -3,6 +3,7 @@ package com.sw.ck.bpm.engine.facade;
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.result.BpmProcessStatus;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import org.flowable.common.engine.api.FlowableObjectNotFoundException;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
@@ -248,6 +249,35 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
             return BpmProcessStatus.FAILED;
         }
         return BpmProcessStatus.TERMINATED;
+    }
+
+    @Override
+    public Optional<MutationOutcome> signalWaitNode(String processInstanceId, String activityId) {
+        if (processInstanceId == null || processInstanceId.isBlank()
+                || activityId == null || activityId.isBlank()) {
+            // 实例/节点标识缺失：无法定位等待执行流
+            return Optional.empty();
+        }
+        ProcessInstance running = runtimeService.createProcessInstanceQuery()
+                .processInstanceId(processInstanceId).singleResult();
+        if (running == null) {
+            // 实例不在运行期（已结束/不存在）：empty 语义
+            return Optional.empty();
+        }
+        org.flowable.engine.runtime.Execution execution = runtimeService.createExecutionQuery()
+                .processInstanceId(processInstanceId)
+                .activityId(activityId)
+                .singleResult();
+        if (execution == null) {
+            // 无停留在该等待节点的执行流：批次结算与到达回调竞态的幂等吸收，不是失败
+            log.info("等待节点唤醒幂等吸收（无等待执行流）: processInstanceId={}, activityId={}",
+                    processInstanceId, activityId);
+            return Optional.of(MutationOutcome.ALREADY_APPLIED);
+        }
+        runtimeService.trigger(execution.getId());
+        log.info("等待节点已唤醒: processInstanceId={}, activityId={}, executionId={}",
+                processInstanceId, activityId, execution.getId());
+        return Optional.of(MutationOutcome.APPLIED);
     }
 
 }

@@ -168,6 +168,9 @@ sw:
       queue-wait-ms: ${SW_BPM_SCRIPT_QUEUE_WAIT_MS:50}                      # 等候时限，时限内未获许可判“繁忙（可恢复）”，无无界等待
       queue-capacity: ${SW_BPM_SCRIPT_QUEUE_CAPACITY:8}                     # 全局等候数量硬上限（0=不允许等候，满额立即繁忙）
       tenant-queue-capacity: ${SW_BPM_SCRIPT_TENANT_QUEUE_CAPACITY:4}       # 单租户等候数量硬上限（0=不允许等候，满额立即繁忙）
+    # ---------- 主子流程编排护栏（P64 阶段Ⅱ，A05/A12；UI 可见并经服务端复核） ----------
+    orchestration:
+      max-nesting: ${SW_BPM_ORCH_MAX_NESTING:3}                             # 父子嵌套默认上限（根=0层）；服务端硬上限 8，超限派发拒绝可诊断
 
   # ---------- 多租户（列级隔离） ----------
   tenant:

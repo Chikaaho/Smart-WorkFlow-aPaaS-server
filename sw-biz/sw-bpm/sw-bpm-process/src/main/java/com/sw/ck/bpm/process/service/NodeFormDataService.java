@@ -186,6 +186,21 @@ public class NodeFormDataService {
     }
 
     /**
+     * 指定节点全部有效轮次的最终提交（P64 阶段Ⅱ回写读取口径；仅 SUBMITTED，
+     * 按轮次与提交顺序升序——调用方取末位即最新权威结果，来源含轮次/任务可追溯）。
+     */
+    public List<BpmTaskFormData> listSubmittedByNode(Long tenantId, String processInstanceId,
+                                                     String nodeKey) {
+        return taskFormDataMapper.selectList(Wrappers.<BpmTaskFormData>lambdaQuery()
+                .eq(BpmTaskFormData::getTenantId, tenantId)
+                .eq(BpmTaskFormData::getProcessInstanceId, processInstanceId)
+                .eq(BpmTaskFormData::getNodeKey, nodeKey)
+                .eq(BpmTaskFormData::getStatus, STATUS_SUBMITTED)
+                .orderByAsc(BpmTaskFormData::getRoundNo)
+                .orderByAsc(BpmTaskFormData::getId));
+    }
+
+    /**
      * 保存草稿（DRAFT upsert；已 SUBMITTED 的任务拒绝改写 2434）。
      */
     @Transactional

@@ -95,6 +95,22 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     private final DomainEventPublisher domainEventPublisher;
     private final ObjectMapper objectMapper;
 
+    /** P64 阶段Ⅱ：主子流程编排（可选装配；无 CHILD 批次零行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
+
+    /** 撤回/废弃终态化的子流程编排钩子：本实例作为子流程计失败项、作为父流程取消未完成批次。 */
+    private void childOrchestrationHooks(BpmInstance instance, String terminalStatus) {
+        com.sw.ck.bpm.process.service.ChildOrchestrationService orchestration =
+                childOrchestrationProvider == null ? null
+                        : childOrchestrationProvider.getIfAvailable();
+        if (orchestration == null || instance == null) {
+            return;
+        }
+        orchestration.onChildProcessTerminal(instance, terminalStatus);
+        orchestration.cancelBatchesForParent(instance, terminalStatus);
+    }
+
     public ApprovalLifecycleServiceImpl(BpmTaskFacade bpmTaskFacade,
                                         BpmInstanceService bpmInstanceService,
                                         BpmProcessDefService bpmProcessDefService,
@@ -306,6 +322,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         bpmInstanceService.updateStatus(processInstanceId,
                 InstanceStatusEnum.WITHDRAWN.getCode());
+        // — P64 阶段Ⅱ（A05）：撤回终态化——本实例作为子流程计失败项、作为父流程取消未完成批次 —
+        childOrchestrationHooks(instance, InstanceStatusEnum.WITHDRAWN.getCode());
         closeDeadlines(processInstanceId, "撤回关闭");
         recordInstance(instance, actor, ApprovalAction.WITHDRAW, "WITHDRAWN",
                 mapOf("reason", nullSafe(request.getReason())));
@@ -332,6 +350,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         bpmInstanceService.updateStatus(processInstanceId,
                 InstanceStatusEnum.DISCARDED.getCode());
+        // — P64 阶段Ⅱ（A05）：废弃终态化——同撤回口径 —
+        childOrchestrationHooks(instance, InstanceStatusEnum.DISCARDED.getCode());
         closeDeadlines(processInstanceId, "废弃关闭");
         recordInstance(instance, actor, ApprovalAction.DISCARD, "DISCARDED",
                 mapOf("reason", nullSafe(request.getReason()),

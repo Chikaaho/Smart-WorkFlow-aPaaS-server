@@ -78,7 +78,63 @@ public class ProcessVariableValidator {
         validateNodeFormBindings(graph, errors);
         validateVariables(graph, errors);
         validateTriggers(graph, errors);
+        validateWaitNodes(graph, errors);
         return errors;
+    }
+
+    // ==================== 子流程等待节点（P64 阶段Ⅱ A05） ====================
+
+    /** 等待节点引用校验：引用的动作必须存在、是 CHILD 且等待策略非 NONE（NONE 无等待语义）。 */
+    private void validateWaitNodes(ProcessGraph graph, List<GraphValidationError> errors) {
+        if (graph.getElements() == null) {
+            return;
+        }
+        Set<String> waitableActionIds = new HashSet<>();
+        if (graph.getTriggers() != null) {
+            for (TriggerConfig trigger : graph.getTriggers()) {
+                if (trigger.getBranches() == null) {
+                    continue;
+                }
+                for (TriggerConfig.TriggerBranch branch : trigger.getBranches()) {
+                    if (branch.getActions() == null) {
+                        continue;
+                    }
+                    for (ActionConfig action : branch.getActions()) {
+                        if (action.isChild()
+                                && !"NONE".equalsIgnoreCase(action.getWaitPolicy())) {
+                            waitableActionIds.add(action.getActionId());
+                        }
+                    }
+                }
+            }
+        }
+        for (var element : graph.getElements()) {
+            if (!"node".equals(element.getKind())
+                    || !"SUBFLOW_WAIT".equalsIgnoreCase(element.getType())) {
+                continue;
+            }
+            Object refsObj = element.getConfig() == null ? null
+                    : element.getConfig().get("waitActionIds");
+            if (refsObj == null) {
+                // 缺省 = 等待本图全部等待型 CHILD 动作：仅当图内存在可等动作时合法
+                if (waitableActionIds.isEmpty()) {
+                    errors.add(error(element.getId(), BpmErrorCode.WAIT_NODE_CONFIG_INVALID,
+                            "子流程等待节点未配置 waitActionIds，且图中没有 ALL/ANY/COUNT 策略的子流程动作可等待"));
+                }
+                continue;
+            }
+            if (!(refsObj instanceof List<?> refs)) {
+                errors.add(error(element.getId(), BpmErrorCode.WAIT_NODE_CONFIG_INVALID,
+                        "waitActionIds 必须是动作 ID 数组"));
+                continue;
+            }
+            for (Object ref : refs) {
+                if (!waitableActionIds.contains(String.valueOf(ref))) {
+                    errors.add(error(element.getId(), BpmErrorCode.WAIT_NODE_CONFIG_INVALID,
+                            "等待节点引用的动作不存在、不是子流程动作或等待策略为 NONE: " + ref));
+                }
+            }
+        }
     }
 
     // ==================== 节点表单绑定 ====================
@@ -339,11 +395,11 @@ public class ProcessVariableValidator {
                     }
                 }
             }
-            validateBranches(trigger, errors);
+            validateBranches(graph, trigger, errors);
         }
     }
 
-    private void validateBranches(TriggerConfig trigger, List<GraphValidationError> errors) {
+    private void validateBranches(ProcessGraph graph, TriggerConfig trigger, List<GraphValidationError> errors) {
         if (trigger.getBranches() == null) {
             return;
         }
@@ -395,11 +451,11 @@ public class ProcessVariableValidator {
                                 + matchType + "=" + branch.getMatchValue()));
                 continue;
             }
-            validateActions(trigger, branch, errors);
+            validateActions(graph, trigger, branch, errors);
         }
     }
 
-    private void validateActions(TriggerConfig trigger, TriggerConfig.TriggerBranch branch,
+    private void validateActions(ProcessGraph graph, TriggerConfig trigger, TriggerConfig.TriggerBranch branch,
                                  List<GraphValidationError> errors) {
         if (branch.getActions() == null) {
             return;
@@ -444,7 +500,122 @@ public class ProcessVariableValidator {
             }
             validateActionTarget(action, locator, errors);
             validateActionMapping(action, locator, errors);
+            if (action.isChild()) {
+                validateChildAction(graph, action, locator, errors);
+            }
         }
+    }
+
+    // ==================== CHILD 子流程动作（P64 阶段Ⅱ A05/A06） ====================
+
+    private static final Set<String> WAIT_POLICIES = Set.of("ALL", "ANY", "COUNT", "NONE");
+
+    /** CHILD 配置校验：等待策略/K 值/输出回写结构与父表单目标字段存在性。 */
+    private void validateChildAction(ProcessGraph graph, ActionConfig action, String locator,
+                                     List<GraphValidationError> errors) {
+        String policy = action.getWaitPolicy() == null ? "ALL"
+                : action.getWaitPolicy().toUpperCase();
+        if (!WAIT_POLICIES.contains(policy)) {
+            errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                    "子流程动作 " + action.getActionId() + " 等待策略无效: " + action.getWaitPolicy()
+                            + "（ALL/ANY/COUNT/NONE）"));
+            return;
+        }
+        if ("COUNT".equals(policy)) {
+            if (action.getWaitCount() == null || action.getWaitCount() < 1) {
+                errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                        "子流程动作 " + action.getActionId() + ": COUNT 策略必须配置正整数 K"));
+                return;
+            }
+            if (action.getMaxDispatch() != null && action.getWaitCount() > action.getMaxDispatch()) {
+                errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                        "子流程动作 " + action.getActionId() + ": K=" + action.getWaitCount()
+                                + " 超过单次派发上限 " + action.getMaxDispatch()));
+                return;
+            }
+        }
+        ActionConfig.WriteBackConfig wb = action.getWriteBack();
+        if (wb == null) {
+            return;
+        }
+        if (wb.getResultNodeKey() == null || wb.getResultNodeKey().isBlank()) {
+            errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                    "子流程动作 " + action.getActionId() + ": 回写配置缺少 resultNodeKey"));
+            return;
+        }
+        boolean hasRowWrite = wb.getTableField() != null && !wb.getTableField().isBlank();
+        if (hasRowWrite) {
+            if (wb.getRowKeyField() == null || wb.getRowKeyField().isBlank()
+                    || wb.getParentTableField() == null || wb.getParentTableField().isBlank()) {
+                errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                        "子流程动作 " + action.getActionId() + ": 行级回写必须配置 rowKeyField 与 parentTableField"));
+                return;
+            }
+            if (wb.getFields() == null || wb.getFields().isEmpty()) {
+                errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                        "子流程动作 " + action.getActionId() + ": 行级回写必须配置允许列映射 fields"));
+                return;
+            }
+        }
+        if ((wb.getFields() == null || wb.getFields().isEmpty())
+                && (wb.getMainFields() == null || wb.getMainFields().isEmpty())) {
+            errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                    "子流程动作 " + action.getActionId() + ": 回写配置缺少任何字段映射"));
+            return;
+        }
+        // 父表单目标字段存在性（主字段/来源表格列）
+        Optional<String> parentDef = formDefinitionService.getFormDefinition(graph.getFormKey());
+        if (parentDef.isEmpty()) {
+            errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                    "子流程动作 " + action.getActionId() + ": 父业务表单定义不可用 " + graph.getFormKey()));
+            return;
+        }
+        List<Map<String, Object>> parentFields = parseFields(parentDef.get());
+        Map<String, Object> parentTableField = hasRowWrite
+                ? findFieldDef(parentFields, wb.getParentTableField()) : null;
+        if (hasRowWrite && parentTableField == null) {
+            errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                    "子流程动作 " + action.getActionId() + ": 父业务表单缺少来源表格字段 "
+                            + wb.getParentTableField()));
+            return;
+        }
+        if (hasRowWrite) {
+            Set<String> parentColumns = new HashSet<>();
+            Object subFields = parentTableField.get("subFields");
+            if (subFields instanceof List<?> columns) {
+                columns.stream().filter(Map.class::isInstance)
+                        .map(item -> (Map<String, Object>) item)
+                        .forEach(column -> {
+                            Object name = column.get("name");
+                            if (name != null) {
+                                parentColumns.add(String.valueOf(name));
+                            }
+                        });
+            }
+            for (ActionConfig.FieldMapping mapping : wb.getFields()) {
+                if (mapping.getToField() == null || !parentColumns.contains(mapping.getToField())) {
+                    errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                            "子流程动作 " + action.getActionId() + ": 来源表格缺少回写列 "
+                                    + mapping.getToField()));
+                }
+            }
+        }
+        if (wb.getMainFields() != null) {
+            for (ActionConfig.FieldMapping mapping : wb.getMainFields()) {
+                if (mapping.getToField() == null || findFieldDef(parentFields, mapping.getToField()) == null) {
+                    errors.add(error(locator, BpmErrorCode.CHILD_ACTION_INVALID,
+                            "子流程动作 " + action.getActionId() + ": 父业务表单缺少回写字段 "
+                                    + mapping.getToField()));
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> findFieldDef(List<Map<String, Object>> fields, String name) {
+        return fields.stream()
+                .filter(field -> name.equals(String.valueOf(field.get("name"))))
+                .findFirst().orElse(null);
     }
 
     private void validateActionTarget(ActionConfig action, String locator,

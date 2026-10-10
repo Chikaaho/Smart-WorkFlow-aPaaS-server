@@ -67,12 +67,20 @@ public class TaskActionService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.TriggerExecutionService> triggerExecutionProvider;
 
+    /** P64 阶段Ⅱ：主子流程编排（可选装配；无 CHILD 动作/批次零行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
+
     private com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService() {
         return nodeFormDataProvider == null ? null : nodeFormDataProvider.getIfAvailable();
     }
 
     private com.sw.ck.bpm.process.service.TriggerExecutionService triggerExecution() {
         return triggerExecutionProvider == null ? null : triggerExecutionProvider.getIfAvailable();
+    }
+
+    private com.sw.ck.bpm.process.service.ChildOrchestrationService childOrchestration() {
+        return childOrchestrationProvider == null ? null : childOrchestrationProvider.getIfAvailable();
     }
 
     private com.sw.ck.bpm.process.service.ApprovalLifecycleService lifecycle() {
@@ -320,6 +328,11 @@ public class TaskActionService {
             }
             recordAction(task, loginUser, effectiveRequest, action, "RETURNED", processVariables,
                     commandId, nextReturnRound(processInstanceId));
+            // — P64 阶段Ⅱ（A05）：合法退回终止本实例未完成子流程批次的写回推进权 —
+            com.sw.ck.bpm.process.service.ChildOrchestrationService orchestration = childOrchestration();
+            if (orchestration != null && instance != null) {
+                orchestration.cancelBatchesForParent(instance, "RETURNED");
+            }
             publishProcessEvent(processInstanceId, loginUser, BpmNotifyTrigger.PROCESS_RETURNED);
             // 方向 §6-96 退回：新办理轮次重建任务后必须可生成新通知（同轮次唯一身份），
             // 不被过宽唯一键误杀；受众=重建任务的 assignee/candidates（缺 task 或非数字仅 warn 不阻断）
@@ -454,6 +467,16 @@ public class TaskActionService {
                     com.sw.ck.bpm.process.service.TriggerExecutionService triggerService = triggerExecution();
                     if (triggerService != null) {
                         triggerService.onProcessCompleted(instance, terminalStatus);
+                    }
+                }
+
+                // — P64 阶段Ⅱ（A05/A06）：本实例作为子流程完成时回写并推进父批次结算；
+                //   作为父流程终态化时取消未完成批次（写回推进权终止） —
+                if (instance != null) {
+                    com.sw.ck.bpm.process.service.ChildOrchestrationService orchestration = childOrchestration();
+                    if (orchestration != null) {
+                        orchestration.onChildProcessTerminal(instance, terminalStatus);
+                        orchestration.cancelBatchesForParent(instance, terminalStatus);
                     }
                 }
 

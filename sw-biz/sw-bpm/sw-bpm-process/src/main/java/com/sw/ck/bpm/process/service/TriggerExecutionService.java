@@ -13,6 +13,7 @@ import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
+import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTriggerExec;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
@@ -60,6 +61,9 @@ public class TriggerExecutionService {
     private final BpmActionRefMapper actionRefMapper;
     private final BpmTaskFacade bpmTaskFacade;
     private final ObjectMapper objectMapper;
+    /** 阶段Ⅱ（P64 A05/A06）子流程编排（可选注入；engine/process 既有单测保持旧构造）。 */
+    private final org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
+            childOrchestrationProvider;
 
     public TriggerExecutionService(NodeFormDataService nodeFormDataService,
                                    BpmVariableSnapshotService variableSnapshotService,
@@ -69,6 +73,21 @@ public class TriggerExecutionService {
                                    BpmActionRefMapper actionRefMapper,
                                    BpmTaskFacade bpmTaskFacade,
                                    ObjectMapper objectMapper) {
+        this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
+                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TriggerExecutionService(NodeFormDataService nodeFormDataService,
+                                   BpmVariableSnapshotService variableSnapshotService,
+                                   BpmScriptEvaluatePort scriptRunner,
+                                   BpmCommandQueue commandQueue,
+                                   BpmTriggerExecMapper triggerExecMapper,
+                                   BpmActionRefMapper actionRefMapper,
+                                   BpmTaskFacade bpmTaskFacade,
+                                   ObjectMapper objectMapper,
+                                   org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
+                                           childOrchestrationProvider) {
         this.nodeFormDataService = nodeFormDataService;
         this.variableSnapshotService = variableSnapshotService;
         this.scriptRunner = scriptRunner;
@@ -77,6 +96,11 @@ public class TriggerExecutionService {
         this.actionRefMapper = actionRefMapper;
         this.bpmTaskFacade = bpmTaskFacade;
         this.objectMapper = objectMapper;
+        this.childOrchestrationProvider = childOrchestrationProvider;
+    }
+
+    private ChildOrchestrationService childOrchestration() {
+        return childOrchestrationProvider == null ? null : childOrchestrationProvider.getIfAvailable();
     }
 
     /** 派发项（集合项冻结身份）。 */
@@ -304,8 +328,28 @@ public class TriggerExecutionService {
                             + " 超过上限 " + maxDispatch + "，已整体拒绝（OVER_LIMIT），未静默截断");
                     continue;
                 }
+                // 阶段Ⅱ（P64 A05）：CHILD 动作先冻结批次（同事务，预期数/来源快照随批次冻结；
+                // 护栏超限抛可诊断异常落派发留痕，不冒称派发成功）
+                ChildOrchestrationService orchestration = action.isChild() ? childOrchestration() : null;
+                ChildOrchestrationService.FrozenBatch frozen = null;
+                if (orchestration != null) {
+                    BpmChildBatch batch = orchestration.freezeBatch(instance, trigger.getTriggerId(),
+                            action, exec.getExecKey(), items.size(), exec.getRoundNo(),
+                            instance.getFormKey(), instance.getTenantId());
+                    frozen = new ChildOrchestrationService.FrozenBatch(batch.getId(), batch.getBatchKey(),
+                            batch.getWaitPolicy());
+                    if ("NONE".equals(frozen.waitPolicy())) {
+                        dispatchNotes.add("动作 " + action.getActionId() + ": NONE 策略批次 "
+                                + batch.getBatchKey() + " 派发意图提交后即结算，父流程不等待");
+                    }
+                }
                 for (ActionItem item : items) {
-                    dispatchItem(instance, trigger, action, exec, item, snapshot, dispatchNotes);
+                    dispatchItem(instance, trigger, action, exec, item, snapshot, dispatchNotes, frozen);
+                }
+                if (orchestration != null && frozen != null && "NONE".equals(frozen.waitPolicy())) {
+                    // NONE：全部项登记完成后立即结算（单次推进由结算通道幂等保证）
+                    orchestration.settleIfNone(
+                            orchestration.loadBatch(instance.getTenantId(), frozen.batchId()));
                 }
             } catch (Exception e) {
                 log.error("动作派发失败: instance={}, action={}", instance.getProcessInstanceId(),
@@ -322,7 +366,7 @@ public class TriggerExecutionService {
 
     private void dispatchItem(BpmInstance instance, TriggerConfig trigger, ActionConfig action,
                               BpmTriggerExec exec, ActionItem item, Map<String, Object> snapshot,
-                              List<String> notes) {
+                              List<String> notes, ChildOrchestrationService.FrozenBatch frozen) {
         String commandKey = "P64ACT:" + exec.getExecKey() + ":" + action.getActionId() + ":" + item.itemKey();
         Long tenantId = instance.getTenantId();
         Optional<BpmActionRef> existingRef = Optional.ofNullable(actionRefMapper.selectOne(
@@ -348,6 +392,23 @@ public class TriggerExecutionService {
         ref.setStatus("INTENT_SUBMITTED");
         actionRefMapper.insert(ref);
 
+        // 阶段Ⅱ（P64 A05/A06）：CHILD 项登记（冻结来源行身份与版本；转办/重试不增加预期数）
+        if (frozen != null) {
+            ChildOrchestrationService orchestration = childOrchestration();
+            if (orchestration != null) {
+                String sourceRowId = "ROW".equals(String.valueOf(item.summary().get("type")))
+                        ? String.valueOf(item.itemValues().getOrDefault("id", "")).trim()
+                        : null;
+                orchestration.registerItem(orchestration.loadBatch(tenantId, frozen.batchId()),
+                        ref.getId(), item.itemKey(),
+                        sourceRowId == null || sourceRowId.isEmpty()
+                                || "null".equals(sourceRowId) ? null : sourceRowId,
+                        safeJson(item.summary()),
+                        action.getTargetProcessDefKey(), action.getTargetFormKey(),
+                        instance.getFormKey(), tenantId);
+            }
+        }
+
         Map<String, Object> data = new LinkedHashMap<>();
         if (action.getMapping() != null) {
             for (ActionConfig.ActionMapping mapping : action.getMapping()) {
@@ -369,6 +430,11 @@ public class TriggerExecutionService {
         payload.put("targetDefKey", action.getTargetProcessDefKey());
         payload.put("sourceInstanceId", instance.getProcessInstanceId());
         payload.put("sourceBusinessKey", instance.getBusinessKey());
+        if (frozen != null) {
+            // 子流程批次回查链：消费侧与完成回写经批次/项身份关联
+            payload.put("childBatchId", frozen.batchId());
+            payload.put("childBatchKey", frozen.batchKey());
+        }
         payload.put("data", data);
         String payloadJson;
         try {

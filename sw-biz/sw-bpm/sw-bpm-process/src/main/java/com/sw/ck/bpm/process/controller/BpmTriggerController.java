@@ -15,6 +15,7 @@ import com.sw.ck.bpm.process.mapper.BpmTriggerExecMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmVariableSnapshotService;
 import com.sw.ck.bpm.process.service.ActionRefRecoveryService;
+import com.sw.ck.bpm.process.service.ChildOrchestrationService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.bpm.process.service.TriggerExecutionService;
 import com.sw.ck.common.exception.BaseException;
@@ -55,7 +56,9 @@ public class BpmTriggerController {
     private final BpmTriggerExecMapper triggerExecMapper;
     private final BpmActionRefMapper actionRefMapper;
     private final ActionRefRecoveryService actionRefRecoveryService;
+    private final ChildOrchestrationService childOrchestrationService;
 
+    /** 兼容既有控制器单测构造（无子流程编排时相关端点显式 501 语义拒绝）。 */
     public BpmTriggerController(BpmTaskFacade bpmTaskFacade,
                                 BpmInstanceService bpmInstanceService,
                                 NodeFormDataService nodeFormDataService,
@@ -64,6 +67,20 @@ public class BpmTriggerController {
                                 BpmTriggerExecMapper triggerExecMapper,
                                 BpmActionRefMapper actionRefMapper,
                                 ActionRefRecoveryService actionRefRecoveryService) {
+        this(bpmTaskFacade, bpmInstanceService, nodeFormDataService, variableSnapshotService,
+                scriptRunner, triggerExecMapper, actionRefMapper, actionRefRecoveryService, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BpmTriggerController(BpmTaskFacade bpmTaskFacade,
+                                BpmInstanceService bpmInstanceService,
+                                NodeFormDataService nodeFormDataService,
+                                BpmVariableSnapshotService variableSnapshotService,
+                                BpmScriptEvaluatePort scriptRunner,
+                                BpmTriggerExecMapper triggerExecMapper,
+                                BpmActionRefMapper actionRefMapper,
+                                ActionRefRecoveryService actionRefRecoveryService,
+                                ChildOrchestrationService childOrchestrationService) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.nodeFormDataService = nodeFormDataService;
@@ -72,6 +89,7 @@ public class BpmTriggerController {
         this.triggerExecMapper = triggerExecMapper;
         this.actionRefMapper = actionRefMapper;
         this.actionRefRecoveryService = actionRefRecoveryService;
+        this.childOrchestrationService = childOrchestrationService;
     }
 
     // ==================== 预览（只读，无副作用） ====================
@@ -199,6 +217,61 @@ public class BpmTriggerController {
         ActionRefRecoveryService.RetryOutcome outcome = actionRefRecoveryService.retry(ref);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("commandId", outcome.commandId());
+        result.put("status", outcome.status());
+        result.put("message", outcome.message());
+        return R.ok(result);
+    }
+
+    // ==================== 子流程批次回查与回写恢复（P64 阶段Ⅱ A05/A06/A11） ====================
+
+    /**
+     * 实例的子流程派发批次/批次项/回写与等待结果回查（父子单据、来源行、等待原因可追溯）。
+     */
+    @GetMapping("/instances/{instanceId}/child-batches")
+    public R<List<Map<String, Object>>> listChildBatches(@PathVariable String instanceId) {
+        Long tenantId = requireTenantId();
+        if (childOrchestrationService == null) {
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "子流程编排能力未装配");
+        }
+        String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
+        return R.ok(childOrchestrationService.listBatches(tenantId, processInstanceId).stream()
+                .map(batch -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", batch.id());
+                    item.put("batchKey", batch.batchKey());
+                    item.put("parentInstanceId", batch.parentInstanceId());
+                    item.put("triggerId", batch.triggerId());
+                    item.put("actionId", batch.actionId());
+                    item.put("roundNo", batch.roundNo());
+                    item.put("waitPolicy", batch.waitPolicy());
+                    item.put("waitCount", batch.waitCount());
+                    item.put("expectedCount", batch.expectedCount());
+                    item.put("settledCount", batch.settledCount());
+                    item.put("status", batch.status());
+                    item.put("blockReason", batch.blockReason());
+                    item.put("settledAt", batch.settledAt());
+                    item.put("parentDepth", batch.parentDepth());
+                    item.put("items", batch.items());
+                    return item;
+                })
+                .toList());
+    }
+
+    /**
+     * 回写冲突受控恢复：仅 CONFLICT 项可由有权用户按当前权威版本重放（不重复已生效结果）。
+     * 权限：实例查看权（workflow:instance:view）；租户边界由登录态强制。
+     */
+    @PreAuthorize("@ss.hasPermi('workflow:instance:view')")
+    @PostMapping("/child-items/{itemId}/retry-writeback")
+    public R<Map<String, Object>> retryChildWriteback(@PathVariable Long itemId) {
+        Long tenantId = requireTenantId();
+        if (childOrchestrationService == null) {
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "子流程编排能力未装配");
+        }
+        Long actorId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
+        ChildOrchestrationService.WritebackRetryOutcome outcome =
+                childOrchestrationService.retryWriteback(tenantId, itemId, actorId);
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", outcome.status());
         result.put("message", outcome.message());
         return R.ok(result);

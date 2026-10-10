@@ -22,10 +22,38 @@ public final class ParticipantStrategy {
      * USER=所选人员审批；DEPT=服务端按权威组织关系解析各部门唯一负责人。
      */
     public static final String FORM_FIELD = "FORM_FIELD";
+    /**
+     * 节点表单人员聚合策略（P64 阶段Ⅱ A07）：value 为 {nodeKey, formField, round}。
+     * 读取指定节点指定轮次全部有效最终提交的节点表单人员字段，按用户 ID 并集去重，
+     * 生成下一轮会签参与者；round 缺省 CURRENT（当前轮），PREVIOUS=当前轮-1。
+     */
+    public static final String NODE_FORM_AGGREGATE = "NODE_FORM_AGGREGATE";
 
     /** 设计/发布校验共用的合法策略白名单（单一权威，翻译器不得另建目录）。 */
     public static final List<String> ALL = List.of(FIXED_USER, ROLE, DEPT_LEADER, POST, DEPT_POST,
-            EXPRESSION, ADAPTER, FORM_FIELD);
+            EXPRESSION, ADAPTER, FORM_FIELD, NODE_FORM_AGGREGATE);
+
+    /**
+     * NODE_FORM_AGGREGATE value 形状校验（设计/发布/运行共用的单一权威）。
+     *
+     * @return present = 面向用户的错误说明；empty = 形状合法
+     */
+    public static java.util.Optional<String> nodeFormAggregateConfigError(Object value) {
+        if (!(value instanceof Map<?, ?> mapping)) {
+            return java.util.Optional.of("NODE_FORM_AGGREGATE 必须配置 {nodeKey, formField[, round]}");
+        }
+        if (text(mapping.get("nodeKey")) == null) {
+            return java.util.Optional.of("NODE_FORM_AGGREGATE.nodeKey 必须配置来源节点 key");
+        }
+        if (text(mapping.get("formField")) == null) {
+            return java.util.Optional.of("NODE_FORM_AGGREGATE.formField 必须配置人员字段名");
+        }
+        String round = text(mapping.get("round"));
+        if (round != null && !"CURRENT".equalsIgnoreCase(round) && !"PREVIOUS".equalsIgnoreCase(round)) {
+            return java.util.Optional.of("NODE_FORM_AGGREGATE.round 只能是 CURRENT 或 PREVIOUS");
+        }
+        return java.util.Optional.empty();
+    }
 
     /**
      * FORM_FIELD value 形状校验（设计/发布/运行共用的单一权威）。
