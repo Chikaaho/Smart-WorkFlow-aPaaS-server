@@ -328,11 +328,12 @@ class ChildOrchestrationRootChainRaceTest {
             System.out.println("[race] outcomeA=" + describe(first));
             System.out.println("[race] outcomeB=" + describe(second));
             long admitted = countAdmitted(first, second);
-            long rejected = 2 - admitted;
+            long rejectedCount = 2 - admitted;
             // 合同：同根并发占用串行化后，999+1 允许、第 2 个并发冻结必须被拒
             assertThat(admitted).as("恰好一个并发冻结获得最后 1 个额度").isEqualTo(1);
-            assertThat(rejected).as("另一个必须拒绝").isEqualTo(1);
-            assertThatRejectedWithChainOverLimit(admitted == 1 ? second : first);
+            assertThat(rejectedCount).as("另一个必须拒绝").isEqualTo(1);
+            Object rejected = (first instanceof BpmChildBatch) ? second : first;
+            assertThatRejectedWithChainOverLimit(rejected);
             // 最终总额 ≤1000：拒绝方零新增批次
             assertThat(rootOccupancySum()).as("根链自动发起实例总额").isEqualTo(1000);
             assertThat(rootBatchCount()).as("同根批次数（fixture+1）").isEqualTo(2);

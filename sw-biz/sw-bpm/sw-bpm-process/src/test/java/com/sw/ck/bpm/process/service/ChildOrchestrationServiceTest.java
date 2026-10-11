@@ -384,6 +384,16 @@ class ChildOrchestrationServiceTest {
         // 复审05 P2-02b-V-C：恢复成功即清空挂起期诊断，WRITTEN 项不残留"挂起等待"历史文案
         assertThat(conflict.getStatus()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
         assertThat(conflict.getErrorText()).isNull();
+        // MP updateById 忽略 null 字段：恢复成功后必须存在显式 error_text=NULL 的 wrapper 清除
+        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildItem>>
+                clearCaptor = org.mockito.ArgumentCaptor.forClass(
+                com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(itemMapper).update(org.mockito.ArgumentMatchers.isNull(), clearCaptor.capture());
+        String clearSqlSet = ((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+                clearCaptor.getValue()).getSqlSet();
+        org.junit.jupiter.api.Assertions.assertTrue(
+                clearSqlSet != null && clearSqlSet.contains("error_text"),
+                "恢复成功后应显式清除 error_text: " + clearSqlSet);
         // 恢复成功后重新结算（BLOCKED 批次在全项成功后可结算）
         verify(batchMapper).update(any(), any());
     }

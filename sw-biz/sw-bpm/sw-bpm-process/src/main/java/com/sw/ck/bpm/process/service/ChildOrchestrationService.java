@@ -871,6 +871,13 @@ public class ChildOrchestrationService {
         item.setSourceRowsJson(clearFrozenVersions(item.getSourceRowsJson()));
         applyWriteback(item, batch, child, true);
         itemMapper.updateById(item);
+        if (BpmChildItem.STATUS_WRITTEN.equals(item.getStatus())) {
+            // 复审05 P2-02b-V-C：恢复成功必须真清除挂起期诊断——MP updateById 忽略 null 字段，
+            // 须以显式 wrapper 置 error_text=NULL，避免 WRITTEN 项残留"已挂起等待有权处置"
+            itemMapper.update(null, Wrappers.<BpmChildItem>lambdaUpdate()
+                    .eq(BpmChildItem::getId, itemId)
+                    .set(BpmChildItem::getErrorText, null));
+        }
         settleBatch(batch.getId());
         return new WritebackRetryOutcome(item.getStatus(),
                 BpmChildItem.STATUS_WRITTEN.equals(item.getStatus())
