@@ -131,13 +131,22 @@ public class ChildOrchestrationService {
         }
         String rootInstanceId = parentDepth == 0
                 ? parent.getProcessInstanceId() : resolveRootInstanceId(tenantId, parent.getBusinessKey());
-        Long chainCount = batchMapper.selectCount(Wrappers.<BpmChildBatch>lambdaQuery()
+        // 护栏口径=自动发起实例数：同一根链既有批次的预期子流程数求和，加本批 expectedCount
+        // （单批多个子实例按实例数消耗额度）；临界=恰好上限允许，超过上限拒绝。
+        List<BpmChildBatch> rootBatches = batchMapper.selectList(Wrappers.<BpmChildBatch>lambdaQuery()
+                .select(BpmChildBatch::getExpectedCount)
                 .eq(BpmChildBatch::getTenantId, tenantId)
                 .eq(BpmChildBatch::getRootInstanceId, rootInstanceId));
-        if (chainCount != null && chainCount >= MAX_ROOT_CHAIN_INSTANCES) {
+        long chainInstances = rootBatches.stream()
+                .map(BpmChildBatch::getExpectedCount)
+                .filter(java.util.Objects::nonNull)
+                .mapToLong(Integer::longValue)
+                .sum();
+        if (chainInstances + Math.max(expectedCount, 0) > MAX_ROOT_CHAIN_INSTANCES) {
             throw new BaseException(BpmErrorCode.CHILD_CHAIN_OVER_LIMIT.getCode(),
-                    "业务根链 " + rootInstanceId + " 自动发起实例数 " + chainCount
-                            + " 达到上限 " + MAX_ROOT_CHAIN_INSTANCES + "，已阻止派发");
+                    "业务根链 " + rootInstanceId + " 自动发起实例数 " + chainInstances
+                            + " + 本批 " + Math.max(expectedCount, 0)
+                            + " 超过上限 " + MAX_ROOT_CHAIN_INSTANCES + "，已阻止派发");
         }
         String batchKey = "CHILD:" + execKey + ":" + action.getActionId();
         BpmChildBatch existing = batchMapper.selectOne(Wrappers.<BpmChildBatch>lambdaQuery()

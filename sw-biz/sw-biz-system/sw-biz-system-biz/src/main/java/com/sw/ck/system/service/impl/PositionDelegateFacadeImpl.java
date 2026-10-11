@@ -108,6 +108,7 @@ public class PositionDelegateFacadeImpl implements PositionDelegateFacade {
 
     /**
      * 沿有效委托关系逐跳前进（DEPT 精确匹配优先，无精确命中走 ORG 默认）。
+     * 跳数按边计数：恰 4 跳（4 条委托边）合法并解析最终任职，第 5 条边拒绝；
      * 循环/超跳为运行期纵深防御（配置期已拒绝）。
      */
     private Chain walkChain(Long tenantId, SysPost sourcePost, Long deptId,
@@ -139,8 +140,12 @@ public class PositionDelegateFacadeImpl implements PositionDelegateFacade {
             }
             cursor = target;
         }
-        throw new IllegalStateException(
-                "岗位委托链超过最大 " + MAX_HOPS + " 跳，解析终止，请修正委托配置");
+        // 已走满 4 条边：仅当第 5 条委托边仍存在才超限（按边计数，4 跳合法）
+        if (findEnabledRule(tenantId, cursor.getId(), deptId) != null) {
+            throw new IllegalStateException(
+                    "岗位委托链超过最大 " + MAX_HOPS + " 跳，解析终止，请修正委托配置");
+        }
+        return new Chain(hops, codeOf(postsByCode, cursor));
     }
 
     /** 精确部门范围优先于组织默认范围；每源岗位/范围最多一条有效关系。 */

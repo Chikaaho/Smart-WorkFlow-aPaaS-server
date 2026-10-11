@@ -748,14 +748,16 @@ class ChildOrchestrationServiceTest {
     }
 
     @Test
-    @DisplayName("根链护栏：同业务根链自动发起实例数达 1000 → 冻结拒绝（CHILD_CHAIN_OVER_LIMIT），不新增批次/项/意图")
+    @DisplayName("根链护栏（实例口径）：既有999实例+本批2实例=1001>1000 → 冻结拒绝（CHILD_CHAIN_OVER_LIMIT），不新增批次/项/意图")
     void rootChainOverLimitRejectsFreezeWithoutBatchOrIntents() {
         BpmInstance parent = parent();
         when(itemMapper.selectList(any())).thenReturn(List.of());
-        when(batchMapper.selectCount(any())).thenReturn(1000L);
+        // 实例口径=同根既有批次 expectedCount 求和：500+499=999 个自动发起实例
+        when(batchMapper.selectList(any())).thenReturn(List.of(
+                rootBatch(1L, 500), rootBatch(2L, 499)));
 
         assertThatThrownBy(() -> service.freezeBatch(parent, "trg",
-                childAction("act_all", "ALL", null), "TRG:p1:trg:1:1", 3, 1L, "parent_form", 9L))
+                childAction("act_all", "ALL", null), "TRG:p1:trg:1:1", 2, 1L, "parent_form", 9L))
                 .isInstanceOfSatisfying(BaseException.class, e ->
                         assertThat(e.getCode()).isEqualTo(BpmErrorCode.CHILD_CHAIN_OVER_LIMIT.getCode()));
 
@@ -765,12 +767,63 @@ class ChildOrchestrationServiceTest {
     }
 
     @Test
+    @DisplayName("护栏按实例数而非批次数：单批 expectedCount=1000（批次数=1）再加1个实例即拒绝")
+    void rootChainCountsInstancesNotBatches() {
+        BpmInstance parent = parent();
+        when(itemMapper.selectList(any())).thenReturn(List.of());
+        // 单批 1000 个子实例：批次数只有 1，按批次数计数会误判未达限
+        when(batchMapper.selectList(any())).thenReturn(List.of(rootBatch(1L, 1000)));
+
+        assertThatThrownBy(() -> service.freezeBatch(parent, "trg",
+                childAction("act_all", "ALL", null), "TRG:p1:trg:1:1", 1, 1L, "parent_form", 9L))
+                .isInstanceOfSatisfying(BaseException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(BpmErrorCode.CHILD_CHAIN_OVER_LIMIT.getCode()));
+
+        verify(batchMapper, never()).insert(any(BpmChildBatch.class));
+        verify(itemMapper, never()).insert(any(BpmChildItem.class));
+    }
+
+    @Test
+    @DisplayName("临界合法额度允许：既有999实例+本批1实例=1000 → 冻结照常进行（批次落库）")
+    void rootChainCriticalQuotaAllowsExactlyAtLimit() {
+        BpmInstance parent = parent();
+        when(itemMapper.selectList(any())).thenReturn(List.of());
+        when(batchMapper.selectList(any())).thenReturn(List.of(
+                rootBatch(1L, 600), rootBatch(2L, 399)));
+        when(batchMapper.selectOne(any())).thenReturn(null);
+        when(batchMapper.insert(any(BpmChildBatch.class))).thenReturn(1);
+
+        BpmChildBatch frozen = service.freezeBatch(parent, "trg",
+                childAction("act_all", "ALL", null), "TRG:p1:trg:1:1", 1, 1L, "parent_form", 9L);
+
+        assertThat(frozen.getStatus()).isEqualTo(BpmChildBatch.STATUS_WAITING);
+        assertThat(frozen.getExpectedCount()).isEqualTo(1);
+        verify(batchMapper).insert(any(BpmChildBatch.class));
+    }
+
+    @Test
+    @DisplayName("单批多子实例临界允许：既有998实例+本批2实例=1000 → 冻结照常进行")
+    void rootChainMultiChildBatchConsumesInstanceQuota() {
+        BpmInstance parent = parent();
+        when(itemMapper.selectList(any())).thenReturn(List.of());
+        when(batchMapper.selectList(any())).thenReturn(List.of(rootBatch(1L, 998)));
+        when(batchMapper.selectOne(any())).thenReturn(null);
+        when(batchMapper.insert(any(BpmChildBatch.class))).thenReturn(1);
+
+        BpmChildBatch frozen = service.freezeBatch(parent, "trg",
+                childAction("act_all", "ALL", null), "TRG:p1:trg:1:1", 2, 1L, "parent_form", 9L);
+
+        assertThat(frozen.getExpectedCount()).isEqualTo(2);
+        verify(batchMapper).insert(any(BpmChildBatch.class));
+    }
+
+    @Test
     @DisplayName("嵌套硬上限8：配置抬高到10仍按硬钳8拒绝（父批次深度7→本次深度8），不新增批次/项")
     void hardNestingCapEightBlocksEvenWithRaisedConfig() {
         org.springframework.test.util.ReflectionTestUtils.setField(service, "configuredMaxNesting", 10);
         BpmChildItem parentItem = itemWithBatch(7);
         when(itemMapper.selectList(any())).thenReturn(List.of(parentItem));
-        when(batchMapper.selectCount(any())).thenReturn(0L);
+        when(batchMapper.selectList(any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.freezeBatch(parent(), "trg",
                 childAction("act_all", "ALL", null), "TRG:x:1", 2, 1L, "parent_form", 9L))
@@ -842,6 +895,21 @@ class ChildOrchestrationServiceTest {
         batch.setStatus(BpmChildBatch.STATUS_WAITING);
         ActionConfig action = childAction("act", policy, waitCount);
         batch.setConfigJson(new ObjectMapper().valueToTree(action).toString());
+        return batch;
+    }
+
+    /** 根链既有批次：指定 expectedCount（实例口径护栏 fixture），同根不同动作。 */
+    private BpmChildBatch rootBatch(Long id, int expectedCount) {
+        BpmChildBatch batch = new BpmChildBatch();
+        batch.setTenantId(9L);
+        batch.setId(id);
+        batch.setBatchKey("CHILD:TRG:p1:act" + id);
+        batch.setParentInstanceId("p-other-" + id);
+        batch.setParentDefKey("parent_def");
+        batch.setRootInstanceId("p1");
+        batch.setParentDepth(0);
+        batch.setExpectedCount(expectedCount);
+        batch.setStatus(BpmChildBatch.STATUS_SETTLED);
         return batch;
     }
 
