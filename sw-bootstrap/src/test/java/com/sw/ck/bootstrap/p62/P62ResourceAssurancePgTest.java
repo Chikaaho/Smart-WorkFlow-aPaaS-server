@@ -821,10 +821,10 @@ class P62ResourceAssurancePgTest {
                 lightTargetsWithSubmitPoint++;
             }
             if (trace.acceptMs() >= windowFormalBeginMs && trace.acceptMs() < windowFormalEndMs) {
-                Long invMs = epochOf(inv == null ? null : inv.get("update_time"));
-                Long targetMs = epochOf(targetRow == null ? null : targetRow.get("update_time"));
-                Long submitMs = invMs == null ? targetMs
-                        : targetMs == null ? invMs : Math.max(invMs, targetMs);
+                // 提交点=本实例目标调用行结算时刻（inv.update_time，实例专属有写者）；
+                // 目标行 update_time 是共享热点行的最后写者（含他人写入），只作效果佐证列，
+                // 不参与逐 trace 时延（r2-p1 尝试1 实测 30207ms 系共享行后写污染，装置缺陷）
+                Long submitMs = epochOf(inv == null ? null : inv.get("update_time"));
                 if (submitMs == null) {
                     windowLightMissingSubmit++;
                 } else {

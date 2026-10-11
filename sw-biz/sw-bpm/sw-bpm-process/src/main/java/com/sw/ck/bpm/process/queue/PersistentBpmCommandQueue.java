@@ -188,13 +188,26 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                     .and(wrapper -> wrapper.isNull(BpmCommand::getNextRetryAt)
                             .or().le(BpmCommand::getNextRetryAt, now))
                     // 准入截止（P62 合同）在领取路径强校验：截止已过不得再获得执行权，
-                    // 不依赖对账线程抢先改状态；旧数据无截止字段按旧行为保持可领取。
+                    // 不依赖对账线程抢先改状态；唯一例外=分片续跑中的批次命令（项级效果
+                    // 已部分发生）：准入截止约束首次执行，续跑是对已生效工作的收敛推进，
+                    // 不是新准入（否则批次永远不可领取，成为既不过期也无推进者的孤儿）。
+                    // 过去截止的批次候选在下方逐条校验项级效果后决定领取或跳过。
                     .and(wrapper -> wrapper.isNull(BpmCommand::getDeadlineAt)
-                            .or().gt(BpmCommand::getDeadlineAt, now))
+                            .or().gt(BpmCommand::getDeadlineAt, now)
+                            .or().eq(BpmCommand::getCommandType, CommandTypeEnum.BATCH_INVOKE.getCode()))
                     .orderByAsc(BpmCommand::getCreateTime)
                     .last("LIMIT " + slice)
                     .list();
             for (BpmCommand candidate : candidates) {
+                boolean deadlinePassed = candidate.getDeadlineAt() != null
+                        && !candidate.getDeadlineAt().isAfter(now);
+                if (deadlinePassed) {
+                    // 过去截止仅批次候选可进入本查询；非在途（项级效果未发生）不得领取，
+                    // 留给 expireDue 安全过期
+                    if (!hasPartiallySettledBatchItems(candidate)) {
+                        continue;
+                    }
+                }
                 // 批量命令每轮限量领取（共享预算内推进，批量不能占完全部执行机会）
                 if (CommandTypeEnum.BATCH_INVOKE.getCode().equals(candidate.getCommandType())) {
                     if (batchClaimed >= batchClaimLimit) {
@@ -203,16 +216,19 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                     batchClaimed++;
                 }
                 // 一次性租约令牌：写回（complete/reject/fail）须匹配本令牌，
-                // stale 回收后旧持有者的迟到写回因令牌不匹配被拒。
+                // stale 回收后旧执行者的迟到写回因令牌不匹配被拒。
                 String claimToken = java.util.UUID.randomUUID().toString();
                 // CAS 同样携带准入截止条件：候选扫描与领取之间截止到期的命令不得被领取，
-                // 与 expireDue 的 PENDING→EXPIRED 收敛在两种先后顺序下都只产生一个合法结果。
+                // 与 expireDue 的 PENDING→EXPIRED 收敛在两种先后顺序下都只产生一个合法结果；
+                // 在途批次续跑例外与候选查询同口径。
                 LambdaUpdateWrapper<BpmCommand> claim = new LambdaUpdateWrapper<BpmCommand>()
                         .eq(BpmCommand::getId, candidate.getId())
-                        .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
-                        .and(wrapper -> wrapper.isNull(BpmCommand::getDeadlineAt)
-                                .or().gt(BpmCommand::getDeadlineAt, now))
-                        .set(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
+                        .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode());
+                if (!deadlinePassed) {
+                    claim.and(wrapper -> wrapper.isNull(BpmCommand::getDeadlineAt)
+                            .or().gt(BpmCommand::getDeadlineAt, now));
+                }
+                claim.set(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
                         .set(BpmCommand::getClaimedAt, now)
                         .set(BpmCommand::getClaimToken, claimToken);
                 if (commandService.update(claim)) {

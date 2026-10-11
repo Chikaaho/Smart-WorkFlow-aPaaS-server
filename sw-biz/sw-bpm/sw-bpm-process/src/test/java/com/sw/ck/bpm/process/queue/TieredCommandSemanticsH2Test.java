@@ -259,6 +259,16 @@ class TieredCommandSemanticsH2Test {
         // 幂等：再次扫描不重复过期、不重复写超期
         assertThat(queue.expireDue(future)).isZero();
         assertThat(statusOf(inFlightCmd)).isEqualTo(CommandStatusEnum.PENDING.getCode());
+
+        // 领取路径同口径：截止已过的在途批次可被续跑领取（准入截止约束首次执行，
+        // 续跑是对已生效工作的收敛推进，不是新准入）；claimDue 不受 next_retry 阻塞
+        List<CommandEnvelope> resumed = queue.claimDue(List.of(CommandChannelEnum.NORMAL), 10);
+        assertThat(resumed).as("截止已过的在途批次应可续跑领取").hasSize(1);
+        assertThat(resumed.get(0).getCommandId()).isEqualTo(inFlightCmd);
+        assertThat(statusOf(inFlightCmd)).isEqualTo(CommandStatusEnum.PROCESSING.getCode());
+        // 未开始的过期批次已 EXPIRED，不再可领取（仅剩在途批次一条候选）
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM sw_bpm_command WHERE id = ?",
+                String.class, untouchedCmd)).isEqualTo(CommandStatusEnum.EXPIRED.getCode());
     }
 
     // ==================== 统一逻辑身份：重放/冲突与截止校验 ====================
