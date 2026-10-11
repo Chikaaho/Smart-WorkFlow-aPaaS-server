@@ -528,7 +528,8 @@ class P62ResourceAssurancePgTest {
                     int slowLight10s = countSince(protectedLight, nowMs - 10_000, 2_000);
                     int slowOa10s = countSince(oaRead, nowMs - 10_000, 1_000);
                     int slowApprove10s = countSince(oaApproval, nowMs - 10_000, 1_000);
-                    int burstReject1s = countOutcomeSince(burstLoad, nowMs - 1_000, "REJECTED");
+                    int burstReject1s = burstLoad == null ? 0
+                            : countOutcomeSince(burstLoad, nowMs - 1_000, "REJECTED");
                     resCsv.append(LocalDateTime.now().format(TS)).append(',')
                             .append(poolActive).append(',').append(poolWaitThread).append(',')
                             .append(poolWaitMax).append(',').append(lockWaits).append(',')
