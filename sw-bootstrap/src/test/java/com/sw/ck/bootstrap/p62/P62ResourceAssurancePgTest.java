@@ -1047,9 +1047,14 @@ class P62ResourceAssurancePgTest {
         assertThat(approvalSubmitByTenant.get(protectedKey)).as("受保护租户窗口内审批受理样本不得为空（G2）").isNotEmpty();
         assertThat(windowLightMissingSubmit).as("窗口内受理轻流程全部有目标提交证据（G2，不猜 ε）").isZero();
         assertThat(windowApprovalMissingSubmit).as("窗口内受理审批全部有终结证据（G2）").isZero();
-        assertThat(percentile(lightSubmitByTenant.get(protectedKey), 0.99))
+        // percentile 输入须升序（nearest-rank 契约）；列表按插入序累积，先排序副本
+        List<Double> protectedLightSubmit = new ArrayList<>(lightSubmitByTenant.get(protectedKey));
+        protectedLightSubmit.sort(Double::compare);
+        List<Double> protectedApprovalSubmit = new ArrayList<>(approvalSubmitByTenant.get(protectedKey));
+        protectedApprovalSubmit.sort(Double::compare);
+        assertThat(percentile(protectedLightSubmit, 0.99))
                 .as("受保护轻流程受理→提交独立可见 P99≤5000ms（G2）").isLessThanOrEqualTo(5_000.0);
-        assertThat(percentile(approvalSubmitByTenant.get(protectedKey), 0.99))
+        assertThat(percentile(protectedApprovalSubmit, 0.99))
                 .as("受保护审批受理→任务终结 P99≤5000ms（G2）").isLessThanOrEqualTo(5_000.0);
         for (List<Double> latencies : lightSubmitByTenant.values()) {
             assertThat((double) latencies.stream().mapToDouble(Double::doubleValue).max().orElse(0))
