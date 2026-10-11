@@ -78,7 +78,8 @@ class ChildOrchestrationServiceTest {
         bpmRuntimeFacade = mock(BpmRuntimeFacade.class);
         writebackFacade = mock(FormDataWritebackFacade.class);
         service = new ChildOrchestrationService(actionRefMapper, batchMapper, itemMapper, nodeFormDataService,
-                bpmInstanceService, bpmRuntimeFacade, writebackFacade, new ObjectMapper());
+                bpmInstanceService, bpmRuntimeFacade, writebackFacade,
+                mock(com.sw.ck.bpm.process.mapper.BpmInstanceMapper.class), new ObjectMapper());
         // parseData 为实例方法：以真实 Jackson 语义应答（与实现口径一致）
         com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
         when(nodeFormDataService.parseData(anyString())).thenAnswer(invocation -> {
@@ -183,6 +184,16 @@ class ChildOrchestrationServiceTest {
         // ALL 达预期：批次结算一次（状态守卫 UPDATE）并唤醒父图等待节点
         verify(batchMapper).update(any(), any());
         verify(bpmRuntimeFacade).signalWaitNode(eq("p1"), eq("wait_1"));
+        // 复审05 P2-02b-V-C：结算即清空阻断期诊断——SETTLED 批次不残留挂起文案
+        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildBatch>>
+                settleCaptor = org.mockito.ArgumentCaptor.forClass(
+                com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(batchMapper).update(org.mockito.ArgumentMatchers.isNull(), settleCaptor.capture());
+        String settleSqlSet = ((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+                settleCaptor.getValue()).getSqlSet();
+        org.junit.jupiter.api.Assertions.assertTrue(
+                settleSqlSet != null && settleSqlSet.contains("block_reason"),
+                "结算 UPDATE 应显式清空 block_reason: " + settleSqlSet);
     }
 
     @Test
@@ -370,6 +381,9 @@ class ChildOrchestrationServiceTest {
         assertThat(captor.getAllValues().get(1).expectedRowVersion()).isNull();
         // 冻结集合内版本同样被清理（保留行身份）
         assertThat(conflict.getSourceRowsJson()).contains("row-b").doesNotContain("4");
+        // 复审05 P2-02b-V-C：恢复成功即清空挂起期诊断，WRITTEN 项不残留"挂起等待"历史文案
+        assertThat(conflict.getStatus()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
+        assertThat(conflict.getErrorText()).isNull();
         // 恢复成功后重新结算（BLOCKED 批次在全项成功后可结算）
         verify(batchMapper).update(any(), any());
     }

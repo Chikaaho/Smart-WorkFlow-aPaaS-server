@@ -239,6 +239,76 @@ class FormSubmitServiceTest {
         System.out.println("=== 事件证据：兜底发布已退役，本次提交未产生进程内事件 ===");
     }
 
+    // ==================== 复审05 P2-04a：记录归属接缝 ====================
+
+    @Test
+    @DisplayName("submitOnBehalfOf：create_by/update_by=记录归属人（被分配办理人），trace 审计仍为真实上下文用户")
+    void submitForm_onBehalfOfOwner_shouldStampOwnerAsCreator() {
+        String formKey = "submit_on_behalf_test";
+        FormDefDTO draft = formDefService.createDraft(formKey, "归属接缝测试", "submit_on_behalf", "归属接缝测试");
+        createdFormIds.add(draft.getId());
+        formDefService.saveConfig(draft.getId(), """
+                {
+                    "title": "归属接缝测试表单",
+                    "fields": [
+                        {"name": "full_name", "type": "TEXT", "required": true, "label": "姓名"}
+                    ]
+                }
+                """);
+        formDefService.publish(draft.getId());
+        FormDefEntity entity = formDefMapper.selectById(draft.getId());
+        String tableName = entity.getPhysicalTableName();
+        createdTables.add(tableName);
+
+        Long ownerUserId = 2108817586892435457L;
+        Map<String, Object> formData = new LinkedHashMap<>();
+        formData.put("full_name", "派发子记录");
+        String recordId = formSubmitService.submitForm(formKey, formData, null, null, null,
+                null, null, null, ownerUserId);
+
+        Map<String, Object> row = jdbcTemplate.queryForList(
+                "SELECT * FROM \"" + tableName + "\" WHERE \"id\" = ?", recordId).get(0);
+        // 复审05 P2-04a：记录归属人=被分配办理人（SELF 数据域按 create_by 等值自然可读）
+        assertThat(((Number) row.get("create_by")).longValue())
+                .as("create_by 应为记录归属人（非上下文用户）").isEqualTo(ownerUserId);
+        assertThat(((Number) row.get("update_by")).longValue()).isEqualTo(ownerUserId);
+        // 审计不模拟：trace 提交者仍为真实调用方上下文用户
+        FormTraceEntity trace = formTraceMapper.selectOne(
+                Wrappers.lambdaQuery(FormTraceEntity.class).eq(FormTraceEntity::getRecordId, recordId));
+        assertThat(trace).as("trace 记录应存在").isNotNull();
+        assertThat(trace.getSubmitUserId()).as("trace 审计保持真实上下文用户").isEqualTo(TEST_USER_ID);
+        assertThat(((Number) row.get("tenant_id")).longValue()).isEqualTo(TEST_TENANT_ID);
+    }
+
+    @Test
+    @DisplayName("submitOnBehalfOf 归属人为空：与普通提交一致（create_by=当前用户），行为不变")
+    void submitForm_onBehalfOfNullOwner_shouldKeepContextUserAsCreator() {
+        String formKey = "submit_on_behalf_null_test";
+        FormDefDTO draft = formDefService.createDraft(formKey, "归属接缝空值测试", "submit_on_behalf_null", "归属接缝空值测试");
+        createdFormIds.add(draft.getId());
+        formDefService.saveConfig(draft.getId(), """
+                {
+                    "title": "归属接缝空值测试表单",
+                    "fields": [
+                        {"name": "full_name", "type": "TEXT", "required": true, "label": "姓名"}
+                    ]
+                }
+                """);
+        formDefService.publish(draft.getId());
+        FormDefEntity entity = formDefMapper.selectById(draft.getId());
+        String tableName = entity.getPhysicalTableName();
+        createdTables.add(tableName);
+
+        Map<String, Object> formData = new LinkedHashMap<>();
+        formData.put("full_name", "普通提交");
+        String recordId = formSubmitService.submitForm(formKey, formData, null, null, null,
+                null, null, null, null);
+
+        Map<String, Object> row = jdbcTemplate.queryForList(
+                "SELECT * FROM \"" + tableName + "\" WHERE \"id\" = ?", recordId).get(0);
+        assertThat(((Number) row.get("create_by")).longValue()).isEqualTo(TEST_USER_ID);
+    }
+
     // ==================== 测试 2：TABLE 子表写入 ====================
 
     @Test

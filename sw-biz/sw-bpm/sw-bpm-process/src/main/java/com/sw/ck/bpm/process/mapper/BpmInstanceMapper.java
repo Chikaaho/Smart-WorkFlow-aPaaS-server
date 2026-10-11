@@ -86,4 +86,18 @@ public interface BpmInstanceMapper extends BaseMapperX<BpmInstance> {
                                          @Param("scope") DataScopeFilter scope,
                                          @Param("limit") int limit,
                                          @Param("offset") long offset);
+
+    /**
+     * 根链互斥点：按实例 ID 加行锁（FOR UPDATE，调用方事务内持有至提交）。
+     * <p>
+     * P64 根链护栏（复审05 P2-06a-C）以"同根批次 expected_count 求和→插入"判定额度，
+     * 该检查-后插入序列在两个不同 batch_key 的同根并发派发下可能同时通过陈旧快照；
+     * 同一根链的全部派发解析到同一 root_instance_id，对其根实例行加锁即把同根
+     * 冻结串行化，使计数守卫与插入在同一根链上原子成立。行不存在（数据异常）返回
+     * null，由调用方按原语义继续（不因锁目标缺失新增派发失败模式）。
+     * </p>
+     */
+    @Select("SELECT id FROM sw_bpm_instance WHERE process_instance_id = #{processInstanceId} "
+            + "AND deleted = 0 FOR UPDATE")
+    Long lockByProcessInstanceIdForUpdate(@Param("processInstanceId") String processInstanceId);
 }

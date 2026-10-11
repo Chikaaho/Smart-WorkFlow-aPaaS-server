@@ -1,13 +1,19 @@
 package com.sw.ck.bpm.process.queue;
 
+import com.sw.ck.bpm.api.dto.GraphElement;
+import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
+import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
+import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -23,7 +29,8 @@ import static org.mockito.Mockito.when;
  * {@link OrchActionStartCommandHandler} 单元测试（ADR-P64-001 §4）。
  * <p>
  * 覆盖：意图行缺失拒绝；正常启动（建记录 + STARTED 回填）；同身份重放回查原结果
- * （SKIP_DUPLICATE 不重复启动）。
+ * （SKIP_DUPLICATE 不重复启动）；记录归属接缝（复审05 P2-04a）——目标定义首节点
+ * FORM_FIELD/USER/MAIN 参与人解析为归属人走 submitOnBehalfOf，非该配置保持原语义。
  * </p>
  */
 @DisplayName("P64 关联动作命令处理器测试")
@@ -31,8 +38,10 @@ class OrchActionStartCommandHandlerTest {
 
     private final BpmActionRefMapper actionRefMapper = mock(BpmActionRefMapper.class);
     private final FormDataSubmitFacade formDataSubmitFacade = mock(FormDataSubmitFacade.class);
-    private final OrchActionStartCommandHandler handler =
-            new OrchActionStartCommandHandler(actionRefMapper, formDataSubmitFacade);
+    private final BpmProcessDefService processDefService = mock(BpmProcessDefService.class);
+    private final NodeFormDataService nodeFormDataService = mock(NodeFormDataService.class);
+    private final OrchActionStartCommandHandler handler = new OrchActionStartCommandHandler(
+            actionRefMapper, formDataSubmitFacade, processDefService, nodeFormDataService);
 
     private CommandEnvelope envelope(String payload) {
         CommandEnvelope envelope = new CommandEnvelope();
@@ -133,5 +142,97 @@ class OrchActionStartCommandHandlerTest {
         verify(formDataSubmitFacade, org.mockito.Mockito.times(2)).submit(eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
                 eq("P64ACT:x:act-1:11"));
+    }
+
+    // ==================== 复审05 P2-04a：系统派发记录归属接缝 ====================
+
+    private BpmProcessDef publishedDef(String processKey) {
+        BpmProcessDef def = new BpmProcessDef();
+        def.setProcessKey(processKey);
+        def.setPublishedVersion(3);
+        return def;
+    }
+
+    private ProcessGraph graphWithFirstNodeParticipant(Map<String, Object> participant) {
+        Map<String, Object> nodeConfig = new HashMap<>();
+        if (participant != null) {
+            nodeConfig.put("participant", participant);
+        }
+        return ProcessGraph.builder().elements(List.of(
+                GraphElement.builder().id("start").kind("node").type("START").build(),
+                GraphElement.builder().id("node_first").kind("node").type("APPROVAL")
+                        .config(nodeConfig).build(),
+                GraphElement.builder().id("e1").kind("edge").source("start").target("node_first").build())).build();
+    }
+
+    @Test
+    @DisplayName("记录归属接缝：首节点 FORM_FIELD/USER/MAIN 参与人 → 按字段值走 submitOnBehalfOf（create_by=被分配办理人）")
+    void shouldSubmitOnBehalfOfResolvedFormFieldOwner() throws Exception {
+        when(actionRefMapper.selectById(1L)).thenReturn(ref(1L, "INTENT_SUBMITTED", null));
+        long ownerId = 2108817586892435457L;
+        String payload = "{\"refId\":1,\"targetFormKey\":\"target_form\",\"data\":{\"owner_id\":\""
+                + ownerId + "\"}}";
+        BpmProcessDef def = publishedDef("def_target");
+        when(processDefService.findByProcessKey("def_target")).thenReturn(def);
+        Map<String, Object> binding = Map.of("strategy", "FORM_FIELD",
+                "value", Map.of("objectType", "USER", "scope", "MAIN", "field", "owner_id"));
+        when(nodeFormDataService.loadGraph("def_target", 3))
+                .thenReturn(graphWithFirstNodeParticipant(binding));
+        when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
+                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                eq("P64ACT:x:act-1:11"), eq(ownerId)))
+                .thenReturn(Optional.of("rec-target-1"));
+
+        String result = handler.handle(envelope(payload));
+
+        assertThat(result).contains("STARTED").contains("rec-target-1");
+        verify(formDataSubmitFacade, org.mockito.Mockito.never())
+                .submit(anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString());
+        verify(actionRefMapper).updateById(ref(1L, "STARTING", "rec-target-1"));
+    }
+
+    @Test
+    @DisplayName("非 FORM_FIELD/USER/MAIN 参与人（或解析不可得）保持原语义：submit（create_by=命令发起人）")
+    void shouldFallbackToPlainSubmitWhenParticipantNotFormFieldUserMain() throws Exception {
+        when(actionRefMapper.selectById(2L)).thenReturn(ref(2L, "INTENT_SUBMITTED", null));
+        String payload = "{\"refId\":2,\"targetFormKey\":\"target_form\",\"data\":{\"owner_id\":\"x\"}}";
+        // TABLE 范围参与人：首节点在记录创建时刻无单一归属人 → 保持原语义
+        BpmProcessDef def = publishedDef("def_target");
+        when(processDefService.findByProcessKey("def_target")).thenReturn(def);
+        Map<String, Object> tableBinding = Map.of("strategy", "FORM_FIELD",
+                "value", Map.of("objectType", "USER", "scope", "TABLE",
+                        "tableField", "t", "column", "handler"));
+        when(nodeFormDataService.loadGraph("def_target", 3))
+                .thenReturn(graphWithFirstNodeParticipant(tableBinding));
+        when(formDataSubmitFacade.submit(eq("target_form"),
+                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                eq("P64ACT:x:act-1:11")))
+                .thenReturn(Optional.of("rec-target-2"));
+
+        String result = handler.handle(envelope(payload));
+
+        assertThat(result).contains("STARTED").contains("rec-target-2");
+        verify(formDataSubmitFacade, org.mockito.Mockito.never()).submitOnBehalfOf(
+                anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString(),
+                org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    @DisplayName("定义未发布/图缺失：归属解析跳过，普通 submit 不阻断派发")
+    void shouldFallbackWhenTargetDefUnresolvable() throws Exception {
+        when(actionRefMapper.selectById(3L)).thenReturn(ref(3L, "INTENT_SUBMITTED", null));
+        String payload = "{\"refId\":3,\"targetFormKey\":\"target_form\",\"data\":{\"owner_id\":\"1\"}}";
+        when(processDefService.findByProcessKey("def_target")).thenReturn(null);
+        when(formDataSubmitFacade.submit(eq("target_form"),
+                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                eq("P64ACT:x:act-1:11")))
+                .thenReturn(Optional.of("rec-target-3"));
+
+        String result = handler.handle(envelope(payload));
+
+        assertThat(result).contains("STARTED").contains("rec-target-3");
+        verify(formDataSubmitFacade, org.mockito.Mockito.never()).submitOnBehalfOf(
+                anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString(),
+                org.mockito.ArgumentMatchers.anyLong());
     }
 }

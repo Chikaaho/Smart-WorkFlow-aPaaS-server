@@ -293,6 +293,30 @@ public class FormSubmitService {
                              String idempotencyKey,
                              String dispatchChannel,
                              String processDefKey) {
+        return submitForm(formKey, submittedData, submitIp, deviceFingerprint, userAgent,
+                idempotencyKey, dispatchChannel, processDefKey, null);
+    }
+
+    /**
+     * 提交表单并以指定用户作为记录归属人落库（P64 派发接缝 A06，复审05 P2-04a）。
+     * <p>
+     * {@code recordOwnerUserId} 非空且为正时：主表/子表系统列 create_by/update_by 记录该归属人
+     * （系统派发子记录的合法被分配办理人），使既有数据范围模型（SELF→create_by 等值）对
+     * 被分配对象自然生效；表单可见性、字段校验、租户与 sw_form_trace 审计仍按当前调用方
+     * 上下文权威执行，不模拟登录态。为空/非正时与普通提交完全一致（create_by=当前用户）。
+     * 归属人有效性由调用方（派发链）保证；数据范围过滤是读路径权威，本参数不放大任何范围。
+     * </p>
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String submitForm(String formKey,
+                             Map<String, Object> submittedData,
+                             String submitIp,
+                             String deviceFingerprint,
+                             String userAgent,
+                             String idempotencyKey,
+                             String dispatchChannel,
+                             String processDefKey,
+                             Long recordOwnerUserId) {
         // ==========================================================
         // Step 1: 获取当前用户
         // ==========================================================
@@ -302,6 +326,10 @@ public class FormSubmitService {
         }
         Long tenantId = loginUser.getTenantId();
         Long userId = loginUser.getUserId();
+        // P64 派发接缝 A06（复审05 P2-04a）：记录归属人（被分配办理人）作为系统列创建者；
+        // 审计/追踪/发起人仍用真实上下文用户
+        Long recordCreator = recordOwnerUserId != null && recordOwnerUserId > 0
+                ? recordOwnerUserId : userId;
 
         // 幂等前置检查：同键提交已存在时返回既有 recordId，不产生任何写入
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
@@ -372,7 +400,7 @@ public class FormSubmitService {
         // Step 5: 构建系统列 + 用户列值
         // ==========================================================
         String recordId = idGenerator.generate();
-        Map<String, Object> systemCols = buildSystemColumns(recordId, tenantId, userId);
+        Map<String, Object> systemCols = buildSystemColumns(recordId, tenantId, recordCreator);
 
         // 用户列（按 fieldDefs 顺序构建，排除 TABLE/LABEL 类型）
         Map<String, String> subTableMapping = parseSubTableMapping(formDef.getSubTableMapping());
@@ -471,7 +499,7 @@ public class FormSubmitService {
 
             for (Map<String, Object> row : rows) {
                 String subRecordId = idGenerator.generate();
-                Map<String, Object> subSysCols = buildSystemColumns(subRecordId, tenantId, userId);
+                Map<String, Object> subSysCols = buildSystemColumns(subRecordId, tenantId, recordCreator);
                 subSysCols.put("parent_record_id", recordId);
 
                 List<String> subCols = new ArrayList<>(subSysCols.keySet());

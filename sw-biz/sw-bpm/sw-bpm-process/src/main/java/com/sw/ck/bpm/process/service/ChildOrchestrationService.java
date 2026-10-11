@@ -75,6 +75,7 @@ public class ChildOrchestrationService {
     private final BpmInstanceService bpmInstanceService;
     private final BpmRuntimeFacade bpmRuntimeFacade;
     private final FormDataWritebackFacade writebackFacade;
+    private final com.sw.ck.bpm.process.mapper.BpmInstanceMapper bpmInstanceMapper;
     private final ObjectMapper objectMapper;
 
     /** 父子嵌套上限（默认 3；服务端硬钳 8；UI 可见并经服务端复核）。 */
@@ -88,6 +89,7 @@ public class ChildOrchestrationService {
                                      BpmInstanceService bpmInstanceService,
                                      BpmRuntimeFacade bpmRuntimeFacade,
                                      FormDataWritebackFacade writebackFacade,
+                                     com.sw.ck.bpm.process.mapper.BpmInstanceMapper bpmInstanceMapper,
                                      ObjectMapper objectMapper) {
         this.actionRefMapper = actionRefMapper;
         this.batchMapper = batchMapper;
@@ -96,6 +98,7 @@ public class ChildOrchestrationService {
         this.bpmInstanceService = bpmInstanceService;
         this.bpmRuntimeFacade = bpmRuntimeFacade;
         this.writebackFacade = writebackFacade;
+        this.bpmInstanceMapper = bpmInstanceMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -131,6 +134,16 @@ public class ChildOrchestrationService {
         }
         String rootInstanceId = parentDepth == 0
                 ? parent.getProcessInstanceId() : resolveRootInstanceId(tenantId, parent.getBusinessKey());
+        // 同根并发占用串行化（复审05 P2-06a-C 竞争验证确证的检查-后插入窗口）：
+        // 同一根链的全部派发解析到同一 root_instance_id，对根实例行 FOR UPDATE 使
+        // "计数求和→插入"在同一根链上严格串行，根链自动发起实例总额不超过上限。
+        // 行缺失（数据异常）按原语义继续，不新增派发失败模式。
+        if (rootInstanceId == null) {
+            log.warn("根链护栏未取得 root_instance_id（跳过同根串行化）: parent={}",
+                    parent.getProcessInstanceId());
+        } else {
+            bpmInstanceMapper.lockByProcessInstanceIdForUpdate(rootInstanceId);
+        }
         // 护栏口径=自动发起实例数：同一根链既有批次的预期子流程数求和，加本批 expectedCount
         // （单批多个子实例按实例数消耗额度）；临界=恰好上限允许，超过上限拒绝。
         List<BpmChildBatch> rootBatches = batchMapper.selectList(Wrappers.<BpmChildBatch>lambdaQuery()
@@ -324,8 +337,9 @@ public class ChildOrchestrationService {
         ActionConfig action = parseConfig(batch.getConfigJson());
         ActionConfig.WriteBackConfig wb = action == null ? null : action.getWriteBack();
         if (wb == null) {
-            // 未配置回写：子流程有效完成即成功
+            // 未配置回写：子流程有效完成即成功（清空历史期诊断，当前状态即权威展示）
             item.setStatus(BpmChildItem.STATUS_WRITTEN);
+            item.setErrorText(null);
             return;
         }
         BpmTaskFormData result = latestSubmitted(child.getTenantId(), child.getProcessInstanceId(),
@@ -422,6 +436,9 @@ public class ChildOrchestrationService {
             recorded.put("main", mainFields);
         }
         item.setStatus(BpmChildItem.STATUS_WRITTEN);
+        // 恢复/成功即清空挂起期诊断：WRITTEN 项不再残留"已挂起等待有权处置"历史文案
+        // （复审05 P2-02b-V-C：已恢复结果不得显示为当前待处置；诊断展示按当前状态语义）
+        item.setErrorText(null);
         item.setWritebackJson(safeJson(recorded));
         item.setWritebackTime(LocalDateTime.now());
         item.setWritebackSource(writebackSource(child, batch));
@@ -635,6 +652,9 @@ public class ChildOrchestrationService {
                     .eq(BpmChildBatch::getId, batchId)
                     .in(BpmChildBatch::getStatus, BpmChildBatch.STATUS_WAITING, BpmChildBatch.STATUS_BLOCKED)
                     .set(BpmChildBatch::getStatus, BpmChildBatch.STATUS_SETTLED)
+                    // 结算即清空阻断期诊断：SETTLED 批次不再残留 CONFLICT/BLOCKED 挂起文案
+                    // （复审05 P2-02b-V-C：阻断原因只属于未决状态，结算后按当前状态展示）
+                    .set(BpmChildBatch::getBlockReason, null)
                     .set(BpmChildBatch::getSettledCount, successes)
                     .set(BpmChildBatch::getSettledAt, LocalDateTime.now()));
             if (updated > 0) {
