@@ -179,6 +179,17 @@ class P62ResourceAssurancePgTest {
         callbackReceiver.start();
         jdbc.update("UPDATE sw_openapi_app SET callback_url = ? WHERE app_id = 'i4-demo-app'",
                 "http://127.0.0.1:" + callbackReceiver.getAddress().getPort() + "/i4/callback");
+        // 出站回调=流程实例终态事件，而审批实例仅在受保护租户推进（突发租户无审批负载）；
+        // 互换画像（保护=100）需 tenant 100 应用才能观测真实投递——双租户各配一台
+        jdbc.update("DELETE FROM sw_openapi_app WHERE app_id = 'i4-demo-app-t100'");
+        jdbc.update("INSERT INTO sw_openapi_app (id, create_time, update_time, deleted, tenant_id,"
+                        + " version, app_id, app_name, secret_hash, scopes, status, act_as_user_id,"
+                        + " callback_url, callback_secret_hash)"
+                        + " VALUES (900000001, current_timestamp, current_timestamp, 0, 100, 0,"
+                        + " 'i4-demo-app-t100', 'P62 性能装置 tenant100 回调观测',"
+                        + " 'fcba56c261010a10a795ef40b347938165fcf6b69cbe9ab60eded236849dd49a',"
+                        + " 'PROCESS_START,PROCESS_QUERY,TASK_HANDLE', 'ENABLED', 1, ?, null)",
+                "http://127.0.0.1:" + callbackReceiver.getAddress().getPort() + "/i4/callback");
         System.out.println("[P62-EV] callback receiver on port " + callbackReceiver.getAddress().getPort());
         seedTenant(0L, 91999L, "p62_ra_t0");
         seedTenant(100L, 92999L, "p62_ra_t100");
@@ -765,19 +776,26 @@ class P62ResourceAssurancePgTest {
                 counterTotal, factTotal);
         writeOccupancyResponsibility(scenario);
         writeStatDefinition(scenario);
-        // G5 正常投递与租户归属（活体接收器）：正式窗内 SUCCESS 投递行与租户值实测
+        // G5 正常投递与租户归属（活体接收器）：正式窗内 SUCCESS 投递行与租户值实测。
+        // 回调源=审批实例终态，审批仅受保护租户推进 ⇒ 每画像成功投递租户=受保护租户
         Map<String, Object> cb = jdbc.queryForMap("SELECT COUNT(*) AS n,"
                 + " COALESCE(MIN(tenant_id), -1) AS min_t, COALESCE(MAX(tenant_id), -1) AS max_t"
-                + " FROM sw_openapi_callback_log WHERE status = 'SUCCESS' AND delivered_at >= ?",
-                new java.sql.Timestamp(formalStart));
+                + " FROM sw_openapi_callback_log WHERE status = 'SUCCESS' AND delivered_at >= ?"
+                + " AND tenant_id = ?", new java.sql.Timestamp(formalStart), protectedTenant);
         long cbCount = ((Number) cb.get("n")).longValue();
-        assertThat(cbCount).as("正式窗内存在真实成功回调投递（G5 正常投递）").isGreaterThan(0);
+        assertThat(cbCount).as("正式窗内受保护租户存在真实成功回调投递（G5 正常投递）").isGreaterThan(0);
         assertThat(((Number) cb.get("min_t")).longValue())
-                .as("成功投递行租户归属=应用租户 0（G5 租户归属，挂起租户线+显式过滤下写入）").isEqualTo(0L);
+                .as("成功投递行租户归属一致（G5 租户归属，挂起租户线+显式过滤下写入）")
+                .isEqualTo(((Number) cb.get("max_t")).longValue());
         writeEvidence("callback-delivery.txt", "scenario=" + scenario
+                + " protectedTenant=" + protectedTenant
                 + "\nreceiverPort=" + callbackReceiver.getAddress().getPort()
-                + "\nsuccessRowsInFormalWindow=" + cbCount
+                + "\nsuccessRowsInFormalWindow(protectedTenant)=" + cbCount
                 + " tenantMin=" + cb.get("min_t") + " tenantMax=" + cb.get("max_t")
+                + "\nallTenants=" + jdbc.queryForList(
+                        "SELECT tenant_id, COUNT(*) AS n FROM sw_openapi_callback_log"
+                                + " WHERE status = 'SUCCESS' AND delivered_at >= ? GROUP BY tenant_id"
+                                + " ORDER BY tenant_id", new java.sql.Timestamp(formalStart))
                 + "\nreceiptsHead:\n" + String.join("\n", callbackReceipts.stream()
                         .skip(Math.max(0, callbackReceipts.size() - 20)).toList()) + "\n");
         System.out.println("[P62-EV] " + scenario + " done openAfter=" + openAfter
@@ -1162,9 +1180,9 @@ class P62ResourceAssurancePgTest {
                 + " (合同上界 30000ms)"
                 + "\nwindowBatchTraces=" + windowBatchTraces
                 + " (正式窗口内受理的批次笔数；0=不得判通过，NP03)"
-                + "\nlightSubmitObservedByTenant=" + summarizeObserved(lightObs)
-                + " (G2 提交后独立可见：独立读路径轮询效果行，观察值=真实可见+≤250ms 保守上界)"
-                + "\napprovalSubmitObservedByTenant=" + summarizeObserved(approvalObs)
+                + "\nlightSubmitObservedByTenant=" + summarizeObserved(lightObs, windowFormalBeginMs, windowFormalEndMs)
+                + " (G2 提交后独立可见：独立读路径轮询效果行，观察值=真实可见+≤250ms 保守上界；inWindowN=发起入组)"
+                + "\napprovalSubmitObservedByTenant=" + summarizeObserved(approvalObs, windowFormalBeginMs, windowFormalEndMs)
                 + " (G2 同口径)"
                 + "\nbatchItemSettleBounds=" + summarizeBatchBounds(batchItemSettleBounds)
                 + " (G2/NP03：受理→逐项结算完成保守上界，V0.1.11 settled_at 实测时点；含队列+切片排队)"
@@ -1178,8 +1196,9 @@ class P62ResourceAssurancePgTest {
                 .as("窗口内批次命令领取等待 ≤30000ms（持久受理→领取，NP03）").isLessThanOrEqualTo(30_000.0);
         assertThat(batchUnsettledItems)
                 .as("已接受批次全部项终态结算（G4 结果闭环保持，settled_at 实测）").isZero();
-        // G2 断言（口径=受保护合法轻流程/审批；突发不追加 5s）：观测样本非空、无超时、
-        // 每个≤30s、受保护 P99≤5s（观察值含 ≤250ms 轮询保守上界，超界即真超界）
+        // G2 断言（口径=受保护合法轻流程/审批；突发不追加 5s）：预算以发起入组为准
+        // （stat-definition primaryCohort：accept∈正式窗；窗口外受理单列不混入分位）。
+        // 观测样本非空、无超时、每个≤30s、受保护窗内 P99≤5s（含 ≤250ms 轮询保守上界）
         String protectedKey = String.valueOf(protectedTenantArg);
         List<double[]> protectedLightObs = lightObs.get(protectedKey);
         List<double[]> protectedApprovalObs = approvalObs.get(protectedKey);
@@ -1189,12 +1208,18 @@ class P62ResourceAssurancePgTest {
         long approvalTimeouts = protectedApprovalObs.stream().filter(s -> s[1] < 0).count();
         assertThat(lightTimeouts).as("受保护轻流程 30s 内全部独立可观察（G2，不猜 ε）").isZero();
         assertThat(approvalTimeouts).as("受保护审批 30s 内全部独立可观察（G2）").isZero();
-        List<Double> lightDeltas = observedDeltas(protectedLightObs);
-        List<Double> approvalDeltas = observedDeltas(protectedApprovalObs);
+        List<double[]> windowLightObs = protectedLightObs.stream()
+                .filter(s -> s[0] >= windowFormalBeginMs && s[0] < windowFormalEndMs).toList();
+        List<double[]> windowApprovalObs = protectedApprovalObs.stream()
+                .filter(s -> s[0] >= windowFormalBeginMs && s[0] < windowFormalEndMs).toList();
+        assertThat(windowLightObs).as("窗内受保护轻流程观测样本不得为空（G2 发起入组）").isNotEmpty();
+        assertThat(windowApprovalObs).as("窗内受保护审批观测样本不得为空（G2 发起入组）").isNotEmpty();
+        List<Double> lightDeltas = observedDeltas(windowLightObs);
+        List<Double> approvalDeltas = observedDeltas(windowApprovalObs);
         assertThat(percentile(lightDeltas, 0.99))
-                .as("受保护轻流程受理→提交后独立可见 P99≤5000ms（G2，保守上界）").isLessThanOrEqualTo(5_000.0);
+                .as("受保护轻流程受理→提交后独立可见 P99≤5000ms（G2 发起入组，保守上界）").isLessThanOrEqualTo(5_000.0);
         assertThat(percentile(approvalDeltas, 0.99))
-                .as("受保护审批受理→任务终结可观察 P99≤5000ms（G2，保守上界）").isLessThanOrEqualTo(5_000.0);
+                .as("受保护审批受理→任务终结可观察 P99≤5000ms（G2 发起入组，保守上界）").isLessThanOrEqualTo(5_000.0);
         for (List<double[]> samples : lightObs.values()) {
             for (double[] s : samples) {
                 if (s[1] >= 0) {
@@ -1326,8 +1351,9 @@ class P62ResourceAssurancePgTest {
                 + " medianMs=" + String.format(Locale.ROOT, "%.1f", percentile(valid, 0.50)) + "}";
     }
 
-    /** G2 汇总：每租户 n/p99/max/timeouts（nearest-rank 输入先排序）。 */
-    private static String summarizeObserved(Map<String, List<double[]>> byTenant) {
+    /** G2 汇总：窗内入组 n/p99/max/timeouts + 全量 n（nearest-rank 输入先排序）。 */
+    private static String summarizeObserved(Map<String, List<double[]>> byTenant,
+                                            long windowBegin, long windowEnd) {
         StringBuilder sb = new StringBuilder("{");
         boolean first = true;
         for (var e : byTenant.entrySet()) {
@@ -1336,11 +1362,14 @@ class P62ResourceAssurancePgTest {
             }
             first = false;
             long timeouts = e.getValue().stream().filter(s -> s[1] < 0).count();
-            List<Double> deltas = observedDeltas(e.getValue());
-            sb.append(e.getKey()).append("={n=").append(e.getValue().size())
+            List<double[]> inWindow = e.getValue().stream()
+                    .filter(s -> s[0] >= windowBegin && s[0] < windowEnd).toList();
+            List<Double> deltas = observedDeltas(inWindow);
+            sb.append(e.getKey()).append("={inWindowN=").append(inWindow.size())
                     .append(" p99=").append(String.format(Locale.ROOT, "%.1f", percentile(deltas, 0.99)))
                     .append(" max=").append(String.format(Locale.ROOT, "%.1f", max(deltas)))
-                    .append(" timeouts=").append(timeouts).append('}');
+                    .append(" timeouts=").append(timeouts)
+                    .append(" totalN=").append(e.getValue().size()).append('}');
         }
         return sb.append('}').toString();
     }
