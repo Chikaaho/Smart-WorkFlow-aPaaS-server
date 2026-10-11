@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * 由 ADR-P64-001 §6 契约承载。
  * </p>
  */
-@DisplayName("P64 A12 真实 PG 0.1.6 非空基线 → V0.1.7—V0.1.9 追加升级演练（阶段Ⅱ链尾）")
+@DisplayName("P64 A12 真实 PG 0.1.6 非空基线 → V0.1.7—V0.1.10 追加升级演练（链尾）")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class P64AppendMigrationUpgradePostgresTest {
 
@@ -60,7 +60,7 @@ class P64AppendMigrationUpgradePostgresTest {
     private String dbPassword;
 
     @Test
-    @DisplayName("0.1.6 非空基线追加至链尾：新表就位、存量原义保持、链尾 0.1.9")
+    @DisplayName("0.1.6 非空基线追加至链尾：新表就位、存量原义保持、链尾 0.1.10")
     void appendMigrationPreservesLegacyRows() throws Exception {
         probeConnection();
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);
@@ -92,14 +92,14 @@ class P64AppendMigrationUpgradePostgresTest {
                     + "(9003, 9, 'legacy-pi-1', 'node_legacy', 'legacy-task-1', 7, 'APPROVE')");
         }
 
-        // 3) 追加升级到链尾（V0.1.7—V0.1.9）
+        // 3) 追加升级到链尾（V0.1.7—V0.1.10）
         var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(result.success, "追加迁移应成功");
 
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
-            // 终点版本 0.1.9
-            assertEquals("0.1.9", currentVersion(conn), "升级终点应为 0.1.9");
+            // 终点版本 0.1.10（P62 性能装置处置追加查找索引，链尾随迁移文件滚动）
+            assertEquals("0.1.10", currentVersion(conn), "升级终点应为 0.1.10");
 
             // 三张新表就位
             for (String table : new String[]{
@@ -152,10 +152,10 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals(0, rs.getInt(1), "六张新表在升级后应为空（零迁移写回）");
             }
 
-            // 迁移历史恰一条 0.1.7/0.1.8/0.1.9 且成功
+            // 迁移历史恰一条 0.1.7/0.1.8/0.1.9/0.1.10 且成功
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT version, COUNT(*) FROM flyway_schema_history "
-                            + "WHERE version IN ('0.1.7','0.1.8','0.1.9') AND success = TRUE "
+                            + "WHERE version IN ('0.1.7','0.1.8','0.1.9','0.1.10') AND success = TRUE "
                             + "GROUP BY version");
                  ResultSet rs = ps.executeQuery()) {
                 int seen = 0;
@@ -163,7 +163,7 @@ class P64AppendMigrationUpgradePostgresTest {
                     assertEquals(1, rs.getInt(2), rs.getString(1) + " 应恰有一条成功迁移记录");
                     seen++;
                 }
-                assertEquals(3, seen, "0.1.7/0.1.8/0.1.9 应各有一条成功迁移记录");
+                assertEquals(4, seen, "0.1.7/0.1.8/0.1.9/0.1.10 应各有一条成功迁移记录");
             }
         }
     }

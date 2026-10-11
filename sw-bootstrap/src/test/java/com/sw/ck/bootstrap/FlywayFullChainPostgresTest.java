@@ -94,8 +94,8 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(17, result.migrationsExecuted,
-                "全新库应执行 17 条（V0.1.0 基线 + V0.1.1—V0.1.9 增量 + 7 个 R__ 可重复对账），实际: "
+        assertEquals(18, result.migrationsExecuted,
+                "全新库应执行 18 条（V0.1.0 基线 + V0.1.1—V0.1.10 增量 + 7 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
     }
 
@@ -107,10 +107,10 @@ class FlywayFullChainPostgresTest {
     }
 
     @Test
-    @DisplayName("基线迁移后：info().applied() 共 17 条（0.1.0—0.1.9 + 7 个可重复对账），终点 0.1.9")
+    @DisplayName("基线迁移后：info().applied() 共 18 条（0.1.0—0.1.10 + 7 个可重复对账），终点 0.1.10")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
-        assertEquals(17, applied.length, "已应用迁移数应为 17（基线 + 9 个增量 + 7 个 R__）");
+        assertEquals(18, applied.length, "已应用迁移数应为 18（基线 + 10 个增量 + 7 个 R__）");
         boolean baselineSeen = false;
         int incrementalSeen = 0;
         int repeatableCount = 0;
@@ -127,15 +127,16 @@ class FlywayFullChainPostgresTest {
                     || "0.1.6".equals(info.getVersion().getVersion())
                     || "0.1.7".equals(info.getVersion().getVersion())
                     || "0.1.8".equals(info.getVersion().getVersion())
-                    || "0.1.9".equals(info.getVersion().getVersion())) {
+                    || "0.1.9".equals(info.getVersion().getVersion())
+                    || "0.1.10".equals(info.getVersion().getVersion())) {
                 incrementalSeen++;
             }
         }
         assertTrue(baselineSeen, "V0.1.0 基线应已应用");
-        assertEquals(9, incrementalSeen, "V0.1.1—V0.1.9 增量应已应用");
+        assertEquals(10, incrementalSeen, "V0.1.1—V0.1.10 增量应已应用");
         assertEquals(7, repeatableCount, "7 个 R__ 菜单可重复对账应已应用");
-        assertEquals("0.1.9", flyway().info().current().getVersion().getVersion(),
-                "终点当前版本应为 0.1.9 增量");
+        assertEquals("0.1.10", flyway().info().current().getVersion().getVersion(),
+                "终点当前版本应为 0.1.10 增量");
     }
 
     @Test
@@ -149,7 +150,7 @@ class FlywayFullChainPostgresTest {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway().migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.1.9", flyway().info().current().getVersion().getVersion(), "版本应保持 0.1.9");
+        assertEquals("0.1.10", flyway().info().current().getVersion().getVersion(), "版本应保持 0.1.10");
     }
 
     @Test
@@ -167,7 +168,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立基线库应成功");
-        assertEquals(17, first.migrationsExecuted, "基线库应含 17 条（V0.1.0—V0.1.9 + 7 R__），实际: " + first.migrationsExecuted);
+        assertEquals(18, first.migrationsExecuted, "基线库应含 18 条（V0.1.0—V0.1.10 + 7 R__），实际: " + first.migrationsExecuted);
 
         try (Connection conn = DriverManager.getConnection(tamperedUrl, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {

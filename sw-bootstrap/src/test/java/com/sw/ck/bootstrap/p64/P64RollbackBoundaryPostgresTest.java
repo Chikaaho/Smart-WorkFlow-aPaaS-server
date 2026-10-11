@@ -26,15 +26,15 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * P64 阶段Ⅱ A12 回退边界观察（真实 PostgreSQL）：
- * 以在役 0.1.9 全链库为基线，把回退代码等价的旧迁移集（仅 ≤0.1.7 的资源）作为
- * Flyway location 对该库执行 validate——0.1.8/0.1.9 已应用而本地不可解析，
+ * 以在役 0.1.10 全链库为基线，把回退代码等价的旧迁移集（仅 ≤0.1.7 的资源）作为
+ * Flyway location 对该库执行 validate——0.1.8—0.1.10 已应用而本地不可解析，
  * validate 必须失败（不得静默通过），即"不能把不能处理存量的旧代码直接切回"。
  * <p>
  * 旧迁移集经 classpath 真实资源复制生成（V0.1.0—V0.1.7 全部 SQL，含各子域目录），
  * 非手工快照；复制清单非空且数量可核。连接不可用按外部环境事实跳过。
  * </p>
  */
-@DisplayName("P64 A12 真实 PG 回退边界观察：旧迁移集对在役 0.1.9 库 validate 必须失败")
+@DisplayName("P64 A12 真实 PG 回退边界观察：旧迁移集对在役 0.1.10 库 validate 必须失败")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class P64RollbackBoundaryPostgresTest {
 
@@ -51,7 +51,7 @@ class P64RollbackBoundaryPostgresTest {
     private String dbUrl;
 
     @Test
-    @DisplayName("在役 0.1.9 库 × 旧迁移集(≤0.1.7)：validate 失败且指名未解析的 0.1.8/0.1.9；新配置完整链 validate 成功")
+    @DisplayName("在役 0.1.10 库 × 旧迁移集(≤0.1.7)：validate 失败且指名未解析的 0.1.8—0.1.10；新配置完整链 validate 成功")
     void rollbackToLegacyMigrationSetFailsValidateNotSilentlyPass() throws Exception {
         probeConnection();
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);
@@ -60,12 +60,12 @@ class P64RollbackBoundaryPostgresTest {
             stmt.executeUpdate("CREATE DATABASE " + DB_NAME);
         }
 
-        // 1) 在役基线：全链迁移至 0.1.9
+        // 1) 在役基线：全链迁移至 0.1.10
         var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(P64AppendMigrationUpgradePostgresTest.appLocations()).load().migrate();
         assertTrue(result.success, "全链迁移应成功");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
-            assertEquals("0.1.9", currentVersion(conn), "在役基线应为 0.1.9");
+            assertEquals("0.1.10", currentVersion(conn), "在役基线应为 0.1.10");
         }
 
         // 2) 旧代码等价迁移集：从 classpath 真实复制全部 ≤0.1.7 的 SQL 到临时目录
@@ -84,23 +84,26 @@ class P64RollbackBoundaryPostgresTest {
                 "旧迁移集不得包含 0.1.8（等价回退代码）");
         assertTrue(legacyNames.stream().noneMatch(n -> n.startsWith("V0.1.9")),
                 "旧迁移集不得包含 0.1.9（等价回退代码）");
+        assertTrue(legacyNames.stream().noneMatch(n -> n.startsWith("V0.1.10")),
+                "旧迁移集不得包含 0.1.10（等价回退代码）");
 
-        // 3) 回退观察：旧迁移集对在役 0.1.9 库 validate → 必须失败并指名未解析迁移
-        //    （ignoreMigrationPatterns 仅忽略 ignored：库领先旧代码的 0.1.8/0.1.9 属 future 类，
+        // 3) 回退观察：旧迁移集对在役 0.1.10 库 validate → 必须失败并指名未解析迁移
+        //    （ignoreMigrationPatterns 仅忽略 ignored：库领先旧代码的 0.1.8—0.1.10 属 future 类，
         //     默认被忽略；本断言按完整校验口径显式检查）
         var validation = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations("filesystem:" + legacyDir.toAbsolutePath())
                 .ignoreMigrationPatterns("*:ignored").load().validateWithResult();
         assertFalse(validation.validationSuccessful,
-                "旧迁移集对在役 0.1.9 库 validate 必须失败（不得把不能处理存量的旧代码直接切回）");
+                "旧迁移集对在役 0.1.10 库 validate 必须失败（不得把不能处理存量的旧代码直接切回）");
         java.util.List<String> unresolvedVersions = validation.invalidMigrations.stream()
                 .map(migration -> String.valueOf(migration.version))
                 .toList();
         System.out.println("[p64-rollback] unresolved=" + unresolvedVersions);
-        assertTrue(unresolvedVersions.contains("0.1.8") && unresolvedVersions.contains("0.1.9"),
-                "validate 未解析迁移应含 0.1.8 与 0.1.9，实际: " + unresolvedVersions);
+        assertTrue(unresolvedVersions.contains("0.1.8") && unresolvedVersions.contains("0.1.9")
+                        && unresolvedVersions.contains("0.1.10"),
+                "validate 未解析迁移应含 0.1.8、0.1.9 与 0.1.10，实际: " + unresolvedVersions);
 
-        // 4) 对照一：旧迁移集对旧终点库（0.1.7）迁移+validate 全通过——失败只源于 0.1.8/0.1.9 新增
+        // 4) 对照一：旧迁移集对旧终点库（0.1.7）迁移+validate 全通过——失败只源于 0.1.8—0.1.10 新增
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("DROP DATABASE IF EXISTS " + LEGACY_DB_NAME + " WITH (FORCE)");
@@ -114,7 +117,7 @@ class P64RollbackBoundaryPostgresTest {
                 .locations("filesystem:" + legacyDir.toAbsolutePath())
                 .ignoreMigrationPatterns("*:ignored").load().validate();
 
-        // 5) 对照二：在役（完整）配置对同一 0.1.9 库 validate 成功——失败只源于回退集缺迁移
+        // 5) 对照二：在役（完整）配置对同一 0.1.10 库 validate 成功——失败只源于回退集缺迁移
         Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(P64AppendMigrationUpgradePostgresTest.appLocations())
                 .ignoreMigrationPatterns("*:ignored").load().validate();
