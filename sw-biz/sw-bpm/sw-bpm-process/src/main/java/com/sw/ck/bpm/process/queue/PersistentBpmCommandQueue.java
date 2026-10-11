@@ -7,6 +7,8 @@ import com.sw.ck.bpm.process.entity.BpmCommandEffect;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper;
+import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
 import com.sw.ck.bpm.process.service.BpmCommandService;
 import com.sw.ck.common.exception.BaseException;
@@ -45,15 +47,21 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     private final BpmCommandEffectMapper effectMapper;
     private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService;
     private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
+    private final BpmCommandBatchMapper batchMapper;
+    private final BpmCommandBatchItemMapper batchItemMapper;
 
     public PersistentBpmCommandQueue(BpmCommandService commandService,
                                      BpmCommandEffectMapper effectMapper,
                                      com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+                                     BpmCommandBatchMapper batchMapper,
+                                     BpmCommandBatchItemMapper batchItemMapper) {
         this.commandService = commandService;
         this.effectMapper = effectMapper;
         this.releaseService = releaseService;
         this.admissionService = admissionService;
+        this.batchMapper = batchMapper;
+        this.batchItemMapper = batchItemMapper;
     }
 
     @Override
@@ -452,6 +460,13 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     /**
      * 准入截止扫描：仅 PENDING（待执行）且<strong>效果未发生</strong>（无效果权威行）的到期命令
      * 收敛为 EXPIRED。执行中（PROCESSING）不得据此判过期，由 {@link #markOverdue} 仅记超期。
+     * <p>
+     * 批次命令的分片续跑（{@link #requeueForContinuation}）会让已开始处理的批次命令回到
+     * PENDING 间隙——此时项级效果已部分发生（既有已生效项，剩余项待结算），属于
+     * 「效果已发生」的执行中事实：不得判过期终止执行权（否则批次停留 PROCESSING、
+     * 剩余项失去推进者且已生效项面临重放风险），仅补写 {@code overdue_at} 超期证据，
+     * 等待切片收敛出权威结果；额度按项终态逐项回收，不受影响。
+     * </p>
      *
      * @return 本次过期条数
      */
@@ -470,6 +485,17 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
             for (BpmCommand candidate : candidates) {
                 if (effectMapper.selectById(candidate.getId()) != null) {
                     continue; // 效果已发生：不得判过期（等待权威结果收敛）
+                }
+                if (hasPartiallySettledBatchItems(candidate)) {
+                    // 分片续跑中的批次：项级效果已部分发生=效果已发生，不判过期；
+                    // 补写超期证据（幂等），剩余项由切片续跑推进至逐项终态
+                    commandService.lambdaUpdate()
+                            .eq(BpmCommand::getId, candidate.getId())
+                            .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
+                            .isNull(BpmCommand::getOverdueAt)
+                            .set(BpmCommand::getOverdueAt, now)
+                            .update();
+                    continue;
                 }
                 boolean updated = commandService.lambdaUpdate()
                         .eq(BpmCommand::getId, candidate.getId())
@@ -491,6 +517,30 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
             }
             return expired;
         }
+    }
+
+    /**
+     * 批次命令是否已发生项级效果（存在非 PENDING 项）。仅对 BATCH_INVOKE 命令检查；
+     * 批次行缺失或未开始处理（全部 PENDING）返回 false，照常安全过期。
+     */
+    private boolean hasPartiallySettledBatchItems(BpmCommand candidate) {
+        if (batchMapper == null || batchItemMapper == null
+                || !CommandTypeEnum.BATCH_INVOKE.getCode().equals(candidate.getCommandType())) {
+            return false;
+        }
+        com.sw.ck.bpm.process.entity.BpmCommandBatch batch = batchMapper.selectOne(
+                new LambdaQueryWrapper<com.sw.ck.bpm.process.entity.BpmCommandBatch>()
+                        .eq(com.sw.ck.bpm.process.entity.BpmCommandBatch::getCommandId, candidate.getId())
+                        .last("LIMIT 1"));
+        if (batch == null) {
+            return false;
+        }
+        Long settled = batchItemMapper.selectCount(
+                new LambdaQueryWrapper<com.sw.ck.bpm.process.entity.BpmCommandBatchItem>()
+                        .eq(com.sw.ck.bpm.process.entity.BpmCommandBatchItem::getBatchId, batch.getId())
+                        .ne(com.sw.ck.bpm.process.entity.BpmCommandBatchItem::getStatus,
+                                com.sw.ck.bpm.process.entity.BatchItemStatusEnum.PENDING.getCode()));
+        return settled != null && settled > 0;
     }
 
     /**

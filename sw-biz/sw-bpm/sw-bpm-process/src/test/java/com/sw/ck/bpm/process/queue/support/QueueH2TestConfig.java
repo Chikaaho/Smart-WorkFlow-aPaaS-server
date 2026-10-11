@@ -240,8 +240,11 @@ public class QueueH2TestConfig {
     public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService,
                                                      BpmCommandEffectMapper effectMapper,
                                                      com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        return new PersistentBpmCommandQueue(commandService, effectMapper, releaseService, admissionService);
+                                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+                                                     com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper batchMapper,
+                                                     com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper batchItemMapper) {
+        return new PersistentBpmCommandQueue(commandService, effectMapper, releaseService, admissionService,
+                batchMapper, batchItemMapper);
     }
 
     @Bean

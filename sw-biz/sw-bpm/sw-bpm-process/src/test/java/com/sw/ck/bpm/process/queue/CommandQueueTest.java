@@ -46,7 +46,7 @@ class CommandQueueTest {
             mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
 
     private final PersistentBpmCommandQueue queue =
-            new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService);
+            new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService, null, null);
 
     @BeforeEach
     @SuppressWarnings("unchecked")

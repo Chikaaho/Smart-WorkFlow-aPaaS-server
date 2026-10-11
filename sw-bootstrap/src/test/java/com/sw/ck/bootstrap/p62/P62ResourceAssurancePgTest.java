@@ -396,6 +396,7 @@ class P62ResourceAssurancePgTest {
             allCollectors.add(burstBatch);
         }
         PACED_ARRIVALS.clear();
+        PACED_SECONDLY.clear();
         // 配对追踪（RA02b）：受理→命令→引擎任务→目标/审批完成需逐项关联，不靠计数总和
         List<LightSubmitTrace> lightTraces = java.util.Collections.synchronizedList(new ArrayList<>());
         List<ApprovalTrace> approvalTraces = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -781,6 +782,12 @@ class P62ResourceAssurancePgTest {
         // NP03：窗口内受理的批次命令领取等待（持久受理→领取 ≤30s）与窗口批次笔数（零样本≠通过）
         List<Double> batchClaimWaits = new ArrayList<>();
         int windowBatchTraces = 0;
+        // G2：受理→目标提交独立可见（轻=目标调用行/目标行更新较晚者；审批=历史任务终结时刻）；
+        // 预算 P99≤5s、每个≤30s；全部受理对象须有提交证据（缺失即列示，不猜 ε）
+        Map<String, List<Double>> lightSubmitByTenant = new LinkedHashMap<>();
+        Map<String, List<Double>> approvalSubmitByTenant = new LinkedHashMap<>();
+        int windowLightMissingSubmit = 0;
+        int windowApprovalMissingSubmit = 0;
         Map<String, Integer> orphanByStatus = new LinkedHashMap<>();
         int traced = 0;
         int unpaired = 0;
@@ -812,6 +819,18 @@ class P62ResourceAssurancePgTest {
                             + " WHERE id = ? AND deleted = 0", trace.targetRecordId());
             if (inv != null && inv.get("update_time") != null && targetRow != null) {
                 lightTargetsWithSubmitPoint++;
+            }
+            if (trace.acceptMs() >= windowFormalBeginMs && trace.acceptMs() < windowFormalEndMs) {
+                Long invMs = epochOf(inv == null ? null : inv.get("update_time"));
+                Long targetMs = epochOf(targetRow == null ? null : targetRow.get("update_time"));
+                Long submitMs = invMs == null ? targetMs
+                        : targetMs == null ? invMs : Math.max(invMs, targetMs);
+                if (submitMs == null) {
+                    windowLightMissingSubmit++;
+                } else {
+                    lightSubmitByTenant.computeIfAbsent(String.valueOf(trace.tenant()),
+                            k -> new ArrayList<>()).add((double) (submitMs - trace.acceptMs()));
+                }
             }
             String status = String.valueOf(cmd.get("status"));
             statusCounts.merge("command:" + status, 1L, Long::sum);
@@ -880,6 +899,15 @@ class P62ResourceAssurancePgTest {
             Object procEnd = hiProc == null ? null : hiProc.get("end_time_");
             if (taskEnd != null) {
                 approvalTargetsWithSubmitPoint++;
+            }
+            if (trace.acceptMs() >= windowFormalBeginMs && trace.acceptMs() < windowFormalEndMs) {
+                Long submitMs = epochOf(taskEnd);
+                if (submitMs == null) {
+                    windowApprovalMissingSubmit++;
+                } else {
+                    approvalSubmitByTenant.computeIfAbsent(String.valueOf(trace.tenant()),
+                            k -> new ArrayList<>()).add((double) (submitMs - trace.acceptMs()));
+                }
             }
             csv.append("approval,").append(trace.tenant()).append(',').append(trace.taskId())
                     .append(',').append(csv(trace.outcome())).append(',').append(commandKey).append(',')
@@ -1001,12 +1029,36 @@ class P62ResourceAssurancePgTest {
                 + " (合同上界 30000ms)"
                 + "\nwindowBatchTraces=" + windowBatchTraces
                 + " (正式窗口内受理的批次笔数；0=不得判通过，NP03)"
+                + "\nlightSubmitVisibilityByTenant=" + summarizeSubmit(lightSubmitByTenant)
+                + " (G2：受理→目标提交独立可见；预算 P99≤5000ms、每个≤30000ms)"
+                + "\napprovalSubmitVisibilityByTenant=" + summarizeSubmit(approvalSubmitByTenant)
+                + " (G2：受理→审批任务终结；预算同上)"
+                + "\nwindowLightMissingSubmit=" + windowLightMissingSubmit
+                + " windowApprovalMissingSubmit=" + windowApprovalMissingSubmit
+                + " (全部受理对象须有提交证据；>0 即入缺口清单)"
                 + "\n注意=unpaired 仅为「trace 有键但库中无命令行」的请求（HTTP 级失败/500 在受理前终结，"
                 + "以 -samples.csv 的 outcome 为准）；pairing.csv 无脚注行，可直接按列解析\n");
         assertThat(windowBatchTraces)
                 .as("正式窗口内批次样本不得为空（零样本≠通过，NP03）").isGreaterThan(0);
         assertThat(batchClaimWaits.stream().mapToDouble(Double::doubleValue).max().orElse(0))
                 .as("窗口内批次命令领取等待 ≤30000ms（持久受理→领取，NP03）").isLessThanOrEqualTo(30_000.0);
+        String protectedKey = String.valueOf(protectedTenantArg);
+        assertThat(lightSubmitByTenant.get(protectedKey)).as("受保护租户窗口内轻流程受理样本不得为空（G2）").isNotEmpty();
+        assertThat(approvalSubmitByTenant.get(protectedKey)).as("受保护租户窗口内审批受理样本不得为空（G2）").isNotEmpty();
+        assertThat(windowLightMissingSubmit).as("窗口内受理轻流程全部有目标提交证据（G2，不猜 ε）").isZero();
+        assertThat(windowApprovalMissingSubmit).as("窗口内受理审批全部有终结证据（G2）").isZero();
+        assertThat(percentile(lightSubmitByTenant.get(protectedKey), 0.99))
+                .as("受保护轻流程受理→提交独立可见 P99≤5000ms（G2）").isLessThanOrEqualTo(5_000.0);
+        assertThat(percentile(approvalSubmitByTenant.get(protectedKey), 0.99))
+                .as("受保护审批受理→任务终结 P99≤5000ms（G2）").isLessThanOrEqualTo(5_000.0);
+        for (List<Double> latencies : lightSubmitByTenant.values()) {
+            assertThat((double) latencies.stream().mapToDouble(Double::doubleValue).max().orElse(0))
+                    .as("全部租户轻流程受理→提交每个≤30000ms（G2）").isLessThanOrEqualTo(30_000.0);
+        }
+        for (List<Double> latencies : approvalSubmitByTenant.values()) {
+            assertThat((double) latencies.stream().mapToDouble(Double::doubleValue).max().orElse(0))
+                    .as("全部租户审批受理→任务终结每个≤30000ms（G2）").isLessThanOrEqualTo(30_000.0);
+        }
         // 勾稽：HTTP 样本失败账 vs 配对行（复核03 要求 1940/1921/49 与失败账勾稽）
         System.out.println("[P62-EV] pairing traced=" + traced + " unpaired=" + unpaired
                 + " lightTargetSubmitPoints=" + lightTargetsWithSubmitPoint
@@ -1089,6 +1141,29 @@ class P62ResourceAssurancePgTest {
             return null;
         }
         return end.getTime() - start.getTime();
+    }
+
+    /** DB 时间戳→epoch ms（G2 提交可见性对齐 HTTP accept 时刻）；非时间戳返回 null。 */
+    private static Long epochOf(Object value) {
+        return value instanceof java.sql.Timestamp ts ? ts.getTime() : null;
+    }
+
+    /** G2 汇总：每租户 n/p99/max（percentile 输入须先排序）。 */
+    private static String summarizeSubmit(Map<String, List<Double>> byTenant) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (var e : byTenant.entrySet()) {
+            if (!first) {
+                sb.append(", ");
+            }
+            first = false;
+            List<Double> sorted = new ArrayList<>(e.getValue());
+            sorted.sort(Double::compare);
+            sb.append(e.getKey()).append("={n=").append(sorted.size())
+                    .append(" p99=").append(String.format(Locale.ROOT, "%.1f", percentile(sorted, 0.99)))
+                    .append(" max=").append(String.format(Locale.ROOT, "%.1f", max(sorted))).append('}');
+        }
+        return sb.append('}').toString();
     }
 
     /** 收敛明细：残余占用逐项归因 + 未完成对象清单（不以账面相等替代工作量清零）。 */
@@ -2387,6 +2462,10 @@ class P62ResourceAssurancePgTest {
     private static final java.util.concurrent.ConcurrentMap<String,
             java.util.concurrent.atomic.AtomicLongArray> PACED_ARRIVALS =
             new java.util.concurrent.ConcurrentHashMap<>();
+    /** 每角色逐秒实发到达（G1：真实到达与计划可勾稽的秒级粒度）。 */
+    private static final java.util.concurrent.ConcurrentMap<String,
+            java.util.concurrent.ConcurrentMap<Integer, java.util.concurrent.atomic.AtomicLong>>
+            PACED_SECONDLY = new java.util.concurrent.ConcurrentHashMap<>();
 
     private Thread pacedWorker(AtomicBoolean running, long intervalMillis, int maxInFlight,
                                PacedAction action) {
@@ -2425,6 +2504,10 @@ class P62ResourceAssurancePgTest {
                     stats.incrementAndGet(0);
                     if (windowFormalBeginMs != 0 && now >= windowFormalBeginMs && !afterStop) {
                         stats.incrementAndGet(1);
+                        int second = (int) ((now - windowFormalBeginMs) / 1000);
+                        PACED_SECONDLY.computeIfAbsent(role, k -> new java.util.concurrent.ConcurrentHashMap<>())
+                                .computeIfAbsent(second, s -> new java.util.concurrent.atomic.AtomicLong())
+                                .incrementAndGet();
                     }
                     if (afterStop) {
                         stats.incrementAndGet(2);
@@ -2461,6 +2544,18 @@ class P62ResourceAssurancePgTest {
                     .append(" dispatchedInFormal=").append(s.get(1))
                     .append(" deferredAfterStop=").append(s.get(2))
                     .append(" backpressureRounds=").append(s.get(3)).append('\n');
+            var perSec = PACED_SECONDLY.get(e.getKey());
+            if (perSec != null) {
+                sb.append("  arrivalPerSec=");
+                for (int sec = 0; sec < FORMAL_SECONDS; sec++) {
+                    var bucket = perSec.get(sec);
+                    sb.append(sec).append(':').append(bucket == null ? 0 : bucket.get());
+                    if (sec < FORMAL_SECONDS - 1) {
+                        sb.append(',');
+                    }
+                }
+                sb.append('\n');
+            }
         }
         writeEvidence("paced-arrivals.txt", sb.toString());
     }

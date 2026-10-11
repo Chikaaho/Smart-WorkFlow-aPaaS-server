@@ -58,6 +58,8 @@ class TieredCommandSemanticsH2Test {
         user.setTenantId(1L);
         LoginUserHolder.set(user);
         jdbcTemplate.update("DELETE FROM sw_bpm_command_effect");
+        jdbcTemplate.update("DELETE FROM sw_bpm_command_batch_item");
+        jdbcTemplate.update("DELETE FROM sw_bpm_command_batch");
         jdbcTemplate.update("DELETE FROM sw_bpm_command");
     }
 
@@ -84,6 +86,25 @@ class TieredCommandSemanticsH2Test {
 
     private Long accept(String key, String logicalId, String fingerprint, int deadlineSeconds) {
         return txTemplate.execute(status -> queue.enqueue(envelope(key, logicalId, fingerprint, deadlineSeconds)));
+    }
+
+    /** 批次命令受理（BATCH_INVOKE；供准入截止×分片续跑隔离验证用）。 */
+    private Long acceptBatch(String key, String logicalId, int deadlineSeconds) {
+        CommandEnvelope envelope = envelope(key, logicalId, CommandFingerprint.of(key), deadlineSeconds);
+        envelope.setCommandType(CommandTypeEnum.BATCH_INVOKE);
+        return txTemplate.execute(status -> queue.enqueue(envelope));
+    }
+
+    private void insertBatch(long id, String batchKey, long commandId, String status, int totalCount) {
+        jdbcTemplate.update("INSERT INTO sw_bpm_command_batch (id, tenant_id, batch_key, action_id,"
+                        + " status, total_count, command_id, initiator_id) VALUES (?, 1, ?, 'p62-ra', ?, ?, ?, ?)",
+                id, batchKey, status, totalCount, commandId, 7L);
+    }
+
+    private void insertBatchItem(long id, long batchId, String itemKey, String status) {
+        jdbcTemplate.update("INSERT INTO sw_bpm_command_batch_item (id, tenant_id, batch_id, item_key,"
+                        + " status, attempt_count) VALUES (?, 1, ?, ?, ?, 0)",
+                id, batchId, itemKey, status);
     }
 
     private CommandEnvelope claimOne() {
@@ -209,6 +230,35 @@ class TieredCommandSemanticsH2Test {
                 withEffect, "LOG-DL-3", "{\"status\":\"SUBMITTED\"}", "R-DL");
         assertThat(queue.expireDue(future)).isZero();
         assertThat(statusOf(withEffect)).isEqualTo(CommandStatusEnum.PENDING.getCode());
+    }
+
+    @Test
+    @DisplayName("准入截止×批次分片续跑：项级效果已发生的在途批次命令不判过期仅补超期证据；未开始批次照常过期")
+    void inFlightBatchSliceNotExpiredButUntouchedBatchExpires() {
+        LocalDateTime future = LocalDateTime.now().plusSeconds(5);
+
+        // 在途批次：1 项已生效（SUCCEEDED）+ 1 项 PENDING——命令处于切片让出后的 PENDING 间隙
+        Long inFlightCmd = acceptBatch("K-DL-BINFLIGHT", "LOG-DL-B1", 1);
+        insertBatch(9101L, "BK-INFLIGHT", inFlightCmd, "PROCESSING", 2);
+        insertBatchItem(9111L, 9101L, "it-1", "SUCCEEDED");
+        insertBatchItem(9112L, 9101L, "it-2", "PENDING");
+
+        // 未开始批次：全部项 PENDING，效果未发生
+        Long untouchedCmd = acceptBatch("K-DL-BUNTOUCHED", "LOG-DL-B2", 1);
+        insertBatch(9102L, "BK-UNTOUCHED", untouchedCmd, "PENDING", 1);
+        insertBatchItem(9121L, 9102L, "it-1", "PENDING");
+
+        int expired = queue.expireDue(future);
+        assertThat(expired).as("仅未开始批次命令过期；在途批次不终止执行权").isEqualTo(1);
+        assertThat(statusOf(inFlightCmd)).as("分片续跑中的批次不得判过期（剩余项有推进者，已生效项不面临重放）")
+                .isEqualTo(CommandStatusEnum.PENDING.getCode());
+        assertThat(jdbcTemplate.queryForObject("SELECT overdue_at FROM sw_bpm_command WHERE id = ?",
+                        LocalDateTime.class, inFlightCmd))
+                .as("超期证据字段补写（执行超准入截止照实登记）").isNotNull();
+        assertThat(statusOf(untouchedCmd)).isEqualTo(CommandStatusEnum.EXPIRED.getCode());
+        // 幂等：再次扫描不重复过期、不重复写超期
+        assertThat(queue.expireDue(future)).isZero();
+        assertThat(statusOf(inFlightCmd)).isEqualTo(CommandStatusEnum.PENDING.getCode());
     }
 
     // ==================== 统一逻辑身份：重放/冲突与截止校验 ====================
