@@ -133,6 +133,9 @@ class P62ResourceAssurancePgTest {
         // JVM 侧只拿到 DETAIL 的 pid/事务/元组（环形状），拿不到各参与事务实际执行的语句；
         // log_error_verbosity=verbose 使死锁报告携带每个进程的语句（Process <pid>: ...），
         // log_line_prefix 带 pid+xid+application_name，用于把服务端语句映回冲突环。
+        // Windows 适配（新机装置处置）：pg_ctl 经 cmd /c 拉起 postgres，前缀分隔符禁用
+        // 管道符（cmd 元字符→「命令语法不正确」启动失败），改用短横线分隔；GUC 值一律
+        // 不带引号/空格。旧机（M1/macOS posix_spawn）无此约束。
         // 注意：pg_ctl 起的 postmaster 不继承 JVM stdio（重定向只能收 pg_ctl 输出），
         // 服务端日志必须用 logging_collector 落盘到证据目录。
         pg = EmbeddedPostgres.builder()
@@ -144,7 +147,7 @@ class P62ResourceAssurancePgTest {
                 .setServerConfig("log_min_messages", "info")
                 .setServerConfig("log_min_error_statement", "log")
                 .setServerConfig("log_error_verbosity", "verbose")
-                .setServerConfig("log_line_prefix", "%n|%p|%x|%a|")
+                .setServerConfig("log_line_prefix", "%n-%p-%x-%a-")
                 .setServerConfig("log_lock_waits", "on")
                 .setServerConfig("deadlock_timeout", "1s")
                 .setErrorRedirector(java.lang.ProcessBuilder.Redirect.appendTo(
