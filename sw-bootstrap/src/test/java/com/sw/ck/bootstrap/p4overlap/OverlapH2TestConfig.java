@@ -187,8 +187,10 @@ public class OverlapH2TestConfig {
     public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService,
                                                      com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper,
                                                      com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        return new StaleReadWindowQueue(commandService, effectMapper, releaseService, admissionService);
+                                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+                                                     com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper batchMapper,
+                                                     com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper batchItemMapper) {
+        return new StaleReadWindowQueue(commandService, effectMapper, releaseService, admissionService, batchMapper, batchItemMapper);
     }
 
     /**
@@ -203,8 +205,10 @@ public class OverlapH2TestConfig {
         public StaleReadWindowQueue(BpmCommandServiceImpl commandService,
                                     com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper,
                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                    com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-            super(commandService, effectMapper, releaseService, admissionService);
+                                    com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+                                    com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper batchMapper,
+                                    com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper batchItemMapper) {
+            super(commandService, effectMapper, releaseService, admissionService, batchMapper, batchItemMapper);
         }
 
         @Override

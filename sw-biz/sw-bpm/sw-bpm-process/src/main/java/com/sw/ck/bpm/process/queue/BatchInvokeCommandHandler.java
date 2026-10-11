@@ -182,6 +182,9 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
             current.setErrorCode(e.getCode());
             current.setErrorMsg(truncate(e.getMessage()));
         }
+        // 项结算时刻与终态同事务写入（V0.1.11 观测接缝）：逐项等待/结算可按真实时点复算，
+        // 取代「item.update_time≡插入时刻」的失效代理（RA08）
+        current.setSettledAt(java.time.LocalDateTime.now());
         itemMapper.updateById(current);
         refreshCounters(batch.getId());
         log.info("批量项已结算: batchKey={}, itemKey={}, status={}, attempt={}",

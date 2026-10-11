@@ -44,4 +44,7 @@ public class BpmCommandBatchItem extends BaseEntity {
 
     /** 已尝试次数（调度重试累加）。 */
     private Integer attemptCount;
+
+    /** 项结算时刻（终态写入事务内记录；V0.1.11 观测接缝，逐项等待/结算可复算）。 */
+    private java.time.LocalDateTime settledAt;
 }
