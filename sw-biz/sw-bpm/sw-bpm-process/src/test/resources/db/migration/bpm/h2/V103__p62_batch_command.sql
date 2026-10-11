@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS sw_bpm_command_batch_item (
     invocation_id   varchar(64),
     error_code      integer,
     error_msg       varchar(500),
-    attempt_count   integer       NOT NULL DEFAULT 0
+    attempt_count   integer       NOT NULL DEFAULT 0,
+    settled_at      timestamp     NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_bpm_command_batch_item_key ON sw_bpm_command_batch_item (batch_id, item_key);
 CREATE INDEX IF NOT EXISTS idx_sw_bpm_command_batch_item_status ON sw_bpm_command_batch_item (batch_id, status);
