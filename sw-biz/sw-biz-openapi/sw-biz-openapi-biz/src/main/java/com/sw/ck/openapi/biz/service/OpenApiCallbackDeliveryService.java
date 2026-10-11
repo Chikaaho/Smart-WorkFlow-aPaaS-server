@@ -172,6 +172,8 @@ public class OpenApiCallbackDeliveryService {
     private void record(OpenApiApp app, BpmNotifyEvent event, int attempt, String status,
                         String summary) {
         OpenApiCallbackLog row = new OpenApiCallbackLog();
+        // 后台投递无登录上下文（监听侧已悬挂租户行改写），租户列显式取事件租户
+        row.setTenantId(event.getTenantId());
         row.setAppId(app.getAppId());
         row.setEvent(event.getTrigger().name());
         row.setBizRef(event.getBizId());

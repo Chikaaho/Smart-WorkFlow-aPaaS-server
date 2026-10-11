@@ -3,6 +3,7 @@ package com.sw.ck.openapi.biz.listener;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
@@ -45,13 +46,18 @@ public class OpenApiCallbackListener {
                 || !TERMINAL.contains(event.getTrigger())) {
             return;
         }
-        List<OpenApiApp> apps = appMapper.selectList(new LambdaQueryWrapper<OpenApiApp>()
-                .eq(OpenApiApp::getTenantId, event.getTenantId())
-                .eq(OpenApiApp::getStatus, "ENABLED")
-                .isNotNull(OpenApiApp::getCallbackUrl)
-                .eq(OpenApiApp::getDeleted, 0));
-        for (OpenApiApp app : apps) {
-            deliveryService.dispatch(app, event);
+        // @Async 线程无登录上下文，MyBatis-Plus 租户行拦截器会拒绝生成过滤条件；
+        // 本链路按 event.getTenantId() 显式过滤（与 ResourceAssuranceReconcileJob 同模式），
+        // 悬挂租户行改写不削弱鉴权，仅让后台投递按事件自带租户执行（RA06b 注册缺陷修复）
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            List<OpenApiApp> apps = appMapper.selectList(new LambdaQueryWrapper<OpenApiApp>()
+                    .eq(OpenApiApp::getTenantId, event.getTenantId())
+                    .eq(OpenApiApp::getStatus, "ENABLED")
+                    .isNotNull(OpenApiApp::getCallbackUrl)
+                    .eq(OpenApiApp::getDeleted, 0));
+            for (OpenApiApp app : apps) {
+                deliveryService.dispatch(app, event);
+            }
         }
     }
 }
