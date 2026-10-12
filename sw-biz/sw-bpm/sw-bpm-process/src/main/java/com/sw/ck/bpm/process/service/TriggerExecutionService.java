@@ -53,6 +53,11 @@ public class TriggerExecutionService {
     private static final int DEFAULT_MAX_DISPATCH = 50;
     private static final int HARD_MAX_DISPATCH = 200;
 
+    /** 子行预填时排除的来源行内部列：业务字段随派发冻结，系统列与父行归属不复制。 */
+    private static final java.util.Set<String> PREFILL_EXCLUDED_ROW_COLUMNS = java.util.Set.of(
+            "id", "tenant_id", "deleted", "version", "parent_record_id",
+            "create_time", "create_by", "update_time", "update_by");
+
     private final NodeFormDataService nodeFormDataService;
     private final BpmVariableSnapshotService variableSnapshotService;
     private final BpmScriptEvaluatePort scriptRunner;
@@ -436,14 +441,25 @@ public class TriggerExecutionService {
                 && action.getWriteBack().getRowKeyField() != null
                 && !action.getWriteBack().getRowKeyField().isBlank()
                 && !data.containsKey(action.getWriteBack().getTableField())) {
+            String rowKeyField = action.getWriteBack().getRowKeyField();
             List<Map<String, Object>> prefillRows = new ArrayList<>();
             for (Map<String, Object> row : item.rows()) {
                 Object rowId = row.get("id");
                 if (rowId == null || String.valueOf(rowId).isBlank()) {
                     continue;
                 }
+                // 来源行的业务字段随派发冻结到子行（同名可识别列）：办理人可据此识别本行对象，
+                // 不必回查内部行 ID。子表单未声明的列在落库时按表单模型过滤，既有场景零变化。
                 Map<String, Object> prefill = new LinkedHashMap<>();
-                prefill.put(action.getWriteBack().getRowKeyField(), String.valueOf(rowId));
+                for (Map.Entry<String, Object> cell : row.entrySet()) {
+                    String column = cell.getKey();
+                    if (column == null || column.equals(rowKeyField)
+                            || PREFILL_EXCLUDED_ROW_COLUMNS.contains(column)) {
+                        continue;
+                    }
+                    prefill.put(column, cell.getValue());
+                }
+                prefill.put(rowKeyField, String.valueOf(rowId));
                 prefillRows.add(prefill);
             }
             if (!prefillRows.isEmpty()) {

@@ -187,15 +187,26 @@ class TriggerExecutionServiceChildDispatchTest {
         verify(actionRefMapper, times(2)).insert(refCaptor.capture());
         ObjectMapper mapper = new ObjectMapper();
         List<List<String>> prefilledRowIds = new java.util.ArrayList<>();
+        List<List<Map<String, Object>>> prefilledRows = new java.util.ArrayList<>();
         for (BpmActionRef ref : refCaptor.getAllValues()) {
             Map<String, Object> payload = mapper.readValue(ref.getPayloadJson(), Map.class);
             Map<String, Object> data = (Map<String, Object>) payload.get("data");
             List<Map<String, Object>> table = (List<Map<String, Object>>) data.get("result_table");
+            prefilledRows.add(table);
             prefilledRowIds.add(table.stream().map(row -> String.valueOf(row.get("src_row_id"))).toList());
         }
         assertThat(prefilledRowIds)
                 .anySatisfy(ids -> assertThat(ids).containsExactly("row-1", "row-2"))
                 .anySatisfy(ids -> assertThat(ids).containsExactly("row-3"));
+        // 业务字段随派发冻结：来源行业务列进入子行（同名可识别列），系统/父行归属列不复制
+        assertThat(prefilledRows)
+                .anySatisfy(rows -> assertThat(rows).anySatisfy(row -> {
+                    assertThat(row).containsEntry("owner", "2");
+                    assertThat(row).containsEntry("src_row_id", "row-1");
+                    assertThat(row).doesNotContainKeys("id", "tenant_id", "parent_record_id");
+                }))
+                .anySatisfy(rows -> assertThat(rows).anySatisfy(row ->
+                        assertThat(row).containsEntry("owner", "3")));
     }
 
     @Test
