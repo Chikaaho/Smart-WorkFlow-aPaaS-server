@@ -36,6 +36,10 @@ public class BpmInstanceStateSyncJob {
     private final BpmInstanceService instanceService;
     private final ObjectProvider<BpmTaskFacade> taskFacadeProvider;
 
+    /** P64 阶段Ⅲ（数量差异关闭收尾）：延迟终态的子流程编排结算钩子（可选装配）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
+
     public BpmInstanceStateSyncJob(BpmInstanceService instanceService,
                                    ObjectProvider<BpmTaskFacade> taskFacadeProvider) {
         this.instanceService = instanceService;
@@ -77,6 +81,22 @@ public class BpmInstanceStateSyncJob {
             for (BpmInstance instance : candidates) {
                 Boolean active = facade.isProcessActive(instance.getProcessInstanceId()).orElse(true);
                 if (!active) {
+                    // P64 阶段Ⅲ：等待节点唤醒后异步走到终态的子流程实例，在请求内检测不到
+                    // 流程结束（TaskActionService 终态回调只覆盖同请求内结束），其父批次此前
+                    // 永不结算。对账收敛为 APPROVED 时同步触发既有编排结算/回写，语义与
+                    // 审批完成路径一致；钩子失败保留 RUNNING 行，下一轮对账重试。
+                    var orchestration = childOrchestrationProvider == null ? null
+                            : childOrchestrationProvider.getIfAvailable();
+                    if (orchestration != null) {
+                        try {
+                            orchestration.onChildProcessTerminal(instance,
+                                    InstanceStatusEnum.APPROVED.getCode());
+                        } catch (Exception e) {
+                            log.warn("对账编排结算钩子失败（保留 RUNNING 待下轮重试）: processInstanceId={}, error={}",
+                                    instance.getProcessInstanceId(), e.getMessage());
+                            continue;
+                        }
+                    }
                     instance.setStatus(InstanceStatusEnum.APPROVED.getCode());
                     instanceService.updateById(instance);
                     synced++;
