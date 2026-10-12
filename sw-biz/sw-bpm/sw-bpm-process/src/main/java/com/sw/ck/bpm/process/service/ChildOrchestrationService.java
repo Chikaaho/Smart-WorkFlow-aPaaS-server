@@ -957,26 +957,53 @@ public class ChildOrchestrationService {
         if (parentBusinessKey == null) {
             return 0;
         }
-        List<BpmChildItem> parentItems = itemMapper.selectList(Wrappers.<BpmChildItem>lambdaQuery()
-                .eq(BpmChildItem::getTenantId, tenantId)
-                .eq(BpmChildItem::getTargetRecordId, parentBusinessKey));
         int maxDepth = -1;
-        for (BpmChildItem item : parentItems) {
-            BpmChildBatch batch = batchMapper.selectById(item.getBatchId());
-            if (batch != null && batch.getParentDepth() != null) {
+        for (BpmChildBatch batch : batchesOwningBusinessKey(tenantId, parentBusinessKey)) {
+            if (batch.getParentDepth() != null) {
                 maxDepth = Math.max(maxDepth, batch.getParentDepth());
             }
         }
         return maxDepth + 1;
     }
 
-    private String resolveRootInstanceId(Long tenantId, String parentBusinessKey) {
-        List<BpmChildItem> parentItems = itemMapper.selectList(Wrappers.<BpmChildItem>lambdaQuery()
+    /**
+     * 定位以 businessKey 为派发目标的全部批次（P64 阶段Ⅲ A08 修复）：
+     * 批次项 target_record_id 在子实例终态才回填，而循环/嵌套链的派发发生在父实例
+     * 完成之前——仅按项回填值解析会把在途链误判为根（depth=0、root=自身），
+     * 使嵌套/循环护栏对自循环再派发失效。动作意图（sw_bpm_action_ref）受理即
+     * 持久 target_record_id，作为在途链的权威补充路径；两路并集取最大深度。
+     */
+    private List<BpmChildBatch> batchesOwningBusinessKey(Long tenantId, String businessKey) {
+        java.util.LinkedHashMap<Long, BpmChildBatch> owned = new java.util.LinkedHashMap<>();
+        List<BpmChildItem> items = itemMapper.selectList(Wrappers.<BpmChildItem>lambdaQuery()
                 .eq(BpmChildItem::getTenantId, tenantId)
-                .eq(BpmChildItem::getTargetRecordId, parentBusinessKey));
-        for (BpmChildItem item : parentItems) {
+                .eq(BpmChildItem::getTargetRecordId, businessKey));
+        for (BpmChildItem item : items) {
             BpmChildBatch batch = batchMapper.selectById(item.getBatchId());
-            if (batch != null && batch.getRootInstanceId() != null) {
+            if (batch != null) {
+                owned.putIfAbsent(batch.getId(), batch);
+            }
+        }
+        List<BpmActionRef> refs = actionRefMapper.selectList(Wrappers.<BpmActionRef>lambdaQuery()
+                .eq(BpmActionRef::getTenantId, tenantId)
+                .eq(BpmActionRef::getTargetRecordId, businessKey));
+        for (BpmActionRef ref : refs) {
+            List<BpmChildItem> refItems = itemMapper.selectList(Wrappers.<BpmChildItem>lambdaQuery()
+                    .eq(BpmChildItem::getTenantId, tenantId)
+                    .eq(BpmChildItem::getActionRefId, ref.getId()));
+            for (BpmChildItem item : refItems) {
+                BpmChildBatch batch = batchMapper.selectById(item.getBatchId());
+                if (batch != null) {
+                    owned.putIfAbsent(batch.getId(), batch);
+                }
+            }
+        }
+        return new java.util.ArrayList<>(owned.values());
+    }
+
+    private String resolveRootInstanceId(Long tenantId, String parentBusinessKey) {
+        for (BpmChildBatch batch : batchesOwningBusinessKey(tenantId, parentBusinessKey)) {
+            if (batch.getRootInstanceId() != null) {
                 return batch.getRootInstanceId();
             }
         }

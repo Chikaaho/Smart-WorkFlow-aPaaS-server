@@ -165,6 +165,17 @@ public class NodeFormDataService {
                 .last("limit 1")));
     }
 
+    /**
+     * 按任务删除节点表单最终提交（阶段Ⅲ A09 聚合可见性修复的失败路径清理）：
+     * 表单先于引擎推进落库后，任务未能合法完成（分支求值失败/并发冲突）时，
+     * 本任务的提交必须移除，恢复"任务未完成即无有效提交"的原语义。
+     */
+    public int deleteByTaskId(Long tenantId, String taskId) {
+        return taskFormDataMapper.delete(Wrappers.<BpmTaskFormData>lambdaQuery()
+                .eq(BpmTaskFormData::getTenantId, tenantId)
+                .eq(BpmTaskFormData::getTaskId, taskId));
+    }
+
     public List<BpmTaskFormData> listByInstance(Long tenantId, String processInstanceId) {
         return taskFormDataMapper.selectList(Wrappers.<BpmTaskFormData>lambdaQuery()
                 .eq(BpmTaskFormData::getTenantId, tenantId)

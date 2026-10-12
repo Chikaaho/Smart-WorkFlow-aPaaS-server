@@ -36,6 +36,8 @@ public class SubflowWaitListener implements ExecutionListener {
         this.waitPort = null;
     }
 
+    /** P64 阶段Ⅲ（A08 实链修复）：多构造时 Spring 缺省选无参构造，桥接单例需显式指定注入构造。 */
+    @org.springframework.beans.factory.annotation.Autowired
     public SubflowWaitListener(ObjectProvider<SubflowWaitPort> waitPort) {
         this.waitPort = waitPort;
         bridge = this;
@@ -50,17 +52,38 @@ public class SubflowWaitListener implements ExecutionListener {
     private void dispatch(DelegateExecution execution) {
         SubflowWaitPort port = waitPort == null ? null : waitPort.getIfAvailable();
         if (port == null) {
-            log.debug("SubflowWaitPort 未装配，等待节点到达回调跳过: activityId={}",
+            log.info("SubflowWaitPort 未装配，等待节点到达回调跳过: activityId={}",
                     execution.getCurrentActivityId());
             return;
         }
-        port.onWaitNodeArrival(parseTenant(execution.getTenantId()),
-                        execution.getProcessInstanceId(), execution.getCurrentActivityId())
+        Long tenantId = parseTenant(execution.getTenantId());
+        String processInstanceId = execution.getProcessInstanceId();
+        String activityId = execution.getCurrentActivityId();
+        port.onWaitNodeArrival(tenantId, processInstanceId, activityId)
                 .ifPresentOrElse(
-                        outcome -> log.debug("等待节点到达处置: activityId={}, outcome={}",
-                                execution.getCurrentActivityId(), outcome),
-                        () -> log.debug("等待节点到达上下文缺失（父实例/租户不可核对）: activityId={}",
-                                execution.getCurrentActivityId()));
+                        outcome -> {
+                            log.info("等待节点到达处置: activityId={}, outcome={}", activityId, outcome);
+                            if (outcome == com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED) {
+                                // P64 阶段Ⅲ（A08 实链修复）：start 监听先于执行流进入可信号等待态，
+                                // 到达即"无批次应立即唤醒"时首查 signal 可能空吸收（执行流尚未可触发）。
+                                // 事务提交后再次核对唤醒：幂等（有批次则继续保持挂起，无批次则推进一次）。
+                                if (org.springframework.transaction.support.TransactionSynchronizationManager
+                                        .isSynchronizationActive()) {
+                                    org.springframework.transaction.support.TransactionSynchronizationManager
+                                            .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                                                @Override
+                                                public void afterCommit() {
+                                                    port.onWaitNodeArrival(tenantId, processInstanceId, activityId)
+                                                            .ifPresent(res -> log.info(
+                                                                    "等待节点提交后重核唤醒: activityId={}, outcome={}",
+                                                                    activityId, res));
+                                                }
+                                            });
+                                }
+                            }
+                        },
+                        () -> log.info("等待节点到达上下文缺失（父实例/租户不可核对）: activityId={}",
+                                activityId));
     }
 
     private Long parseTenant(String tenantId) {
