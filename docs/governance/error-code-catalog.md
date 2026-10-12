@@ -194,6 +194,7 @@
 | bpm | `DELEGATE_CONFIG_INVALID` | 2451 | `bpm.delegate_config_invalid` | 岗位委托配置无效：自委托、循环、跨租户、越权范围或同优先级重叠，已被拒绝 |
 | bpm | `DELEGATE_RESOLVE_FAILED` | 2452 | `bpm.delegate_resolve_failed` | 岗位委托解析失败：委托链超过 4 跳、受托岗位缺有效人员或关系失效，请检查委托配置 |
 | bpm | `PARTICIPANT_AGGREGATE_INVALID` | 2453 | `bpm.participant_aggregate_invalid` | 节点表单人员聚合配置无效：来源节点、字段或轮次不满足要求，无法解析下一轮参与人 |
+| bpm | `REWORK_LOOP_OVER_LIMIT` | 2454 | `bpm.rework_loop_over_limit` | 异常处理→复检自动循环超过上限，已阻止自动派发并挂起等待有权用户处置 |
 | openapi | `APP_NOT_FOUND` | 3000 | `openapi.app_not_found` | 开放应用不存在 |
 | openapi | `APP_DISABLED` | 3001 | `openapi.app_disabled` | 开放应用已停用 |
 | openapi | `SIGN_INVALID` | 3002 | `openapi.signature_invalid` | 签名校验失败 |

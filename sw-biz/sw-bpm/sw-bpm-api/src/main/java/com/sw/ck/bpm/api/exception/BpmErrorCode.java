@@ -145,6 +145,8 @@ public enum BpmErrorCode implements ErrorCode {
             "岗位委托解析失败：委托链超过 4 跳、受托岗位缺有效人员或关系失效，请检查委托配置"),
     PARTICIPANT_AGGREGATE_INVALID(2453, "bpm.participant_aggregate_invalid",
             "节点表单人员聚合配置无效：来源节点、字段或轮次不满足要求，无法解析下一轮参与人"),
+    REWORK_LOOP_OVER_LIMIT(2454, "bpm.rework_loop_over_limit",
+            "异常处理→复检自动循环超过上限，已阻止自动派发并挂起等待有权用户处置"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================

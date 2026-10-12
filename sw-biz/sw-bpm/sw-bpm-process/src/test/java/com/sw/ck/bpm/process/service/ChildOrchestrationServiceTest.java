@@ -137,6 +137,50 @@ class ChildOrchestrationServiceTest {
                         assertThat(e.getCode()).isEqualTo(BpmErrorCode.CHILD_NESTING_OVER_LIMIT.getCode()));
     }
 
+    @Test
+    @DisplayName("freezeBatch：同根链同目标模板循环超限（3+1>3）阻止自动派发（REWORK_LOOP_OVER_LIMIT）")
+    void freezeBatch_reworkLoopOverLimitRejected() {
+        BpmInstance parent = parent();
+        BpmChildBatch prior = new BpmChildBatch();
+        prior.setExpectedCount(3);
+        prior.setConfigJson(batchConfigJson("rectify_def"));
+        when(batchMapper.selectList(any())).thenReturn(List.of(prior));
+
+        ActionConfig action = childAction("act_rework", "ALL", null);
+        action.setTargetProcessDefKey("rectify_def");
+        assertThatThrownBy(() -> service.freezeBatch(parent, "trg-rework", action,
+                "TRG:p1:trg-rework:2:1", 1, 2L, "parent_form", 9L))
+                .isInstanceOfSatisfying(BaseException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(BpmErrorCode.REWORK_LOOP_OVER_LIMIT.getCode()));
+    }
+
+    @Test
+    @DisplayName("freezeBatch：循环护栏临界（累计=上限）放行；不同目标模板不受同阶段计数影响")
+    void freezeBatch_reworkLoopBoundaryAllowsAndOtherStageUnaffected() {
+        BpmInstance parent = parent();
+        BpmChildBatch prior = new BpmChildBatch();
+        prior.setExpectedCount(2);
+        prior.setConfigJson(batchConfigJson("rectify_def"));
+        when(batchMapper.selectList(any())).thenReturn(List.of(prior));
+        when(writebackFacade.readVersion(eq(9L), eq("parent_form"), eq("rec-1"),
+                isNull(), isNull())).thenReturn(Optional.of(7L));
+
+        // 临界：同阶段累计 2 + 本批 1 = 3（恰好上限）→ 放行
+        ActionConfig sameStage = childAction("act_rework", "ALL", null);
+        sameStage.setTargetProcessDefKey("rectify_def");
+        BpmChildBatch allowed = service.freezeBatch(parent, "trg-rework", sameStage,
+                "TRG:p1:trg-rework:2:1", 1, 2L, "parent_form", 9L);
+        assertThat(allowed.getBatchKey()).isEqualTo("CHILD:TRG:p1:trg-rework:2:1:act_rework");
+
+        // 不同阶段（其他目标模板）不受同阶段循环计数阻断
+        when(batchMapper.selectList(any())).thenReturn(List.of(prior));
+        ActionConfig otherStage = childAction("act_other", "ALL", null);
+        otherStage.setTargetProcessDefKey("repair_def");
+        BpmChildBatch other = service.freezeBatch(parent, "trg-other", otherStage,
+                "TRG:p1:trg-other:2:1", 1, 2L, "parent_form", 9L);
+        assertThat(other.getBatchKey()).isEqualTo("CHILD:TRG:p1:trg-other:2:1:act_other");
+    }
+
     // ==================== 子完成回写与结算 ====================
 
     @Test
@@ -941,6 +985,17 @@ class ChildOrchestrationServiceTest {
         BpmChildBatch batch = waitingBatch(policy, null, settledCount);
         batch.setStatus(BpmChildBatch.STATUS_SETTLED);
         return batch;
+    }
+
+    /** 既有批次冻结配置桩：与 ActionConfig 序列化形状一致（freezeBatch 循环护栏按其解析目标模板）。 */
+    private String batchConfigJson(String targetDefKey) {
+        try {
+            ActionConfig config = childAction("act_prior", "ALL", null);
+            config.setTargetProcessDefKey(targetDefKey);
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(config);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private ActionConfig childAction(String actionId, String policy, Integer waitCount) {

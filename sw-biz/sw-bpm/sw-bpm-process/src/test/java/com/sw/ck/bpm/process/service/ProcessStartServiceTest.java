@@ -82,6 +82,54 @@ class ProcessStartServiceTest {
         verify(bpmTaskFacade).queryByProcessInstance("instance-1");
     }
 
+    @Test
+    @DisplayName("P64阶段Ⅲ：表单携带 txn_quantity 时提升为流程变量供 TXN_ACTION 节点取数")
+    void start_whenSubmittedDataCarriesTxnQuantity_shouldPromoteProcessVariable() {
+        BpmFormBinding binding = binding();
+        when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+
+        StartCommand command = command();
+        command.setSubmittedData(new java.util.HashMap<>(java.util.Map.of(
+                "target_record_id", "inv-record-9",
+                "txn_quantity", "12.5")));
+        service.start(command);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(java.util.Map.class);
+        verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
+                varsCaptor.capture(), eq("57001"));
+        assertThat(varsCaptor.getValue())
+                .containsEntry("targetRecordId", "inv-record-9")
+                .containsEntry("txnQuantity", "12.5");
+    }
+
+    @Test
+    @DisplayName("P64阶段Ⅲ：无 txn_quantity 表单数据时跳过透传，不影响普通审批流")
+    void start_whenNoTxnQuantity_shouldNotPromoteVariable() {
+        BpmFormBinding binding = binding();
+        when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+
+        service.start(command());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(java.util.Map.class);
+        verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
+                varsCaptor.capture(), eq("57001"));
+        assertThat(varsCaptor.getValue()).doesNotContainKey("txnQuantity");
+    }
+
     private BpmFormBinding binding() {
         BpmFormBinding binding = new BpmFormBinding();
         binding.setFormKey("p57-r1-form");

@@ -62,6 +62,8 @@ public class ChildOrchestrationService {
     public static final int HARD_MAX_NESTING = 8;
     /** 同一业务根链自动发起实例上限（主方向 §3.5 设计限制）。 */
     public static final int MAX_ROOT_CHAIN_INSTANCES = 1000;
+    /** 异常处理→复检自动循环硬上限（主方向 §3.5；配置默认 3，服务端钳 10）。 */
+    public static final int HARD_MAX_REWORK_ROUNDS = 10;
 
     private static final String POLICY_ALL = "ALL";
     private static final String POLICY_ANY = "ANY";
@@ -81,6 +83,10 @@ public class ChildOrchestrationService {
     /** 父子嵌套上限（默认 3；服务端硬钳 8；UI 可见并经服务端复核）。 */
     @Value("${sw.bpm.orchestration.max-nesting:3}")
     private int configuredMaxNesting;
+
+    /** 异常处理→复检自动循环轮数上限（默认 3；服务端硬钳 10；按根链+目标模板计数）。 */
+    @Value("${sw.bpm.orchestration.rework-max-rounds:3}")
+    private int configuredReworkMaxRounds;
 
     public ChildOrchestrationService(BpmActionRefMapper actionRefMapper,
                                      BpmChildBatchMapper batchMapper,
@@ -147,7 +153,7 @@ public class ChildOrchestrationService {
         // 护栏口径=自动发起实例数：同一根链既有批次的预期子流程数求和，加本批 expectedCount
         // （单批多个子实例按实例数消耗额度）；临界=恰好上限允许，超过上限拒绝。
         List<BpmChildBatch> rootBatches = batchMapper.selectList(Wrappers.<BpmChildBatch>lambdaQuery()
-                .select(BpmChildBatch::getExpectedCount)
+                .select(BpmChildBatch::getExpectedCount, BpmChildBatch::getConfigJson)
                 .eq(BpmChildBatch::getTenantId, tenantId)
                 .eq(BpmChildBatch::getRootInstanceId, rootInstanceId));
         long chainInstances = rootBatches.stream()
@@ -160,6 +166,27 @@ public class ChildOrchestrationService {
                     "业务根链 " + rootInstanceId + " 自动发起实例数 " + chainInstances
                             + " + 本批 " + Math.max(expectedCount, 0)
                             + " 超过上限 " + MAX_ROOT_CHAIN_INSTANCES + "，已阻止派发");
+        }
+        // 循环护栏（主方向 §3.5：异常处理→复检自动循环默认最多 3 轮、硬上限 10 轮，
+        // 计数归属根业务及检验阶段）：同一根链上同一目标模板（检验/整改阶段）的累计
+        // 自动发起实例数达到阈值时阻止再次自动派发；等待批次按既有阻断路径展示可诊断
+        // 原因，交有权用户终止或调整，不静默把异常结果折算为成功。
+        int reworkLimit = resolveReworkLoopLimit();
+        if (reworkLimit > 0 && action.getTargetProcessDefKey() != null
+                && !action.getTargetProcessDefKey().isBlank()) {
+            long stageInstances = rootBatches.stream()
+                    .filter(batch -> action.getTargetProcessDefKey()
+                            .equals(resolveBatchTargetDefKey(batch)))
+                    .map(BpmChildBatch::getExpectedCount)
+                    .filter(java.util.Objects::nonNull)
+                    .mapToLong(Integer::longValue)
+                    .sum();
+            if (stageInstances + Math.max(expectedCount, 0) > reworkLimit) {
+                throw new BaseException(BpmErrorCode.REWORK_LOOP_OVER_LIMIT.getCode(),
+                        "业务根链 " + rootInstanceId + " 检验/整改阶段 " + action.getTargetProcessDefKey()
+                                + " 自动发起实例数 " + stageInstances + " + 本批 " + Math.max(expectedCount, 0)
+                                + " 超过循环上限 " + reworkLimit + "，已阻止自动派发并挂起等待有权用户处置");
+            }
         }
         String batchKey = "CHILD:" + execKey + ":" + action.getActionId();
         BpmChildBatch existing = batchMapper.selectOne(Wrappers.<BpmChildBatch>lambdaQuery()
@@ -959,6 +986,18 @@ public class ChildOrchestrationService {
     private int resolveMaxNesting() {
         int value = configuredMaxNesting <= 0 ? 3 : configuredMaxNesting;
         return Math.min(value, HARD_MAX_NESTING);
+    }
+
+    /** 循环轮数上限（默认 3；服务端硬钳 10；非正值回退默认，与嵌套上限同一守恒模式）。 */
+    private int resolveReworkLoopLimit() {
+        int value = configuredReworkMaxRounds <= 0 ? 3 : configuredReworkMaxRounds;
+        return Math.min(value, HARD_MAX_REWORK_ROUNDS);
+    }
+
+    /** 从既有批次冻结配置解析目标模板（缺配置/解析失败返回 null，不阻断既有批次计数）。 */
+    private String resolveBatchTargetDefKey(BpmChildBatch batch) {
+        ActionConfig config = parseConfig(batch.getConfigJson());
+        return config == null ? null : config.getTargetProcessDefKey();
     }
 
     private String normalizePolicy(String policy) {
