@@ -68,7 +68,7 @@ public class FormDefinitionController {
         log.info("Creating form draft: formKey={}, name={}", req.getFormKey(), req.getName());
         FormDefDTO result = formDefService.createDraft(
                 req.getFormKey(), req.getName(),
-                req.getLogicalTableName(), req.getDescription());
+                req.getLogicalTableName(), req.getDescription(), req.getFormType());
         return R.ok(result);
     }
 
@@ -123,8 +123,9 @@ public class FormDefinitionController {
     @PreAuthorize("@ss.hasPermi('form:design')")
     @GetMapping("/page")
     public R<PageResult<FormDefDTO>> pageFormDefs(PageParam pageParam,
-                                                  @RequestParam(required = false) String keyword) {
-        PageResult<FormDefDTO> result = formDefService.pageFormDefs(pageParam, keyword);
+                                                  @RequestParam(required = false) String keyword,
+                                                  @RequestParam(required = false) String formType) {
+        PageResult<FormDefDTO> result = formDefService.pageFormDefs(pageParam, keyword, formType);
         return R.ok(result);
     }
 

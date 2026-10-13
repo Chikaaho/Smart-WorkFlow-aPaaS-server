@@ -21,6 +21,8 @@ import java.time.LocalDateTime;
 public class FormDefDTO implements Serializable {
 
     private String id;
+    /** 表单类型：BUSINESS 业务表单 / APPROVAL_COMMENT 审批意见表单（BF20261013-020）。 */
+    private String formType;
     private String formKey;
     private String name;
     private String logicalTableName;

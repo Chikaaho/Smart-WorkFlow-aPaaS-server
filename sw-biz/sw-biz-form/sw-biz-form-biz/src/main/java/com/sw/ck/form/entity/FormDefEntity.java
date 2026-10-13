@@ -14,6 +14,12 @@ import lombok.EqualsAndHashCode;
 @TableName("sw_form_def")
 public class FormDefEntity extends FormBaseEntity {
 
+    /**
+     * 表单类型（BF20261013-020 元数据区分）：BUSINESS 业务表单（默认/存量）/
+     * APPROVAL_COMMENT 审批意见表单（流程节点审批意见专用，流程管理单独维护）。
+     */
+    private String formType;
+
     /** 表单业务标识（唯一，如 leave_request） */
     private String formKey;
 

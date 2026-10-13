@@ -28,6 +28,14 @@ public interface FormDefService {
     FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description);
 
     /**
+     * 创建表单草稿（BF20261013-020：带表单类型）。
+     *
+     * @param formType BUSINESS 业务表单 / APPROVAL_COMMENT 审批意见表单；空白按 BUSINESS
+     */
+    FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+            String formType);
+
+    /**
      * 更新表单草稿元数据。
      *
      * @param id         表单 ID
@@ -114,6 +122,13 @@ public interface FormDefService {
      * @return 分页结果，每行 FormDefDTO（含 id/formKey/name/status/createTime/updateTime 等）
      */
     PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword);
+
+    /**
+     * 分页查询（BF20261013-020：按表单类型过滤）。
+     *
+     * @param formType 可选，BUSINESS / APPROVAL_COMMENT；为空不过滤
+     */
+    PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword, String formType);
 
     /**
      * 根据 ID 获取表单定义实体。

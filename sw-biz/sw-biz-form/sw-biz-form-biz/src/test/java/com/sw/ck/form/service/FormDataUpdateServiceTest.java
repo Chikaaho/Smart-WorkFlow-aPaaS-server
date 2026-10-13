@@ -360,7 +360,7 @@ class FormDataUpdateServiceTest {
 
     private void createMetadataTables() {
         jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS sw_form_def ("
-                + "id VARCHAR(36) PRIMARY KEY, form_key VARCHAR(100) NOT NULL UNIQUE,"
+                + "id VARCHAR(36) PRIMARY KEY, form_type VARCHAR(20) NOT NULL DEFAULT 'BUSINESS', form_key VARCHAR(100) NOT NULL UNIQUE,"
                 + "name VARCHAR(200) NOT NULL, logical_table_name VARCHAR(100),"
                 + "status VARCHAR(20) NOT NULL DEFAULT 'DRAFT', physical_table_name VARCHAR(100),"
                 + "form_version INT NOT NULL DEFAULT 1, description VARCHAR(500), visibility_scope TEXT,"

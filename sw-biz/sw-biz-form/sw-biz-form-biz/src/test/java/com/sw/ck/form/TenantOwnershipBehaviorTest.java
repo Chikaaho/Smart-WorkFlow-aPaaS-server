@@ -67,7 +67,8 @@ class TenantOwnershipBehaviorTest {
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS sw_form_def (
                     id                   varchar(36)  not null primary key,
-                    form_key             varchar(100) not null,
+
+                    form_type           varchar(20)  not null default 'BUSINESS',                    form_key             varchar(100) not null,
                     name                 varchar(200) not null,
                     logical_table_name   varchar(100),
                     physical_table_name  varchar(100),

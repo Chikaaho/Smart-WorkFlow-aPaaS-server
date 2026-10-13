@@ -108,6 +108,12 @@ public class FormDefServiceImpl implements FormDefService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description) {
+        return createDraft(formKey, name, logicalTableName, description, null);
+    }
+
+    /** BF20261013-020：带表单类型的草稿创建（空白类型按业务表单）。 */
+    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+            String formType) {
         // —— 校验唯一性（经租户拦截器按当前租户过滤；V83 后跨租户同名 formKey 合法） ——
         LambdaQueryWrapper<FormDefEntity> keyQuery = Wrappers.lambdaQuery(FormDefEntity.class)
                 .eq(FormDefEntity::getFormKey, formKey);
@@ -123,6 +129,8 @@ public class FormDefServiceImpl implements FormDefService {
         entity.setLogicalTableName(logicalTableName);
         entity.setDescription(description);
         entity.setStatus(FormStatusEnum.DRAFT.getCode());
+        // BF20261013-020：表单类型元数据（空白/未知按业务表单）
+        entity.setFormType("APPROVAL_COMMENT".equals(formType) ? "APPROVAL_COMMENT" : "BUSINESS");
         entity.setFormVersion(1);
         entity.setCreateTime(LocalDateTime.now());
         entity.setUpdateTime(LocalDateTime.now());
@@ -437,11 +445,19 @@ public class FormDefServiceImpl implements FormDefService {
 
     @Override
     public PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword) {
-        // 构造查询条件：按 update_time 倒序 + 可选 name 模糊搜索
+        return pageFormDefs(pageParam, keyword, null);
+    }
+
+    /** BF20261013-020：按表单类型过滤的分页查询（formType 为空不过滤）。 */
+    public PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword, String formType) {
+        // 构造查询条件：按 update_time 倒序 + 可选 name 模糊搜索 + 可选类型精确过滤
         LambdaQueryWrapper<FormDefEntity> wrapper = Wrappers.lambdaQuery(FormDefEntity.class)
                 .orderByDesc(FormDefEntity::getUpdateTime);
         if (keyword != null && !keyword.isBlank()) {
             wrapper.like(FormDefEntity::getName, keyword.trim());
+        }
+        if (formType != null && !formType.isBlank()) {
+            wrapper.eq(FormDefEntity::getFormType, formType.trim());
         }
         // 走 MyBatis-Plus selectPage → @TableLogic / TenantLineHandler 自动生效
         PageResult<FormDefEntity> entityPage = formDefMapper.selectPage(pageParam, wrapper);
@@ -865,6 +881,7 @@ public class FormDefServiceImpl implements FormDefService {
                 .formVersion(entity.getFormVersion())
                 .description(entity.getDescription())
                 .visibilityScope(entity.getVisibilityScope())
+                .formType(entity.getFormType())
                 .createTime(entity.getCreateTime())
                 .updateTime(entity.getUpdateTime())
                 .build();
