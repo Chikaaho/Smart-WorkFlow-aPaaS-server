@@ -43,6 +43,21 @@ public interface FormDefinitionService {
     Optional<FormDefDTO> getFormDef(String formKey);
 
     /**
+     * 指定已发布版本的表单定义快照（任务级绑定版本冻结读取用，P64 A01）。
+     * <p>
+     * 任务实例绑定发布时点的表单版本；后续表单再发布不得改变既有任务的字段/校验语义，
+     * 调用方按绑定版本读取该快照。未实现或该版本无快照时返回 empty，由调用方回退当前定义。
+     * </p>
+     *
+     * @param formKey     表单业务标识
+     * @param formVersion 已发布版本号
+     * @return present = 该版本的 definition JSON；empty = 目标缺失（formKey/版本为空或无该版本快照）
+     */
+    default Optional<String> getFormDefinitionSnapshot(String formKey, Integer formVersion) {
+        return Optional.empty();
+    }
+
+    /**
      * 判断当前登录用户是否可从业务入口发起该已发布表单。
      *
      * @return present = 判定结果（true 可发起 / false 不可发起，含表单不存在、未发布、未登录或无权）；

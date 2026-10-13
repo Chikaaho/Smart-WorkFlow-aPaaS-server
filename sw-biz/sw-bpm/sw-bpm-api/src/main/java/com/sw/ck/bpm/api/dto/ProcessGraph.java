@@ -42,4 +42,14 @@ public class ProcessGraph implements Serializable {
 
     /** 画布元数据（不透明，原样透传）。 */
     private Map<String, Object> canvas;
+
+    // ==================== P64 高级编排（阶段Ⅰ：数据到动作） ====================
+    // 文档级类型化配置，发布时随 graph_json 冻结于 def_version；旧图缺省 = 无变量/无触发器、
+    // 零行为（向后兼容，A12 存量语义不漂移）。元素级 config/style 仍为不透明透传，不变。
+
+    /** BPM 变量定义（PD02；发布时经 ProcessVariableValidator 校验后冻结）。 */
+    private List<ProcessVariableDef> variables;
+
+    /** Trigger 判断配置（PD03；发布时校验并冻结）。 */
+    private List<TriggerConfig> triggers;
 }

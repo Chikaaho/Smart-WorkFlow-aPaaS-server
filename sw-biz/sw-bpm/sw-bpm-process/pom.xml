@@ -94,6 +94,11 @@
             <groupId>com.alibaba.fastjson2</groupId>
             <artifactId>fastjson2</artifactId>
         </dependency>
+        <!--
+            P64 受控判断脚本运行时经 sw-bpm-api 的 BpmScriptEvaluatePort 消费，
+            GraalJS 重型依赖随实现留在引擎侧模块，不进入本模块类路径
+            （IotContractBoundaryIsolationTest 门禁；ADR-P64-001 §3）。
+        -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>

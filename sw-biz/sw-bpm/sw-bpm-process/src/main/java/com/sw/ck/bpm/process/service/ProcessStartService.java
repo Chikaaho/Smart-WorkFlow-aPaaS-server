@@ -179,6 +179,11 @@ public class ProcessStartService {
         // 无则跳过，不影响普通审批流与 instanceBusinessKey 缺省源）
         putFirstNotBlank(variables, "targetRecordId", cmd.getSubmittedData(),
                 "target_record_id", "targetRecordId");
+        // P64 阶段Ⅲ（A08 数量账）：事务动作数量透传（表单携带 txn_quantity/txnQuantity
+        // 时成为流程变量，供 quantity=variable:txnQuantity 的 TXN_ACTION 节点解析逐行动作
+        // 数量；无则跳过，不影响普通审批流与字面量数量配置）
+        putFirstNotBlank(variables, "txnQuantity", cmd.getSubmittedData(),
+                "txn_quantity", "txnQuantity");
 
         // 原: runtimeService.startProcessInstanceByKeyAndTenantId(...)
         // → bpmRuntimeFacade.startProcess(...)

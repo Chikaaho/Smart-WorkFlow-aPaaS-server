@@ -145,6 +145,19 @@ public interface BpmTaskFacade {
     Optional<Boolean> canHandle(String taskId, String userId);
 
     /**
+     * 候选领取：候选人将未认领任务转为本人办理（P64 阶段Ⅱ A07/A11 候选组任务唯一合法办理入口）。
+     * <p>
+     * 仅未认领（assignee 为空）且调用者为候选（候选用户/候选组）时可领取；领取即
+     * 竞争定胜负：其余候选链接一并移除（失败方待办不再可见、无办理权），后续只有
+     * 新 assignee 可读详情/节点表单并可办理。
+     * </p>
+     *
+     * @return present = {@link MutationOutcome#APPLIED} 本次领取已生效；
+     *         任务不存在或已被处理、任务已被他人领取、调用者非候选抛明确异常
+     */
+    Optional<MutationOutcome> claimTask(String taskId, String userId);
+
+    /**
      * 将人工任务退回到已经过且被定义允许的节点。
      *
      * @return present = {@link MutationOutcome#APPLIED} 本次退回已生效；

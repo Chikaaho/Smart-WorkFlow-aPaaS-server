@@ -102,6 +102,8 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                         new BpmNodeConfigField("participant", "参与人", "object", true,
                                 Map.of("strategies", ParticipantStrategy.ALL)),
                         new BpmNodeConfigField("opinionForm", "审批意见表单", "object", false, Map.of()),
+                        new BpmNodeConfigField("nodeForm", "节点业务表单（P64）", "object", false,
+                                Map.of("shape", "{formKey}")),
                         new BpmNodeConfigField("returnTargets", "可退回节点", "array", false, Map.of())),
                 "2",
                 EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,

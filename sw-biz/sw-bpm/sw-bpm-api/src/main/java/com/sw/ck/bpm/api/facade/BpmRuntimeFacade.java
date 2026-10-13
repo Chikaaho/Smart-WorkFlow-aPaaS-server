@@ -2,6 +2,7 @@ package com.sw.ck.bpm.api.facade;
 
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
 import com.sw.ck.bpm.api.result.BpmProcessStatus;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 
 import java.util.List;
 import java.util.Map;
@@ -81,4 +82,18 @@ public interface BpmRuntimeFacade {
      * @return present = 状态（含运行中与各终态）；empty = 实例不存在（原 "NOT_FOUND" 字符串哨兵已移除）
      */
     Optional<BpmProcessStatus> getProcessInstanceStatus(String processInstanceId);
+
+    /**
+     * 唤醒等待节点（P64 阶段Ⅱ A05：SUBFLOW_WAIT ReceiveTask；子流程批次结算后推进父主链）。
+     * <p>
+     * 幂等：该实例当前没有停留在指定等待节点的执行流时返回 ALREADY_ADVANCED，不视为失败；
+     * 实例不存在/未运行时 empty。并发重复唤醒由引擎侧吸收。
+     * </p>
+     *
+     * @param processInstanceId 父流程实例 ID
+     * @param activityId        等待节点 BPMN 元素 ID
+     * @return present = MutationOutcome（APPLIED=已唤醒；ALREADY_APPLIED=无等待执行流，幂等吸收）；
+     *         empty = 实例标识缺失或实例不在运行期
+     */
+    Optional<MutationOutcome> signalWaitNode(String processInstanceId, String activityId);
 }

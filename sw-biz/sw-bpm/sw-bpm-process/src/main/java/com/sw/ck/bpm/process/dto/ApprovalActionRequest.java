@@ -19,6 +19,17 @@ public class ApprovalActionRequest {
     private String comment;
     private Map<String, Object> opinionData = new LinkedHashMap<>();
 
+    // ==================== P64 节点业务表单（阶段Ⅰ A01） ====================
+
+    /**
+     * 节点业务表单数据（任务绑定节点表单时随合法动作提交）。
+     * <p>
+     * 仅 APPROVE/DISAPPROVE（任务合法完成）时与任务动作同事务落 SUBMITTED；
+     * REJECT/RETURN 不产生有效提交（各自处置，不冒充合法完成）。
+     * </p>
+     */
+    private Map<String, Object> nodeFormData;
+
     // ==================== I3 生命周期动作扩展字段 ====================
 
     /** 转入人 / 受托人 / 追加参与人目标（TRANSFER/DELEGATE 用；加签用 participants）。 */

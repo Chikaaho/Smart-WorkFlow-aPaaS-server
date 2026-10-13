@@ -44,7 +44,9 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                         new BpmNodeConfigField("mode", "结算方式", "string", true,
                                 Map.of("values", List.of("ALL", "ANY", "RATIO", "VETO"))),
                         new BpmNodeConfigField("ratio", "通过比例", "integer", false,
-                                Map.of("min", 1, "max", 100))),
+                                Map.of("min", 1, "max", 100)),
+                        new BpmNodeConfigField("nodeForm", "节点业务表单（P64）", "object", false,
+                                Map.of("shape", "{formKey}"))),
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
                         BpmNodeCapability.RUNTIME, BpmNodeCapability.CONFIG_VALIDATE),
                 false, false, false, true));

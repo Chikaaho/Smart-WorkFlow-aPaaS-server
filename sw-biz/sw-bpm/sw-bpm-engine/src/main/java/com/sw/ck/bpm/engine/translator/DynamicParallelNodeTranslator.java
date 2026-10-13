@@ -62,7 +62,9 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
                         new BpmNodeConfigField("invalidStrategy", "失效对象策略", "string", false,
                                 Map.of("values", List.of("BLOCK", "SKIP"))),
                         new BpmNodeConfigField("semanticVersion", "分支语义版本", "integer", false,
-                                Map.of("min", 2, "max", 2))),
+                                Map.of("min", 2, "max", 2)),
+                        new BpmNodeConfigField("nodeForm", "节点业务表单（P64）", "object", false,
+                                Map.of("shape", "{formKey}"))),
                 "1", EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
                 BpmNodeCapability.RUNTIME, BpmNodeCapability.CONFIG_VALIDATE),
                 false, false, false, true));

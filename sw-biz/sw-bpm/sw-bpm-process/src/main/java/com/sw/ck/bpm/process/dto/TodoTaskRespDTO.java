@@ -43,4 +43,7 @@ public class TodoTaskRespDTO {
 
     /** 流程定义键（V012-BUG-010 定位分类用） */
     private String processDefKey;
+
+    /** 候选任务标记（P64 阶段Ⅱ：assignee 为空的候选组任务，须先领取再查看/办理） */
+    private Boolean candidate;
 }

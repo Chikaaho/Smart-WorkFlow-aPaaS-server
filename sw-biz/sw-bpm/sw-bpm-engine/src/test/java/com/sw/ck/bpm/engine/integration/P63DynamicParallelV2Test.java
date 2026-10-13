@@ -51,6 +51,13 @@ class P63DynamicParallelV2Test {
     private DynamicBranchCollectionResolver resolver(FormRecordReadFacade formFacade,
                                                      DynamicBranchPort port,
                                                      Map<String, Object> nodeConfig) {
+        return resolver(formFacade, port, nodeConfig, null);
+    }
+
+    private DynamicBranchCollectionResolver resolver(FormRecordReadFacade formFacade,
+                                                     DynamicBranchPort port,
+                                                     Map<String, Object> nodeConfig,
+                                                     com.sw.ck.bpm.api.variable.BpmVariableReadPort readPort) {
         RepositoryService repositoryService = mock(RepositoryService.class);
         BpmnModel model = new BpmnModel();
         org.flowable.bpmn.model.Process process = new org.flowable.bpmn.model.Process();
@@ -90,7 +97,7 @@ class P63DynamicParallelV2Test {
 
         return new DynamicBranchCollectionResolver(repositoryService, new ObjectMapper(),
                 mock(ParticipantResolverRegistry.class), deptFacade, userFacade,
-                provider(port), formFacade);
+                provider(port), formFacade, provider(readPort));
     }
 
     private DelegateExecution execution(String executionId) {
@@ -136,6 +143,7 @@ class P63DynamicParallelV2Test {
                                                        String sd, String m, List<BranchCandidate> c) {
                 throw new AssertionError("legacy path must not run for v2 config");
             }
+
 
             @Override
             public Optional<List<FrozenBranchV2>> freezeRound(String t, String pi, String n, String execId,
@@ -199,6 +207,7 @@ class P63DynamicParallelV2Test {
                 throw new AssertionError("legacy path must not run for v2 config");
             }
 
+
             @Override
             public Optional<List<FrozenBranchV2>> freezeRound(String t, String pi, String n, String execId,
                                                               String st, String sd, String m, String ot,
@@ -245,6 +254,7 @@ class P63DynamicParallelV2Test {
                                                        String sd, String m, List<BranchCandidate> c) {
                 throw new AssertionError("legacy path must not run for v2 config");
             }
+
             @Override public Optional<List<FrozenBranchV2>> freezeRound(String t, String pi, String n, String e, String st, String sd, String m, String ot, List<BranchCandidateV2> c) {
                 return Optional.of(List.of());
             }
@@ -306,5 +316,99 @@ class P63DynamicParallelV2Test {
         element.setType("DYNAMIC_PARALLEL");
         element.setConfig(config);
         return element;
+    }
+
+    @Test
+    @DisplayName("P64：VARIABLE 来源流程变量缺省时回退 BPM 变量快照端口（USER_SET → 逐对象分支）")
+    void variableSourceFallsBackToBpmVariablePort() {
+        java.util.Map<String, List<String>> frozenRefs = new java.util.LinkedHashMap<>();
+        DynamicBranchPort port = new DynamicBranchPort() {
+            @Override
+            public Optional<List<FrozenBranch>> freeze(String t, String pi, String n, String st,
+                                                       String sd, String m, List<BranchCandidate> c) {
+                throw new AssertionError("legacy path must not run for v2 config");
+            }
+
+
+            @Override
+            public Optional<List<FrozenBranchV2>> freezeRound(String t, String pi, String n, String execId,
+                                                              String st, String sd, String m, String ot,
+                                                              List<BranchCandidateV2> candidates) {
+                frozenRefs.put("executionId", List.of(execId));
+                List<FrozenBranchV2> result = new java.util.ArrayList<>();
+                int i = 0;
+                for (BranchCandidateV2 c : candidates) {
+                    if (c.assigneeId() != null) {
+                        result.add(new FrozenBranchV2(i++, c.assigneeId(), ot, c.objectId(), c.sourceRefsJson()));
+                    }
+                }
+                return Optional.of(result);
+            }
+
+            @Override
+            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> recordAction(String t, String pi,
+                                                                                   String n, String l,
+                                                                                   String task, String a,
+                                                                                   String r) {
+                return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED);
+            }
+
+            @Override
+            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> closeRemaining(String t, String pi,
+                                                                                     String n, String r) {
+                return Optional.empty();
+            }
+        };
+        // 流程变量缺省：仅端口提供 var_handlers（USER_SET 快照形态 = ID 列表）
+        com.sw.ck.bpm.api.variable.BpmVariableReadPort readPort = (pi, varId) ->
+                "var_handlers".equals(varId) ? Optional.of(List.of("5", "6")) : Optional.empty();
+        Map<String, Object> config = v2Config(
+                Map.of("type", "VARIABLE", "value", "var_handlers", "objectType", "USER"), Map.of());
+        DynamicBranchCollectionResolver resolver = resolver(formFacade(Map.of(), Map.of()), port, config, readPort);
+        DelegateExecution exec = execution("exec-port");
+        Object collection = resolver.resolveCollection(null, exec);
+        assertThat((Iterable<Object>) collection).containsExactly("5", "6");
+        assertThat(frozenRefs.get("executionId")).containsExactly("exec-port");
+    }
+
+    @Test
+    @DisplayName("P64：端口未接线且流程变量缺省时保持原语义（空集合按 emptyStrategy 阻断）")
+    void variableSourceWithoutPortKeepsBlockSemantics() {
+        DynamicBranchPort port = new DynamicBranchPort() {
+            @Override
+            public Optional<List<FrozenBranch>> freeze(String t, String pi, String n, String st,
+                                                       String sd, String m, List<BranchCandidate> c) {
+                throw new AssertionError("legacy path must not run for v2 config");
+            }
+
+
+            @Override
+            public Optional<List<FrozenBranchV2>> freezeRound(String t, String pi, String n, String execId,
+                                                              String st, String sd, String m, String ot,
+                                                              List<BranchCandidateV2> candidates) {
+                return Optional.of(List.of());
+            }
+
+            @Override
+            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> recordAction(String t, String pi,
+                                                                                   String n, String l,
+                                                                                   String task, String a,
+                                                                                   String r) {
+                return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED);
+            }
+
+            @Override
+            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> closeRemaining(String t, String pi,
+                                                                                     String n, String r) {
+                return Optional.empty();
+            }
+        };
+        Map<String, Object> config = v2Config(
+                Map.of("type", "VARIABLE", "value", "var_handlers", "objectType", "USER"), Map.of());
+        DynamicBranchCollectionResolver resolver = resolver(formFacade(Map.of(), Map.of()), port, config, null);
+        assertThatThrownBy(() -> resolver.resolveCollection(null, execution("exec-noport")))
+                .isInstanceOf(BaseException.class)
+                .satisfies(e -> assertThat(((BaseException) e).getCode())
+                        .isEqualTo(BpmErrorCode.DYNAMIC_BRANCH_EMPTY.getCode()));
     }
 }

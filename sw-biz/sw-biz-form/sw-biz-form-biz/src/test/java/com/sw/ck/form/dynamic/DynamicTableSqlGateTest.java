@@ -216,7 +216,9 @@ class DynamicTableSqlGateTest {
         List<String> owners = new ArrayList<>();
         for (Path path : productionSources()) {
             if (read(path).contains(TABLE_NAME_PATTERN_LITERAL)) {
-                owners.add(moduleRoot().relativize(path).toString());
+                // Windows 下 Path.toString 为反斜杠，规范化后与正斜杠断言恒等比较
+                owners.add(moduleRoot().relativize(path).toString()
+                        .replace(java.io.File.separatorChar, '/'));
             }
         }
         assertEquals(List.of("src/main/java/com/sw/ck/form/dynamic/DynamicTableSql.java"), owners,

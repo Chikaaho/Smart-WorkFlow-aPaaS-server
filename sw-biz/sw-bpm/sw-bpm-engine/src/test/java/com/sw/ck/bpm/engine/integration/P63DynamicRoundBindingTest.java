@@ -213,7 +213,7 @@ class P63DynamicRoundBindingTest {
                 processEngine.getRepositoryService(), new ObjectMapper(),
                 mock(ParticipantResolverRegistry.class), deptQueryFacade, userQueryFacade,
                 providerOf(roundPort),
-                (tenantId, formKey, recordId) -> Optional.empty());
+                (tenantId, formKey, recordId) -> Optional.empty(), null);
         DynamicBranchTaskListener listener = new DynamicBranchTaskListener(runtimeService,
                 providerOf(snapshotRecorder), providerOf(votePort), providerOf(roundPort));
         ApprovalTaskListener approvalListener = new ApprovalTaskListener(

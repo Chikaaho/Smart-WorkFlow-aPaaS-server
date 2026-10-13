@@ -175,6 +175,34 @@ class CommandDispatcherTest {
         verify(handler, never()).handle(any());
     }
 
+    @Test
+    @DisplayName("P64 回退收敛：旧代码注册表无 ORCH_ACTION_START 处理器 → 按有界重试收敛 FAILED，无部分效果")
+    void rollback_shouldConvergeOrchActionStartWithoutHandler() throws Exception {
+        // 回滚场景模拟：旧代码 handler 注册表只含既有类型，不识别 ORCH_ACTION_START。
+        // 调度器行为：有界重试（failAndScheduleRetry，超 max-retries 终态 FAILED），
+        // 不冒称成功、不产生部分效果、不阻塞其他命令消费。
+        BpmCommandHandler legacyHandler = mock(BpmCommandHandler.class);
+        when(legacyHandler.types()).thenReturn(Set.of(CommandTypeEnum.FLOW_START,
+                CommandTypeEnum.TASK_APPROVE, CommandTypeEnum.TASK_RETURN,
+                CommandTypeEnum.TASK_REJECT));
+        CommandDispatcher rolledBackDispatcher =
+                configure(new CommandDispatcher(commandQueue, List.of(legacyHandler)));
+        when(commandQueue.failAndScheduleRetry(eq(11L), anyString(), anyString(), anyInt(), anyLong()))
+                .thenReturn(true);
+
+        when(commandQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 20))
+                .thenReturn(List.of(envelope(CommandTypeEnum.ORCH_ACTION_START)));
+
+        rolledBackDispatcher.pollNormal();
+
+        org.mockito.ArgumentCaptor<String> reason = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(commandQueue).failAndScheduleRetry(eq(11L), eq("claim-token-11"),
+                reason.capture(), eq(5), eq(1000L));
+        assertThat(reason.getValue()).contains("无命令处理器").contains("ORCH_ACTION_START");
+        verify(legacyHandler, never()).handle(any());
+        verify(legacyHandler, never()).onFinalFailure(any(), any());
+    }
+
     // ==================== 注册冲突 ====================
 
     @Test

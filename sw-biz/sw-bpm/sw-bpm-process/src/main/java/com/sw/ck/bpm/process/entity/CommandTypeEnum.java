@@ -30,7 +30,14 @@ public enum CommandTypeEnum {
      * 后台批量受控动作调用（P62 分级执行 S3）：payload 携带 batchId，
      * 逐项独立事务、持久结果与稳定项键幂等；批次重放返回原批次。
      */
-    BATCH_INVOKE("BATCH_INVOKE");
+    BATCH_INVOKE("BATCH_INVOKE"),
+
+    /**
+     * P64 配置化动作发起关联流程（阶段Ⅰ A04）：触发命中后与源业务同事务登记的可靠意图；
+     * command_key = P64ACT:{execKey}:{actionId}:{itemKey}；消费事务内建目标表单记录并沿
+     * 既有 FLOW_START 链发起实例；重放回查原结果（ADR-P64-001 §4）。
+     */
+    ORCH_ACTION_START("ORCH_ACTION_START");
 
     private final String code;
 

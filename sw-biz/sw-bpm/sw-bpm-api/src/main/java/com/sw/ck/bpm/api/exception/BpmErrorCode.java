@@ -110,6 +110,43 @@ public enum BpmErrorCode implements ErrorCode {
             "资源策略校验未通过：额度、保留份额、消费者可用性或预算相容性检查失败，已拒绝启用"),
     RESOURCE_CONSUMER_UNAVAILABLE(2431, "bpm.resource_consumer_unavailable",
             "必需消费者未启用：异步目标或批量消费能力不可用，已拒绝启用新受理"),
+
+    // ==================== P64 高级编排阶段Ⅰ：数据到动作（2432+） ====================
+    NODE_FORM_NOT_BOUND(2432, "bpm.node_form_not_bound", "该任务节点未绑定业务表单，或绑定的表单已不可用"),
+    NODE_FORM_VALIDATION_FAILED(2433, "bpm.node_form_validation_failed", "节点业务表单数据校验未通过，请按字段要求填写后重新提交"),
+    NODE_FORM_ALREADY_SUBMITTED(2434, "bpm.node_form_already_submitted", "该任务的业务表单数据已最终提交，不能再次修改"),
+    VARIABLE_INVALID(2435, "bpm.variable_invalid", "BPM 变量配置无效：引用、类型、来源或聚合规则不满足发布要求"),
+    VARIABLE_SNAPSHOT_TOO_LARGE(2436, "bpm.variable_snapshot_too_large", "变量快照超出大小上限，本次判断已终止并记录，请收窄变量来源"),
+    TRIGGER_INVALID(2437, "bpm.trigger_invalid", "触发器配置无效：事件、脚本、分支或动作不满足发布要求"),
+    TRIGGER_SCRIPT_FAILED(2438, "bpm.trigger_script_failed", "判断脚本执行失败，本次判断已记录为可诊断结果，未产生任何动作"),
+    TRIGGER_RESULT_UNMATCHED(2439, "bpm.trigger_result_unmatched", "判断结果未命中任何分支（含空值返回），已按未匹配处置记录，未产生动作"),
+    TRIGGER_RESOURCE_LIMIT(2440, "bpm.trigger_resource_limit", "判断脚本超出执行资源限制（超时/语句/快照/输出），本次判断已终止并记录"),
+    ACTION_INVALID(2441, "bpm.action_invalid", "动作配置无效：目标流程、表单或映射不满足发布要求"),
+    ACTION_DISPATCH_EMPTY(2442, "bpm.action_dispatch_empty", "派发集合为空：没有有效派发对象，已阻止派发并记录原因"),
+    ACTION_DISPATCH_OVER_LIMIT(2443, "bpm.action_dispatch_over_limit", "派发集合超过单次上限，已整体拒绝（不静默截断），请收窄集合或调整配置"),
+    ACTION_TARGET_INVALID(2444, "bpm.action_target_invalid", "动作目标流程或表单不可用，无法创建关联实例"),
+
+    // ==================== P64 高级编排阶段Ⅱ：人员与父子协作（2445+） ====================
+    CHILD_ACTION_INVALID(2445, "bpm.child_action_invalid",
+            "子流程动作配置无效：等待策略、K 值或输出回写映射不满足发布要求"),
+    CHILD_NESTING_OVER_LIMIT(2446, "bpm.child_nesting_over_limit",
+            "父子流程嵌套超过安全上限，已阻止派发并记录可诊断原因"),
+    CHILD_CHAIN_OVER_LIMIT(2447, "bpm.child_chain_over_limit",
+            "同一业务根链自动发起实例数超过安全上限，已阻止派发并记录可诊断原因"),
+    CHILD_WRITEBACK_CONFLICT(2448, "bpm.child_writeback_conflict",
+            "子流程回写与来源行当前版本冲突，已挂起等待有权用户处置，未覆盖任何现有结果"),
+    CHILD_WRITEBACK_TARGET_INVALID(2449, "bpm.child_writeback_target_invalid",
+            "子流程回写目标（来源行/字段）不可用或越权，回写被拒绝"),
+    WAIT_NODE_CONFIG_INVALID(2450, "bpm.wait_node_config_invalid",
+            "子流程等待节点配置无效：引用的动作不存在、不是等待型子流程动作或等待策略为 NONE"),
+    DELEGATE_CONFIG_INVALID(2451, "bpm.delegate_config_invalid",
+            "岗位委托配置无效：自委托、循环、跨租户、越权范围或同优先级重叠，已被拒绝"),
+    DELEGATE_RESOLVE_FAILED(2452, "bpm.delegate_resolve_failed",
+            "岗位委托解析失败：委托链超过 4 跳、受托岗位缺有效人员或关系失效，请检查委托配置"),
+    PARTICIPANT_AGGREGATE_INVALID(2453, "bpm.participant_aggregate_invalid",
+            "节点表单人员聚合配置无效：来源节点、字段或轮次不满足要求，无法解析下一轮参与人"),
+    REWORK_LOOP_OVER_LIMIT(2454, "bpm.rework_loop_over_limit",
+            "异常处理→复检自动循环超过上限，已阻止自动派发并挂起等待有权用户处置"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================

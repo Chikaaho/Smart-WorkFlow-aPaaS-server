@@ -61,6 +61,18 @@
             <artifactId>sw-basic-notify-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- P64 受控判断脚本运行时（GraalJS 沙箱；版本由 sw-dependencies BOM 管理）。
+             仅 com.sw.ck.bpm.engine.script 包使用；重型依赖不得进入 sw-bpm-process 类路径
+             （IotContractBoundaryIsolationTest 门禁），process 经 BpmScriptEvaluatePort 消费。 -->
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>polyglot</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>js-community</artifactId>
+            <type>pom</type>
+        </dependency>
         <dependency>
             <groupId>org.flowable</groupId>
             <artifactId>flowable-spring-boot-starter-process</artifactId>

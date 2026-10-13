@@ -59,6 +59,30 @@ public class TaskActionService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService;
 
+    /** P64 阶段Ⅰ：节点业务表单数据服务（可选装配；旧图/未绑定零行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.NodeFormDataService> nodeFormDataProvider;
+
+    /** P64 阶段Ⅰ：触发器受控判断执行服务（可选装配；无触发器配置零行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.TriggerExecutionService> triggerExecutionProvider;
+
+    /** P64 阶段Ⅱ：主子流程编排（可选装配；无 CHILD 动作/批次零行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
+
+    private com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService() {
+        return nodeFormDataProvider == null ? null : nodeFormDataProvider.getIfAvailable();
+    }
+
+    private com.sw.ck.bpm.process.service.TriggerExecutionService triggerExecution() {
+        return triggerExecutionProvider == null ? null : triggerExecutionProvider.getIfAvailable();
+    }
+
+    private com.sw.ck.bpm.process.service.ChildOrchestrationService childOrchestration() {
+        return childOrchestrationProvider == null ? null : childOrchestrationProvider.getIfAvailable();
+    }
+
     private com.sw.ck.bpm.process.service.ApprovalLifecycleService lifecycle() {
         return lifecycleProvider == null ? null : lifecycleProvider.getIfAvailable();
     }
@@ -304,6 +328,11 @@ public class TaskActionService {
             }
             recordAction(task, loginUser, effectiveRequest, action, "RETURNED", processVariables,
                     commandId, nextReturnRound(processInstanceId));
+            // — P64 阶段Ⅱ（A05）：合法退回终止本实例未完成子流程批次的写回推进权 —
+            com.sw.ck.bpm.process.service.ChildOrchestrationService orchestration = childOrchestration();
+            if (orchestration != null && instance != null) {
+                orchestration.cancelBatchesForParent(instance, "RETURNED");
+            }
             publishProcessEvent(processInstanceId, loginUser, BpmNotifyTrigger.PROCESS_RETURNED);
             // 方向 §6-96 退回：新办理轮次重建任务后必须可生成新通知（同轮次唯一身份），
             // 不被过宽唯一键误杀；受众=重建任务的 assignee/candidates（缺 task 或非数字仅 warn 不阻断）
@@ -322,6 +351,18 @@ public class TaskActionService {
             // 的操作人绑定到实际推进流程的审批人，而不是回退到发起人。
             variables.put("lastApprovalActorId", loginUser.getUserId());
         }
+        // — P64 阶段Ⅲ（A09 实链缺陷修复）：节点业务表单先于引擎推进落库 —
+        // complete 的同步调用栈内可能创建下一节点任务并解析聚合参与人
+        //（NODE_FORM_AGGREGATE 读取本节点本轮全部有效最终提交）；表单若在
+        // complete 之后落库，最后一份提交对聚合解析不可见，聚合名单缺人。
+        // 同事务内先 INSERT 表单再 complete，聚合读取即可见；complete 失败
+        // （并发冲突/分支求值失败）路径在本方法内精准清理本任务已落表单，
+        // 保持"数据/意图未可靠落库即整体回滚"的原语义。
+        boolean submitFormEarly = !legacyInvocation && instance != null
+                && (action == ApprovalAction.APPROVE || action == ApprovalAction.DISAPPROVE);
+        if (submitFormEarly) {
+            submitNodeFormData(instance, task, effectiveRequest, loginUser);
+        }
         try {
             // 命令方法：present = APPLIED；状态冲突/任务不存在继续抛原异常
             if (assigned) bpmTaskFacade.complete(taskId, variables);
@@ -331,6 +372,11 @@ public class TaskActionService {
             BaseException branchFailure = findBaseException(e,
                     com.sw.ck.bpm.api.exception.BpmErrorCode.BRANCH_EVALUATION_FAILED.getCode());
             if (branchFailure != null) {
+                // 表单已先于引擎落库（阶段Ⅲ聚合可见性修复）：分支求值失败任务未完成，
+                // 精准清理本任务刚落的最终提交，恢复"任务未完成即无有效提交"的原语义。
+                if (submitFormEarly) {
+                    discardNodeFormData(task, loginUser);
+                }
                 bpmInstanceService.updateStatus(processInstanceId, InstanceStatusEnum.FAILED.getCode());
                 log.warn("分支条件求值失败，实例进入 FAILED: processInstanceId={}, taskId={}",
                         processInstanceId, taskId);
@@ -338,7 +384,11 @@ public class TaskActionService {
             }
             if (isConcurrentTaskCollision(e)) {
                 // 并发同任务重复办理：另一请求已合法完成，本请求零副作用。
+                // 表单先于引擎落库（阶段Ⅲ）：清理本请求刚落的最终提交，保持零副作用口径。
                 // PostgreSQL 唯一键冲突会中止整个事务，必须翻译为既有业务状态，不得放大为 500。
+                if (submitFormEarly) {
+                    discardNodeFormData(task, loginUser);
+                }
                 log.info("并发任务冲突，按已处理拒绝: taskId={}, processInstanceId={}",
                         taskId, processInstanceId);
                 throw new BaseException(
@@ -381,6 +431,17 @@ public class TaskActionService {
                     case DISAPPROVE -> "DISAPPROVED";
                     default -> "APPROVED";
                 }, processVariables, commandId, null);
+        // — P64 阶段Ⅰ：节点业务表单合法最终提交（A01）+ 受控触发器评估（A03/A04）——
+        // 与任务完成同事务：数据/意图未可靠落库时整个办理回滚，不留半成功；触发器自身
+        // 异常不回滚业务（就地落 FAILED 可诊断行）。
+        // 表单落库已在 complete 之前执行（阶段Ⅲ A09 聚合可见性修复）；此处仅触发器评估。
+        if (!legacyInvocation && instance != null
+                && (action == ApprovalAction.APPROVE || action == ApprovalAction.DISAPPROVE)) {
+            com.sw.ck.bpm.process.service.TriggerExecutionService triggerService = triggerExecution();
+            if (triggerService != null) {
+                triggerService.onTaskActionCompleted(instance, task, action);
+            }
+        }
         runHandleResultFunction(task, loginUser, processVariables, action);
         log.info("审批已完成: taskId={}, processInstanceId={}, userId={}",
                 taskId, processInstanceId, loginUser.getUserId());
@@ -421,6 +482,24 @@ public class TaskActionService {
                 bpmInstanceService.updateStatus(processInstanceId, terminalStatus);
                 log.info("流程已结束，实例状态更新为 {}: processInstanceId={}",
                         terminalStatus, processInstanceId);
+
+                // — P64 阶段Ⅰ：流程合法完成触发器（仅 APPROVED；驳回/撤回/废弃不触发） —
+                if (instance != null && InstanceStatusEnum.APPROVED.getCode().equals(terminalStatus)) {
+                    com.sw.ck.bpm.process.service.TriggerExecutionService triggerService = triggerExecution();
+                    if (triggerService != null) {
+                        triggerService.onProcessCompleted(instance, terminalStatus);
+                    }
+                }
+
+                // — P64 阶段Ⅱ（A05/A06）：本实例作为子流程完成时回写并推进父批次结算；
+                //   作为父流程终态化时取消未完成批次（写回推进权终止） —
+                if (instance != null) {
+                    com.sw.ck.bpm.process.service.ChildOrchestrationService orchestration = childOrchestration();
+                    if (orchestration != null) {
+                        orchestration.onChildProcessTerminal(instance, terminalStatus);
+                        orchestration.cancelBatchesForParent(instance, terminalStatus);
+                    }
+                }
 
                 // — 发布审批结果通知事件（DISAPPROVE 使用独立语义触发器） —
                 publishProcessEvent(processInstanceId, loginUser,
@@ -579,6 +658,39 @@ public class TaskActionService {
                         && ApprovalAction.RETURN.name().equals(item.getAction()))
                 .count();
         return (int) previous + 1;
+    }
+
+    /**
+     * P64 节点业务表单合法最终提交（A01）：任务绑定节点表单且携带/存在数据时，
+     * 与任务完成同事务落 SUBMITTED；校验失败抛业务异常使整个办理回滚（无半成功）。
+     */
+    private void submitNodeFormData(BpmInstance instance, BpmTaskDTO task,
+                                    ApprovalActionRequest request, LoginUser loginUser) {
+        com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService = nodeFormDataService();
+        if (nodeFormDataService == null || instance.getDefVersion() == null) {
+            return;
+        }
+        var binding = nodeFormDataService.resolveBinding(task.getProcessDefinitionKey(),
+                instance.getDefVersion(), task.getTaskDefinitionKey());
+        if (binding.isEmpty()) {
+            return;
+        }
+        nodeFormDataService.submitFinal(instance.getProcessInstanceId(), instance.getProcessDefKey(),
+                task.getTaskDefinitionKey(), task.getTaskId(), binding.get().formKey(),
+                com.sw.ck.bpm.process.service.NodeFormDataService.parseBindingVersion(binding.get().formVersion()),
+                request.getNodeFormData(), loginUser.getUserId());
+    }
+
+    /** 分支求值失败/并发冲突路径：清理本任务刚落的最终提交（同租户同任务精准删除）。 */
+    private void discardNodeFormData(BpmTaskDTO task, LoginUser loginUser) {
+        com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService = nodeFormDataService();
+        if (nodeFormDataService == null) {
+            return;
+        }
+        int removed = nodeFormDataService.deleteByTaskId(loginUser.getTenantId(), task.getTaskId());
+        if (removed > 0) {
+            log.info("已清理未完成任务的节点表单提交: taskId={}, removed={}", task.getTaskId(), removed);
+        }
     }
 
     /** I3 §4.9：结果处理白名单函数执行（输出不改变流程走向，仅审计摘要/白名单变量）。 */

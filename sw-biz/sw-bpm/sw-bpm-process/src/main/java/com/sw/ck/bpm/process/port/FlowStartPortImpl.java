@@ -120,6 +120,91 @@ public class FlowStartPortImpl implements FlowStartPort {
         return payload;
     }
 
+    /**
+     * 受控恢复（复审05 P1-06b）：为已受理但二段 FLOW_START 终态失败/过期的意图登记新的
+     * 恢复代命令（key={@code FLOW_START:{recordId}:R{n}}），载荷沿用原受理输入（formKey/
+     * recordId/submitter/submittedData 取自原载荷，输入冻结不重算），仅将流程指针
+     * {@code processDefKey} 指向**当前有效绑定**。
+     * <p>
+     * 原始命令行与其冻结载荷一律保留（审计可回查），恢复只新增行：不篡改历史载荷、
+     * 不重复目标记录（businessKey=recordId 不变，启动幂等仍由消费方按 businessKey 保证）。
+     * 无有效绑定返回 empty = 明确安全处置（零目标），不冒称成功。
+     * </p>
+     *
+     * @param tenantId        租户
+     * @param originalPayload 原 FLOW_START 受理载荷（含 recordId/formKey/submitter/submittedData）
+     * @return 新恢复代命令标识；empty=当前无有效绑定（安全处置，零目标）
+     */
+    public Optional<Long> recoverFlowStart(Long tenantId, Map<String, Object> originalPayload) {
+        if (originalPayload == null) {
+            return Optional.empty();
+        }
+        Object formKeyObj = originalPayload.get("formKey");
+        Object recordIdObj = originalPayload.get("recordId");
+        if (formKeyObj == null || String.valueOf(formKeyObj).isBlank()
+                || recordIdObj == null || String.valueOf(recordIdObj).isBlank()) {
+            return Optional.empty();
+        }
+        String formKey = String.valueOf(formKeyObj);
+        String recordId = String.valueOf(recordIdObj);
+        var bindings = bindingService.findActiveByFormKey(formKey);
+        if (bindings.isEmpty()) {
+            log.info("受控恢复跳过：表单无启用绑定（安全处置零目标）: formKey={}, recordId={}",
+                    formKey, recordId);
+            return Optional.empty();
+        }
+        if (bindings.size() != 1) {
+            throw new IllegalStateException("表单存在多个有效流程绑定: formKey=" + formKey);
+        }
+        String resolvedProcessDefKey = bindings.get(0).getProcessDefKey();
+        String baseKey = "FLOW_START:" + recordId;
+        int generation = 1;
+        String commandKey;
+        while (true) {
+            commandKey = baseKey + ":R" + generation;
+            if (commandQueue.findByKey(tenantId, commandKey).isEmpty()) {
+                break;
+            }
+            generation++;
+        }
+        CommandEnvelope envelope = new CommandEnvelope();
+        envelope.setCommandType(CommandTypeEnum.FLOW_START);
+        envelope.setChannel(CommandChannelEnum.NORMAL);
+        envelope.setCommandKey(commandKey);
+        envelope.setTenantId(tenantId);
+        Object submitter = originalPayload.get("submitter");
+        envelope.setInitiatorId(submitter == null ? null : Long.valueOf(String.valueOf(submitter)));
+        Map<String, Object> payload = new LinkedHashMap<>(originalPayload);
+        payload.put("processDefKey", resolvedProcessDefKey);
+        envelope.setPayload(toPayload(payload, recordId));
+        boolean light = lightProcessClassifier.isLightProcess(tenantId, resolvedProcessDefKey);
+        envelope.setCompletionPoint(light
+                ? com.sw.ck.bpm.process.service.ResourceReleaseService.COMPLETION_POINT_TARGET_DONE
+                : "FLOW_STARTED");
+        Optional<Long> accepted = Optional.of(commandQueue.enqueue(envelope));
+        com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
+                admissionService.admit(tenantId,
+                        com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, 1, commandKey);
+        if (ticket != null) {
+            envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode());
+            envelope.setResourceUnits(1);
+            envelope.setResourceSegment(ticket.segment());
+            envelope.setPolicyVersion(ticket.policyVersion());
+            commandQueue.updateResourceFreeze(envelope);
+        }
+        log.warn("二段流程发起受控恢复已受理: recordId={}, recoveryKey={}, processDefKey={}",
+                recordId, commandKey, resolvedProcessDefKey);
+        return accepted;
+    }
+
+    private String toPayload(Map<String, Object> payload, String recordId) {
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (Exception e) {
+            throw new IllegalStateException("序列化流程发起恢复 payload 失败: recordId=" + recordId, e);
+        }
+    }
+
     public static StartCommand toStartCommand(CommandEnvelope envelope, Map<String, Object> payload) {
         StartCommand cmd = new StartCommand();
         cmd.setFormKey((String) payload.get("formKey"));

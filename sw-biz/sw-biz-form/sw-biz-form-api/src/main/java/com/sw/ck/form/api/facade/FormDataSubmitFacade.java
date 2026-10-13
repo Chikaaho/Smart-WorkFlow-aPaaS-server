@@ -52,6 +52,22 @@ public interface FormDataSubmitFacade {
     }
 
     /**
+     * 提交表单数据并以指定用户作为记录归属人落库（P64 派发接缝 A06，复审05 P2-04a）。
+     * <p>
+     * {@code recordOwnerUserId} = 目标记录的合法归属人（系统派发场景下的被分配办理人）：
+     * 记录系统列 create_by/update_by 记为该用户，使既有数据范围模型（SELF→create_by 等值）
+     * 对被分配对象自然生效；表单可见性、字段校验、租户与提交审计仍按调用方上下文权威执行，
+     * 不模拟登录态、不放大任何数据范围。为 null 时等价 {@link #submit}（create_by=当前用户）。
+     * 该方法仅供服务端受信消费链（统一命令处理器）调用，不得由浏览器请求直接触达。
+     * </p>
+     *
+     * @param recordOwnerUserId 记录归属人用户 ID（非正/空按普通提交处理）
+     * @return present = 主表记录 recordId；当前契约恒 present，提交失败抛业务异常
+     */
+    Optional<String> submitOnBehalfOf(String formKey, Map<String, Object> submittedData,
+                                      String idempotencyKey, Long recordOwnerUserId);
+
+    /**
      * 提交前校验（D3：受理审批命令前执行，失败定位到字段，不受理不落库）。
      * 与 {@link #submit} 共用同一校验实现，失败抛业务异常（含字段级原因）。
      * 调用方须已还原可信 LoginUserHolder 上下文。

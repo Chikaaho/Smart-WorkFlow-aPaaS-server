@@ -45,6 +45,15 @@ public class FormDataSubmitFacadeImpl implements FormDataSubmitFacade {
     }
 
     @Override
+    public Optional<String> submitOnBehalfOf(String formKey, Map<String, Object> submittedData,
+                                             String idempotencyKey, Long recordOwnerUserId) {
+        // P64 派发接缝 A06（复审05 P2-04a）：记录归属人=被分配办理人（系统列 create_by/update_by）；
+        // 校验/可见性/审计仍按调用方上下文（命令消费侧还原的发起人）
+        return Optional.of(formSubmitService.submitForm(formKey, submittedData, null, null, null,
+                idempotencyKey, null, null, recordOwnerUserId));
+    }
+
+    @Override
     public Optional<SubmissionValidationOutcome> validateSubmission(String formKey,
                                                                     Map<String, Object> submittedData) {
         formSubmitService.validateSubmission(formKey, submittedData);

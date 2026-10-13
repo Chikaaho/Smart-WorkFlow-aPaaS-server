@@ -367,7 +367,23 @@ class I4CrossTenantServiceEntryTest {
             };
             return new DynamicBranchCollectionResolver(R1Engine.REPOSITORY_SERVICE,
                     new ObjectMapper(), null, deptQueryFacade, userQueryFacade, provider,
-                    (tenantId, formKey, recordId) -> java.util.Optional.empty());
+                    (tenantId, formKey, recordId) -> java.util.Optional.empty(),
+                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.variable.BpmVariableReadPort>() {
+                        @Override
+                        public com.sw.ck.bpm.api.variable.BpmVariableReadPort getObject(Object... args) {
+                            return null;
+                        }
+
+                        @Override
+                        public com.sw.ck.bpm.api.variable.BpmVariableReadPort getIfAvailable() {
+                            return null;
+                        }
+
+                        @Override
+                        public java.util.Iterator<com.sw.ck.bpm.api.variable.BpmVariableReadPort> iterator() {
+                            return java.util.List.<com.sw.ck.bpm.api.variable.BpmVariableReadPort>of().iterator();
+                        }
+                    });
         }
 
         @Bean

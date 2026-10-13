@@ -116,6 +116,13 @@ public class FormDataQueryService {
         this.deptScopeProvider = deptScopeProvider;
     }
 
+    private com.sw.ck.form.api.port.FormRecordAccessPort formRecordAccessPort;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setFormRecordAccessPort(com.sw.ck.form.api.port.FormRecordAccessPort formRecordAccessPort) {
+        this.formRecordAccessPort = formRecordAccessPort;
+    }
+
     // ==================== 主入口 ====================
 
     /**
@@ -324,6 +331,19 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "查询记录时系统未能完成，请稍后重试");
         }
 
+        if ((records == null || records.isEmpty()) && formRecordAccessPort != null
+                && isRestrictiveScope(detailScope)) {
+            // 数据范围遮蔽后的合法办理人通道：记录被流程实例引用且当前用户为该实例
+            // 发起人/办理人/参与人时，按记录 ID 重查（仅该行，不放大表单级范围）。
+            if (formRecordAccessPort.isProcessParticipant(tenantId, loginUser.getUserId(),
+                    formKey, recordId).orElse(false)) {
+                String participantSql = "SELECT " + columns + " FROM " + DynamicTableSql.quote(tableName)
+                        + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?";
+                records = DynamicTableSql.query(jdbcTemplate, tableName, participantSql,
+                        new Object[]{recordId, tenantId});
+            }
+        }
+
         if (records == null || records.isEmpty()) {
             throw new BaseException(FormErrorCode.RECORD_NOT_FOUND, "记录不存在或已删除");
         }
@@ -519,6 +539,15 @@ public class FormDataQueryService {
     }
 
     // ==================== 表名校验 ====================
+
+    /**
+     * 数据范围是否处于“可能遮蔽”状态：非空且带用户/部门约束或恒假。
+     * none 语义（无约束）不触发合法办理人回退通道。
+     */
+    private boolean isRestrictiveScope(DataScopeFilter scope) {
+        return scope != null
+                && (scope.getUserId() != null || scope.getDeptIds() != null || scope.isAlwaysFalse());
+    }
 
     /**
      * 防御性表名校验（表名来自注册表，发布期已校验，此处为纵深防御）。

@@ -138,6 +138,50 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
+    public Optional<MutationOutcome> claimTask(String taskId, String userId) {
+        if (isBlank(taskId) || isBlank(userId)) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+                    "任务标识或用户标识缺失，无法领取");
+        }
+        synchronized (lockFor(taskId)) {
+            Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
+            if (task == null) {
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务不存在或已被处理: " + taskId);
+            }
+            if (task.getAssignee() != null && !task.getAssignee().isBlank()) {
+                // 竞争单结果：先到先得，后领取方确定性失败且不产生任何状态变化
+                throw new BaseException(BpmErrorCode.APPROVAL_ALREADY_HANDLED.getCode(),
+                        "任务已被领取: 当前办理人 " + task.getAssignee());
+            }
+            boolean candidate = taskService.createTaskQuery().taskId(taskId)
+                    .taskCandidateOrAssigned(userId).singleResult() != null;
+            if (!candidate) {
+                throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.FORBIDDEN.getCode(),
+                        "无权领取该任务（当前用户不是候选）");
+            }
+            taskService.claim(taskId, userId);
+            // 领取即收窄：移除其余候选链接，失败方待办不再可见、办理权随候选链接移除
+            for (org.flowable.identitylink.api.IdentityLink link
+                    : taskService.getIdentityLinksForTask(taskId)) {
+                if (!org.flowable.identitylink.api.IdentityLinkType.CANDIDATE.equals(link.getType())) {
+                    continue;
+                }
+                if (link.getUserId() != null && !userId.equals(link.getUserId())) {
+                    taskService.deleteUserIdentityLink(taskId, link.getUserId(),
+                            org.flowable.identitylink.api.IdentityLinkType.CANDIDATE);
+                }
+                if (link.getGroupId() != null) {
+                    taskService.deleteGroupIdentityLink(taskId, link.getGroupId(),
+                            org.flowable.identitylink.api.IdentityLinkType.CANDIDATE);
+                }
+            }
+        }
+        log.info("BPM task claimed by candidate: taskId={}, userId={}", taskId, userId);
+        return Optional.of(MutationOutcome.APPLIED);
+    }
+
+    @Override
     public Optional<MutationOutcome> completeAsUser(String taskId, String userId, Map<String, Object> variables) {
         Task snapshot = taskService.createTaskQuery().taskId(taskId).singleResult();
         String lockKey = snapshot == null ? "task:" + taskId
@@ -156,28 +200,29 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     /**
-     * 并发会签任务可能同时更新同一 Flowable execution。第一次提交发生乐观锁竞争时，
-     * 重新读取任务并只重试一次；若竞争者已经处理该任务，则转换为可预期的 2305，
-     * 不把正常的幂等竞争暴露成 HTTP 500。
+     * 并发会签任务可能同时更新同一 Flowable execution。<b>同事务内二次执行必须禁止</b>
+     * （复审05 P1-04a，X7 双击活性实证）：首次提交的语句已在当前事务内执行，
+     * 乐观锁异常发生在刷盘阶段时，重试会把已执行的副作用（完成/多实例延续/新任务）
+     * 重复提交一次——表现为下游节点被激活两次。
+     * <p>
+     * 现语义：冲突时先判定竞争者是否已实际完成该任务——任务已不存在 = 正常幂等竞争，
+     * 转换为可预期的 2305；任务仍在 = 冲突来自同实例的并发写（另一命令未提交的
+     * 副作用窗口），本事务整体回滚（异常向上传播），由命令层在新事务中受控重试，
+     * 不在本事务内重放。
+     * </p>
      */
     private void completeWithOptimisticRetry(String taskId, Map<String, Object> variables) {
         try {
             completeWithoutRetry(taskId, variables);
-            return;
-        } catch (FlowableOptimisticLockingException first) {
+        } catch (FlowableOptimisticLockingException conflict) {
             if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
                 throw alreadyHandled(taskId);
             }
-            log.info("BPM task optimistic lock conflict, retrying once: taskId={}", taskId);
-        }
-
-        try {
-            completeWithoutRetry(taskId, variables);
-        } catch (FlowableOptimisticLockingException second) {
-            if (taskService.createTaskQuery().taskId(taskId).singleResult() == null) {
-                throw alreadyHandled(taskId);
-            }
-            throw second;
+            // 任务仍在：不得在本事务内二次执行（半提交重放会重复副作用）；
+            // 抛出原始冲突，让当前事务整体回滚并由命令层受控重试新事务。
+            log.info("BPM task optimistic lock conflict with task still active; "
+                    + "propagating for whole-transaction rollback and controlled retry: taskId={}", taskId);
+            throw conflict;
         }
     }
 
