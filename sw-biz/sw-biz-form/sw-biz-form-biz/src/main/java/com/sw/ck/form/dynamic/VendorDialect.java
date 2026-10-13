@@ -104,10 +104,13 @@ public enum VendorDialect {
 
     /**
      * 多选感知的列类型（P63）：USER/DEPT 多选值=ID 列表 JSON 字符串，列宽与
-     * MULTISELECT 对齐为 VARCHAR(1000)；其余类型/单选与 {@link #columnType(FieldType)} 一致。
+     * MULTISELECT 对齐为 VARCHAR(1000)；BF20261013-009 起 DICT 下拉多选同口径；
+     * 其余类型/单选与 {@link #columnType(FieldType)} 一致。
      */
     public String columnType(FieldType fieldType, boolean multiple) {
-        if (multiple && (fieldType == FieldType.USER || fieldType == FieldType.DEPT)) {
+        if (multiple
+                && (fieldType == FieldType.USER || fieldType == FieldType.DEPT
+                        || fieldType == FieldType.DICT)) {
             return "VARCHAR(1000)";
         }
         return columnType(fieldType);

@@ -456,6 +456,115 @@ class FormSubmitServiceTest {
         System.out.println("  非法值 'invalid_value' 被正确拦截，无数据落库");
     }
 
+    // ==================== 测试 3b：DICT 数据来源（BF20261013-009） ====================
+
+    @Test
+    @DisplayName("DICT 自定义来源：值域按候选键判定（不查字典服务），非候选键拒绝")
+    void submitForm_customSourceDict_validatesOptionKeys() {
+        // —— Arrange ——
+        String formKey = "dict_custom_source_test";
+        FormDefDTO draft = formDefService.createDraft(formKey, "自定义来源字典", null, null);
+        createdFormIds.add(draft.getId());
+
+        // 故意带 stale dictType=sys_user_sex：custom 来源不得咨询字典服务（否则 canyin 会被字典值域拒绝）
+        String definitionJson = """
+                {
+                    "fields": [
+                        {"name": "meal", "type": "DICT", "source": "custom", "dictType": "sys_user_sex",
+                         "options": [{"key": "canyin", "value": "餐饮"}, {"key": "jiaotong", "value": "交通"}]}
+                    ]
+                }
+                """;
+        formDefService.saveConfig(draft.getId(), definitionJson);
+        formDefService.publish(draft.getId());
+        FormDefEntity entity = formDefMapper.selectById(draft.getId());
+        createdTables.add(entity.getPhysicalTableName());
+
+        // —— Act + Assert：候选键通过并落库 ——
+        Map<String, Object> ok = new HashMap<>();
+        ok.put("meal", "canyin");
+        String recordId = formSubmitService.submitForm(formKey, ok, null, null, null);
+        assertThat(recordId).as("custom 来源候选键应通过（不咨询字典服务）").isNotBlank();
+
+        // —— Assert：非候选键被拒 ——
+        Map<String, Object> bad = new HashMap<>();
+        bad.put("meal", "invalid_key");
+        assertThatThrownBy(() ->
+                formSubmitService.submitForm(formKey, bad, null, null, null))
+                .isInstanceOf(BaseException.class)
+                .satisfies(e -> {
+                    BaseException be = (BaseException) e;
+                    assertThat(be.getCode()).isEqualTo(FormErrorCode.SUBMIT_DICT_INVALID.getCode());
+                });
+
+        System.out.println("=== DICT 自定义来源值域 ===");
+        System.out.println("  候选键 canyin 通过；非候选键 invalid_key 被拦截");
+    }
+
+    @Test
+    @DisplayName("DICT 下拉多选：列表逐项按字典值域校验，JSON 数组字符串落库（列宽 VARCHAR(1000)）")
+    void submitForm_dictMultiple_validatesEachCodeAndStoresJson() {
+        // —— Arrange ——
+        String formKey = "dict_multiple_test";
+        FormDefDTO draft = formDefService.createDraft(formKey, "下拉多选测试", null, null);
+        createdFormIds.add(draft.getId());
+
+        String definitionJson = """
+                {
+                    "fields": [
+                        {"name": "sexes", "type": "DICT", "dictType": "sys_user_sex", "multiple": true}
+                    ]
+                }
+                """;
+        formDefService.saveConfig(draft.getId(), definitionJson);
+        formDefService.publish(draft.getId());
+        FormDefEntity entity = formDefMapper.selectById(draft.getId());
+        createdTables.add(entity.getPhysicalTableName());
+
+        // 列宽：DICT 多选与 USER/DEPT 多选同口径 VARCHAR(1000)（H2 information_schema 报 CHARACTER VARYING）
+        String colLen = jdbcTemplate.queryForObject(
+                "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns "
+                        + "WHERE table_name = ? AND column_name = 'sexes'", String.class,
+                entity.getPhysicalTableName());
+        assertThat(colLen).isEqualTo("1000");
+
+        // —— Act：合法列表提交 ——
+        Map<String, Object> ok = new HashMap<>();
+        ok.put("sexes", List.of("0", "2"));
+        String recordId = formSubmitService.submitForm(formKey, ok, null, null, null);
+        assertThat(recordId).isNotBlank();
+
+        // —— Assert：JSON 数组字符串落库 ——
+        Map<String, Object> row = jdbcTemplate.queryForList(
+                "SELECT * FROM \"" + entity.getPhysicalTableName() + "\" WHERE \"id\" = ?", recordId).get(0);
+        assertThat(row.get("sexes")).isEqualTo("[\"0\",\"2\"]");
+
+        // —— Assert：非法项拒绝 ——
+        Map<String, Object> bad = new HashMap<>();
+        bad.put("sexes", List.of("0", "9"));
+        assertThatThrownBy(() ->
+                formSubmitService.submitForm(formKey, bad, null, null, null))
+                .isInstanceOf(BaseException.class)
+                .satisfies(e -> {
+                    BaseException be = (BaseException) e;
+                    assertThat(be.getCode()).isEqualTo(FormErrorCode.SUBMIT_DICT_INVALID.getCode());
+                });
+
+        // —— Assert：非列表拒绝 ——
+        Map<String, Object> notList = new HashMap<>();
+        notList.put("sexes", "0");
+        assertThatThrownBy(() ->
+                formSubmitService.submitForm(formKey, notList, null, null, null))
+                .isInstanceOf(BaseException.class)
+                .satisfies(e -> {
+                    BaseException be = (BaseException) e;
+                    assertThat(be.getCode()).isEqualTo(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH.getCode());
+                });
+
+        System.out.println("=== DICT 下拉多选 ===");
+        System.out.println("  合法列表落 JSON 数组串；非法项/非列表被拦截");
+    }
+
     // ==================== 测试 4：未知字段拦截 ====================
 
     @Test

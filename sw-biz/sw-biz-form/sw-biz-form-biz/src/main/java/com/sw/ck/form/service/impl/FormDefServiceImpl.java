@@ -1002,11 +1002,15 @@ public class FormDefServiceImpl implements FormDefService {
             case DATE -> FieldSpec.date(name);
             case BOOL -> FieldSpec.bool(name);
             case DICT -> {
-                if (!node.has("dictType") || node.get("dictType").asText().isBlank()) {
+                // BF20261013-009：source=custom 走自定义候选键值域，允许 dictType 为空；
+                // dict（缺省）仍必须带 dictType。multiple=true（下拉多选）列宽走 VARCHAR(1000)。
+                boolean customSource = "custom".equals(node.path("source").asText(""));
+                String dictType = node.path("dictType").asText("");
+                if (!customSource && dictType.isBlank()) {
                     throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
                             "DICT 字段 '" + name + "' 必须带 dictType");
                 }
-                yield FieldSpec.dict(name, node.get("dictType").asText());
+                yield FieldSpec.dict(name, dictType, node.path("multiple").asBoolean(false));
             }
             case REFERENCE -> {
                 if (!node.has("targetFormId") || node.get("targetFormId").asText().isBlank()) {

@@ -81,9 +81,16 @@ public class FieldSpec {
     }
 
     public static FieldSpec dict(String name, String dictType) {
+        return dict(name, dictType, false);
+    }
+
+    /**
+     * 下拉选择：单选值=key/code → VARCHAR(100)；multiple=true（下拉多选）→ 列表 JSON 字符串 → VARCHAR(1000)。
+     * BF20261013-009：dictType 允许为空串（source=custom 自定义候选来源不绑定字典）。
+     */
+    public static FieldSpec dict(String name, String dictType, boolean multiple) {
         return new FieldSpec(name, FieldType.DICT,
-                Objects.requireNonNull(dictType, "dictType must not be null for DICT field"),
-                null, null);
+                dictType == null ? "" : dictType, null, null, multiple);
     }
 
     /** REFERENCE：列名自动生成为 {@code ref_{name}_id} */

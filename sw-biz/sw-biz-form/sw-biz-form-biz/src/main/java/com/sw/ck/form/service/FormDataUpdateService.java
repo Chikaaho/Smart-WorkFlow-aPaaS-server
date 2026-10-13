@@ -508,8 +508,9 @@ public class FormDataUpdateService {
         if (value == null) {
             return null;
         }
+        // BF20261013-009：DICT 下拉多选（multiple）与 MULTISELECT 同口径序列化
         boolean multiselectLike = "MULTISELECT".equals(type) || "ATTACHMENT".equals(type)
-                || "IMAGE".equals(type);
+                || "IMAGE".equals(type) || ("DICT".equals(type) && multiple);
         boolean objectMulti = multiple && ("USER".equals(type) || "DEPT".equals(type));
         if ((multiselectLike || objectMulti) && (value instanceof List<?> || value instanceof Map<?, ?>)) {
             try {

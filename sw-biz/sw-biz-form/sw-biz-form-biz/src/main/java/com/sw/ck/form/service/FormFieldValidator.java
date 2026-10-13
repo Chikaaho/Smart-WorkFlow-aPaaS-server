@@ -88,6 +88,10 @@ public class FormFieldValidator {
                 boolean multiple = fieldNode.has("multiple") && fieldNode.get("multiple").asBoolean();
                 String format = fieldNode.has("format") && !fieldNode.get("format").asText().isBlank()
                         ? fieldNode.get("format").asText() : null;
+                // BF20261013-009：选择类字段数据来源与自定义候选键（提交值域判定用）
+                String source = fieldNode.has("source") && !fieldNode.get("source").asText().isBlank()
+                        ? fieldNode.get("source").asText() : null;
+                List<String> optionKeys = parseOptionKeys(fieldNode.get("options"));
                 Object defaultValue = fieldNode.has("defaultValue") && !fieldNode.get("defaultValue").isNull()
                         ? objectMapper.convertValue(fieldNode.get("defaultValue"), Object.class)
                         : null;
@@ -107,13 +111,16 @@ public class FormFieldValidator {
                             boolean subMultiple = sub.has("multiple") && sub.get("multiple").asBoolean();
                             String subFormat = sub.has("format") && !sub.get("format").asText().isBlank()
                                     ? sub.get("format").asText() : null;
+                            String subSource = sub.has("source") && !sub.get("source").asText().isBlank()
+                                    ? sub.get("source").asText() : null;
+                            List<String> subOptionKeys = parseOptionKeys(sub.get("options"));
                             Object subDefault = sub.has("defaultValue") && !sub.get("defaultValue").isNull()
                                     ? objectMapper.convertValue(sub.get("defaultValue"), Object.class)
                                     : null;
                             String subLabel = sub.has("label") && !sub.get("label").asText().isBlank()
                                     ? sub.get("label").asText() : null;
                             subFields.add(new FieldDef(subName, subType, subRequired, subDictType, null,
-                                    subDefault, subLabel, subMultiple, subFormat));
+                                    subDefault, subLabel, subMultiple, subFormat, subSource, subOptionKeys));
                         }
                     }
                 }
@@ -121,7 +128,7 @@ public class FormFieldValidator {
                 String label = fieldNode.has("label") && !fieldNode.get("label").asText().isBlank()
                         ? fieldNode.get("label").asText() : null;
                 fieldDefs.put(name, new FieldDef(name, type, required, dictType, subFields,
-                        defaultValue, label, multiple, format));
+                        defaultValue, label, multiple, format, source, optionKeys));
             }
 
             // 检查未知字段
@@ -263,19 +270,20 @@ public class FormFieldValidator {
                     }
                 }
                 case "DICT" -> {
-                    String dictType = def.dictType;
-                    if (dictType == null || dictType.isBlank()) {
-                        log.warn("DICT field '{}' has no dictType, skip dict validation", def.name);
-                    } else {
-                        String code = String.valueOf(value);
-                        // dictType 与 code 均非空白 ⇒ 契约保证 present（empty 只表达缺少判定目标）
-                        boolean valid = dictFacade.isValidCode(dictType, code).orElseThrow(() ->
-                                new IllegalStateException(
-                                        "字典值域判定缺少查询目标: dictType=" + dictType));
-                        if (!valid) {
-                            throw new BaseException(FormErrorCode.SUBMIT_DICT_INVALID,
-                                    "字段「" + def.displayName() + "」的选项不在允许范围内，请重新选择");
+                    // BF20261013-009：source=custom 走候选键值域；dict（或缺省）走字典值域；
+                    // multiple=true 为下拉多选，值为 key/code 字符串列表。
+                    boolean custom = "custom".equals(def.source);
+                    if (def.multiple) {
+                        if (!(value instanceof List<?> list)
+                                || list.stream().anyMatch(v -> !(v instanceof String))) {
+                            throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                                    "字段「" + def.displayName() + "」需要多选列表");
                         }
+                        for (Object item : list) {
+                            validateDictCode(def, (String) item, dictFacade, custom);
+                        }
+                    } else {
+                        validateDictCode(def, String.valueOf(value), dictFacade, custom);
                     }
                 }
                 case "MULTISELECT" -> {
@@ -283,6 +291,18 @@ public class FormFieldValidator {
                             || list.stream().anyMatch(v -> !(v instanceof String))) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                                 "字段「" + def.displayName() + "」需要多选列表");
+                    }
+                    // BF20261013-009：数据来源=字典时逐项校验 code 值域（custom 来源保持 List<String> 形状校验）
+                    if ("dict".equals(def.source) && def.dictType != null && !def.dictType.isBlank()) {
+                        for (Object item : list) {
+                            boolean valid = dictFacade.isValidCode(def.dictType, (String) item)
+                                    .orElseThrow(() -> new IllegalStateException(
+                                            "字典值域判定缺少查询目标: dictType=" + def.dictType));
+                            if (!valid) {
+                                throw new BaseException(FormErrorCode.SUBMIT_DICT_INVALID,
+                                        "字段「" + def.displayName() + "」的选项不在允许范围内，请重新选择");
+                            }
+                        }
                     }
                 }
                 case "ATTACHMENT", "IMAGE" -> {
@@ -393,6 +413,57 @@ public class FormFieldValidator {
     /**
      * 表单字段定义（从 definition JSON 解析）。
      */
+    /**
+     * BF20261013-009：解析 definition 里 options 的键列表（键值对 {key,value}；兼容历史字符串数组）。
+     * 返回空列表表示未配置候选（值域不拦截）。
+     */
+    private static List<String> parseOptionKeys(JsonNode optionsNode) {
+        if (optionsNode == null || !optionsNode.isArray()) {
+            return List.of();
+        }
+        List<String> keys = new ArrayList<>();
+        for (JsonNode item : optionsNode) {
+            if (item.isTextual()) {
+                String key = item.asText().trim();
+                if (!key.isEmpty()) keys.add(key);
+            } else if (item.isObject()) {
+                JsonNode keyNode = item.get("key");
+                if (keyNode != null && keyNode.isTextual() && !keyNode.asText().trim().isEmpty()) {
+                    keys.add(keyNode.asText().trim());
+                }
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * BF20261013-009：DICT 值域判定。
+     * source=custom → 对候选键校验（未配置候选时不拦截，与字典缺 dictType 同口径）；
+     * source=dict（或缺省）→ 走字典服务校验 code。
+     */
+    private void validateDictCode(FieldDef def, String code, DictFacade dictFacade, boolean custom) {
+        if (custom) {
+            if (def.optionKeys != null && !def.optionKeys.isEmpty() && !def.optionKeys.contains(code)) {
+                throw new BaseException(FormErrorCode.SUBMIT_DICT_INVALID,
+                        "字段「" + def.displayName() + "」的选项不在允许范围内，请重新选择");
+            }
+            return;
+        }
+        String dictType = def.dictType;
+        if (dictType == null || dictType.isBlank()) {
+            log.warn("DICT field '{}' has no dictType, skip dict validation", def.name);
+            return;
+        }
+        // dictType 与 code 均非空白 ⇒ 契约保证 present（empty 只表达缺少判定目标）
+        boolean valid = dictFacade.isValidCode(dictType, code).orElseThrow(() ->
+                new IllegalStateException(
+                        "字典值域判定缺少查询目标: dictType=" + dictType));
+        if (!valid) {
+            throw new BaseException(FormErrorCode.SUBMIT_DICT_INVALID,
+                    "字段「" + def.displayName() + "」的选项不在允许范围内，请重新选择");
+        }
+    }
+
     public record FieldDef(
             String name,
             String type,
@@ -402,7 +473,11 @@ public class FormFieldValidator {
             Object defaultValue,
             String label,
             boolean multiple,
-            String format
+            String format,
+            /** BF20261013-009：数据来源（dict / custom / null=按类型缺省）。 */
+            String source,
+            /** BF20261013-009：source=custom 的候选键（提交值域判定；空列表=未配置不拦截）。 */
+            List<String> optionKeys
     ) {
         /**
          * 用户可见的字段名：优先设计者填写的显示名，缺省回退字段键（不产生空名称）。
@@ -412,10 +487,19 @@ public class FormFieldValidator {
             return label == null || label.isBlank() ? name : label;
         }
 
+        /** 兼容既有 9 参构造（source=null、optionKeys=null：既有语义不变）。 */
+        public FieldDef(String name, String type, boolean required, String dictType,
+                        List<FieldDef> subFields, Object defaultValue, String label,
+                        boolean multiple, String format) {
+            this(name, type, required, dictType, subFields, defaultValue, label, multiple, format,
+                    null, null);
+        }
+
         /** 兼容既有 7 参构造（multiple=false、format=null：既有语义不变）。 */
         public FieldDef(String name, String type, boolean required, String dictType,
                         List<FieldDef> subFields, Object defaultValue, String label) {
-            this(name, type, required, dictType, subFields, defaultValue, label, false, null);
+            this(name, type, required, dictType, subFields, defaultValue, label, false, null,
+                    null, null);
         }
     }
 }
