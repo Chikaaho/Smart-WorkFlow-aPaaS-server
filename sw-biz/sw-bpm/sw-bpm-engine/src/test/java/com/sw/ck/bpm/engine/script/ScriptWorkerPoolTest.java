@@ -42,6 +42,22 @@ class ScriptWorkerPoolTest {
     }
 
     @Test
+    @DisplayName("BF021 函数上下文经协议下发 worker：组织函数与变量写入在真实 worker 内生效")
+    void shouldPassFunctionContextAndReturnWritesThroughWorkerProtocol() {
+        pool.configure(2, 1, 200);
+        com.sw.ck.bpm.api.script.ScriptFunctionContext ctx =
+                new com.sw.ck.bpm.api.script.ScriptFunctionContext(
+                        Map.of(2L, 1L), Map.of(1L, 100L), Map.of("flag", 7L));
+        BpmScriptRunner.Result result = pool.evaluate(
+                "#设置流程变量(leader, #获取分管领导(2)); return #获取流程变量(flag);",
+                Map.of("v", "x"), 5_000L, 9L, ctx);
+        assertThat(result.kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
+        // 协议经 JSON 往返：小整数回宿主为 Integer（既有协议语义，Branch 匹配按文本比对不受影响）
+        assertThat(result.value()).isEqualTo(7);
+        assertThat(result.variableWrites()).containsEntry("leader", 100);
+    }
+
+    @Test
     @DisplayName("128MiB 执行空间真实生效：超限分配致 worker 堆耗尽→RESOURCE_LIMIT，进程受管复用且池恢复")
     void shouldCapExecutionSpaceAt128MiBAndRecover() {
         // 独立池：pid/残留断言不受本类其他用例已启 worker 干扰

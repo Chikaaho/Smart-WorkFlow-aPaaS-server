@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,6 +103,15 @@ public class ScriptWorkerPool {
      */
     public BpmScriptRunner.Result evaluate(String script, Map<String, Object> variables,
                                           long timeoutMs, Long tenantId) {
+        return evaluate(script, variables, timeoutMs, tenantId, ScriptFunctionContext.EMPTY);
+    }
+
+    /**
+     * BF20261013-021：带宿主函数上下文的提交（组织目录/实例变量随请求下发 worker）。
+     */
+    public BpmScriptRunner.Result evaluate(String script, Map<String, Object> variables,
+                                          long timeoutMs, Long tenantId,
+                                          ScriptFunctionContext functionContext) {
         long tenantKey = tenantId == null ? 0L : tenantId;
         Semaphore tenantPermit = tenantPermits.computeIfAbsent(
                 tenantKey,
@@ -142,7 +152,7 @@ public class ScriptWorkerPool {
             }
             globalAcquired = true;
             worker = acquireWorker();
-            return worker.evaluate(script, variables, timeoutMs);
+            return worker.evaluate(script, variables, timeoutMs, functionContext);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new BpmScriptRunner.Result(BpmScriptRunner.Result.Kind.RESOURCE_LIMIT, null, null,
@@ -387,15 +397,24 @@ public class ScriptWorkerPool {
             return process.isAlive();
         }
 
-        BpmScriptRunner.Result evaluate(String script, Map<String, Object> variables, long timeoutMs) {
+        BpmScriptRunner.Result evaluate(String script, Map<String, Object> variables, long timeoutMs,
+                                        ScriptFunctionContext functionContext) {
             long begin = System.currentTimeMillis();
             String requestId = UUID.randomUUID().toString();
             try {
-                Map<String, Object> request = Map.of(
-                        "id", requestId,
-                        "script", script == null ? "" : script,
-                        "variables", variables == null ? Map.of() : variables,
-                        "timeoutMs", timeoutMs);
+                Map<String, Object> request = new java.util.LinkedHashMap<>();
+                request.put("id", requestId);
+                request.put("script", script == null ? "" : script);
+                request.put("variables", variables == null ? Map.of() : variables);
+                request.put("timeoutMs", timeoutMs);
+                // BF20261013-021：函数上下文仅在非空时下发（既有脚本请求报文零变化）
+                if (functionContext != null && !functionContext.isEmpty()) {
+                    Map<String, Object> ctx = new java.util.LinkedHashMap<>();
+                    ctx.put("deptParentMap", functionContext.deptParentMap());
+                    ctx.put("deptLeaderMap", functionContext.deptLeaderMap());
+                    ctx.put("instanceVariables", functionContext.instanceVariables());
+                    request.put("functionContext", ctx);
+                }
                 stdin.write(mapper.writeValueAsString(request));
                 stdin.write("\n");
                 stdin.flush();
@@ -412,12 +431,17 @@ public class ScriptWorkerPool {
                             "worker 进程退出（判断执行空间耗尽或崩溃）", elapsed(begin));
                 }
                 Map<?, ?> response = mapper.readValue(line, Map.class);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> writes = response.get("variableWrites") instanceof Map<?, ?> map
+                        ? new java.util.LinkedHashMap<>((Map<String, Object>) map)
+                        : Map.of();
                 return new BpmScriptRunner.Result(
                         BpmScriptRunner.Result.Kind.valueOf(String.valueOf(response.get("kind"))),
                         response.get("value"),
                         (String) response.get("typeName"),
                         (String) response.get("errorMessage"),
-                        ((Number) Objects.requireNonNullElse(response.get("durationMs"), 0L)).longValue());
+                        ((Number) Objects.requireNonNullElse(response.get("durationMs"), 0L)).longValue(),
+                        writes);
             } catch (Exception e) {
                 return new BpmScriptRunner.Result(BpmScriptRunner.Result.Kind.RESOURCE_LIMIT, null, null,
                         "worker 通信失败（进程已回收）: " + e.getMessage(), elapsed(begin));

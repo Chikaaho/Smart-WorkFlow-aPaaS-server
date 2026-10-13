@@ -15,6 +15,7 @@ import com.sw.ck.bpm.process.mapper.BpmTriggerExecMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmVariableSnapshotService;
 import com.sw.ck.bpm.process.service.ActionRefRecoveryService;
+import com.sw.ck.bpm.process.service.BpmScriptFunctionContextFactory;
 import com.sw.ck.bpm.process.service.ChildOrchestrationService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.bpm.process.service.TriggerExecutionService;
@@ -57,6 +58,8 @@ public class BpmTriggerController {
     private final BpmActionRefMapper actionRefMapper;
     private final ActionRefRecoveryService actionRefRecoveryService;
     private final ChildOrchestrationService childOrchestrationService;
+    /** BF20261013-021 脚本函数上下文工厂（可为 null：预览退化为空上下文）。 */
+    private final BpmScriptFunctionContextFactory scriptFunctionContextFactory;
 
     /** 兼容既有控制器单测构造（无子流程编排时相关端点显式 501 语义拒绝）。 */
     public BpmTriggerController(BpmTaskFacade bpmTaskFacade,
@@ -68,7 +71,7 @@ public class BpmTriggerController {
                                 BpmActionRefMapper actionRefMapper,
                                 ActionRefRecoveryService actionRefRecoveryService) {
         this(bpmTaskFacade, bpmInstanceService, nodeFormDataService, variableSnapshotService,
-                scriptRunner, triggerExecMapper, actionRefMapper, actionRefRecoveryService, null);
+                scriptRunner, triggerExecMapper, actionRefMapper, actionRefRecoveryService, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -80,7 +83,8 @@ public class BpmTriggerController {
                                 BpmTriggerExecMapper triggerExecMapper,
                                 BpmActionRefMapper actionRefMapper,
                                 ActionRefRecoveryService actionRefRecoveryService,
-                                ChildOrchestrationService childOrchestrationService) {
+                                ChildOrchestrationService childOrchestrationService,
+                                BpmScriptFunctionContextFactory scriptFunctionContextFactory) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.nodeFormDataService = nodeFormDataService;
@@ -90,6 +94,7 @@ public class BpmTriggerController {
         this.actionRefMapper = actionRefMapper;
         this.actionRefRecoveryService = actionRefRecoveryService;
         this.childOrchestrationService = childOrchestrationService;
+        this.scriptFunctionContextFactory = scriptFunctionContextFactory;
     }
 
     // ==================== 预览（只读，无副作用） ====================
@@ -131,8 +136,13 @@ public class BpmTriggerController {
             result.put("kind", "SNAPSHOT_FAILED");
             return R.ok(result);
         }
+        com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext =
+                scriptFunctionContextFactory == null
+                        ? com.sw.ck.bpm.api.script.ScriptFunctionContext.EMPTY
+                        : scriptFunctionContextFactory.build(trigger.getScript(), instanceId, tenantId);
         BpmScriptEvaluatePort.ScriptOutcome run = scriptRunner
-                .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS)
+                .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS,
+                        functionContext)
                 .orElseThrow(() -> new IllegalStateException(
                         "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
         result.put("kind", run.kind());
@@ -140,6 +150,8 @@ public class BpmTriggerController {
         result.put("resultType", run.typeName());
         result.put("errorMessage", run.errorMessage());
         result.put("durationMs", run.durationMs());
+        // BF20261013-021：预览展示脚本会写入的变量（只读展示，不落库）
+        result.put("variableWrites", run.variableWrites() == null ? Map.of() : run.variableWrites());
         if (run.ok() && run.value() != null) {
             TriggerConfig.TriggerBranch matched = matchPreview(trigger, run.typeName(), run.value());
             result.put("matchedBranchId", matched == null ? null : matched.getBranchId());

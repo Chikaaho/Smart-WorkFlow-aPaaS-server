@@ -1,6 +1,7 @@
 package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.sw.ck.system.api.dept.DeptDirectoryRow;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.mapper.SysDeptMapper;
@@ -53,5 +54,28 @@ public class DeptFacadeImpl implements DeptQueryFacade {
             found.add(d.getId());
         }
         return Optional.of(found);
+    }
+
+    @Override
+    public Optional<List<DeptDirectoryRow>> listDeptDirectory(Long tenantId) {
+        if (tenantId == null) {
+            // 缺少查询上下文：查询未执行
+            return Optional.empty();
+        }
+        List<java.util.Map<String, Object>> rows = sysDeptMapper.selectDeptDirectory(tenantId);
+        List<DeptDirectoryRow> directory = new ArrayList<>(rows.size());
+        for (java.util.Map<String, Object> row : rows) {
+            Long deptId = asLong(row.get("dept_id"));
+            if (deptId == null) {
+                continue;
+            }
+            directory.add(new DeptDirectoryRow(deptId, asLong(row.get("parent_id")),
+                    asLong(row.get("leader_id"))));
+        }
+        return Optional.of(directory);
+    }
+
+    private static Long asLong(Object value) {
+        return value instanceof Number number ? number.longValue() : null;
     }
 }

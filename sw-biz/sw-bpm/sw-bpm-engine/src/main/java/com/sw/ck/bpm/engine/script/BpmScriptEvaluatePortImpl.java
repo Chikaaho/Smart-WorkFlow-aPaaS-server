@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
+import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.springframework.stereotype.Component;
 
@@ -28,10 +29,17 @@ public class BpmScriptEvaluatePortImpl implements BpmScriptEvaluatePort {
 
     @Override
     public Optional<ScriptOutcome> run(String script, Map<String, Object> variables, long timeoutMs) {
+        return run(script, variables, timeoutMs, ScriptFunctionContext.EMPTY);
+    }
+
+    @Override
+    public Optional<ScriptOutcome> run(String script, Map<String, Object> variables, long timeoutMs,
+                                       ScriptFunctionContext functionContext) {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
-        BpmScriptRunner.Result result = workerPool.evaluate(script, variables, timeoutMs, tenantId);
+        BpmScriptRunner.Result result = workerPool.evaluate(script, variables, timeoutMs, tenantId,
+                functionContext == null ? ScriptFunctionContext.EMPTY : functionContext);
         return Optional.of(new ScriptOutcome(result.kind().name(), result.value(), result.typeName(),
-                result.errorMessage(), result.durationMs()));
+                result.errorMessage(), result.durationMs(), result.variableWrites()));
     }
 
     @Override

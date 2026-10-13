@@ -30,6 +30,18 @@ public interface BpmScriptEvaluatePort {
     Optional<ScriptOutcome> run(String script, Map<String, Object> variables, long timeoutMs);
 
     /**
+     * BF20261013-021：带宿主函数上下文的执行（流程变量读写 / 组织目录函数用）。
+     * 默认实现忽略上下文，既有实现与调用方保持向后兼容。
+     *
+     * @param functionContext 组织目录与实例变量快照；{@code null} 等价 {@link ScriptFunctionContext#EMPTY}
+     * @return present = 结果（variableWrites 为脚本 设置流程变量 收集到的写入，仅 OK 时消费方允许落库）
+     */
+    default Optional<ScriptOutcome> run(String script, Map<String, Object> variables, long timeoutMs,
+                                        ScriptFunctionContext functionContext) {
+        return run(script, variables, timeoutMs);
+    }
+
+    /**
      * 语法/安全校验（仅编译不执行）。
      *
      * @return present = 结果（OK 或 SCRIPT_ERROR，errorMessage 为编译失败原因）；
@@ -38,7 +50,14 @@ public interface BpmScriptEvaluatePort {
     Optional<ScriptOutcome> validate(String script);
 
     /** 脚本执行结果记录。 */
-    record ScriptOutcome(String kind, Object value, String typeName, String errorMessage, long durationMs) {
+    record ScriptOutcome(String kind, Object value, String typeName, String errorMessage, long durationMs,
+                         Map<String, Object> variableWrites) {
+
+        /** 兼容构造：无变量写入的场景（校验/旧调用链）默认空写入。 */
+        public ScriptOutcome(String kind, Object value, String typeName, String errorMessage, long durationMs) {
+            this(kind, value, typeName, errorMessage, durationMs, Map.of());
+        }
+
         public static final String KIND_OK = "OK";
         public static final String KIND_SCRIPT_ERROR = "SCRIPT_ERROR";
         public static final String KIND_TYPE_ERROR = "TYPE_ERROR";

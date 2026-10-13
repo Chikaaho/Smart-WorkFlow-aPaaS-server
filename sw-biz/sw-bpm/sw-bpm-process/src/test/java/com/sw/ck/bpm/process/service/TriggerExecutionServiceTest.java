@@ -76,8 +76,15 @@ class TriggerExecutionServiceTest {
     private com.sw.ck.bpm.api.script.BpmScriptEvaluatePort scriptPort() {
         com.sw.ck.bpm.api.script.BpmScriptEvaluatePort port =
                 mock(com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.class);
-        when(port.run(anyString(), any(), anyLong())).thenAnswer(invocation -> {
+        when(port.run(anyString(), any(), anyLong(), any())).thenAnswer(invocation -> {
             String script = invocation.getArgument(0);
+            if (script.contains("writes:")) {
+                java.util.Map<String, Object> writes = new java.util.LinkedHashMap<>();
+                writes.put("flag", 5L);
+                return java.util.Optional.of(
+                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                                "OK", 1L, "NUMBER", null, 5L, writes));
+            }
             if (script.contains("nonexistent()")) {
                 return java.util.Optional.of(
                         new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
@@ -197,6 +204,46 @@ class TriggerExecutionServiceTest {
         verify(triggerExecMapper).insert(execCaptor.capture());
         assertThat(execCaptor.getValue().getStatus()).isEqualTo("MATCHED");
         assertThat(execCaptor.getValue().getResultValue()).isEqualTo("1");
+    }
+
+    @Test
+    @DisplayName("BF021 脚本变量写入：OK 时逐项落库并继续匹配派发")
+    void shouldApplyVariableWritesOnOk() {
+        BpmInstance instance = instance();
+        stubGraph(instance, trigger("TASK_SUBMITTED", "node_qc", "writes:1; return 1;",
+                List.of(branch("b1", "NUMBER", "1", null))));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+
+        verify(bpmTaskFacade).setVariable("pi-1", "flag", 5L);
+        ArgumentCaptor<BpmTriggerExec> execCaptor = ArgumentCaptor.forClass(BpmTriggerExec.class);
+        verify(triggerExecMapper, atLeastOnce()).insert(execCaptor.capture());
+        assertThat(execCaptor.getAllValues())
+                .anySatisfy(exec -> assertThat(exec.getStatus()).isEqualTo("MATCHED"));
+    }
+
+    @Test
+    @DisplayName("BF021 脚本变量写入失败：登记 FAILED 且不派发动作")
+    void shouldFailExecWhenVariableWriteFails() {
+        BpmInstance instance = instance();
+        stubGraph(instance, trigger("TASK_SUBMITTED", "node_qc", "writes:1; return 1;",
+                List.of(branch("b1", "NUMBER", "1", eachAction(50)))));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(bpmTaskFacade.setVariable(eq("pi-1"), eq("flag"), any()))
+                .thenThrow(new RuntimeException("实例不存在"));
+
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+
+        verify(commandQueue, never()).enqueue(any());
+        ArgumentCaptor<BpmTriggerExec> execCaptor = ArgumentCaptor.forClass(BpmTriggerExec.class);
+        verify(triggerExecMapper, atLeastOnce()).insert(execCaptor.capture());
+        assertThat(execCaptor.getAllValues()).anySatisfy(exec -> {
+            assertThat(exec.getStatus()).isEqualTo("FAILED");
+            assertThat(exec.getErrorText()).contains("变量写入失败");
+        });
     }
 
     @Test

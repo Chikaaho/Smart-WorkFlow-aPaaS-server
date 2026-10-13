@@ -27,4 +27,15 @@ public interface DeptQueryFacade {
      *         empty = {@code ids} 为 {@code null}，缺少查询对象，查询未执行
      */
     Optional<List<Long>> findActiveDeptIds(Collection<Long> ids);
+
+    /**
+     * BF20261013-021：列出指定租户内正常状态部门的目录行（部门ID/上级部门/有效负责人）。
+     * 供流程脚本组织函数（获取部门负责人/获取分管领导/获取上级部门）一次性快照；
+     * 负责人须为同租户启用用户，未设置或无效登记为 null（部门行仍返回）。
+     *
+     * @param tenantId 租户 ID
+     * @return present = 目录行（空集合 = 该租户无正常状态部门，合法零匹配）；
+     *         empty = {@code tenantId} 为 {@code null}，缺少查询上下文，查询未执行
+     */
+    Optional<List<DeptDirectoryRow>> listDeptDirectory(Long tenantId);
 }

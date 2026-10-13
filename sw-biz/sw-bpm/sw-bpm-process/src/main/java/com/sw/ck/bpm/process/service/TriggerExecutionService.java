@@ -69,6 +69,9 @@ public class TriggerExecutionService {
     /** 阶段Ⅱ（P64 A05/A06）子流程编排（可选注入；engine/process 既有单测保持旧构造）。 */
     private final org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
             childOrchestrationProvider;
+    /** BF20261013-021 脚本函数上下文工厂（可选注入；既有单测保持旧构造）。 */
+    private final org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
+            scriptFunctionContextProvider;
 
     public TriggerExecutionService(NodeFormDataService nodeFormDataService,
                                    BpmVariableSnapshotService variableSnapshotService,
@@ -79,7 +82,23 @@ public class TriggerExecutionService {
                                    BpmTaskFacade bpmTaskFacade,
                                    ObjectMapper objectMapper) {
         this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
-                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null);
+                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null, null);
+    }
+
+    /** 兼容既有子流程派发单测构造（无脚本函数上下文工厂）。 */
+    public TriggerExecutionService(NodeFormDataService nodeFormDataService,
+                                   BpmVariableSnapshotService variableSnapshotService,
+                                   BpmScriptEvaluatePort scriptRunner,
+                                   BpmCommandQueue commandQueue,
+                                   BpmTriggerExecMapper triggerExecMapper,
+                                   BpmActionRefMapper actionRefMapper,
+                                   BpmTaskFacade bpmTaskFacade,
+                                   ObjectMapper objectMapper,
+                                   org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
+                                           childOrchestrationProvider) {
+        this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
+                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper,
+                childOrchestrationProvider, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -92,7 +111,9 @@ public class TriggerExecutionService {
                                    BpmTaskFacade bpmTaskFacade,
                                    ObjectMapper objectMapper,
                                    org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
-                                           childOrchestrationProvider) {
+                                           childOrchestrationProvider,
+                                   org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
+                                           scriptFunctionContextProvider) {
         this.nodeFormDataService = nodeFormDataService;
         this.variableSnapshotService = variableSnapshotService;
         this.scriptRunner = scriptRunner;
@@ -102,10 +123,38 @@ public class TriggerExecutionService {
         this.bpmTaskFacade = bpmTaskFacade;
         this.objectMapper = objectMapper;
         this.childOrchestrationProvider = childOrchestrationProvider;
+        this.scriptFunctionContextProvider = scriptFunctionContextProvider;
     }
 
     private ChildOrchestrationService childOrchestration() {
         return childOrchestrationProvider == null ? null : childOrchestrationProvider.getIfAvailable();
+    }
+
+    /** BF20261013-021：脚本函数上下文（工厂缺席时为空上下文，保持既有语义）。 */
+    private com.sw.ck.bpm.api.script.ScriptFunctionContext scriptFunctionContext(
+            String script, String processInstanceId, Long tenantId) {
+        BpmScriptFunctionContextFactory factory = scriptFunctionContextProvider == null
+                ? null : scriptFunctionContextProvider.getIfAvailable();
+        return factory == null
+                ? com.sw.ck.bpm.api.script.ScriptFunctionContext.EMPTY
+                : factory.build(script, processInstanceId, tenantId);
+    }
+
+    /**
+     * BF20261013-021：把脚本收集的变量写入落到流程实例变量（跨脚本/节点结果函数的通信层；
+     * 本轮动作映射仍取授权变量快照，不消费本层写入）。
+     *
+     * @return null = 全部写入成功；非 null = 失败描述（调用方登记 FAILED 并跳过派发）
+     */
+    private String applyVariableWrites(BpmInstance instance, Map<String, Object> writes) {
+        for (Map.Entry<String, Object> entry : writes.entrySet()) {
+            try {
+                bpmTaskFacade.setVariable(instance.getProcessInstanceId(), entry.getKey(), entry.getValue());
+            } catch (Exception e) {
+                return "变量写入失败 " + entry.getKey() + ": " + e.getMessage();
+            }
+        }
+        return null;
     }
 
     /**
@@ -223,8 +272,12 @@ public class TriggerExecutionService {
                 return;
             }
             exec.setSnapshotText(snapshot.json());
+            // BF20261013-021：按脚本引用构建函数上下文（组织目录/实例变量；未引用则空上下文零查询）
+            com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext =
+                    scriptFunctionContext(trigger.getScript(), instance.getProcessInstanceId(), tenantId);
             BpmScriptEvaluatePort.ScriptOutcome result = scriptRunner
-                    .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS)
+                    .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS,
+                            functionContext)
                     .orElseThrow(() -> new IllegalStateException(
                             "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
             exec.setDurationMs(result.durationMs());
@@ -253,6 +306,16 @@ public class TriggerExecutionService {
             String typeName = result.typeName();
             exec.setResultType(typeName);
             exec.setResultValue(value == null ? null : truncate(String.valueOf(value), 500));
+            // BF20261013-021：脚本变量写入落库（OK 且非空才应用；写失败登记 FAILED 并跳过派发）
+            if (result.ok() && result.variableWrites() != null && !result.variableWrites().isEmpty()) {
+                String writeError = applyVariableWrites(instance, result.variableWrites());
+                if (writeError != null) {
+                    exec.setStatus("FAILED");
+                    exec.setErrorText(writeError);
+                    insertExec(exec);
+                    return;
+                }
+            }
             if (value == null) {
                 exec.setStatus("UNMATCHED");
                 exec.setDisposition(dispositionOf(trigger.getErrorDisposition()));

@@ -345,7 +345,7 @@ class TriggerExecutionServiceChildDispatchTest {
 
     private BpmScriptEvaluatePort scriptPort() {
         BpmScriptEvaluatePort port = mock(BpmScriptEvaluatePort.class);
-        when(port.run(anyString(), any(), anyLong())).thenAnswer(invocation ->
+        when(port.run(anyString(), any(), anyLong(), any())).thenAnswer(invocation ->
                 Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
                         BpmScriptEvaluatePort.ScriptOutcome.KIND_OK, Boolean.TRUE, "BOOLEAN", null, 1L)));
         return port;
