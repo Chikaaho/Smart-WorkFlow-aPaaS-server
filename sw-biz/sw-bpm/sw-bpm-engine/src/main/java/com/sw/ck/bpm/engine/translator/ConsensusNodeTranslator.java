@@ -40,7 +40,7 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
     public Optional<BpmNodeMetadata> metadata() {
         return Optional.of(new BpmNodeMetadata("会签", "多人并行审批节点", "TASK",
                 new BpmNodeTopology(1, 1, 1, 1),
-                List.of(new BpmNodeConfigField("participant", "参与人", "object", true, Map.of()),
+                List.of(new BpmNodeConfigField("participant", "审批人", "object", true, Map.of()),
                         new BpmNodeConfigField("mode", "结算方式", "string", true,
                                 Map.of("values", List.of("ALL", "ANY", "RATIO", "VETO"))),
                         new BpmNodeConfigField("ratio", "通过比例", "integer", false,
