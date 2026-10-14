@@ -196,4 +196,50 @@ class BpmProcessDefServiceImplTest {
             assertThat(wrapper.getSqlSegment()).doesNotContain("form_key");
         }
     }
+
+    // ==================== publish（BF20261013-041 流程编号规则必填） ====================
+
+    @Nested
+    @DisplayName("publish 方法（流程编号规则必填门）")
+    class PublishTests {
+
+        private static final String MINIMAL_GRAPH =
+                "{\"processKey\":\"bpm_gate\",\"name\":\"gate\",\"formKey\":\"form-1\","
+                        + "\"version\":1,\"elements\":[{\"id\":\"n1\",\"kind\":\"node\",\"type\":\"START\"}],\"canvas\":{}}";
+
+        @Test
+        @DisplayName("规则为空 → 抛 BaseException 含 THEME_RULE_REQUIRED（发布门拦住）")
+        void publish_withoutThemeRule_shouldThrowThemeRuleRequired() {
+            BpmProcessDef def = new BpmProcessDef();
+            def.setId(9L);
+            def.setStatus("DRAFT");
+            def.setGraphJson(MINIMAL_GRAPH);
+            def.setThemeRule(null);
+            when(mapper.selectById(9L)).thenReturn(def);
+
+            assertThatThrownBy(() -> service.publish(9L))
+                    .isInstanceOf(BaseException.class)
+                    .satisfies(e -> {
+                        BaseException be = (BaseException) e;
+                        assertThat(be.getCode()).isEqualTo(BpmErrorCode.THEME_RULE_REQUIRED.getCode());
+                        assertThat(be.getMessage()).contains(BpmErrorCode.THEME_RULE_REQUIRED.getMessage());
+                    });
+        }
+
+        @Test
+        @DisplayName("规则为空白串 → 同样被发布门拦住（不只判 null）")
+        void publish_blankThemeRule_shouldThrowThemeRuleRequired() {
+            BpmProcessDef def = new BpmProcessDef();
+            def.setId(10L);
+            def.setStatus("DRAFT");
+            def.setGraphJson(MINIMAL_GRAPH);
+            def.setThemeRule("   ");
+            when(mapper.selectById(10L)).thenReturn(def);
+
+            assertThatThrownBy(() -> service.publish(10L))
+                    .isInstanceOf(BaseException.class)
+                    .satisfies(e -> assertThat(((BaseException) e).getCode())
+                            .isEqualTo(BpmErrorCode.THEME_RULE_REQUIRED.getCode()));
+        }
+    }
 }

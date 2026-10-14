@@ -117,9 +117,9 @@ public class BpmProcessDefController {
     }
 
     /**
-     * 更新主题生成规则（管理流程系统级设置，必填）。
-     * 合法性：非空 + 占位符白名单 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}；
-     * 非法返回 400 可读消息，不落库。
+     * 更新流程编号（主题）规则（管理流程系统级设置，必填；发布门亦要求非空）。
+     * 合法性：非空 + 占位符白名单 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}/{SEQ:n}
+     * （n=自增编号位数 1-10，左补零）；非法返回 400 可读消息，不落库。
      */
     @PutMapping("/{id}/theme-rule")
     @PreAuthorize("@ss.hasPermi('workflow:catalog:manage')")

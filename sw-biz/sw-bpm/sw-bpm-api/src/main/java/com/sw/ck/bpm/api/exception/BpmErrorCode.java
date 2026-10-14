@@ -41,6 +41,7 @@ public enum BpmErrorCode implements ErrorCode {
     NODE_CONFIG_INVALID(2106, "bpm.node_config_invalid", "节点配置不合法"),
     NODE_CAPABILITY_MISSING(2107, "bpm.node_capability_missing", "节点配置不完整，请在流程设计中补全后重试"),
     NODE_REGISTRATION_INVALID(2108, "bpm.node_registration_invalid", "节点配置不完整，请在流程设计中补全后重试"),
+    THEME_RULE_REQUIRED(2109, "bpm.theme_rule_required", "尚未配置流程编号规则，请先设置编号规则后再发布"),
 
     // ==================== 审批人解析（22xx） ====================
     APPROVER_RESOLVE_EMPTY(2200, "bpm.approver_resolve_empty", "未能确定审批人，请检查该节点的审批人配置"),

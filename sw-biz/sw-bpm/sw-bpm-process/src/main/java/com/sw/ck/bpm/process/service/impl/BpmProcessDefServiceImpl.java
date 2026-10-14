@@ -40,6 +40,8 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     private static final String STATUS_DRAFT = "DRAFT";
     private static final String STATUS_PUBLISHED = "PUBLISHED";
     private static final String FORM_STATUS_PUBLISHED = "PUBLISHED";
+    /** BF20261013-041：新建流程定义的默认流程编号规则（日期 + 3 位自增，如 20261014-001）。 */
+    private static final String DEFAULT_THEME_RULE = "{YYYYMMDD}-{SEQ:3}";
 
     private final BpmProcessDefMapper mapper;
     private final com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper;
@@ -103,6 +105,10 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         entity.setDefVersion(1);
         entity.setStatus(STATUS_DRAFT);
         entity.setGraphJson(toJson(initialGraph));
+        // BF20261013-041：流程编号（主题）规则是这条流程的必填配置——新建定义即带可用默认值
+        // （日期 + 3 位自增，如 20261014-001），可在列表「流程编号规则」中随时改；
+        // 发布门另要求非空，历史/外部导入的空规则定义发布前必须补齐。
+        entity.setThemeRule(DEFAULT_THEME_RULE);
 
         mapper.insert(entity);
         log.info("Created process def: id={}, processKey={}", entity.getId(), processKey);
@@ -280,13 +286,20 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     public BpmProcessDef publish(Long id) {
         BpmProcessDef def = getExisting(id);
 
+        // ========== ② 发布门校验 ==========
+        // 2a0. BF20261013-041：流程编号（主题）规则为必填配置——任一版本发布前必须已配置，
+        //      避免上线后实例编号退化为流程名（规则为空时 generate 会回退 def 名）。
+        //      放在最前：这是列表页一键可补的配置，先给出可操作提示，不必先撞图校验。
+        if (def.getThemeRule() == null || def.getThemeRule().isBlank()) {
+            throw new BaseException(BpmErrorCode.THEME_RULE_REQUIRED);
+        }
+
         // 解析图
         ProcessGraph graph = parseGraph(def.getGraphJson());
         if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
             throw new BaseException(BpmErrorCode.GRAPH_MISSING_START);
         }
 
-        // ========== ② 发布门校验 ==========
         // 2a. 图拓扑校验（复现 GraphValidator 全规则）
         List<GraphValidationError> graphErrors = graphValidator.validate(graph.getElements(), graph.getFormKey());
         if (!graphErrors.isEmpty()) {

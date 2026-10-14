@@ -21,10 +21,19 @@ import java.util.regex.Pattern;
 @Service
 public class ProcessThemeService {
 
-    /** 规则合法占位符（其余 {..} 记法一律拒绝，避免歧义）。 */
-    private static final Pattern PLACEHOLDER = Pattern.compile("\\{(TIMESTAMP|YYYYMMDD|YYYYMMDDHHMMSS|SEQ)\\}");
-    private static final Pattern ILLEGAL_PLACEHOLDER = Pattern.compile("\\{(?!TIMESTAMP|YYYYMMDD|YYYYMMDDHHMMSS|SEQ\\})[^{}]*\\}");
-    private static final Pattern SEQ_PATTERN = Pattern.compile("\\{SEQ\\}");
+    /**
+     * 规则合法占位符（其余 {..} 记法一律拒绝，避免歧义）。
+     * BF20261013-041：{SEQ} 支持指定位数 {@code {SEQ:3}}（左补零到 n 位，n=1..10），
+     * 供前端「自增编号几位数」选择带入。
+     */
+    private static final Pattern PLACEHOLDER =
+            Pattern.compile("\\{(TIMESTAMP|YYYYMMDD|YYYYMMDDHHMMSS|SEQ(?::\\d{1,2})?)\\}");
+    private static final Pattern ILLEGAL_PLACEHOLDER =
+            Pattern.compile("\\{(?!(?:TIMESTAMP|YYYYMMDD|YYYYMMDDHHMMSS|SEQ(?::\\d{1,2})?)\\})[^{}]*\\}");
+    private static final Pattern SEQ_PATTERN = Pattern.compile("\\{SEQ(?::(\\d{1,2}))?\\}");
+
+    /** 自增序号位数上限（左补零），也是校验里拒绝 {SEQ:n} 的边界。 */
+    private static final int SEQ_DIGITS_MAX = 10;
 
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
@@ -41,7 +50,20 @@ public class ProcessThemeService {
             throw new IllegalArgumentException("主题生成规则长度不能超过 200");
         }
         if (ILLEGAL_PLACEHOLDER.matcher(rule).find()) {
-            throw new IllegalArgumentException("主题生成规则包含未知占位符，仅支持 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}");
+            throw new IllegalArgumentException(
+                    "主题生成规则包含未知占位符，仅支持 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}/{SEQ:n}");
+        }
+        Matcher seq = SEQ_PATTERN.matcher(rule);
+        while (seq.find()) {
+            String digits = seq.group(1);
+            if (digits == null) {
+                continue;
+            }
+            int n = Integer.parseInt(digits);
+            if (n < 1 || n > SEQ_DIGITS_MAX) {
+                throw new IllegalArgumentException(
+                        "自增编号位数需在 1-" + SEQ_DIGITS_MAX + " 之间（如 {SEQ:3} 表示补零到 3 位）");
+            }
         }
     }
 
@@ -61,23 +83,37 @@ public class ProcessThemeService {
         long seqValue = 0;
         while (m.find()) {
             out.append(themeRule, last, m.start());
-            switch (m.group(1)) {
-                case "TIMESTAMP" -> out.append(now);
-                case "YYYYMMDD" -> out.append(LocalDateTime.now().format(DateTimeFormatter.BASIC_ISO_DATE));
-                case "YYYYMMDDHHMMSS" -> out.append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
-                case "SEQ" -> {
-                    if (!seqUsed) {
-                        seqValue = nextSeq(processKey);
-                        seqUsed = true;
-                    }
-                    out.append(seqValue);
+            String token = m.group(1);
+            if (token.startsWith("SEQ")) {
+                if (!seqUsed) {
+                    seqValue = nextSeq(processKey);
+                    seqUsed = true;
                 }
-                default -> throw new IllegalStateException("未支持的占位符");
+                out.append(formatSeq(seqValue, seqDigits(token)));
+            } else if ("TIMESTAMP".equals(token)) {
+                out.append(now);
+            } else if ("YYYYMMDD".equals(token)) {
+                out.append(LocalDateTime.now().format(DateTimeFormatter.BASIC_ISO_DATE));
+            } else if ("YYYYMMDDHHMMSS".equals(token)) {
+                out.append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
+            } else {
+                throw new IllegalStateException("未支持的占位符");
             }
             last = m.end();
         }
         out.append(themeRule.substring(last));
         return out.toString();
+    }
+
+    /** {SEQ} / {SEQ:n} 的位数：未指定（不补零）返回 0。 */
+    private static int seqDigits(String token) {
+        int colon = token.indexOf(':');
+        return colon < 0 ? 0 : Integer.parseInt(token.substring(colon + 1));
+    }
+
+    /** 自增序号展示值：指定位数时左补零（{SEQ:3} 的 1 → "001"），否则原样输出。 */
+    private static String formatSeq(long value, int digits) {
+        return digits <= 0 ? Long.toString(value) : String.format("%0" + digits + "d", value);
     }
 
     /**
