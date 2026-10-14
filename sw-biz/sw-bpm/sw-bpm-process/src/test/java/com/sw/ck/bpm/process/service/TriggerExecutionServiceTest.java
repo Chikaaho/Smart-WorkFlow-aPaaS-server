@@ -495,6 +495,46 @@ class TriggerExecutionServiceTest {
     }
 
     @Test
+    @DisplayName("BF20261013-027 映射脚本源：脚本求值结果进入载荷（与变量/字面量同表共存）")
+    void shouldResolveMappingScriptSource() {
+        BpmInstance instance = instance();
+        ActionConfig single = ActionConfig.builder()
+                .actionId("act-script").name("s").type("START_SINGLE")
+                .targetProcessDefKey("def_target").targetFormKey("target_form")
+                .mapping(List.of(
+                        ActionConfig.ActionMapping.builder()
+                                .targetField("computed").script("return 'X';").build(),
+                        ActionConfig.ActionMapping.builder()
+                                .targetField("channel").literal("P64").build()))
+                .build();
+        when(nodeFormDataService.loadGraph("def_main", 2)).thenReturn(ProcessGraph.builder()
+                .processKey("def_main")
+                .variables(List.of(ProcessVariableDef.builder()
+                        .varId("v_verdict").type("STRING").source("NODE_FORM")
+                        .sourceField("field_verdict").build()))
+                .triggers(List.of(trigger("TASK_SUBMITTED", "node_qc", "return 'X';",
+                        List.of(branch("b1", "STRING", "X", single)))))
+                .build());
+        when(nodeFormDataService.currentRound("pi-1")).thenReturn(1L);
+        when(variableSnapshotService.buildSnapshot(any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(new BpmVariableSnapshotService.SnapshotResult(
+                        Map.of("v_verdict", "REWORK"), "{}", false, List.of(), List.of()));
+        when(triggerExecMapper.selectCount(any())).thenReturn(0L);
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
+        when(commandQueue.enqueue(any())).thenReturn(401L);
+        when(actionRefMapper.selectOne(any())).thenReturn(null);
+
+        service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);
+
+        verify(commandQueue, times(1)).enqueue(any());
+        ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
+        verify(actionRefMapper).insert(refCaptor.capture());
+        assertThat(refCaptor.getValue().getPayloadJson())
+                .contains("\"computed\":\"X\"")
+                .contains("\"channel\":\"P64\"");
+    }
+
+    @Test
     @DisplayName("START_GROUPED 按 ROWS 列值分组：同值行合并为单组，映射取代表行字段")
     void shouldGroupRowsByColumnForStartGrouped() {
         BpmInstance instance = instance();

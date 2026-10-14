@@ -136,5 +136,11 @@ public class ActionConfig implements Serializable {
 
         /** 字面量值（JSON 标量）。 */
         private Object literal;
+
+        /**
+         * BF20261013-027 映射脚本源：与判断脚本同上下文（授权变量快照 + 函数上下文），
+         * 每个动作求值一次后逐项复用；与 sourceVarId/itemField/literal 四选一，脚本优先。
+         */
+        private String script;
     }
 }

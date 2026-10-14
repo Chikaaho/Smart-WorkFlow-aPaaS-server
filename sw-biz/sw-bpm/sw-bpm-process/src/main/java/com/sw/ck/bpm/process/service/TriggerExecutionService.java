@@ -29,6 +29,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -455,8 +456,10 @@ public class TriggerExecutionService {
                                 + batch.getBatchKey() + " 派发意图提交后即结算，父流程不等待");
                     }
                 }
+                List<Object> mappingScriptValues = evaluateMappingScripts(instance, action, snapshot);
                 for (ActionItem item : items) {
-                    dispatchItem(instance, trigger, action, exec, item, snapshot, dispatchNotes, frozen);
+                    dispatchItem(instance, trigger, action, exec, item, snapshot, dispatchNotes,
+                            frozen, mappingScriptValues);
                 }
                 if (orchestration != null && frozen != null && "NONE".equals(frozen.waitPolicy())) {
                     // NONE：全部项登记完成后立即结算（单次推进由结算通道幂等保证）
@@ -478,7 +481,8 @@ public class TriggerExecutionService {
 
     private void dispatchItem(BpmInstance instance, TriggerConfig trigger, ActionConfig action,
                               BpmTriggerExec exec, ActionItem item, Map<String, Object> snapshot,
-                              List<String> notes, ChildOrchestrationService.FrozenBatch frozen) {
+                              List<String> notes, ChildOrchestrationService.FrozenBatch frozen,
+                              List<Object> mappingScriptValues) {
         String commandKey = "P64ACT:" + exec.getExecKey() + ":" + action.getActionId() + ":" + item.itemKey();
         Long tenantId = instance.getTenantId();
         Optional<BpmActionRef> existingRef = Optional.ofNullable(actionRefMapper.selectOne(
@@ -525,9 +529,14 @@ public class TriggerExecutionService {
 
         Map<String, Object> data = new LinkedHashMap<>();
         if (action.getMapping() != null) {
-            for (ActionConfig.ActionMapping mapping : action.getMapping()) {
+            List<ActionConfig.ActionMapping> mappings = action.getMapping();
+            for (int mappingIndex = 0; mappingIndex < mappings.size(); mappingIndex++) {
+                ActionConfig.ActionMapping mapping = mappings.get(mappingIndex);
                 Object value;
-                if (mapping.getLiteral() != null) {
+                if (mapping.getScript() != null && !mapping.getScript().isBlank()) {
+                    value = mappingScriptValues != null && mappingIndex < mappingScriptValues.size()
+                            ? mappingScriptValues.get(mappingIndex) : null;
+                } else if (mapping.getLiteral() != null) {
                     value = mapping.getLiteral();
                 } else if (mapping.getSourceVarId() != null && !mapping.getSourceVarId().isBlank()) {
                     value = snapshot.get(mapping.getSourceVarId());
@@ -697,6 +706,39 @@ public class TriggerExecutionService {
             return items;
         }
         return items;
+    }
+
+    /**
+     * BF20261013-027 映射脚本源：与判断脚本同上下文（授权变量快照 + 函数上下文），
+     * 每个动作求值一次后逐项复用（脚本只读快照，不依赖集合项）；脚本失败整体拒绝派发，
+     * 不静默降级为 null。返回与 {@code action.getMapping()} 同序的值列表（无脚本项为 null）。
+     */
+    private List<Object> evaluateMappingScripts(BpmInstance instance, ActionConfig action,
+                                                Map<String, Object> snapshot) {
+        if (action.getMapping() == null || action.getMapping().isEmpty()) {
+            return List.of();
+        }
+        List<Object> values = new ArrayList<>(
+                Collections.nCopies(action.getMapping().size(), null));
+        for (int i = 0; i < action.getMapping().size(); i++) {
+            ActionConfig.ActionMapping mapping = action.getMapping().get(i);
+            if (mapping.getScript() == null || mapping.getScript().isBlank()) {
+                continue;
+            }
+            com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext = scriptFunctionContext(
+                    mapping.getScript(), instance.getProcessInstanceId(), instance.getTenantId());
+            BpmScriptEvaluatePort.ScriptOutcome outcome = scriptRunner
+                    .run(mapping.getScript(), snapshot, BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS,
+                            functionContext)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
+            if (!BpmScriptEvaluatePort.ScriptOutcome.KIND_OK.equals(outcome.kind())) {
+                throw new IllegalStateException("映射脚本求值失败: targetField="
+                        + mapping.getTargetField() + ", error=" + outcome.errorMessage());
+            }
+            values.set(i, outcome.value());
+        }
+        return values;
     }
 
     private int resolveMaxDispatch(ActionConfig action) {
