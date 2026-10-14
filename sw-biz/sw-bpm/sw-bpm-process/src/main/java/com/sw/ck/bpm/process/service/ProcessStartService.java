@@ -60,6 +60,9 @@ public class ProcessStartService {
 
     private static final Logger log = LoggerFactory.getLogger(ProcessStartService.class);
 
+    /** BF20261013-022⑧：自动发起（子流程等系统动作）的操作人=系统管理员（种子账号 userId=1）。 */
+    public static final long AUTO_START_OPERATOR_USER_ID = 1L;
+
     private final BpmFormBindingService bindingService;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sw.ck.bpm.process.service.BpmProcessDefService bpmProcessDefService;
@@ -120,6 +123,12 @@ public class ProcessStartService {
      */
     @Transactional
     public void start(StartCommand cmd) {
+        // BF20261013-022⑧：自动发起（携带主流程来源标记 sourceInstanceId）的操作人=系统管理员——
+        // 自动处理的动作人不落在具体人身上；主流程来源另行嵌入子实例变量（见下方 putFirstNotBlank）
+        if (cmd.getSubmittedData() != null
+                && cmd.getSubmittedData().get("sourceInstanceId") != null) {
+            cmd.setSubmitter(AUTO_START_OPERATOR_USER_ID);
+        }
         // 1. 查启用绑定
         List<BpmFormBinding> bindings = bindingService.findActiveByFormKey(cmd.getFormKey());
         if (bindings.isEmpty()) {
@@ -185,9 +194,14 @@ public class ProcessStartService {
                 "target_record_id", "targetRecordId");
         // P64 阶段Ⅲ（A08 数量账）：事务动作数量透传（表单携带 txn_quantity/txnQuantity
         // 时成为流程变量，供 quantity=variable:txnQuantity 的 TXN_ACTION 节点解析逐行动作
-        // 数量；无则跳过，不影响普通审批流与字面量数量配置）
+        // 数量；无则跳过，不影响普通审批流与 instanceBusinessKey 缺省源）
         putFirstNotBlank(variables, "txnQuantity", cmd.getSubmittedData(),
                 "txn_quantity", "txnQuantity");
+        // BF20261013-022⑧：主流程来源嵌入子实例变量（子流程可读主流程实例编号/业务单号）
+        putFirstNotBlank(variables, "sourceInstanceId", cmd.getSubmittedData(),
+                "source_instance_id", "sourceInstanceId");
+        putFirstNotBlank(variables, "sourceBusinessKey", cmd.getSubmittedData(),
+                "source_business_key", "sourceBusinessKey");
 
         // 原: runtimeService.startProcessInstanceByKeyAndTenantId(...)
         // → bpmRuntimeFacade.startProcess(...)

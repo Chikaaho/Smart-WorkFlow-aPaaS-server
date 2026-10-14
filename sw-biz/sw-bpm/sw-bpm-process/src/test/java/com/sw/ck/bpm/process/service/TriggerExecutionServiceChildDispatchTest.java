@@ -191,6 +191,8 @@ class TriggerExecutionServiceChildDispatchTest {
         for (BpmActionRef ref : refCaptor.getAllValues()) {
             Map<String, Object> payload = mapper.readValue(ref.getPayloadJson(), Map.class);
             Map<String, Object> data = (Map<String, Object>) payload.get("data");
+            // BF20261013-022⑧：主流程来源嵌入子流程提交数据（经发起链成为子实例变量）
+            assertThat(data.get("sourceInstanceId")).isEqualTo("p1");
             List<Map<String, Object>> table = (List<Map<String, Object>>) data.get("result_table");
             prefilledRows.add(table);
             prefilledRowIds.add(table.stream().map(row -> String.valueOf(row.get("src_row_id"))).toList());

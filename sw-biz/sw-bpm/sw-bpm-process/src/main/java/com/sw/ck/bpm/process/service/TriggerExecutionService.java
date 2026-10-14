@@ -569,6 +569,10 @@ public class TriggerExecutionService {
                 data.put(action.getWriteBack().getTableField(), prefillRows);
             }
         }
+        // BF20261013-022⑧：主流程来源嵌入子流程提交数据（经发起链成为子实例变量；
+        // 子实例操作人语义见 ProcessStartService——自动发起操作人=系统管理员）
+        data.put("sourceInstanceId", instance.getProcessInstanceId());
+        data.put("sourceBusinessKey", instance.getBusinessKey() == null ? "" : instance.getBusinessKey());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("refId", ref.getId());
         payload.put("commandKey", commandKey);

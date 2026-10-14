@@ -130,6 +130,40 @@ class ProcessStartServiceTest {
         assertThat(varsCaptor.getValue()).doesNotContainKey("txnQuantity");
     }
 
+    @Test
+    @DisplayName("BF022⑧：携带主流程来源标记的自动发起——操作人强制为系统管理员且来源进入子实例变量")
+    void start_whenAutoStartCarriesSource_shouldForceAdminAndEmbedSourceVariables() {
+        BpmFormBinding binding = binding();
+        when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+
+        StartCommand command = command();
+        command.setSubmitter(7L); // 派发链携带的业务提交人：自动发起时应被改写为管理员
+        command.setSubmittedData(new java.util.HashMap<>(java.util.Map.of(
+                "sourceInstanceId", "main-instance-1",
+                "sourceBusinessKey", "record-9")));
+        service.start(command);
+
+        assertThat(command.getSubmitter()).isEqualTo(1L);
+        ArgumentCaptor<BpmInstance> instanceCaptor = ArgumentCaptor.forClass(BpmInstance.class);
+        verify(bpmInstanceService).save(instanceCaptor.capture());
+        assertThat(instanceCaptor.getValue().getInitiatorId()).isEqualTo(1L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(java.util.Map.class);
+        verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
+                varsCaptor.capture(), eq("57001"));
+        assertThat(varsCaptor.getValue())
+                .containsEntry("sourceInstanceId", "main-instance-1")
+                .containsEntry("sourceBusinessKey", "record-9")
+                .containsEntry("submitter", "1");
+    }
+
     private BpmFormBinding binding() {
         BpmFormBinding binding = new BpmFormBinding();
         binding.setFormKey("p57-r1-form");
