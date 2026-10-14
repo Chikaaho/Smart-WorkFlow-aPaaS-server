@@ -73,6 +73,10 @@ public class ApprovalTaskListener implements TaskListener {
     @Autowired(required = false)
     private transient org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort> lifecycleEntryPort;
 
+    /** BF20261013-022①：节点开始触发器端口（可选注入；引擎单测无实现时跳过）。 */
+    @Autowired(required = false)
+    private transient org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.participant.NodeTriggerEventPort> nodeTriggerEventPort;
+
     /** 兼容既有引擎单测与旧 DESIGNATED 配置。 */
     public ApprovalTaskListener(RepositoryService repositoryService,
                                 @org.springframework.beans.factory.annotation.Qualifier("approverResolverMap")
@@ -282,6 +286,19 @@ public class ApprovalTaskListener implements TaskListener {
                 delegateTask.getId(), nodeKey, userIds.size() == 1 ? userIds.get(0) : "CANDIDATES");
 
         publishNextTaskTodoCreated(delegateTask, tenantId, processInstanceId, notificationUsers);
+
+        // BF20261013-022①：节点开始（NODE_ENTERING）触发器——任务创建成功、办理人办理前评估；
+        // 触发器评估异常不阻断任务创建（评估内部已落可诊断执行行）
+        com.sw.ck.bpm.api.participant.NodeTriggerEventPort triggerPort =
+                nodeTriggerEventPort == null ? null : nodeTriggerEventPort.getIfAvailable();
+        if (triggerPort != null) {
+            try {
+                triggerPort.onNodeEntering(processInstanceId, nodeKey);
+            } catch (Exception e) {
+                log.warn("节点开始触发器评估异常（不阻断任务创建）: nodeKey={}, error={}",
+                        nodeKey, e.getMessage());
+            }
+        }
     }
 
     /**

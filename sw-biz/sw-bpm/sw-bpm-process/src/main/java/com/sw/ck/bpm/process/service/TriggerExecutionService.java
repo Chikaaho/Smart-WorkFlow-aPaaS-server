@@ -49,6 +49,10 @@ public class TriggerExecutionService {
     public static final String EVENT_TASK_SUBMITTED = "TASK_SUBMITTED";
     public static final String EVENT_NODE_ROUND_COMPLETED = "NODE_ROUND_COMPLETED";
     public static final String EVENT_PROCESS_COMPLETED = "PROCESS_COMPLETED";
+    /** BF20261013-022①：节点开始（审批任务创建、办理前）。 */
+    public static final String EVENT_NODE_ENTERING = "NODE_ENTERING";
+    /** BF20261013-022⑥：流程发起（实例创建成功）。 */
+    public static final String EVENT_PROCESS_START = "PROCESS_START";
 
     private static final int DEFAULT_MAX_DISPATCH = 50;
     private static final int HARD_MAX_DISPATCH = 200;
@@ -216,6 +220,42 @@ public class TriggerExecutionService {
                 .filter(trigger -> EVENT_PROCESS_COMPLETED.equalsIgnoreCase(trigger.getEvent()))
                 .forEach(trigger -> evaluate(instance, graph, trigger, EVENT_PROCESS_COMPLETED,
                         null, round, null));
+    }
+
+    /**
+     * BF20261013-022⑥：流程发起（实例创建成功、同事务）后触发 PROCESS_START 判定。
+     */
+    @Transactional(propagation = Propagation.REQUIRED)
+    public void onProcessStarted(BpmInstance instance) {
+        ProcessGraph graph = nodeFormDataService.loadGraph(instance.getProcessDefKey(), instance.getDefVersion());
+        if (graph == null || graph.getTriggers() == null || graph.getTriggers().isEmpty()) {
+            return;
+        }
+        long round = nodeFormDataService.currentRound(instance.getProcessInstanceId());
+        graph.getTriggers().stream()
+                .filter(trigger -> EVENT_PROCESS_START.equalsIgnoreCase(trigger.getEvent()))
+                .forEach(trigger -> evaluate(instance, graph, trigger, EVENT_PROCESS_START,
+                        null, round, null));
+    }
+
+    /**
+     * BF20261013-022①：节点开始（审批任务创建、办理人办理前）触发 NODE_ENTERING 判定。
+     */
+    @Transactional(propagation = Propagation.REQUIRED)
+    public void onNodeEntering(BpmInstance instance, String nodeKey) {
+        if (nodeKey == null || nodeKey.isBlank()) {
+            return;
+        }
+        ProcessGraph graph = nodeFormDataService.loadGraph(instance.getProcessDefKey(), instance.getDefVersion());
+        if (graph == null || graph.getTriggers() == null || graph.getTriggers().isEmpty()) {
+            return;
+        }
+        long round = nodeFormDataService.currentRound(instance.getProcessInstanceId());
+        graph.getTriggers().stream()
+                .filter(trigger -> EVENT_NODE_ENTERING.equalsIgnoreCase(trigger.getEvent()))
+                .filter(trigger -> nodeKey.equals(trigger.getNodeKey()))
+                .forEach(trigger -> evaluate(instance, graph, trigger, EVENT_NODE_ENTERING,
+                        nodeKey, round, null));
     }
 
     // ==================== 评估 ====================

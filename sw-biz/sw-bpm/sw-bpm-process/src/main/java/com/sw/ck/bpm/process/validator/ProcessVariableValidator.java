@@ -40,7 +40,10 @@ public class ProcessVariableValidator {
     private static final Set<String> VARIABLE_SOURCES = Set.of("MAIN_FORM", "NODE_FORM", "SYSTEM");
     private static final Set<String> AGGREGATIONS = Set.of("NONE", "UNION", "CONCAT");
     private static final Set<String> TRIGGER_EVENTS = Set.of(
-            "TASK_SUBMITTED", "NODE_ROUND_COMPLETED", "PROCESS_COMPLETED");
+            "TASK_SUBMITTED", "NODE_ROUND_COMPLETED", "PROCESS_COMPLETED",
+            "NODE_ENTERING", "PROCESS_START");
+    /** 无需绑定源节点的事件（流程级：发起/完成）。 */
+    private static final Set<String> PROCESS_LEVEL_EVENTS = Set.of("PROCESS_COMPLETED", "PROCESS_START");
     private static final Set<String> ACTION_TYPES = Set.of(
             "START_SINGLE", "START_EACH", "START_GROUPED");
     private static final Set<String> NODE_FORM_CAPABLE_TYPES = Set.of(
@@ -362,7 +365,7 @@ public class ProcessVariableValidator {
                         "触发器 " + trigger.getTriggerId() + " 事件无效: " + trigger.getEvent()));
                 continue;
             }
-            if (!"PROCESS_COMPLETED".equals(event)) {
+            if (!PROCESS_LEVEL_EVENTS.contains(event)) {
                 if (trigger.getNodeKey() == null || trigger.getNodeKey().isBlank()) {
                     errors.add(error(locator, BpmErrorCode.TRIGGER_INVALID,
                             "触发器 " + trigger.getTriggerId() + ": 该事件必须绑定 sourceNodeKey"));

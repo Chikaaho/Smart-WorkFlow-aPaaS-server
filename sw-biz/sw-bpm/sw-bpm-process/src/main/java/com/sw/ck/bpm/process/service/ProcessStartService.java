@@ -74,6 +74,10 @@ public class ProcessStartService {
     /** 可选：主题生成规则服务（V012-BUG-010；缺省时不生成主题）。 */
     private final ProcessThemeService processThemeService;
 
+    /** BF20261013-022⑥：流程发起触发器端口（可选注入；单测旧装配保持可用）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sw.ck.bpm.api.participant.NodeTriggerEventPort nodeTriggerEventPort;
+
     public ProcessStartService(BpmFormBindingService bindingService,
                                 ApproverResolver approverResolver,
                                 BpmRuntimeFacade bpmRuntimeFacade,
@@ -232,6 +236,16 @@ public class ProcessStartService {
 
         log.info("流程实例记录已保存: id={}, status={}, processActive={}",
                 instance.getId(), instance.getStatus(), processActive);
+
+        // BF20261013-022⑥：流程发起触发器（PROCESS_START，同事务评估）——异常不阻断发起主链路
+        if (nodeTriggerEventPort != null) {
+            try {
+                nodeTriggerEventPort.onProcessStarted(processInstanceId);
+            } catch (Exception e) {
+                log.warn("流程发起触发器评估异常（不阻断发起）: processInstanceId={}, err={}",
+                        processInstanceId, e.getMessage());
+            }
+        }
 
         // 5. 发布 TODO_CREATED 通知事件（查询刚创建的 task）
         if (processActive) {

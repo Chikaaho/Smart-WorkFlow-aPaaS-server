@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
+import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
@@ -47,6 +48,10 @@ public class BpmVariableSnapshotService {
         this.objectMapper = objectMapper;
     }
 
+    /** BF20261013-022⑦：实例变量读取（脚本 set 过的值优先；可选注入，测试旧装配为 null 时跳过该层）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private transient BpmTaskFacade bpmTaskFacade;
+
     /** 快照构建结果。 */
     public record SnapshotResult(Map<String, Object> values, String json, boolean tooLarge,
                                  List<String> missingRequired, List<String> errors) {
@@ -89,7 +94,9 @@ public class BpmVariableSnapshotService {
                     continue;
                 }
                 values.put(varId, value);
-                if (value == null && !Boolean.TRUE.equals(def.getNullable())) {
+                // BF20261013-022⑦：自动来源（未维护 source）默认可空，不因取不到值阻止触发
+                boolean autoSource = def.getSource() == null || def.getSource().isBlank();
+                if (value == null && !autoSource && !Boolean.TRUE.equals(def.getNullable())) {
                     missing.add(def.getVarId());
                 }
             } catch (Exception e) {
@@ -141,8 +148,7 @@ public class BpmVariableSnapshotService {
     }
 
     private Object resolveVariable(ProcessVariableDef def, ResolutionContext context,
-                                   String currentNodeKey, List<String> missing, List<String> errors) {
-        String source = def.getSource() == null ? "" : def.getSource().toUpperCase();
+                                   String currentNodeKey, List<String> missing, List<String> errors) {        String source = def.getSource() == null ? "" : def.getSource().toUpperCase();
         String type = def.getType() == null ? "" : def.getType().toUpperCase();
         return switch (source) {
             case "MAIN_FORM" -> {
@@ -158,11 +164,53 @@ public class BpmVariableSnapshotService {
                         missing, errors);
             }
             case "SYSTEM" -> resolveSystem(def, context.instance, currentNodeKey, context.roundNo);
+            case "" -> {
+                // BF20261013-022⑦：自动取值链（UI 不再维护来源）——
+                // 脚本写入的实例变量 > 主表单同名字段 > 最新提交的审批意见（节点表单）同名字段
+                yield resolveAuto(def, context);
+            }
             default -> {
                 errors.add("未知变量来源: " + def.getSource());
                 yield RESOLVE_SKIP;
             }
         };
+    }
+
+    /**
+     * BF20261013-022⑦：自动取值链——脚本写入的实例变量 > 主表单同名字段 >
+     * 最新提交的节点表单（审批意见，全实例按提交顺序取最新含该字段的行）同名字段；
+     * 全缺返回 null（自动来源默认可空）。
+     */
+    private Object resolveAuto(ProcessVariableDef def, ResolutionContext context) {
+        String varId = def.getVarId();
+        if (bpmTaskFacade != null) {
+            try {
+                Map<String, Object> instanceVariables = bpmTaskFacade
+                        .getVariables(context.instance.getProcessInstanceId()).orElse(Map.of());
+                if (instanceVariables.containsKey(varId)) {
+                    return instanceVariables.get(varId);
+                }
+            } catch (Exception e) {
+                // 实例变量层不可用：降级到表单层（不视为取值失败）
+            }
+        }
+        context.ensureMainFormLoaded();
+        if (context.mainFields != null && context.mainFields.containsKey(varId)) {
+            return context.mainFields.get(varId);
+        }
+        List<BpmTaskFormData> rows = nodeFormDataService.listByInstance(context.tenantId,
+                context.instance.getProcessInstanceId());
+        for (int i = rows.size() - 1; i >= 0; i--) {
+            BpmTaskFormData row = rows.get(i);
+            if (!NodeFormDataService.STATUS_SUBMITTED.equals(row.getStatus())) {
+                continue;
+            }
+            Map<String, Object> data = nodeFormDataService.parseData(row.getDataText());
+            if (data != null && data.containsKey(varId)) {
+                return data.get(varId);
+            }
+        }
+        return null;
     }
 
     @SuppressWarnings("unchecked")
