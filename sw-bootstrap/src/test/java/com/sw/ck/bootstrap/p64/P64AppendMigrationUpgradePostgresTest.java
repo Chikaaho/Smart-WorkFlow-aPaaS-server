@@ -1,32 +1,47 @@
 package com.sw.ck.bootstrap.p64;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * P64 阶段Ⅰ A12 追加迁移演练（真实 PostgreSQL）：以 0.1.6 迁移链 + 非空存量
- * （旧流程定义/运行实例）为基线，验证 V0.1.7 追加升级——三张新表就位、存量行原义保持、
- * 迁移历史恰一条 0.1.7。
+ * P64 A12 追加迁移演练（真实 PostgreSQL）。
  * <p>
- * 沿 I6G7b 既有配方：一次性临时库、连接不可用按外部环境事实跳过（等强度由
- * FlywayFullChainPostgresTest / H2 链承载）；回退边界（旧代码不读写新表、数据保留）
- * 由 ADR-P64-001 §6 契约承载。
+ * 原形式为「0.1.6 非空基线 → V0.1.7—V0.1.9 追加升级」；0.1.5 发版收敛后
+ * versioned 链为单一种子 {@code V0.1.5__baseline_seed.sql}，中间版本不再存在，
+ * 追加升级语义按开发声明（development-declaration.md §1/§5）重写为
+ * <b>开发时间戳命名</b>：{@code V<yyyymmddhhmmss>__<功能需求>.sql}。</p>
+ * <p>
+ * 本演练证明：0.1.5 种子全新库 + 非空存量（旧流程定义/运行实例/任务级审批动作）→
+ * 追加一支时间戳迁移（新建表，不触碰存量）→ 存量行原义逐字节保持、
+ * 新表零写回、迁移历史恰一条时间戳成功记录、validate 通过、重复 migrate 零执行。
+ * 即：发布基线（0.1.5）与开发时间戳迁移两套命名可在同一库内正确衔接，
+ * 不会重复应用、跳过变化或重写历史。</p>
+ * <p>
+ * 沿既有配方：一次性临时库、连接不可用按外部环境事实跳过（等强度由
+ * FlywayFullChainPostgresTest / H2 链承载）。
  * </p>
  */
-@DisplayName("P64 A12 真实 PG 0.1.6 非空基线 → V0.1.7—V0.1.9 追加升级演练（阶段Ⅱ链尾）")
+@DisplayName("P64 A12 真实 PG 0.1.5 种子基线 → 开发时间戳迁移追加升级演练")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class P64AppendMigrationUpgradePostgresTest {
 
@@ -60,7 +75,7 @@ class P64AppendMigrationUpgradePostgresTest {
     private String dbPassword;
 
     @Test
-    @DisplayName("0.1.6 非空基线追加至链尾：新表就位、存量原义保持、链尾 0.1.9")
+    @DisplayName("0.1.5 种子非空库追加时间戳迁移：存量原义保持、新表零写回、历史恰一条时间戳记录")
     void appendMigrationPreservesLegacyRows() throws Exception {
         probeConnection();
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);
@@ -69,11 +84,13 @@ class P64AppendMigrationUpgradePostgresTest {
             stmt.executeUpdate("CREATE DATABASE " + DB_NAME);
         }
 
-        // 1) 迁移到 0.1.6 基线
-        Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
-                .locations(APP_LOCATIONS).target("0.1.6").load().migrate();
+        // 1) 迁移到 0.1.5 种子基线
+        var baselineResult = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
+                .locations(APP_LOCATIONS).load().migrate();
+        assertTrue(baselineResult.success, "种子迁移应成功");
+        assertEquals("0.1.5", currentVersion(conn()), "种子基线应为 0.1.5");
 
-        // 2) 非空存量：旧流程定义 + 运行实例 + 任务级审批动作行（升级前真实业务行）
+        // 2) 非空存量：旧流程定义 + 运行实例 + 任务级审批动作行（追加前真实业务行）
         String legacyGraphJson = "{\"processKey\":\"legacy_def_p64\",\"elements\":["
                 + "{\"kind\":\"node\",\"id\":\"start\",\"config\":{}},"
                 + "{\"kind\":\"node\",\"id\":\"end\",\"config\":{}}]}";
@@ -92,23 +109,38 @@ class P64AppendMigrationUpgradePostgresTest {
                     + "(9003, 9, 'legacy-pi-1', 'node_legacy', 'legacy-task-1', 7, 'APPROVE')");
         }
 
-        // 3) 追加升级到链尾（V0.1.7—V0.1.9）
-        var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
-                .locations(APP_LOCATIONS).load().migrate();
+        // 3) 追加一支开发时间戳迁移（开发声明 §1 命名：V<yyyymmddhhmmss>__<功能需求>.sql，
+        //    时区 Asia/Singapore；只新建表，不触碰存量）
+        String ts = ZonedDateTime.now(ZoneId.of("Asia/Singapore"))
+                .format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+        String migrationName = "V" + ts + "__p64_append_drill.sql";
+        Path drillDir = Files.createTempDirectory("p64-append-drill");
+        Files.writeString(drillDir.resolve(migrationName),
+                "-- 开发时间戳迁移演练：追加新表，不触碰存量数据。\n"
+                        + "CREATE TABLE sw_p64_append_drill (\n"
+                        + "    id bigint not null primary key,\n"
+                        + "    note varchar(200)\n"
+                        + ");\n", StandardCharsets.UTF_8);
+        String[] withDrill = concat(APP_LOCATIONS, "filesystem:" + drillDir.toAbsolutePath());
+
+        MigrateResult result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
+                .locations(withDrill).load().migrate();
         assertTrue(result.success, "追加迁移应成功");
+        assertEquals(1, result.migrationsExecuted, "追加升级应恰执行 1 条时间戳迁移");
 
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
-            // 终点版本 0.1.9
-            assertEquals("0.1.9", currentVersion(conn), "升级终点应为 0.1.9");
+            // 终点版本 = 时间戳版本（0.1.5 之后）
+            assertEquals(ts, currentVersion(conn), "升级终点应为时间戳版本");
 
-            // 三张新表就位
-            for (String table : new String[]{
-                    "sw_bpm_task_form_data", "sw_bpm_trigger_exec", "sw_bpm_action_ref",
-                    "sw_bpm_child_batch", "sw_bpm_child_item", "sys_post_delegate"}) {
-                assertTrue(tableExists(conn, table), "新表应存在: " + table);
+            // 新表就位且零写回
+            assertTrue(tableExists(conn, "sw_p64_append_drill"), "时间戳迁移新表应存在");
+            try (Statement st2 = conn.createStatement();
+                 ResultSet rs = st2.executeQuery("SELECT COUNT(*) FROM sw_p64_append_drill")) {
+                assertTrue(rs.next());
+                assertEquals(0, rs.getInt(1), "追加升级不得向新表写回数据");
             }
 
-            // 存量行原义保持（A12：受影响旧定义和实际实例原义保持）
+            // 存量行原义保持
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT process_key, name, status, def_version, graph_json FROM sw_bpm_process_def "
                             + "WHERE id = 9001");
@@ -118,7 +150,6 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals("存量定义", rs.getString(2));
                 assertEquals("PUBLISHED", rs.getString(3));
                 assertEquals(2, rs.getInt(4));
-                // 冻结图逐字节不变：运行实例升级后按同一冻结图继续（原义完成的数据前提）
                 assertEquals(legacyGraphJson, rs.getString(5), "存量定义 graph_json 应逐字节不变");
             }
             try (PreparedStatement ps = conn.prepareStatement(
@@ -130,7 +161,6 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals("legacy-rec-1", rs.getString(2));
                 assertEquals("RUNNING", rs.getString(3));
             }
-            // 任务级动作行原义保持（任务/轮次事实不受迁移影响）
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT task_id, actor_id, action FROM sw_bpm_approval_action WHERE id = 9003");
                  ResultSet rs = ps.executeQuery()) {
@@ -139,33 +169,41 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals(7, rs.getInt(2));
                 assertEquals("APPROVE", rs.getString(3));
             }
-            // 升级不写入新表：存量数据零迁移、零改写（追加式升级）
-            try (Statement st2 = conn.createStatement();
-                 ResultSet rs = st2.executeQuery(
-                         "SELECT (SELECT COUNT(*) FROM sw_bpm_task_form_data) + "
-                                 + "(SELECT COUNT(*) FROM sw_bpm_trigger_exec) + "
-                                 + "(SELECT COUNT(*) FROM sw_bpm_action_ref) + "
-                                 + "(SELECT COUNT(*) FROM sw_bpm_child_batch) + "
-                                 + "(SELECT COUNT(*) FROM sw_bpm_child_item) + "
-                                 + "(SELECT COUNT(*) FROM sys_post_delegate)")) {
-                assertTrue(rs.next());
-                assertEquals(0, rs.getInt(1), "六张新表在升级后应为空（零迁移写回）");
-            }
 
-            // 迁移历史恰一条 0.1.7/0.1.8/0.1.9 且成功
+            // 迁移历史：versioned 恰两条成功记录（0.1.5 种子 + 时间戳）
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT version, COUNT(*) FROM flyway_schema_history "
-                            + "WHERE version IN ('0.1.7','0.1.8','0.1.9') AND success = TRUE "
-                            + "GROUP BY version");
+                            + "WHERE version IS NOT NULL AND success = TRUE GROUP BY version");
                  ResultSet rs = ps.executeQuery()) {
                 int seen = 0;
                 while (rs.next()) {
-                    assertEquals(1, rs.getInt(2), rs.getString(1) + " 应恰有一条成功迁移记录");
+                    String version = rs.getString(1);
+                    assertEquals(1, rs.getInt(2), version + " 应恰有一条成功迁移记录");
+                    assertTrue(version.equals("0.1.5") || version.equals(ts),
+                            "versioned 历史应仅含 0.1.5 与时间戳，实际: " + version);
                     seen++;
                 }
-                assertEquals(3, seen, "0.1.7/0.1.8/0.1.9 应各有一条成功迁移记录");
+                assertEquals(2, seen, "versioned 历史应恰 0.1.5 + 时间戳两条");
             }
         }
+
+        // validate 通过 + 重复 migrate 零执行
+        Flyway after = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
+                .locations(withDrill).load();
+        after.validate();
+        MigrateResult again = after.migrate();
+        assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
+    }
+
+    private Connection conn() throws SQLException {
+        return DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+    }
+
+    private static String[] concat(String[] left, String right) {
+        String[] out = new String[left.length + 1];
+        System.arraycopy(left, 0, out, 0, left.length);
+        out[left.length] = right;
+        return out;
     }
 
     private void probeConnection() {
@@ -196,7 +234,7 @@ class P64AppendMigrationUpgradePostgresTest {
     private String currentVersion(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT version FROM flyway_schema_history "
-                     + "WHERE success = TRUE ORDER BY installed_rank DESC LIMIT 1")) {
+                     + "WHERE success = TRUE AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")) {
             assertTrue(rs.next(), "迁移历史不应为空");
             return rs.getString(1);
         }

@@ -24,10 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Phase 4 G5 · 迁移行为证据（真实 PostgreSQL，专用 schema，原始输出可回读）。
  *
  * <p>方向 §5.D.4 要求：既有记录兼容、前置数据检查、正向迁移、终点版本与回滚/恢复边界，
- * 且"不得以清空数据库证明迁移成功"。0.1.3 种子合并后 versioned 链收敛为 V0.1.0 基线，
+ * 且"不得以清空数据库证明迁移成功"。0.1.5 发版收敛后 versioned 链为单一种子 V0.1.5__baseline_seed.sql，
  * 「V95 → 链尾升级」演练随「仅支持全新建库」边界退役，本类在独立 schema 中依次证明：</p>
  * <ol>
- *   <li>全链 clean migrate 到基线（终点版本 0.1.0 + 新表/新列/索引存在）；</li>
+ *   <li>全链 clean migrate 到种子（终点版本 0.1.5 + 新表/新列/索引存在）；</li>
  *   <li>基线结构默认值与新列落点、唯一索引真实拒绝重复；</li>
  *   <li>迁移失败边界：失败不推进版本、不留失败历史行，repair + 重跑后能继续到终点，
  *       且既有数据仍在。</li>
@@ -39,7 +39,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
     private static final String SCHEMA = "p4_migration";
 
     @Test
-    @DisplayName("G5-1 全链 clean migrate 到最新（0.1.9 链尾）：终点版本、新表、新列与索引齐备")
+    @DisplayName("G5-1 全链 clean migrate 到最新（0.1.5 种子）：终点版本、新表、新列与索引齐备")
     void cleanMigrateReachesBaselineWithNewStructures() throws Exception {
         ensureEvidenceDatabase();
         Flyway flyway = flywayTargeting(null, false);
@@ -47,7 +47,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         MigrateResult result = flyway.migrate();
         assertThat(result.success).isTrue();
         String version = latestVersion();
-        assertThat(version).isEqualTo("0.1.9");
+        assertThat(version).isEqualTo("0.1.5");
         assertThat(tableExists("sw_openapi_callback_task")).isTrue();
         assertThat(indexExists("uk_sw_openapi_cb_task")).isTrue();
         assertThat(indexExists("idx_sw_openapi_cb_task_due")).isTrue();
@@ -67,7 +67,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         flyway.clean();
         MigrateResult toBaseline = flyway.migrate();
         assertThat(toBaseline.success).isTrue();
-        assertThat(latestVersion()).isEqualTo("0.1.9");
+        assertThat(latestVersion()).isEqualTo("0.1.5");
 
         // 基线结构下的真实业务行：省略 retry_count / next_retry_time / error，验证列默认值与可空落点
         try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
@@ -139,8 +139,8 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         // 因此失败迁移被整体回滚（Flyway 原始日志为 "Changes successfully rolled back"），
         // 既不留 failed 历史行，也不推进版本号——与非事务型 DDL 方言需要 repair 的边界不同。
         long failedRecords = countRows("select count(*) from flyway_schema_history where success = false");
-        // 失败点（V1001）之前已就绪的 V0.1.0—V0.1.9 正常应用；失败点整体回滚，版本停在最新已应用迁移
-        assertThat(latestVersion()).as("失败迁移不得推进到失败版本").isEqualTo("0.1.9");
+        // 失败点（V1001）之前已就绪的 V0.1.5 种子正常应用；失败点整体回滚，版本停在最新已应用迁移
+        assertThat(latestVersion()).as("失败迁移不得推进到失败版本").isEqualTo("0.1.5");
         assertThat(countRows("select count(*) from flyway_schema_history where version = '1001'"))
                 .as("事务型方言失败后不留下 1001 号历史行").isZero();
         assertThat(failedRecords).as("事务型 DDL 下失败迁移整体回滚，无残留失败行").isZero();
@@ -155,7 +155,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         recovered.repair();
         MigrateResult afterRepair = recovered.migrate();
         assertThat(afterRepair.success).isTrue();
-        assertThat(latestVersion()).isEqualTo("0.1.9");
+        assertThat(latestVersion()).isEqualTo("0.1.5");
         assertThat(countRows("select count(*) from sw_iot_process_trigger where id = 96201"))
                 .as("恢复后既有数据仍必须存在").isEqualTo(1L);
         assertThat(tableExists("sw_openapi_callback_task")).isTrue();

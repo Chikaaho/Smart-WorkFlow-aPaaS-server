@@ -2,22 +2,20 @@ package com.sw.ck.bootstrap.p62;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.core.api.configuration.FluentConfiguration;
+import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -25,301 +23,335 @@ import java.util.HexFormat;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * LT05a：非空旧数据先于 P62 增量迁移的时间链（隔离内嵌真实 PostgreSQL）。
+ * 0.1.5 发布收敛升级通道常驻验证（隔离内嵌真实 PostgreSQL）。
  * <p>
- * 审查02 LT05a 的不可接受证据是「全新建库后写数据」——那只能证明新库可用，
- * 不能证明「迁移前已存在的非空数据」在应用本次增量后身份与值不变。
- * 本用例构建完整时间链：0.1.3 基线（V0.1.0）→ 写入代表数据（表单元数据 + 动态宽表行）
- * → 应用本次增量（V0.1.1 + 可重复迁移）→ 回读身份/值/既有查询，全程无数据改写。
- * </p><p>
- * 隔离性：使用 zonky 内嵌 PostgreSQL（临时集群，随 JVM 退出销毁），不触碰任何
- * 共享库；不做 DROP DATABASE，不写发布基线。校验和取自 flyway_schema_history
- * 机器记录，并附 V0.1.1 迁移文件 SHA-256 供对象身份绑定。
+ * 本类原为 LT05a「非空旧数据先于 P62 增量」时间链；0.1.5 发版收敛
+ * （versioned 链 V0.1.0—V0.1.10 → 每方言单一 {@code V0.1.5__baseline_seed.sql}，
+ * 旧链移入独立升级通道 {@code db/upgrade/0.1.5/}）后，原增量文件不再存在，
+ * 时间链重写为升级通道的两条受控路径，非空数据无损语义延续：</p>
+ * <ol>
+ *   <li>通道A（历史衔接）：在役旧链全量库（0.1.10 终态 + 业务数据）→
+ *       {@code transition-history-to-0.1.5.postgresql.sql} → validate 通过、
+ *       重复 migrate 零执行、数据无损、目录与全新种子库一致；</li>
+ *   <li>通道B（存量升级）：legacy 0.1.1 库（业务数据）→
+ *       {@code upgrade-to-0.1.5-from-0.1.1.postgresql.sql} → 同上。</li>
+ * </ol>
+ * <p>
+ * 隔离性：zonky 内嵌 PostgreSQL（临时集群，随 JVM 退出销毁），不触碰共享库。
+ * 升级脚本按发布资产原文从 classpath 读取，测试即验证交付物本身。
  * </p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@DisplayName("LT05a 非空旧数据先于 P62 增量的隔离升级链（内嵌真实 PostgreSQL）")
+@DisplayName("0.1.5 升级通道常驻验证：历史衔接与存量升级（内嵌真实 PostgreSQL）")
 class P62NonEmptyUpgradePgTest {
 
-    private static final String[] LOCATIONS = {"classpath:db/migration/postgresql"};
     private static final String PG_USER = "postgres";
     private static final String PG_PASSWORD = "postgres";
 
-    private static final String LEGACY_FORM_ID = "lt05a-form-0001";
-    private static final String LEGACY_FORM_KEY = "lt05a_legacy_form";
+    /** 升级通道脚本（发布资产原文）。 */
+    private static final String TRANSITION_SCRIPT =
+            "db/upgrade/0.1.5/transition-history-to-0.1.5.postgresql.sql";
+    private static final String UPGRADE_FROM_0_1_1_SCRIPT =
+            "db/upgrade/0.1.5/upgrade-to-0.1.5-from-0.1.1.postgresql.sql";
+    private static final String LEGACY_DIR_RESOURCE = "db/upgrade/0.1.5/legacy-0.1.x/postgresql";
+
     private static final String LEGACY_TABLE = "lt05a_legacy_tbl";
-    private static final String LEGACY_CONFIG_ID = "lt05a-conf-0001";
 
-    /** P62 增量新建的 6 张表（V0.1.1）。 */
-    private static final List<String> P62_TABLES = List.of(
-            "sw_form_txn_action", "sw_form_txn_action_version", "sw_form_txn_invocation",
-            "sw_form_txn_reservation", "sw_form_txn_ledger", "sw_form_c1_policy");
-
-    private EmbeddedPostgres pg;
-    private String url;
+    private static EmbeddedPostgres pg;
+    private static String url;
 
     @BeforeAll
-    void startEmbedded() throws Exception {
+    static void startEmbedded() throws Exception {
         pg = EmbeddedPostgres.builder().start();
         // stringtype=unspecified：与真实启动数据源同口径，jsonb 列可直接以文本参数写入
         url = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
     }
 
     @AfterAll
-    void stopEmbedded() throws Exception {
+    static void stopEmbedded() throws Exception {
         if (pg != null) {
             pg.close();
         }
     }
 
     @Test
-    @DisplayName("基线 0.1.0 → 非空代表数据 → 本次增量 → 身份/值/既有查询回读无损且迁移历史可复算")
-    void nonEmptyLegacyRowsSurviveP62Increment() throws Exception {
-        // ============ 1. 隔离基线：0.1.3 发布时的迁移全集（V0.1.0 + R__i6） ============
-        // 0.1.3 发版批次（a9483be）的 postgresql 目录仅含这两支；基线阶段用字节级复制隔离
-        // 出同源文件，避免把本次增量才引入的 R__p62 提前执行，破坏时间链。
-        Path baselineDir = Files.createTempDirectory("lt05a-baseline-0.1.3");
-        for (String file : new String[]{
-                "V0.1.0__baseline_seed.sql", "R__i6_notify_menu_reconciliation.sql"}) {
-            String resource = "db/migration/postgresql/" + file;
-            copyResource(resource, baselineDir.resolve(file));
-            assertThat(sha256File(baselineDir.resolve(file))).as("基线复制字节同源：" + file)
-                    .isEqualTo(resourceSha256(resource));
-        }
-        Flyway baseline = Flyway.configure().dataSource(url, PG_USER, PG_PASSWORD)
-                .locations("filesystem:" + baselineDir.toAbsolutePath())
-                .target(MigrationVersion.fromVersion("0.1.0"))
-                .load();
-        var baselineResult = baseline.migrate();
-        assertThat(baselineResult.success).isTrue();
-        String baselineHistory = historyRows();
-        System.out.println("[P62-EV] lt05a.baseline migrated=" + baselineResult.migrationsExecuted
-                + " target=0.1.0 set=V0.1.0+R__i6 history=" + baselineHistory);
-        assertThat(baselineHistory).as("基线含 0.1.0").contains("0.1.0");
+    @DisplayName("通道A：在役旧链全量库（0.1.10 终态+业务数据）→ 历史衔接脚本 → validate 通过/零重复执行/数据无损/目录=全新种子")
+    void legacyFullChainSurvivesHistoryTransition() throws Exception {
+        String db = createDatabase("lt05a_tr_full");
 
-        // 基线阶段必须尚无 P62 结构与 P62 菜单（否则时间链不成立）
-        assertThat(existingTables(P62_TABLES)).as("增量前不存在 P62 表").isEmpty();
-        assertThat(countRowsWhere("sys_menu", "id IN (9100,9101,9102,9103)")).as("增量前无 P62 菜单")
-                .isZero();
+        // 1) 旧链全量迁移（legacy V0.1.0—V0.1.10 + 9 个 R__ 副本）
+        var result = flywayLegacy(db).load().migrate();
+        assertThat(result.success).isTrue();
+        assertThat(currentVersion(db)).isEqualTo("0.1.10");
 
-        // ============ 2. 非空代表数据：迁移前已存在 ============
-        String insertedAt;
-        try (Connection conn = conn()) {
-            insertedAt = now(conn);
-            // 表单元数据（已发布表单，业务查询入口）
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO sw_form_def (id, form_key, name, status, physical_table_name,"
-                            + " form_version, tenant_id, deleted, version, create_time, update_time)"
-                            + " VALUES (?, ?, ?, 'PUBLISHED', ?, 1, 0, 0, 0, now(), now())")) {
-                ps.setString(1, LEGACY_FORM_ID);
-                ps.setString(2, LEGACY_FORM_KEY);
-                ps.setString(3, "LT05a 旧数据表单");
-                ps.setString(4, LEGACY_TABLE);
-                ps.executeUpdate();
-            }
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO sw_form_config (id, form_id, definition, table_name, parent_table,"
-                            + " tenant_id, deleted, version, create_time, update_time)"
-                            + " VALUES (?, ?, ?, ?, NULL, 0, 0, 0, now(), now())")) {
-                ps.setString(1, LEGACY_CONFIG_ID);
-                ps.setString(2, LEGACY_FORM_ID);
-                ps.setString(3, "{\"schemaVersion\":1,\"title\":\"LT05a 旧数据表单\",\"fields\":["
-                        + "{\"name\":\"material\",\"type\":\"TEXT\",\"label\":\"物料\"},"
-                        + "{\"name\":\"qty_available\",\"type\":\"NUMBER\",\"label\":\"可用量\"},"
-                        + "{\"name\":\"qty_reserved\",\"type\":\"NUMBER\",\"label\":\"预占量\"}]}");
-                ps.setString(4, LEGACY_TABLE);
-                ps.executeUpdate();
-            }
-            // 动态宽表（应用生成的真实形态：系统列 + 用户列，NUMBER=NUMERIC(20,6)）
-            try (Statement st = conn.createStatement()) {
-                st.executeUpdate("CREATE TABLE \"" + LEGACY_TABLE + "\" ("
-                        + "  \"id\" VARCHAR(36) NOT NULL,"
-                        + "  \"tenant_id\" BIGINT NOT NULL DEFAULT 0,"
-                        + "  \"deleted\" SMALLINT NOT NULL DEFAULT 0,"
-                        + "  \"create_time\" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-                        + "  \"create_by\" BIGINT,"
-                        + "  \"update_time\" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-                        + "  \"update_by\" BIGINT,"
-                        + "  \"version\" BIGINT NOT NULL DEFAULT 0,"
-                        + "  \"material\" VARCHAR(1000),"
-                        + "  \"qty_available\" NUMERIC(20,6),"
-                        + "  \"qty_reserved\" NUMERIC(20,6),"
-                        + "  PRIMARY KEY (\"id\")"
-                        + ")");
-            }
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO \"" + LEGACY_TABLE + "\" (\"id\", \"tenant_id\", \"deleted\", \"version\","
-                            + " \"material\", \"qty_available\", \"qty_reserved\", \"create_time\", \"update_time\")"
-                            + " VALUES (?, 0, 0, 0, ?, ?, ?, now(), now())")) {
-                ps.setString(1, "lt05a-rec-0001");
-                ps.setString(2, "LT05A-M1");
-                ps.setBigDecimal(3, new java.math.BigDecimal("100.000000"));
-                ps.setBigDecimal(4, new java.math.BigDecimal("30.000000"));
-                ps.executeUpdate();
-                ps.setString(1, "lt05a-rec-0002");
-                ps.setString(2, "LT05A-M2");
-                ps.setBigDecimal(3, new java.math.BigDecimal("7.500000"));
-                ps.setBigDecimal(4, new java.math.BigDecimal("0.000000"));
-                ps.executeUpdate();
-            }
-        }
-        String preDigest = legacyDigest();
-        int preCount = legacyCount();
-        List<String> preRows = legacyRows();
-        assertThat(preCount).as("代表数据非空").isEqualTo(2);
-        assertThat(insertedAt).isNotBlank();
-        System.out.println("[P62-EV] lt05a.legacy-seeded rows=" + preCount + " digest=" + preDigest
-                + " digest_sha256=" + sha256(preDigest) + " inserted_before_increment=true");
+        // 2) 非空代表数据（迁移/衔接前已存在）
+        seedBusinessData(db);
+        String preDigest = legacyDigest(db);
+        int preCount = legacyCount(db);
 
-        // ============ 3. 本次增量（无 target 的最新链） ============
-        Flyway latest = Flyway.configure().dataSource(url, PG_USER, PG_PASSWORD)
-                .locations(LOCATIONS)
-                .load();
-        var incrementResult = latest.migrate();
-        assertThat(incrementResult.success).isTrue();
-        String incrementHistory = historyRows();
-        String versionRow = historyWhere("version = '0.1.1'");
-        System.out.println("[P62-EV] lt05a.increment migrated=" + incrementResult.migrationsExecuted
-                + " applied=" + appliedList() + " history_0_1_1=" + versionRow);
-        assertThat(versionRow).as("V0.1.1 进入迁移历史").contains("0.1.1").contains("true");
+        // 3) 历史衔接脚本（发布资产原文）
+        execScript(db, classpathResource(TRANSITION_SCRIPT));
 
-        // ============ 4. 迁移后回读：身份/值/既有查询 ============
-        List<String> postRows = legacyRows();
-        assertThat(legacyCount()).as("迁移后行数不减").isEqualTo(preCount);
-        assertThat(legacyDigest()).as("迁移后行内容摘要一致（无数据改写）").isEqualTo(preDigest);
-        assertThat(postRows).as("迁移后逐行身份/值一致").isEqualTo(preRows);
-        assertThat(legacyFormMeta()).as("表单元数据回读一致").contains(LEGACY_FORM_KEY).contains(LEGACY_TABLE);
+        // 4) 衔接后：validate 通过 + 重复 migrate 零执行 + 终点 0.1.5
+        Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
+                .locations(appLocations()).load();
+        after.validate();
+        MigrateResult again = after.migrate();
+        assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
+        assertThat(currentVersion(db)).as("衔接终点应为 0.1.5").isEqualTo("0.1.5");
 
-        // 既有查询（应用读路径形态：租户 + 未删条件）仍可执行且结果正确
-        try (Connection conn = conn();
-             PreparedStatement ps = conn.prepareStatement("SELECT \"material\", \"qty_available\" - \"qty_reserved\""
-                     + " AS \"available\" FROM \"" + LEGACY_TABLE + "\""
-                     + " WHERE \"tenant_id\" = 0 AND \"deleted\" = 0 ORDER BY \"id\"")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                List<String> available = new ArrayList<>();
-                while (rs.next()) {
-                    available.add(rs.getString(1) + "=" + rs.getBigDecimal(2).toPlainString());
-                }
-                assertThat(available).as("既有可用量查询迁移后结果").containsExactly("LT05A-M1=70.000000", "LT05A-M2=7.500000");
-            }
-        }
+        // 5) 数据无损 + 目录与全新种子库一致
+        assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
+        assertThat(legacyDigest(db)).as("衔接后行内容摘要一致").isEqualTo(preDigest);
+        assertHistorySingleSeed(db);
+        String fresh = createDatabase("lt05a_tr_full_fresh");
+        Flyway.configure().dataSource(dbUrl(fresh), PG_USER, PG_PASSWORD)
+                .locations(appLocations()).load().migrate();
+        assertThat(catalogOf(db)).as("衔接后目录应与全新种子库一致")
+                .isEqualTo(catalogOf(fresh));
+        System.out.println("[P62-EV] r015.transition fullchain rows=" + legacyCount(db)
+                + " digest_sha256=" + sha256(preDigest) + " history=0.1.5 rerun=0 validate=pass");
+    }
 
-        // 增量结构就位：P62 六表存在且可查询（零行）；P62 菜单与授权随增量落库
-        assertThat(existingTables(P62_TABLES)).as("增量后 P62 六表齐备").containsExactlyInAnyOrderElementsOf(P62_TABLES);
-        assertThat(countRows("sw_form_txn_action")).isZero();
-        assertThat(countRows("sw_form_c1_policy")).isZero();
-        assertThat(countRowsWhere("sys_menu", "id IN (9100,9101,9102,9103)")).as("增量后 P62 菜单落库").isEqualTo(4L);
-        assertThat(countRowsWhere("sys_role_menu", "menu_id IN (9100,9101,9102,9103) AND role_id = 2"))
-                .as("增量后 P62 角色授权落库").isEqualTo(4L);
+    @Test
+    @DisplayName("通道B：legacy 0.1.1 库（业务数据）→ 增量升级脚本 → validate 通过/终点 0.1.5/数据无损/目录=全新种子")
+    void legacy011UpgradesToSeedWithoutDataLoss() throws Exception {
+        String db = createDatabase("lt05a_up_011");
 
-        // 迁移历史复算：版本链、校验和、安装时间
-        assertThat(historyRows()).contains("0.1.0").contains("0.1.1");
-        System.out.println("[P62-EV] lt05a.readback rows=" + legacyCount() + " digest=" + legacyDigest()
-                + " digest_sha256=" + sha256(legacyDigest()) + " digest_equal=" + preDigest.equals(legacyDigest())
-                + " p62_tables=6 history=" + incrementHistory);
-        System.out.println("[P62-EV] lt05a.file-identity migration_file=V0.1.1__form_local_transaction_actions.sql"
-                + " sha256=" + resourceSha256("db/migration/postgresql/V0.1.1__form_local_transaction_actions.sql"));
+        // 1) 旧链迁移到 0.1.1（R__ 全量照常应用；衔接脚本只处理 versioned 行）
+        Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
+                .locations(legacyDir()).target("0.1.1").load().migrate();
+        assertThat(currentVersion(db)).isEqualTo("0.1.1");
+
+        // 2) 非空代表数据（升级前已存在）
+        seedBusinessData(db);
+        String preDigest = legacyDigest(db);
+        int preCount = legacyCount(db);
+
+        // 3) 增量升级脚本（V0.1.2—V0.1.10 DDL + 历史衔接，发布资产原文）
+        execScript(db, classpathResource(UPGRADE_FROM_0_1_1_SCRIPT));
+
+        // 4) 升级后：validate 通过 + 重复 migrate 零执行 + 终点 0.1.5
+        Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
+                .locations(appLocations()).load();
+        after.validate();
+        MigrateResult again = after.migrate();
+        assertEquals(0, again.migrationsExecuted, "升级后重复 migrate 不应执行任何迁移");
+        assertThat(currentVersion(db)).as("升级终点应为 0.1.5").isEqualTo("0.1.5");
+
+        // 5) 数据无损 + 目录与全新种子库一致
+        assertThat(legacyCount(db)).as("升级后行数不减").isEqualTo(preCount);
+        assertThat(legacyDigest(db)).as("升级后行内容摘要一致").isEqualTo(preDigest);
+        assertHistorySingleSeed(db);
+        String fresh = createDatabase("lt05a_up_011_fresh");
+        Flyway.configure().dataSource(dbUrl(fresh), PG_USER, PG_PASSWORD)
+                .locations(appLocations()).load().migrate();
+        assertThat(catalogOf(db)).as("升级后目录应与全新种子库一致")
+                .isEqualTo(catalogOf(fresh));
+        System.out.println("[P62-EV] r015.upgrade-from-0.1.1 rows=" + legacyCount(db)
+                + " digest_sha256=" + sha256(preDigest) + " history=0.1.5 rerun=0 validate=pass");
     }
 
     // ==================== 数据与历史工具 ====================
 
-    private Connection conn() throws Exception {
-        return DriverManager.getConnection(url, PG_USER, PG_PASSWORD);
+    private static String[] appLocations() {
+        return new String[]{
+                "classpath:db/migration/postgresql",
+                "classpath:db/migration/bpm/postgresql",
+                "classpath:db/migration/notify/postgresql",
+                "classpath:db/migration/form/postgresql",
+                "classpath:db/migration/storage/postgresql",
+                "classpath:db/migration/job/postgresql",
+                "classpath:db/migration/agent/postgresql",
+                "classpath:db/migration/iot/postgresql",
+                "classpath:db/migration/openapi/postgresql",
+                "classpath:db/migration/system/postgresql"};
     }
 
-    private static String now(Connection conn) throws Exception {
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT now()::timestamp::text")) {
-            rs.next();
-            return rs.getString(1);
+    /** 旧链位置 = 临时目录（legacy V 文件 + 主链 9 个 R__ 副本），避免与新种子同号冲突。 */
+    private static String[] legacyDir() throws Exception {
+        Path dir = Files.createTempDirectory("r015-legacy-pg-");
+        for (int i = 0; i <= 10; i++) {
+            String name = i == 0 ? "V0.1.0__baseline_seed.sql" : "V0.1." + i + "__" + LEGACY_TAILS.get(i) + ".sql";
+            Files.writeString(dir.resolve(name), classpathResource(LEGACY_DIR_RESOURCE + "/" + name),
+                    StandardCharsets.UTF_8);
+        }
+        for (String r : new String[]{
+                "R__bf20261013_catalog_admin_menu.sql", "R__i6_notify_menu_reconciliation.sql",
+                "R__p62_form_txn_action_menu.sql", "R__p62_iot_command_verify_menu.sql",
+                "R__p62_resource_ops_menu.sql", "R__p62_txn_batch_menu.sql",
+                "R__p63_iot_reservation_menu.sql", "R__p64_approval_form_menu.sql",
+                "R__p64_position_delegate_menu.sql"}) {
+            Files.writeString(dir.resolve(r), classpathResource("db/migration/postgresql/" + r),
+                    StandardCharsets.UTF_8);
+        }
+        return new String[]{"filesystem:" + dir.toAbsolutePath()};
+    }
+
+    private static final java.util.Map<Integer, String> LEGACY_TAILS = java.util.Map.ofEntries(
+            java.util.Map.entry(1, "form_local_transaction_actions"),
+            java.util.Map.entry(2, "tiered_command_semantics"),
+            java.util.Map.entry(3, "batch_command"),
+            java.util.Map.entry(4, "resource_assurance"),
+            java.util.Map.entry(5, "p63_dynamic_branch_semantics"),
+            java.util.Map.entry(6, "p63_iot_command_reservation"),
+            java.util.Map.entry(7, "p64_orchestration_data_action"),
+            java.util.Map.entry(8, "p64_phase2_parent_child"),
+            java.util.Map.entry(9, "p64_position_delegate"),
+            java.util.Map.entry(10, "p64_approval_form_type"));
+
+    /** 代表业务数据：0.1.1 时点已可存在的形态（表单元数据 + 动态宽表行）。 */
+    private static void seedBusinessData(String db) throws Exception {
+        try (Connection conn = conn(db); Statement st = conn.createStatement()) {
+            st.executeUpdate("INSERT INTO sw_form_def (id, form_key, name, status, physical_table_name,"
+                    + " form_version, tenant_id, deleted, version, create_time, update_time)"
+                    + " VALUES ('r015-form-0001', 'r015_legacy_form', '升级通道旧数据表单', 'PUBLISHED',"
+                    + " '" + LEGACY_TABLE + "', 1, 0, 0, 0, now(), now())");
+            st.executeUpdate("CREATE TABLE \"" + LEGACY_TABLE + "\" ("
+                    + "  \"id\" VARCHAR(36) NOT NULL,"
+                    + "  \"tenant_id\" BIGINT NOT NULL DEFAULT 0,"
+                    + "  \"deleted\" SMALLINT NOT NULL DEFAULT 0,"
+                    + "  \"create_time\" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                    + "  \"create_by\" BIGINT,"
+                    + "  \"update_time\" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                    + "  \"update_by\" BIGINT,"
+                    + "  \"version\" BIGINT NOT NULL DEFAULT 0,"
+                    + "  \"material\" VARCHAR(1000),"
+                    + "  \"qty_available\" NUMERIC(20,6),"
+                    + "  \"qty_reserved\" NUMERIC(20,6),"
+                    + "  PRIMARY KEY (\"id\")"
+                    + ")");
+            st.executeUpdate("INSERT INTO \"" + LEGACY_TABLE + "\" (\"id\", \"tenant_id\", \"deleted\", \"version\","
+                    + " \"material\", \"qty_available\", \"qty_reserved\", \"create_time\", \"update_time\")"
+                    + " VALUES ('r015-rec-0001', 0, 0, 0, 'R015-M1', 100.000000, 30.000000, now(), now())");
+            st.executeUpdate("INSERT INTO \"" + LEGACY_TABLE + "\" (\"id\", \"tenant_id\", \"deleted\", \"version\","
+                    + " \"material\", \"qty_available\", \"qty_reserved\", \"create_time\", \"update_time\")"
+                    + " VALUES ('r015-rec-0002', 0, 0, 0, 'R015-M2', 7.500000, 0.000000, now(), now())");
         }
     }
 
-    private String legacyDigest() throws Exception {
-        return queryString("SELECT md5(string_agg(\"id\" || '|' || \"material\" || '|' ||"
-                + " \"qty_available\"::text || '|' || \"qty_reserved\"::text || '|' || \"create_time\"::text, ','"
-                + " ORDER BY \"id\")) FROM \"" + LEGACY_TABLE + "\" WHERE \"tenant_id\" = 0 AND \"deleted\" = 0");
+    private static String legacyDigest(String db) throws Exception {
+        return queryString(db, "SELECT md5(string_agg(\"id\" || '|' || \"material\" || '|'"
+                + " || \"qty_available\"::text || '|' || \"qty_reserved\"::text, ',' ORDER BY \"id\"))"
+                + " FROM \"" + LEGACY_TABLE + "\" WHERE \"tenant_id\" = 0 AND \"deleted\" = 0");
     }
 
-    private int legacyCount() throws Exception {
-        return Integer.parseInt(queryString("SELECT count(*)::text FROM \"" + LEGACY_TABLE + "\""));
+    private static int legacyCount(String db) throws Exception {
+        return Integer.parseInt(queryString(db, "SELECT count(*)::text FROM \"" + LEGACY_TABLE + "\""));
     }
 
-    private List<String> legacyRows() throws Exception {
-        List<String> rows = new ArrayList<>();
-        try (Connection conn = conn();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT \"id\", \"material\", \"qty_available\"::text,"
-                     + " \"qty_reserved\"::text, \"create_time\"::text FROM \"" + LEGACY_TABLE + "\" ORDER BY \"id\"")) {
-            while (rs.next()) {
-                rows.add(String.join("|", rs.getString(1), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getString(5)));
+    /** 历史口径：versioned 恰一条 0.1.5 成功记录；R__ 记录保留。 */
+    private static void assertHistorySingleSeed(String db) throws Exception {
+        int versioned = Integer.parseInt(queryString(db,
+                "SELECT count(*)::text FROM \"flyway_schema_history\" WHERE \"version\" IS NOT NULL"));
+        assertEquals(1, versioned, "versioned 历史应恰一条（0.1.5）");
+        String seed = queryString(db, "SELECT \"version\" || '|' || \"success\"::text || '|' || \"checksum\""
+                + " FROM \"flyway_schema_history\" WHERE \"version\" = '0.1.5'");
+        assertThat(seed).as("0.1.5 成功记录及校验和").isNotNull().endsWith("|true|-454928747");
+    }
+
+    /** 目录口径：表集合 + 列定义 + 索引名（数据不计；时间戳/行序不构成目录差异）。 */
+    private static String catalogOf(String db) throws Exception {
+        StringBuilder out = new StringBuilder();
+        try (Connection conn = conn(db); Statement st = conn.createStatement()) {
+            try (ResultSet rs = st.executeQuery(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' "
+                            + "AND table_name <> 'flyway_schema_history' AND table_name <> '"
+                            + LEGACY_TABLE + "' ORDER BY table_name")) {
+                List<String> tables = new ArrayList<>();
+                while (rs.next()) {
+                    tables.add(rs.getString(1));
+                }
+                out.append("tables=").append(tables).append('\n');
+                for (String table : tables) {
+                    try (ResultSet rs2 = st.executeQuery(
+                            "SELECT column_name || ':' || data_type || ':' || is_nullable"
+                                    + " FROM information_schema.columns WHERE table_schema = 'public'"
+                                    + " AND table_name = '" + table + "' ORDER BY ordinal_position")) {
+                        List<String> cols = new ArrayList<>();
+                        while (rs2.next()) {
+                            cols.add(rs2.getString(1));
+                        }
+                        out.append(table).append('=').append(cols).append('\n');
+                    }
+                    try (ResultSet rs3 = st.executeQuery(
+                            "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"
+                                    + " AND tablename = '" + table + "' ORDER BY indexname")) {
+                        List<String> idx = new ArrayList<>();
+                        while (rs3.next()) {
+                            idx.add(rs3.getString(1));
+                        }
+                        out.append(table).append("#idx=").append(idx).append('\n');
+                    }
+                }
             }
         }
-        return rows;
+        return out.toString();
     }
 
-    private String legacyFormMeta() throws Exception {
-        return queryString("SELECT \"form_key\" || '|' || \"physical_table_name\"::text || '|' || \"status\""
-                + " FROM sw_form_def WHERE \"id\" = '" + LEGACY_FORM_ID + "'");
+    private static String createDatabase(String name) throws Exception {
+        try (Connection conn = DriverManager.getConnection(url, PG_USER, PG_PASSWORD);
+             Statement st = conn.createStatement()) {
+            st.execute("DROP DATABASE IF EXISTS " + name + " WITH (FORCE)");
+            st.execute("CREATE DATABASE " + name);
+        }
+        return name;
     }
 
-    private List<String> existingTables(List<String> names) throws Exception {
-        List<String> found = new ArrayList<>();
-        for (String name : names) {
-            String exists = queryString("SELECT count(*)::text FROM information_schema.tables"
-                    + " WHERE table_schema = 'public' AND table_name = '" + name + "'");
-            if ("1".equals(exists)) {
-                found.add(name);
+    private static String dbUrl(String db) {
+        return url.replace("/postgres", "/" + db);
+    }
+
+    private static Connection conn(String db) throws Exception {
+        return DriverManager.getConnection(dbUrl(db), PG_USER, PG_PASSWORD);
+    }
+
+    private static FluentConfiguration flywayLegacy(String db) throws Exception {
+        return Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD).locations(legacyDir());
+    }
+
+    private static String currentVersion(String db) throws Exception {
+        String v = queryString(db, "SELECT \"version\" FROM \"flyway_schema_history\" "
+                + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL ORDER BY \"installed_rank\" DESC LIMIT 1");
+        assertThat(v).as("迁移历史不应为空").isNotNull();
+        return v;
+    }
+
+    private static void execScript(String db, String script) throws Exception {
+        try (Connection conn = conn(db); Statement st = conn.createStatement()) {
+            for (String raw : script.split(";")) {
+                String sql = stripComments(raw);
+                if (!sql.isBlank()) {
+                    st.execute(sql);
+                }
             }
         }
-        return found;
     }
 
-    private long countRows(String table) throws Exception {
-        return Long.parseLong(queryString("SELECT count(*)::text FROM " + table));
+    private static String stripComments(String raw) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : raw.split("\n")) {
+            if (!line.strip().startsWith("--")) {
+                sb.append(line).append('\n');
+            }
+        }
+        return sb.toString();
     }
 
-    private long countRowsWhere(String table, String where) throws Exception {
-        return Long.parseLong(queryString("SELECT count(*)::text FROM " + table + " WHERE " + where));
-    }
-
-    private static void copyResource(String resource, Path target) throws Exception {
-        try (InputStream in = P62NonEmptyUpgradePgTest.class.getClassLoader().getResourceAsStream(resource)) {
+    private static String classpathResource(String resource) throws Exception {
+        try (var in = P62NonEmptyUpgradePgTest.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
-                throw new IllegalStateException("迁移资源缺失: " + resource);
+                throw new IllegalStateException("发布资产缺失: " + resource);
             }
-            Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 
-    private static String sha256File(Path file) throws Exception {
-        return HexFormat.of().formatHex(
-                MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)));
-    }
-
-    private String historyRows() throws Exception {
-        return queryString("SELECT string_agg(coalesce(version, description) || ':' || checksum || ':'"
-                + " || installed_on::timestamp(0)::text || ':' || success::text || ':' || execution_time || 'ms',"
-                + " ' , ' ORDER BY installed_rank) FROM flyway_schema_history");
-    }
-
-    private String historyWhere(String where) throws Exception {
-        return queryString("SELECT \"version\" || '|' || \"description\" || '|' || checksum::text || '|'"
-                + " || installed_on::timestamp(0)::text || '|' || success::text || '|' || execution_time || 'ms'"
-                + " FROM flyway_schema_history WHERE " + where);
-    }
-
-    private String appliedList() throws Exception {
-        return queryString("SELECT string_agg(coalesce(\"version\", \"description\"), '>' ORDER BY installed_rank)"
-                + " FROM flyway_schema_history WHERE success = true");
-    }
-
-    private String queryString(String sql) throws Exception {
-        try (Connection conn = conn();
-             Statement st = conn.createStatement();
+    private static String queryString(String db, String sql) throws Exception {
+        try (Connection conn = conn(db); Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery(sql)) {
             return rs.next() ? rs.getString(1) : null;
         }
@@ -328,20 +360,5 @@ class P62NonEmptyUpgradePgTest {
     private static String sha256(String value) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
-    }
-
-    private static String resourceSha256(String resource) throws Exception {
-        try (InputStream in = P62NonEmptyUpgradePgTest.class.getClassLoader().getResourceAsStream(resource)) {
-            if (in == null) {
-                return "RESOURCE_NOT_FOUND";
-            }
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] buf = new byte[8192];
-            int read;
-            while ((read = in.read(buf)) > 0) {
-                digest.update(buf, 0, read);
-            }
-            return HexFormat.of().formatHex(digest.digest());
-        }
     }
 }

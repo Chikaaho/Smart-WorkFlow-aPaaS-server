@@ -24,10 +24,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * 基线种子全链 H2 Flyway 验证的永久测试（不启动 Spring 上下文）。
  * <p>
  * 使用独立内存库 + 独立 Flyway 实例，10 个 locations 与 {@code application.yml}
- * 完全一致（{vendor} 按 H2 连接解析为 h2）。0.1.3 种子合并后，versioned 迁移收敛为
- * 单一基线 {@code V0.1.0__baseline_seed.sql}（原 V1—V104 按版本序逐字节合并），
- * 加可重复对账 {@code R__i6_notify_menu_reconciliation}，全新库共执行 2 条。
- * 历史版本升级演练（V32/V33/V36 分阶段、旧基线升级）随 0.1.3「仅支持全新建库」
+ * 完全一致（{vendor} 按 H2 连接解析为 h2）。0.1.5 发版收敛后，versioned 迁移为
+ * 单一基线 {@code V0.1.5__baseline_seed.sql}（0.1.3—0.1.5 期 V0.1.0—V0.1.10 按版本序
+ * 逐字节合并），加 9 个可重复对账 R__，全新库共执行 10 条。
+ * 历史版本升级演练随 0.1.3「仅支持全新建库」与 0.1.5「单一种子 + 独立升级通道」
  * 的边界一并退役；本测试保留并延续全部终态数据/语义断言。
  * </p>
  * <p>
@@ -80,40 +80,28 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(17, result.migrationsExecuted,
-                "全新库应执行 17 条（V0.1.0 基线 + V0.1.1—V0.1.9 增量 + 7 个 R__ 可重复对账），实际: " + result.migrationsExecuted);
-        assertEquals("0.1.9", flyway.info().current().getVersion().getVersion(),
-                "终点当前版本应为 0.1.9 增量");
+        assertEquals(10, result.migrationsExecuted,
+                "全新库应执行 10 条（V0.1.5 种子 + 9 个 R__ 可重复对账），实际: " + result.migrationsExecuted);
+        assertEquals("0.1.5", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为 0.1.5 种子");
     }
 
     @Test
-    @DisplayName("基线迁移后：info().applied() 共 17 条（0.1.0—0.1.9 + 7 个可重复对账）")
+    @DisplayName("种子迁移后：info().applied() 共 10 条（0.1.5 种子 + 9 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(17, applied.length, "已应用迁移数应为 17（基线 + 9 个增量 + 7 个 R__）");
-        boolean baselineSeen = false;
-        int incrementalSeen = 0;
+        assertEquals(10, applied.length, "已应用迁移数应为 10（V0.1.5 种子 + 9 个 R__）");
+        boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
             if (info.getVersion() == null) {
                 repeatableCount++;
-            } else if ("0.1.0".equals(info.getVersion().getVersion())) {
-                baselineSeen = true;
-            } else if ("0.1.1".equals(info.getVersion().getVersion())
-                    || "0.1.2".equals(info.getVersion().getVersion())
-                    || "0.1.3".equals(info.getVersion().getVersion())
-                    || "0.1.4".equals(info.getVersion().getVersion())
-                    || "0.1.5".equals(info.getVersion().getVersion())
-                    || "0.1.6".equals(info.getVersion().getVersion())
-                    || "0.1.7".equals(info.getVersion().getVersion())
-                    || "0.1.8".equals(info.getVersion().getVersion())
-                    || "0.1.9".equals(info.getVersion().getVersion())) {
-                incrementalSeen++;
+            } else if ("0.1.5".equals(info.getVersion().getVersion())) {
+                seedSeen = true;
             }
         }
-        assertTrue(baselineSeen, "V0.1.0 基线应已应用");
-        assertEquals(9, incrementalSeen, "V0.1.1—V0.1.9 增量应已应用");
-        assertEquals(7, repeatableCount, "7 个 R__ 菜单可重复对账应已应用");
+        assertTrue(seedSeen, "V0.1.5 种子应已应用");
+        assertEquals(9, repeatableCount, "9 个 R__ 菜单可重复对账应已应用");
     }
 
     @Test
@@ -127,11 +115,11 @@ class FlywayFullChainH2Test {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway.migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.1.9", flyway.info().current().getVersion().getVersion(), "版本应保持 0.1.9");
+        assertEquals("0.1.5", flyway.info().current().getVersion().getVersion(), "版本应保持 0.1.5");
     }
 
     @Test
-    @DisplayName("基线校验和安全：篡改 0.1.0 登记校验和后必须显式失败（不静默通过、不改写校验和）")
+    @DisplayName("种子校验和安全：篡改 0.1.5 登记校验和后必须显式失败（不静默通过、不改写校验和）")
     void tamperedBaselineChecksum_shouldFailValidateNotSilentlyPass() throws SQLException {
         String tamperedUrl = "jdbc:h2:mem:flyway_baseline_checksum;DB_CLOSE_DELAY=-1";
         String[] locations = Arrays.stream(APP_LOCATIONS)
@@ -148,7 +136,7 @@ class FlywayFullChainH2Test {
              Statement stmt = conn.createStatement()) {
             // Flyway 以小写引号名建历史表，H2 未加引号的标识符会折叠为大写而找不到
             stmt.executeUpdate("UPDATE \"flyway_schema_history\" SET \"checksum\" = \"checksum\" + 1 "
-                    + "WHERE \"version\" = '0.1.0' AND \"success\" = TRUE");
+                    + "WHERE \"version\" = '0.1.5' AND \"success\" = TRUE");
         }
 
         Flyway legacy = Flyway.configure()
