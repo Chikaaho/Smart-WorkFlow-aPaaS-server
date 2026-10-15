@@ -118,8 +118,9 @@ public class BpmProcessDefController {
 
     /**
      * 更新流程编号（主题）规则（管理流程系统级设置，必填；发布门亦要求非空）。
-     * 合法性：非空 + 占位符白名单 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}/{SEQ:n}
-     * （n=自增编号位数 1-10，左补零）；非法返回 400 可读消息，不落库。
+     * 合法性：非空 + 占位符白名单 {TIMESTAMP}/{YYYYMMDD}/{YYYYMMDDHHMMSS}/{SEQ}/{SEQ:n}/{INITIATOR}
+     * （n=自增编号位数 1-10，左补零；{INITIATOR}=发起人展示名）；
+     * 手写花括号以 {{ / }} 转义按普通字符串处理；非法返回 400 可读消息，不落库。
      */
     @PutMapping("/{id}/theme-rule")
     @PreAuthorize("@ss.hasPermi('workflow:catalog:manage')")
@@ -401,6 +402,6 @@ public class BpmProcessDefController {
 /** 主题规则更新请求体（V012-BUG-010）。 */
 @Data
 class ThemeRuleRequest {
-    /** 主题生成规则（必填，占位符白名单校验） */
+    /** 流程编号规则（必填，占位符白名单校验；注意：主题生成规则为业务展示名，实际即流程编号） */
     private String themeRule;
 }

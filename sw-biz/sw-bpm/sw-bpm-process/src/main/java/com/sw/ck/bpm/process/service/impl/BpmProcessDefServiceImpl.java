@@ -40,8 +40,6 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     private static final String STATUS_DRAFT = "DRAFT";
     private static final String STATUS_PUBLISHED = "PUBLISHED";
     private static final String FORM_STATUS_PUBLISHED = "PUBLISHED";
-    /** BF20261013-041：新建流程定义的默认流程编号规则（日期 + 3 位自增，如 20261014-001）。 */
-    private static final String DEFAULT_THEME_RULE = "{YYYYMMDD}-{SEQ:3}";
 
     private final BpmProcessDefMapper mapper;
     private final com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper;
@@ -106,9 +104,9 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         entity.setStatus(STATUS_DRAFT);
         entity.setGraphJson(toJson(initialGraph));
         // BF20261013-041：流程编号（主题）规则是这条流程的必填配置——新建定义即带可用默认值
-        // （日期 + 3 位自增，如 20261014-001），可在列表「流程编号规则」中随时改；
+        // （日期 + 3 位自增，如 20261014-001），可在列表「流程编号」中随时改；
         // 发布门另要求非空，历史/外部导入的空规则定义发布前必须补齐。
-        entity.setThemeRule(DEFAULT_THEME_RULE);
+        entity.setThemeRule(com.sw.ck.bpm.process.service.ProcessThemeService.DEFAULT_RULE);
 
         mapper.insert(entity);
         log.info("Created process def: id={}, processKey={}", entity.getId(), processKey);

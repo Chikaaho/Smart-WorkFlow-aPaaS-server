@@ -231,11 +231,12 @@ public class ProcessStartService {
         if (startedDef != null && startedDef.getPublishedVersion() != null) {
             instance.setDefVersion(startedDef.getPublishedVersion());
         }
-        // V012-BUG-010：按流程主题生成规则生成实例主题（无规则回退定义名，历史兼容）
+        // V012-BUG-010 / BF20261013-044：按流程编号规则生成实例编号（规则为空按默认规则，
+        // 人工/表单/子流程等所有发起链路都带编号；{INITIATOR} 取本实例发起人展示名）
         if (processThemeService != null) {
             instance.setTheme(processThemeService.generate(binding.getProcessDefKey(),
                     startedDef == null ? null : startedDef.getThemeRule(),
-                    startedDef == null ? binding.getProcessDefKey() : startedDef.getName()));
+                    cmd.getSubmitter()));
         }
         // Flowable 可能在 startProcess 返回前就完成无人工节点的流程。此时若无条件写
         // RUNNING，会产生“引擎已到 End、业务记录仍运行中”的假终态；沿用审批完成路径

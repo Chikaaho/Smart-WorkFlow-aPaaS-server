@@ -301,13 +301,14 @@ public class IotProcessTriggerListener {
                 instance.setProcessDefKey(event.getProcessTemplateKey());
                 instance.setBusinessKey("iot-" + event.getTriggerId());
                 instance.setFormKey(def.getFormKey());
-                // V012-BUG-010：IoT 发起同样按主题规则生成实例主题
-                if (themeServiceProvider.getIfAvailable() != null) {
-                    instance.setTheme(themeServiceProvider.getIfAvailable()
-                            .generate(event.getProcessTemplateKey(), def.getThemeRule(), def.getName()));
-                }
                 // 受控租户系统身份：IoT 自动发起不伪装自然人
                 instance.setInitiatorId(0L);
+                // V012-BUG-010 / BF20261013-044：IoT 发起同样按流程编号规则生成实例编号
+                // （规则为空按默认规则；发起人展示名取「系统」——系统身份没有自然人姓名）
+                if (themeServiceProvider.getIfAvailable() != null) {
+                    instance.setTheme(themeServiceProvider.getIfAvailable()
+                            .generate(event.getProcessTemplateKey(), def.getThemeRule(), 0L));
+                }
                 instance.setStatus(processActive
                         ? InstanceStatusEnum.RUNNING.getCode()
                         : InstanceStatusEnum.APPROVED.getCode());
