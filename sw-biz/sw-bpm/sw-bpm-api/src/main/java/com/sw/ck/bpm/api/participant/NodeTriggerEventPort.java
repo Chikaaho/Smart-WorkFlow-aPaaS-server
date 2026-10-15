@@ -8,6 +8,10 @@ package com.sw.ck.bpm.api.participant;
  * 引擎经 ObjectProvider 可选注入（引擎单测无实现时跳过）。回调内的触发器评估
  * 失败不抛出（执行记录落可诊断行），不得阻断任务创建/流程发起主链路。
  * </p>
+ * <p>
+ * 返回值（ApiOptional 契约门）：本次回调实际评估的触发器数量（含幂等去重跳过的
+ * 评估），无触发器时为 0；实例不可达（理论不可能）时 empty。
+ * </p>
  */
 public interface NodeTriggerEventPort {
 
@@ -16,13 +20,15 @@ public interface NodeTriggerEventPort {
      *
      * @param processInstanceId 流程实例 ID
      * @param nodeKey           节点 key（任务 definition key）
+     * @return 本次实际评估的触发器数量（含幂等去重跳过）；实例不可达时 empty
      */
-    void onNodeEntering(String processInstanceId, String nodeKey);
+    java.util.Optional<Long> onNodeEntering(String processInstanceId, String nodeKey);
 
     /**
      * 流程发起（BF20261013-022⑥「流程发起」触发器）：实例创建成功后评估。
      *
      * @param processInstanceId 流程实例 ID
+     * @return 本次实际评估的触发器数量（含幂等去重跳过）；实例不可达时 empty
      */
-    void onProcessStarted(String processInstanceId);
+    java.util.Optional<Long> onProcessStarted(String processInstanceId);
 }

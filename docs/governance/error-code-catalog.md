@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（179 常量 / 5 枚举）
+## 2. 全量登记（180 常量 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -120,6 +120,7 @@
 | bpm | `NODE_CONFIG_INVALID` | 2106 | `bpm.node_config_invalid` | 节点配置不合法 |
 | bpm | `NODE_CAPABILITY_MISSING` | 2107 | `bpm.node_capability_missing` | 节点缺少必要能力 |
 | bpm | `NODE_REGISTRATION_INVALID` | 2108 | `bpm.node_registration_invalid` | 节点注册契约非法 |
+| bpm | `THEME_RULE_REQUIRED` | 2109 | `bpm.theme_rule_required` | 尚未配置流程编号规则，请先设置编号规则后再发布 |
 | bpm | `APPROVER_RESOLVE_EMPTY` | 2200 | `bpm.approver_resolve_empty` | 审批人解析结果为空 |
 | bpm | `APPROVER_TYPE_NOT_IMPLEMENTED` | 2201 | `bpm.approver_type_not_implemented` | 审批人类型未实现 |
 | bpm | `APPROVER_CONFIG_MISSING` | 2202 | `bpm.approver_config_missing` | 审批人配置缺失 |

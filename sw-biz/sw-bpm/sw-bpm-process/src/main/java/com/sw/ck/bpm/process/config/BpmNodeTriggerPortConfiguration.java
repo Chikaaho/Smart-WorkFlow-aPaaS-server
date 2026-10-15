@@ -4,6 +4,7 @@ import com.sw.ck.bpm.api.participant.NodeTriggerEventPort;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.TriggerExecutionService;
+import java.util.Optional;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -22,23 +23,23 @@ public class BpmNodeTriggerPortConfiguration {
                                                      TriggerExecutionService triggerService) {
         return new NodeTriggerEventPort() {
             @Override
-            public void onNodeEntering(String processInstanceId, String nodeKey) {
+            public Optional<Long> onNodeEntering(String processInstanceId, String nodeKey) {
                 BpmInstance instance = bpmInstanceService.findByProcessInstanceId(processInstanceId)
                         .orElse(null);
                 if (instance == null) {
-                    return;
+                    return Optional.empty();
                 }
-                triggerService.onNodeEntering(instance, nodeKey);
+                return Optional.of(triggerService.onNodeEntering(instance, nodeKey));
             }
 
             @Override
-            public void onProcessStarted(String processInstanceId) {
+            public Optional<Long> onProcessStarted(String processInstanceId) {
                 BpmInstance instance = bpmInstanceService.findByProcessInstanceId(processInstanceId)
                         .orElse(null);
                 if (instance == null) {
-                    return;
+                    return Optional.empty();
                 }
-                triggerService.onProcessStarted(instance);
+                return Optional.of(triggerService.onProcessStarted(instance));
             }
         };
     }
