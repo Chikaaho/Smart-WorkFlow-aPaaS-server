@@ -123,6 +123,14 @@ public class FormDataQueryService {
         this.formRecordAccessPort = formRecordAccessPort;
     }
 
+    /** 应用范围访问闸门（可选注入；既有测试构造不注入时不受本闸门约束）。 */
+    private FormAppAccessGuard appAccessGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAppAccessGuard(FormAppAccessGuard appAccessGuard) {
+        this.appAccessGuard = appAccessGuard;
+    }
+
     // ==================== 主入口 ====================
 
     /**
@@ -175,6 +183,10 @@ public class FormDataQueryService {
         }
         if (!formDefService.isCurrentUserVisible(formKey)) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
+        }
+        // 应用范围闸门：绑定应用的表单，应用不可见/停用时不允许列表访问（批量新访问，无记录级回退）。
+        if (appAccessGuard != null) {
+            appAccessGuard.requireNewBusiness(formKey, formDef.getAppId());
         }
         if (!"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
@@ -301,6 +313,13 @@ public class FormDataQueryService {
                     "该表单尚未完成数据表初始化，请联系管理员处理");
         }
         validateTableName(tableName);
+
+        // —— Step 2.5: 应用范围闸门（记录级） ——
+        // 应用不可见/停用时不允许“新访问”，但保留合法历史访问：本人提交的记录，或
+        // 与引用该记录的流程实例存在参与关系（发起人/办理过/节点参与人快照）。
+        if (appAccessGuard != null) {
+            appAccessGuard.requireRecordAccess(formKey, formDef.getAppId(), tableName, recordId);
+        }
 
         // —— Step 3: 加载字段元数据 ——
         Map<String, FieldType> fieldTypeMap = loadFieldTypeMap(formDef.getId());

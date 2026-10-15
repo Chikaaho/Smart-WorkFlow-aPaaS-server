@@ -77,6 +77,14 @@ public class FormSubmitService {
         this.c1PolicyService = c1PolicyService;
     }
 
+    /** 应用范围访问闸门（可选注入；既有测试构造不注入时不受本闸门约束）。 */
+    private FormAppAccessGuard appAccessGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAppAccessGuard(FormAppAccessGuard appAccessGuard) {
+        this.appAccessGuard = appAccessGuard;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired
     public FormSubmitService(FormDefMapper formDefMapper,
                              FormTraceMapper formTraceMapper,
@@ -360,6 +368,12 @@ public class FormSubmitService {
         }
         if (!isVisibleToCurrentUser(formDef)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
+        }
+        // 应用范围闸门：绑定应用的表单，应用不可见/停用时不允许新提交（即新发起），
+        // 拒绝发生在任何写入之前——不产生记录、不产生实例。系统/派发归属提交
+        // （recordOwnerUserId 非空）走独立受控通道，不由本闸门判定。
+        if (appAccessGuard != null && recordOwnerUserId == null) {
+            appAccessGuard.requireNewBusiness(formKey, formDef.getAppId());
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {

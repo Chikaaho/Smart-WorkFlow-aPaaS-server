@@ -75,6 +75,14 @@ public class FormDataUpdateService {
         this.enrichment = enrichment;
     }
 
+    /** 应用范围访问闸门（可选注入；既有测试构造不注入时不受本闸门约束）。 */
+    private FormAppAccessGuard appAccessGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAppAccessGuard(FormAppAccessGuard appAccessGuard) {
+        this.appAccessGuard = appAccessGuard;
+    }
+
     /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
     private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
 
@@ -146,6 +154,12 @@ public class FormDataUpdateService {
                     "该表单尚未完成数据表初始化，请联系管理员处理");
         }
         validateTableName(tableName);
+
+        // —— Step 2.5: 应用范围闸门（记录级） ——
+        // 停用/收窄后不允许新访问；本人提交记录或流程参与关系保留原合法访问。
+        if (appAccessGuard != null) {
+            appAccessGuard.requireRecordAccess(formKey, formDef.getAppId(), tableName, recordId);
+        }
 
         // —— Step 3: 加载字段定义 ——
         Map<String, Object> submittedData = request.getData();
