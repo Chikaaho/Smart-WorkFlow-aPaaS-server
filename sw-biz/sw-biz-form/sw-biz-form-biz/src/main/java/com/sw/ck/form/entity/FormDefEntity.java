@@ -49,6 +49,20 @@ public class FormDefEntity extends FormBaseEntity {
     private String visibilityScope;
 
     /**
+     * 归属应用 ID（sw_form_app.id，应用中心与表单分类统一）。
+     * <p>
+     * NULL = 存量承接歧义对象（跨分类共用表单）或旧入口创建未归属；
+     * 应用中心不展示未归属表单，但既有表单入口可用性不变。
+     * </p>
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String appId;
+
+    /** 归属目录 ID（sw_form_app_dir.id；NULL=直接归属应用） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String dirId;
+
+    /**
      * TABLE 字段名 → 子表物理名映射 JSON。
      * <p>
      * 发布时由 {@code FormDefServiceImpl.publish()} 回填，

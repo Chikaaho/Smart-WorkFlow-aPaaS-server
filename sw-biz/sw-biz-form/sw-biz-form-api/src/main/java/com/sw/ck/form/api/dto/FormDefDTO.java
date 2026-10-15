@@ -31,6 +31,10 @@ public class FormDefDTO implements Serializable {
     private Integer formVersion;
     private String description;
     private String visibilityScope;
+    /** 归属应用 ID（sw_form_app.id；null=未归属，应用中心不展示）。 */
+    private String appId;
+    /** 归属目录 ID（sw_form_app_dir.id；null=直接归属应用或未归属）。 */
+    private String dirId;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
     /**

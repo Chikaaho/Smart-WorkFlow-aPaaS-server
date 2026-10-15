@@ -60,20 +60,20 @@ class P64RollbackBoundaryPostgresTest {
             stmt.executeUpdate("CREATE DATABASE " + DB_NAME);
         }
 
-        // 1) 在役基线：新链迁移至 0.1.5 种子
+        // 1) 在役基线：新链迁移至最新（0.1.5 种子 + 本轮 V20261015190000）
         var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(P64AppendMigrationUpgradePostgresTest.appLocations()).load().migrate();
         assertTrue(result.success, "种子链迁移应成功");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
-            assertEquals("0.1.5", currentVersion(conn), "在役基线应为 0.1.5");
+            assertEquals("20261015190000", currentVersion(conn), "在役基线应为最新迁移");
         }
 
         // 2) 旧代码等价迁移集：从 classpath 真实复制升级通道 legacy 0.1.x 全链（11 个版本化）
-        //    + 现行 9 个 R__（收敛后 R__ 继续随主链，内容未变）
+        //    + 现行 10 个 R__（收敛后 R__ 继续随主链，内容未变）
         Path legacyDir = Files.createTempDirectory("r015-legacy-migrations");
         PathMatchingResourceResolverBridge resolver = new PathMatchingResourceResolverBridge();
         int copied = resolver.copyLegacyMigrations(legacyDir);
-        assertEquals(20, copied, "旧迁移集应含 11 个 legacy 版本化 + 9 个现行 R__，实际复制 " + copied + " 个文件");
+        assertEquals(21, copied, "旧迁移集应含 11 个 legacy 版本化 + 10 个现行 R__，实际复制 " + copied + " 个文件");
         List<String> legacyNames;
         try (var list = Files.list(legacyDir)) {
             legacyNames = list.map(p -> p.getFileName().toString()).toList();
@@ -95,6 +95,8 @@ class P64RollbackBoundaryPostgresTest {
         System.out.println("[r015-rollback] unresolved=" + unresolvedVersions);
         assertTrue(unresolvedVersions.contains("0.1.5"),
                 "validate 未解析迁移应含 0.1.5 种子，实际: " + unresolvedVersions);
+        assertTrue(unresolvedVersions.contains("20261015190000"),
+                "validate 未解析迁移应含本轮迁移，实际: " + unresolvedVersions);
 
         // 4) 对照一：旧迁移集对旧终点库（0.1.10）迁移 + validate 全通过——失败只源于收敛
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);
@@ -130,7 +132,7 @@ class P64RollbackBoundaryPostgresTest {
                 "R__p62_form_txn_action_menu.sql", "R__p62_iot_command_verify_menu.sql",
                 "R__p62_resource_ops_menu.sql", "R__p62_txn_batch_menu.sql",
                 "R__p63_iot_reservation_menu.sql", "R__p64_approval_form_menu.sql",
-                "R__p64_position_delegate_menu.sql"};
+                "R__p64_position_delegate_menu.sql", "R__application_center_menu.sql"};
 
         int copyLegacyMigrations(Path targetDir) throws Exception {
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();

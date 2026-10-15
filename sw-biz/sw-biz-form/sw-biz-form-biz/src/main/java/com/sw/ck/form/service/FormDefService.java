@@ -36,6 +36,31 @@ public interface FormDefService {
             String formType);
 
     /**
+     * 创建表单草稿（应用中心：带归属）。
+     * <p>
+     * appId 非空时校验目标为当前租户启用应用、目录属于该应用（校验失败不创建）；
+     * APPROVAL_COMMENT 表单不参与应用归属，忽略传入归属。
+     * </p>
+     *
+     * @param appId 归属应用 ID（可空=不归属）
+     * @param dirId 归属目录 ID（可空=直接归属应用）
+     */
+    FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+            String formType, String appId, String dirId);
+
+    /**
+     * 批量判定表单对当前用户是否可见（应用中心表单过滤用）。
+     * <p>
+     * 逐 formKey 语义与 {@link #isCurrentUserVisible(String)} 一致（未发布不可见、
+     * 可见范围为空的定义语义、解析失败 fail-closed）；一次查询后内存判定。
+     * </p>
+     *
+     * @param formKeys 待判定的 formKey 集合
+     * @return 其中对当前用户可见的 formKey 子集
+     */
+    java.util.Set<String> filterVisibleFormKeys(java.util.Collection<String> formKeys);
+
+    /**
      * 更新表单草稿元数据。
      *
      * @param id         表单 ID

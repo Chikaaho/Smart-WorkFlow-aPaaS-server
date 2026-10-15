@@ -553,6 +553,8 @@ class TxnActionFlowH2Test {
                     description          varchar(500),
                     visibility_scope     clob,
                     sub_table_mapping    clob,
+                    app_id               varchar(36),
+                    dir_id               varchar(36),
                     create_time          timestamp    not null default current_timestamp,
                     create_by            bigint,
                     update_time          timestamp    not null default current_timestamp,

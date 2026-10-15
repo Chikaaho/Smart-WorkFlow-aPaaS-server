@@ -26,9 +26,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>
  * 使用 zonky embedded-postgres 启动真实 PostgreSQL 二进制，独立 Flyway 实例，
  * 10 个 locations 与 {@code application.yml} 完全一致（{vendor} 按 PostgreSQL 连接
- * 解析为 postgresql）。0.1.3 种子合并后，versioned 迁移收敛为单一基线
- * {@code V0.1.0__baseline_seed.sql}（原 V1—V104 按版本序逐字节合并），
- * 加可重复对账 {@code R__i6_notify_menu_reconciliation}，全新库共执行 2 条。
+ * 解析为 postgresql）。0.1.5 发版收敛后，versioned 迁移为单一基线
+ * {@code V0.1.5__baseline_seed.sql}（0.1.3—0.1.5 期 V0.1.0—V0.1.10 按版本序逐字节合并），
+ * 加 10 个可重复对账 R__ 与 0.1.5 后新增的 versioned 迁移
+ * （{@code V20261015190000__application_center.sql}），全新库共执行 12 条。
  * 历史版本升级演练（V32 分阶段、旧 V13 校验和场景）随 0.1.3「仅支持全新建库」
  * 的边界一并退役，分别由「重复 migrate 幂等」与「基线校验和篡改显式失败」承接；
  * V13/V83 的逻辑删除唯一语义守卫以终态对象断言延续。
@@ -94,8 +95,8 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(10, result.migrationsExecuted,
-                "全新库应执行 10 条（V0.1.5 种子 + 9 个 R__ 可重复对账），实际: "
+        assertEquals(12, result.migrationsExecuted,
+                "全新库应执行 12 条（V0.1.5 种子 + V20261015190000 应用中心 + 10 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
     }
 
@@ -107,10 +108,10 @@ class FlywayFullChainPostgresTest {
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 10 条（0.1.5 种子 + 9 个可重复对账），终点 0.1.5")
+    @DisplayName("种子迁移后：info().applied() 共 12 条（0.1.5 种子 + 应用中心迁移 + 10 个可重复对账），终点 20261015190000")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
-        assertEquals(10, applied.length, "已应用迁移数应为 10（V0.1.5 种子 + 9 个 R__）");
+        assertEquals(12, applied.length, "已应用迁移数应为 12（V0.1.5 种子 + V20261015190000 + 10 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -121,9 +122,9 @@ class FlywayFullChainPostgresTest {
             }
         }
         assertTrue(seedSeen, "V0.1.5 种子应已应用");
-        assertEquals(9, repeatableCount, "9 个 R__ 菜单可重复对账应已应用");
-        assertEquals("0.1.5", flyway().info().current().getVersion().getVersion(),
-                "终点当前版本应为 0.1.5 种子");
+        assertEquals(10, repeatableCount, "10 个 R__ 菜单可重复对账应已应用");
+        assertEquals("20261015190000", flyway().info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移");
     }
 
     @Test
@@ -137,7 +138,8 @@ class FlywayFullChainPostgresTest {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway().migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.1.5", flyway().info().current().getVersion().getVersion(), "版本应保持 0.1.5");
+        assertEquals("20261015190000", flyway().info().current().getVersion().getVersion(),
+                "版本应保持最后一个 versioned 迁移");
     }
 
     @Test
@@ -155,7 +157,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立基线库应成功");
-        assertEquals(10, first.migrationsExecuted, "种子库应含 10 条（0.1.5 种子 + 9 R__），实际: " + first.migrationsExecuted);
+        assertEquals(12, first.migrationsExecuted, "种子库应含 12 条（V0.1.5 种子 + V20261015190000 + 10 R__），实际: " + first.migrationsExecuted);
 
         try (Connection conn = DriverManager.getConnection(tamperedUrl, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {

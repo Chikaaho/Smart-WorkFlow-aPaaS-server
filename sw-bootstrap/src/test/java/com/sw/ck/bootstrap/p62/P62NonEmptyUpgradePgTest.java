@@ -95,13 +95,15 @@ class P62NonEmptyUpgradePgTest {
         // 3) 历史衔接脚本（发布资产原文）
         execScript(db, classpathResource(TRANSITION_SCRIPT));
 
-        // 4) 衔接后：validate 通过 + 重复 migrate 零执行 + 终点 0.1.5
+        // 4) 衔接后：主链继续升级到最新 + validate 通过 + 重复 migrate 零执行 + 终点=最新迁移
         Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
                 .locations(appLocations()).load();
+        MigrateResult upgrade = after.migrate();
+        assertThat(upgrade.success).isTrue();
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接终点应为 0.1.5").isEqualTo("0.1.5");
+        assertThat(currentVersion(db)).as("衔接并升级后终点应为最新迁移").isEqualTo("20261015190000");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
@@ -134,13 +136,15 @@ class P62NonEmptyUpgradePgTest {
         // 3) 增量升级脚本（V0.1.2—V0.1.10 DDL + 历史衔接，发布资产原文）
         execScript(db, classpathResource(UPGRADE_FROM_0_1_1_SCRIPT));
 
-        // 4) 升级后：validate 通过 + 重复 migrate 零执行 + 终点 0.1.5
+        // 4) 升级后：主链继续升级到最新 + validate 通过 + 重复 migrate 零执行 + 终点=最新迁移
         Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
                 .locations(appLocations()).load();
+        MigrateResult upgrade = after.migrate();
+        assertThat(upgrade.success).isTrue();
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "升级后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("升级终点应为 0.1.5").isEqualTo("0.1.5");
+        assertThat(currentVersion(db)).as("升级后终点应为最新迁移").isEqualTo("20261015190000");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("升级后行数不减").isEqualTo(preCount);
@@ -243,14 +247,17 @@ class P62NonEmptyUpgradePgTest {
         return Integer.parseInt(queryString(db, "SELECT count(*)::text FROM \"" + LEGACY_TABLE + "\""));
     }
 
-    /** 历史口径：versioned 恰一条 0.1.5 成功记录；R__ 记录保留。 */
+    /** 历史口径：衔接产生 0.1.5、主链继续升级后加本轮迁移，versioned 恰两条；R__ 记录保留。 */
     private static void assertHistorySingleSeed(String db) throws Exception {
         int versioned = Integer.parseInt(queryString(db,
                 "SELECT count(*)::text FROM \"flyway_schema_history\" WHERE \"version\" IS NOT NULL"));
-        assertEquals(1, versioned, "versioned 历史应恰一条（0.1.5）");
+        assertEquals(2, versioned, "versioned 历史应恰两条（0.1.5 + 本轮迁移）");
         String seed = queryString(db, "SELECT \"version\" || '|' || \"success\"::text || '|' || \"checksum\""
                 + " FROM \"flyway_schema_history\" WHERE \"version\" = '0.1.5'");
         assertThat(seed).as("0.1.5 成功记录及校验和").isNotNull().endsWith("|true|-454928747");
+        String latest = queryString(db, "SELECT \"version\" || '|' || \"success\"::text"
+                + " FROM \"flyway_schema_history\" WHERE \"version\" = '20261015190000'");
+        assertThat(latest).as("本轮迁移成功记录").isNotNull().endsWith("|true");
     }
 
     /** 目录口径：表集合 + 列定义 + 索引名（数据不计；时间戳/行序不构成目录差异）。 */

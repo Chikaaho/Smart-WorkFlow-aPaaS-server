@@ -744,6 +744,8 @@ class FormDefinitionServiceTest {
                     description          VARCHAR(500),
                     visibility_scope     TEXT,
                     sub_table_mapping    TEXT,
+                    app_id               varchar(36),
+                    dir_id               varchar(36),
                     tenant_id            BIGINT       NOT NULL DEFAULT 0,
                     deleted              SMALLINT     NOT NULL DEFAULT 0,
                     create_time          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,

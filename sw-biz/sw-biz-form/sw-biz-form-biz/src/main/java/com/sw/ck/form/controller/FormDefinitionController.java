@@ -65,10 +65,11 @@ public class FormDefinitionController {
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PostMapping
     public R<FormDefDTO> createDraft(@RequestBody FormCreateReq req) {
-        log.info("Creating form draft: formKey={}, name={}", req.getFormKey(), req.getName());
+        log.info("Creating form draft: formKey={}, name={}, appId={}", req.getFormKey(), req.getName(), req.getAppId());
         FormDefDTO result = formDefService.createDraft(
                 req.getFormKey(), req.getName(),
-                req.getLogicalTableName(), req.getDescription(), req.getFormType());
+                req.getLogicalTableName(), req.getDescription(), req.getFormType(),
+                req.getAppId(), req.getDirId());
         return R.ok(result);
     }
 

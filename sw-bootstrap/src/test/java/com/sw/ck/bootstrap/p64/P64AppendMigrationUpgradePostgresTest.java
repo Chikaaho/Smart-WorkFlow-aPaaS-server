@@ -84,11 +84,11 @@ class P64AppendMigrationUpgradePostgresTest {
             stmt.executeUpdate("CREATE DATABASE " + DB_NAME);
         }
 
-        // 1) 迁移到 0.1.5 种子基线
+        // 1) 迁移到最新链（0.1.5 种子 + 本轮 V20261015190000）
         var baselineResult = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(baselineResult.success, "种子迁移应成功");
-        assertEquals("0.1.5", currentVersion(conn()), "种子基线应为 0.1.5");
+        assertEquals("20261015190000", currentVersion(conn()), "基线终点应为最新迁移");
 
         // 2) 非空存量：旧流程定义 + 运行实例 + 任务级审批动作行（追加前真实业务行）
         String legacyGraphJson = "{\"processKey\":\"legacy_def_p64\",\"elements\":["
@@ -170,7 +170,7 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals("APPROVE", rs.getString(3));
             }
 
-            // 迁移历史：versioned 恰两条成功记录（0.1.5 种子 + 时间戳）
+            // 迁移历史：versioned 恰三条成功记录（0.1.5 种子 + 本轮迁移 + 演练时间戳）
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT version, COUNT(*) FROM flyway_schema_history "
                             + "WHERE version IS NOT NULL AND success = TRUE GROUP BY version");
@@ -179,11 +179,12 @@ class P64AppendMigrationUpgradePostgresTest {
                 while (rs.next()) {
                     String version = rs.getString(1);
                     assertEquals(1, rs.getInt(2), version + " 应恰有一条成功迁移记录");
-                    assertTrue(version.equals("0.1.5") || version.equals(ts),
-                            "versioned 历史应仅含 0.1.5 与时间戳，实际: " + version);
+                    assertTrue(version.equals("0.1.5") || version.equals("20261015190000")
+                                    || version.equals(ts),
+                            "versioned 历史应仅含 0.1.5、本轮迁移与时间戳，实际: " + version);
                     seen++;
                 }
-                assertEquals(2, seen, "versioned 历史应恰 0.1.5 + 时间戳两条");
+                assertEquals(3, seen, "versioned 历史应恰 0.1.5 + 本轮迁移 + 时间戳三条");
             }
         }
 

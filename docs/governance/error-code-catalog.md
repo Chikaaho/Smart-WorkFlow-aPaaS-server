@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（180 常量 / 5 枚举）
+## 2. 全量登记（187 常量 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -100,6 +100,13 @@
 | form | `C1_WRITE_PROTECTED` | 1612 | `form.c1_write_protected` | 该数据受关键数据保护，请通过受控事务动作写入 |
 | form | `C1_POLICY_INVALID` | 1613 | `form.c1_policy_invalid` | 现有数据不满足保护约束，暂不能启用 |
 | form | `ACTION_REALTIME_CONCURRENCY_EXCEEDED` | 1614 | `form.action_realtime_concurrency_exceeded` | 实时动作并发已达上限，请稍后重试（适用额度见响应提示） |
+| form | `APP_NOT_FOUND` | 1700 | `form.app_not_found` | 应用不存在或不可见 |
+| form | `APP_NAME_DUPLICATE` | 1701 | `form.app_name_duplicate` | 应用名称已存在 |
+| form | `APP_DISABLED` | 1702 | `form.app_disabled` | 应用已停用，不能新增或调整内容 |
+| form | `APP_DELETE_RESTRICTED` | 1703 | `form.app_delete_restricted` | 应用下仍有目录或表单，须先处理归属再删除 |
+| form | `APP_DIR_NOT_FOUND` | 1704 | `form.app_dir_not_found` | 应用目录不存在或不属于该应用 |
+| form | `APP_DIR_NAME_DUPLICATE` | 1705 | `form.app_dir_name_duplicate` | 目录名称已存在 |
+| form | `APP_DIR_DELETE_RESTRICTED` | 1706 | `form.app_dir_delete_restricted` | 目录下仍有表单，须先处理归属再删除 |
 | bpm | `GRAPH_MISSING_START` | 2000 | `bpm.graph_missing_start` | 图缺少开始节点 |
 | bpm | `GRAPH_MULTIPLE_START` | 2001 | `bpm.graph_multiple_start` | 图存在多个开始节点 |
 | bpm | `GRAPH_MISSING_END` | 2002 | `bpm.graph_missing_end` | 图缺少结束节点 |

@@ -61,6 +61,8 @@ public class FormDefServiceImpl implements FormDefService {
     private final com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper;
     // ==== V012-BUG-015：创建人展示名解析（system 契约；兼容构造可为 null） ====
     private final UserQueryFacade userQueryFacade;
+    // ==== 应用中心：表单归属目标校验（兼容构造可为 null，带归属路径 fail-closed） ====
+    private final com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator;
 
     @org.springframework.beans.factory.annotation.Autowired
     public FormDefServiceImpl(FormDefMapper formDefMapper,
@@ -76,7 +78,8 @@ public class FormDefServiceImpl implements FormDefService {
                               FormExtDataService extDataService,
                               com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper,
                               com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper,
-                              UserQueryFacade userQueryFacade) {
+                              UserQueryFacade userQueryFacade,
+                              com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator) {
         this.formDefMapper = formDefMapper;
         this.formConfigMapper = formConfigMapper;
         this.formSnapshotMapper = formSnapshotMapper;
@@ -90,6 +93,26 @@ public class FormDefServiceImpl implements FormDefService {
         this.listConfigMapper = listConfigMapper;
         this.lifecycleAuditMapper = lifecycleAuditMapper;
         this.userQueryFacade = userQueryFacade;
+        this.appMembershipValidator = appMembershipValidator;
+    }
+
+    /** 兼容既有测试装配（无归属校验注入；带归属路径 fail-closed，不静默跳过校验）。 */
+    public FormDefServiceImpl(FormDefMapper formDefMapper,
+                              FormConfigMapper formConfigMapper,
+                              FormSnapshotMapper formSnapshotMapper,
+                              DynamicTableManager dynamicTableManager,
+                              FormIdGenerator idGenerator,
+                              ObjectMapper objectMapper,
+                              FormVisibilityRules visibilityRules,
+                              FormulaEngine formulaEngine,
+                              FieldPermissionService fieldPermissionService,
+                              FormExtDataService extDataService,
+                              com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper,
+                              com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper,
+                              UserQueryFacade userQueryFacade) {
+        this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
+                idGenerator, objectMapper, visibilityRules, formulaEngine, fieldPermissionService,
+                extDataService, listConfigMapper, lifecycleAuditMapper, userQueryFacade, null);
     }
 
     /** 兼容既有测试构造（无显隐规则注入时使用默认实现；I2 协作对象用默认/空实现）。 */
@@ -102,7 +125,7 @@ public class FormDefServiceImpl implements FormDefService {
         this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
                 idGenerator, objectMapper, new FormVisibilityRules(objectMapper),
                 new FormulaEngine(), new FieldPermissionService(objectMapper),
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     @Override
@@ -114,11 +137,33 @@ public class FormDefServiceImpl implements FormDefService {
     /** BF20261013-020：带表单类型的草稿创建（空白类型按业务表单）。 */
     public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
             String formType) {
+        return createDraft(formKey, name, logicalTableName, description, formType, null, null);
+    }
+
+    /** 应用中心：带表单类型与归属的草稿创建（审批意见表单不参与应用归属）。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+            String formType, String appId, String dirId) {
         // —— 校验唯一性（经租户拦截器按当前租户过滤；V83 后跨租户同名 formKey 合法） ——
         LambdaQueryWrapper<FormDefEntity> keyQuery = Wrappers.lambdaQuery(FormDefEntity.class)
                 .eq(FormDefEntity::getFormKey, formKey);
         if (formDefMapper.selectCount(keyQuery) > 0) {
             throw new BaseException(FormErrorCode.FORM_KEY_DUPLICATE, "表单标识 '" + formKey + "' 已存在");
+        }
+
+        // —— 归属校验（应用中心）：目标应用须存在且启用、目录须属于该应用；失败不创建 ——
+        String normalizedType = "APPROVAL_COMMENT".equals(formType) ? "APPROVAL_COMMENT" : "BUSINESS";
+        String normalizedAppId = trimToNull(appId);
+        String normalizedDirId = trimToNull(dirId);
+        if ("APPROVAL_COMMENT".equals(normalizedType)) {
+            normalizedAppId = null;
+            normalizedDirId = null;
+        } else if (normalizedAppId != null) {
+            if (appMembershipValidator == null) {
+                throw new IllegalStateException("归属校验组件未装配，拒绝写入应用归属");
+            }
+            appMembershipValidator.validateTarget(normalizedAppId, normalizedDirId);
         }
 
         // —— 创建草稿 ——
@@ -130,7 +175,9 @@ public class FormDefServiceImpl implements FormDefService {
         entity.setDescription(description);
         entity.setStatus(FormStatusEnum.DRAFT.getCode());
         // BF20261013-020：表单类型元数据（空白/未知按业务表单）
-        entity.setFormType("APPROVAL_COMMENT".equals(formType) ? "APPROVAL_COMMENT" : "BUSINESS");
+        entity.setFormType(normalizedType);
+        entity.setAppId(normalizedAppId);
+        entity.setDirId(normalizedDirId);
         entity.setFormVersion(1);
         entity.setCreateTime(LocalDateTime.now());
         entity.setUpdateTime(LocalDateTime.now());
@@ -882,9 +929,39 @@ public class FormDefServiceImpl implements FormDefService {
                 .description(entity.getDescription())
                 .visibilityScope(entity.getVisibilityScope())
                 .formType(entity.getFormType())
+                .appId(entity.getAppId())
+                .dirId(entity.getDirId())
                 .createTime(entity.getCreateTime())
                 .updateTime(entity.getUpdateTime())
                 .build();
+    }
+
+    @Override
+    public java.util.Set<String> filterVisibleFormKeys(java.util.Collection<String> formKeys) {
+        if (formKeys == null || formKeys.isEmpty()) {
+            return java.util.Set.of();
+        }
+        java.util.List<String> keys = formKeys.stream()
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (keys.isEmpty()) {
+            return java.util.Set.of();
+        }
+        java.util.List<FormDefEntity> entities = formDefMapper.selectList(
+                Wrappers.<FormDefEntity>lambdaQuery().in(FormDefEntity::getFormKey, keys));
+        return entities.stream()
+                .filter(this::isVisibleToCurrentUser)
+                .map(FormDefEntity::getFormKey)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     // ==================== definition 解析校验闸门（唯一闸门） ====================

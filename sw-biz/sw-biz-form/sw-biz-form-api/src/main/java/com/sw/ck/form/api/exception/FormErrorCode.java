@@ -98,7 +98,16 @@ public enum FormErrorCode implements ErrorCode {
     C1_WRITE_PROTECTED(1612, "form.c1_write_protected", "该字段为 C1 受保护数据，只能通过受控事务动作写入"),
     C1_POLICY_INVALID(1613, "form.c1_policy_invalid", "现有数据不满足 C1 约束，无法启用保护"),
     ACTION_REALTIME_CONCURRENCY_EXCEEDED(1614, "form.action_realtime_concurrency_exceeded",
-            "实时动作并发已达上限，请稍后重试（适用额度见响应提示）");
+            "实时动作并发已达上限，请稍后重试（适用额度见响应提示）"),
+
+    // ==================== 应用中心（1700-1799，应用/目录/归属） ====================
+    APP_NOT_FOUND(1700, "form.app_not_found", "应用不存在或不可见"),
+    APP_NAME_DUPLICATE(1701, "form.app_name_duplicate", "应用名称已存在"),
+    APP_DISABLED(1702, "form.app_disabled", "应用已停用，不能新增或调整内容"),
+    APP_DELETE_RESTRICTED(1703, "form.app_delete_restricted", "应用下仍有目录或表单，须先处理归属再删除"),
+    APP_DIR_NOT_FOUND(1704, "form.app_dir_not_found", "应用目录不存在或不属于该应用"),
+    APP_DIR_NAME_DUPLICATE(1705, "form.app_dir_name_duplicate", "目录名称已存在"),
+    APP_DIR_DELETE_RESTRICTED(1706, "form.app_dir_delete_restricted", "目录下仍有表单，须先处理归属再删除");
 
     private final int code;
     private final String errorKey;
