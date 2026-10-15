@@ -3,7 +3,9 @@
 -- 管理端侧栏点不到；分类维护一度由前台流程中心的「管理分类」弹窗承担。
 -- Owner 2026-10-15 决定：分类维护放到管理端 —— 前台入口撤下，管理端给出可达入口。
 -- 父菜单：id=5（流程管理）；菜单 9112（P62—P64 预留段 9100—9199，9111 已被审批意见表单占用）；
--- 授权 9320（role_id=2 管理员；9300/9310—9319 已占用）。
+-- 授权 9320（role_id=2 管理员；9300/9310—9319 已占用）+ 9321（role_id=1 超级管理员，
+-- Owner 2026-10-15：「和系统管理员角色关联」——sys_user.id=1（admin / real_name=系统管理员）
+-- 持有 role_id=1；两条授权并存，普通角色仍须经角色菜单管理显式授权）。
 -- 不向普通用户默认授予：授权只落管理员角色，普通角色须经角色菜单管理显式授权。
 
 INSERT INTO sys_menu (id, create_time, update_time, deleted, version, parent_id, name, title, hidden, menu_type, path, component, permission, icon, sort)
@@ -17,3 +19,11 @@ WHERE NOT EXISTS (SELECT 1 FROM sys_role_menu WHERE id = 9320)
   AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 2 AND rm.menu_id = 9112 AND rm.deleted = 0)
   AND EXISTS (SELECT 1 FROM sys_menu m WHERE m.id = 9112 AND m.deleted = 0)
   AND EXISTS (SELECT 1 FROM sys_role r WHERE r.id = 2 AND r.deleted = 0);
+
+-- BF20261013-053：同一菜单与「系统管理员」角色（role_id=1，admin 账号持有）关联。
+INSERT INTO sys_role_menu (id, create_time, update_time, deleted, version, role_id, menu_id)
+SELECT 9321, current_timestamp, current_timestamp, 0, 0, 1, 9112
+WHERE NOT EXISTS (SELECT 1 FROM sys_role_menu WHERE id = 9321)
+  AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 1 AND rm.menu_id = 9112 AND rm.deleted = 0)
+  AND EXISTS (SELECT 1 FROM sys_menu m WHERE m.id = 9112 AND m.deleted = 0)
+  AND EXISTS (SELECT 1 FROM sys_role r WHERE r.id = 1 AND r.deleted = 0);
