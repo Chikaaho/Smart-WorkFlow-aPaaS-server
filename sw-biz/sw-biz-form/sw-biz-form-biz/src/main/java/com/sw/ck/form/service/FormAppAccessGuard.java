@@ -6,9 +6,9 @@ import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FormRecordAccessPort;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.entity.FormAppEntity;
-import com.sw.ck.form.entity.FormAppUserEntity;
+import com.sw.ck.form.entity.FormAppScopeEntity;
 import com.sw.ck.form.mapper.FormAppMapper;
-import com.sw.ck.form.mapper.FormAppUserMapper;
+import com.sw.ck.form.mapper.FormAppScopeMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
@@ -55,11 +55,11 @@ public class FormAppAccessGuard {
         DISABLED
     }
 
-    private static final String SCOPE_ALL = "ALL";
     private static final String STATUS_ENABLED = "ENABLED";
 
     private final FormAppMapper appMapper;
-    private final FormAppUserMapper appUserMapper;
+    private final FormAppScopeMapper appScopeMapper;
+    private final FormAppScopeMatcher scopeMatcher;
     private final JdbcTemplate jdbcTemplate;
 
     /** 流程参与关系 SPI（可选注入；依据模块装配，未注入时记录级回退只剩本人提交通道）。 */
@@ -70,10 +70,11 @@ public class FormAppAccessGuard {
         this.formRecordAccessPort = formRecordAccessPort;
     }
 
-    public FormAppAccessGuard(FormAppMapper appMapper, FormAppUserMapper appUserMapper,
-                              JdbcTemplate jdbcTemplate) {
+    public FormAppAccessGuard(FormAppMapper appMapper, FormAppScopeMapper appScopeMapper,
+                              FormAppScopeMatcher scopeMatcher, JdbcTemplate jdbcTemplate) {
         this.appMapper = appMapper;
-        this.appUserMapper = appUserMapper;
+        this.appScopeMapper = appScopeMapper;
+        this.scopeMatcher = scopeMatcher;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -88,7 +89,13 @@ public class FormAppAccessGuard {
             return AppAccess.NOT_VISIBLE;
         }
         FormAppEntity app = appMapper.selectById(appId);
-        if (app == null || !isScopeHit(app, loginUser.getUserId())) {
+        if (app == null) {
+            return AppAccess.NOT_VISIBLE;
+        }
+        // 0.1.7 #1：多维度可见范围（USER/DEPT/ROLE/POST/TENANT 任一命中；ALL 直接可见）
+        List<FormAppScopeEntity> scopeRows = appScopeMapper.selectList(
+                Wrappers.<FormAppScopeEntity>lambdaQuery().eq(FormAppScopeEntity::getAppId, app.getId()));
+        if (!scopeMatcher.matches(app, loginUser, scopeRows)) {
             return AppAccess.NOT_VISIBLE;
         }
         return STATUS_ENABLED.equals(app.getStatus()) ? AppAccess.VISIBLE_ENABLED : AppAccess.DISABLED;
@@ -170,13 +177,4 @@ public class FormAppAccessGuard {
                 && formRecordAccessPort.isProcessParticipant(tenantId, userId, formKey, recordId).orElse(false);
     }
 
-    private boolean isScopeHit(FormAppEntity app, Long userId) {
-        if (SCOPE_ALL.equals(app.getVisibleScopeType())) {
-            return true;
-        }
-        // SPECIFIED：集合空 = 无人可见
-        List<FormAppUserEntity> scopeUsers = appUserMapper.selectList(
-                Wrappers.<FormAppUserEntity>lambdaQuery().eq(FormAppUserEntity::getAppId, app.getId()));
-        return scopeUsers.stream().anyMatch(member -> userId.equals(member.getUserId()));
-    }
 }

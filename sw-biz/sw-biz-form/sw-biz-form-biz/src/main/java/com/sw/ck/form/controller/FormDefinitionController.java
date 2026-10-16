@@ -5,6 +5,7 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormConfigSaveReq;
+import com.sw.ck.form.api.dto.FormRenameReq;
 import com.sw.ck.form.api.dto.FormCreateReq;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.dto.FormSnapshotDTO;
@@ -104,6 +105,17 @@ public class FormDefinitionController {
     public R<Void> saveConfig(@PathVariable("id") String id, @RequestBody FormConfigSaveReq req) {
         log.info("Saving form config: id={}", id);
         formDefService.saveConfig(id, req.getDefinition());
+        return R.ok();
+    }
+
+    /**
+     * 仅改名（0.1.7 #4）：不动 formKey、定义与物理列，草稿/已发布/停用均可改。
+     */
+    @PreAuthorize("@ss.hasPermi('form:design:save')")
+    @PutMapping("/{id}/name")
+    public R<Void> renameFormDef(@PathVariable("id") String id, @RequestBody FormRenameReq req) {
+        log.info("Renaming form def: id={}", id);
+        formDefService.renameFormDef(id, req.getName());
         return R.ok();
     }
 

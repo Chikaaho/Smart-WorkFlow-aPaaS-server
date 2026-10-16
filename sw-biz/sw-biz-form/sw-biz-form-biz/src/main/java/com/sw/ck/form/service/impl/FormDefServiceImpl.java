@@ -222,6 +222,27 @@ public class FormDefServiceImpl implements FormDefService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public void renameFormDef(String id, String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能为空");
+        }
+        if (trimmed.length() > 200) {
+            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能超过 200 字");
+        }
+        FormDefEntity entity = formDefMapper.selectById(id);
+        if (entity == null) {
+            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
+        }
+        // 0.1.7 #4：改名不动 formKey/定义/物理列，全部状态可改
+        entity.setName(trimmed);
+        entity.setUpdateTime(LocalDateTime.now());
+        formDefMapper.updateById(entity);
+        log.info("Renamed form def: id={}, name={}", id, trimmed);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void saveConfig(String formId, String definition) {
         FormDefEntity entity = formDefMapper.selectById(formId);
         if (entity == null) {

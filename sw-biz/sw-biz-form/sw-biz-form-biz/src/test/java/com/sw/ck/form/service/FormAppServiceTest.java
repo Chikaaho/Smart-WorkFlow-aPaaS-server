@@ -25,7 +25,7 @@ import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormAppDirMapper;
 import com.sw.ck.form.mapper.FormAppMapper;
-import com.sw.ck.form.mapper.FormAppUserMapper;
+import com.sw.ck.form.mapper.FormAppScopeMapper;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
@@ -90,14 +90,12 @@ class FormAppServiceTest {
     private FormAppDirMapper dirMapper;
 
     @Autowired
-    private FormAppUserMapper appUserMapper;
-
-    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setUp() {
         jdbcTemplate.execute("DROP TABLE IF EXISTS sw_form_app_user");
+        jdbcTemplate.execute("DROP TABLE IF EXISTS sw_form_app_scope");
         jdbcTemplate.execute("DROP TABLE IF EXISTS sw_form_app_dir");
         jdbcTemplate.execute("DROP TABLE IF EXISTS sw_form_app");
         jdbcTemplate.execute("DROP TABLE IF EXISTS sw_form_def");
@@ -138,11 +136,12 @@ class FormAppServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE sw_form_app_user (
+                CREATE TABLE sw_form_app_scope (
                     id          varchar(36) not null primary key,
                     tenant_id   bigint      not null default 0,
                     app_id      varchar(36) not null,
-                    user_id     bigint      not null,
+                    scope_type  varchar(20) not null,
+                    scope_id    varchar(64) not null,
                     deleted     smallint    not null default 0,
                     create_time timestamp   not null default current_timestamp,
                     create_by   bigint,
@@ -151,8 +150,8 @@ class FormAppServiceTest {
                     version     bigint      not null default 0
                 )
                 """);
-        jdbcTemplate.execute("CREATE UNIQUE INDEX uk_sw_form_app_user "
-                + "ON sw_form_app_user (tenant_id, app_id, user_id)");
+        jdbcTemplate.execute("CREATE INDEX idx_sw_form_app_scope_app "
+                + "ON sw_form_app_scope (tenant_id, app_id, deleted)");
         jdbcTemplate.execute("""
                 CREATE TABLE sw_form_def (
                     id                   varchar(36)  not null primary key,
@@ -289,7 +288,7 @@ class FormAppServiceTest {
         assertThat(all.getVisibleScopeType()).isEqualTo("ALL");
         assertThat(all.getVisibleUserIds()).isNull();
         Integer relationRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM sw_form_app_user WHERE app_id = ?", Integer.class, app.getId());
+                "SELECT COUNT(*) FROM sw_form_app_scope WHERE app_id = ?", Integer.class, app.getId());
         assertThat(relationRows).isZero();
     }
 
@@ -413,8 +412,8 @@ class FormAppServiceTest {
     void visibleApps_scopeSemantics() {
         insertApp("app-all", TENANT_0, "全员应用", "ALL", "ENABLED", "MANUAL");
         insertApp("app-member", TENANT_0, "指定用户应用", "SPECIFIED", "ENABLED", "MANUAL");
-        jdbcTemplate.update("INSERT INTO sw_form_app_user (id, tenant_id, app_id, user_id, deleted, version) "
-                + "VALUES ('au-1', 0, 'app-member', ?, 0, 0)", USER_MEMBER);
+        jdbcTemplate.update("INSERT INTO sw_form_app_scope (id, tenant_id, app_id, scope_type, scope_id, deleted, version) "
+                + "VALUES ('au-1', 0, 'app-member', 'USER', ?, 0, 0)", String.valueOf(USER_MEMBER));
         insertApp("app-empty", TENANT_0, "空集合应用", "SPECIFIED", "ENABLED", "MANUAL");
         insertApp("app-tenant100", TENANT_100, "他租户应用", "ALL", "ENABLED", "MANUAL");
 
@@ -660,13 +659,14 @@ class FormAppServiceTest {
         @Bean
         public FormAppService formAppService(FormAppMapper appMapper,
                                              FormAppDirMapper dirMapper,
-                                             FormAppUserMapper appUserMapper,
+                                             FormAppScopeMapper appScopeMapper,
                                              FormDefMapper formDefMapper,
                                              FormDefService formDefService,
                                              FormAppMembershipValidator membershipValidator,
+                                             FormAppScopeMatcher scopeMatcher,
                                              FormIdGenerator formIdGenerator) {
-            return new FormAppServiceImpl(appMapper, dirMapper, appUserMapper, formDefMapper,
-                    formDefService, membershipValidator, formIdGenerator);
+            return new FormAppServiceImpl(appMapper, dirMapper, appScopeMapper, formDefMapper,
+                    formDefService, membershipValidator, scopeMatcher, formIdGenerator);
         }
     }
 }

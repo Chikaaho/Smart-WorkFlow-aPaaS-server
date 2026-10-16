@@ -213,10 +213,12 @@ class FormAppAccessGuardTest {
 
         @Bean
         public FormAppAccessGuard formAppAccessGuard(com.sw.ck.form.mapper.FormAppMapper appMapper,
-                                                     com.sw.ck.form.mapper.FormAppUserMapper appUserMapper,
+                                                     com.sw.ck.form.mapper.FormAppScopeMapper appScopeMapper,
+                                                     FormAppScopeMatcher scopeMatcher,
                                                      JdbcTemplate jdbcTemplate,
                                                      FormRecordAccessPort formRecordAccessPort) {
-            FormAppAccessGuard guard = new FormAppAccessGuard(appMapper, appUserMapper, jdbcTemplate);
+            FormAppAccessGuard guard = new FormAppAccessGuard(appMapper, appScopeMapper, scopeMatcher,
+                    jdbcTemplate);
             guard.setFormRecordAccessPort(formRecordAccessPort);
             return guard;
         }

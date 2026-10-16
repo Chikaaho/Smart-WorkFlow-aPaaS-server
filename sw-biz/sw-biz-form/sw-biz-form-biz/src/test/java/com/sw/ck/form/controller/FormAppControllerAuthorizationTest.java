@@ -139,7 +139,8 @@ class FormAppControllerAuthorizationTest {
 
         @Bean
         FormAppManageController formAppManageController() {
-            return new FormAppManageController(mock(FormAppService.class));
+            return new FormAppManageController(mock(FormAppService.class),
+                    mock(org.springframework.jdbc.core.JdbcTemplate.class));
         }
 
         @Bean

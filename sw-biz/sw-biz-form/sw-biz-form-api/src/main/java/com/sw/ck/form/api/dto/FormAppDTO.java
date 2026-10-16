@@ -37,11 +37,23 @@ public class FormAppDTO implements Serializable {
     /** 排序号（升序） */
     private Integer sortNo;
 
-    /** 可见范围：ALL=本租户全部用户 / SPECIFIED=指定用户 */
+    /** 可见范围：ALL=本租户全部用户 / SPECIFIED=按维度指定（0.1.7 #1） */
     private String visibleScopeType;
 
-    /** 指定可见用户集合（visibleScopeType=SPECIFIED 时下发；空集=无人可见） */
+    /** 指定可见用户集合（USER 维度；空集=无人可见） */
     private List<Long> visibleUserIds;
+
+    /** 指定可见部门集合（0.1.7 #1；DEPT 维度） */
+    private List<Long> visibleDeptIds;
+
+    /** 指定可见角色 code 集合（0.1.7 #1；ROLE 维度） */
+    private List<String> visibleRoleCodes;
+
+    /** 指定可见岗位集合（0.1.7 #1；POST 维度） */
+    private List<Long> visiblePostIds;
+
+    /** 指定可见租户集合（0.1.7 #1；TENANT 维度） */
+    private List<Long> visibleTenantIds;
 
     /** 状态：ENABLED / DISABLED */
     private String status;

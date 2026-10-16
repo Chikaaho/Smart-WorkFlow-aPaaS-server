@@ -19,9 +19,11 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 应用管理（后台）：应用 / 目录 / 表单归属维护。
@@ -38,9 +40,11 @@ public class FormAppManageController {
     private static final Logger log = LoggerFactory.getLogger(FormAppManageController.class);
 
     private final FormAppService formAppService;
+    private final JdbcTemplate jdbcTemplate;
 
-    public FormAppManageController(FormAppService formAppService) {
+    public FormAppManageController(FormAppService formAppService, JdbcTemplate jdbcTemplate) {
         this.formAppService = formAppService;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /** 应用列表（含停用与承接应用），keyword 对名称模糊过滤。 */
@@ -102,6 +106,21 @@ public class FormAppManageController {
 
     /** 应用内容（管理视角）：目录 + 目录内表单 + 应用内直接归属表单。 */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
+    /**
+     * 租户选项（0.1.7 #1：可见范围 TENANT 维度的候选集）。
+     * 只回 id 与名称，供选择器展示；读失败返回空列表（选择器呈现为空但可保存其它维度）。
+     */
+    @GetMapping("/tenants")
+    public R<List<Map<String, Object>>> listTenantOptions() {
+        try {
+            return R.ok(jdbcTemplate.queryForList(
+                    "SELECT id AS \"id\", name AS \"name\" FROM sys_tenant "
+                            + "WHERE deleted = 0 ORDER BY id"));
+        } catch (Exception e) {
+            return R.ok(List.of());
+        }
+    }
+
     @GetMapping("/{id}/content")
     public R<FormAppContentDTO> content(@PathVariable("id") String id) {
         return R.ok(formAppService.getAppContent(id));

@@ -72,6 +72,11 @@ public interface FormDefService {
     FormDefDTO updateDraft(String id, String name, String logicalTableName, String description);
 
     /**
+     * 仅改名（0.1.7 #4）：不动 formKey、定义与物理列；草稿/已发布/停用均可改。
+     */
+    void renameFormDef(String id, String name);
+
+    /**
      * 保存表单配置（definition JSON）。
      *
      * @param formId     表单 ID

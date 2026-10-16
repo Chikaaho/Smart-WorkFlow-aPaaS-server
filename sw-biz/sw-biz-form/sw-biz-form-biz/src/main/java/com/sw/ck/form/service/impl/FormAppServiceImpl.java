@@ -14,14 +14,16 @@ import com.sw.ck.form.api.dto.FormAppSaveReq;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.entity.FormAppDirEntity;
 import com.sw.ck.form.entity.FormAppEntity;
-import com.sw.ck.form.entity.FormAppUserEntity;
+import com.sw.ck.form.entity.FormAppScopeEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormAppDirMapper;
 import com.sw.ck.form.mapper.FormAppMapper;
-import com.sw.ck.form.mapper.FormAppUserMapper;
+import com.sw.ck.form.mapper.FormAppScopeMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.service.FormAppMembershipValidator;
+import com.sw.ck.form.service.FormAppScopeMatcher;
+import com.sw.ck.form.service.FormAppScopeTypes;
 import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
@@ -56,7 +58,8 @@ public class FormAppServiceImpl implements FormAppService {
 
     private final FormAppMapper appMapper;
     private final FormAppDirMapper dirMapper;
-    private final FormAppUserMapper appUserMapper;
+    private final FormAppScopeMapper appScopeMapper;
+    private final FormAppScopeMatcher scopeMatcher;
     private final FormDefMapper formDefMapper;
     private final FormDefService formDefService;
     private final FormAppMembershipValidator membershipValidator;
@@ -64,17 +67,19 @@ public class FormAppServiceImpl implements FormAppService {
 
     public FormAppServiceImpl(FormAppMapper appMapper,
                               FormAppDirMapper dirMapper,
-                              FormAppUserMapper appUserMapper,
+                              FormAppScopeMapper appScopeMapper,
                               FormDefMapper formDefMapper,
                               FormDefService formDefService,
                               FormAppMembershipValidator membershipValidator,
+                              FormAppScopeMatcher scopeMatcher,
                               FormIdGenerator idGenerator) {
         this.appMapper = appMapper;
         this.dirMapper = dirMapper;
-        this.appUserMapper = appUserMapper;
+        this.appScopeMapper = appScopeMapper;
         this.formDefMapper = formDefMapper;
         this.formDefService = formDefService;
         this.membershipValidator = membershipValidator;
+        this.scopeMatcher = scopeMatcher;
         this.idGenerator = idGenerator;
     }
 
@@ -95,10 +100,10 @@ public class FormAppServiceImpl implements FormAppService {
         }
         Map<String, Long> dirCounts = countDirsByApp();
         Map<String, Long> formCounts = countBusinessFormsByApp();
-        Map<String, List<Long>> scopeUsers = loadScopeUsers();
+        Map<String, List<FormAppScopeEntity>> scopes = loadScopeRows();
         return apps.stream()
                 .map(app -> toDTO(app, formCounts.getOrDefault(app.getId(), 0L),
-                        dirCounts.getOrDefault(app.getId(), 0L), scopeUsers.get(app.getId())))
+                        dirCounts.getOrDefault(app.getId(), 0L), scopes.get(app.getId())))
                 .toList();
     }
 
@@ -110,9 +115,9 @@ public class FormAppServiceImpl implements FormAppService {
         Long formCount = formDefMapper.selectCount(Wrappers.<FormDefEntity>lambdaQuery()
                 .eq(FormDefEntity::getAppId, id)
                 .eq(FormDefEntity::getFormType, FORM_TYPE_BUSINESS));
-        List<Long> scopeUsers = SCOPE_SPECIFIED.equals(app.getVisibleScopeType())
-                ? loadScopeUsersOf(id) : null;
-        return toDTO(app, formCount, dirCount, scopeUsers);
+        List<FormAppScopeEntity> scopes = SCOPE_SPECIFIED.equals(app.getVisibleScopeType())
+                ? loadScopeRowsOf(id) : null;
+        return toDTO(app, formCount, dirCount, scopes);
     }
 
     @Override
@@ -120,7 +125,7 @@ public class FormAppServiceImpl implements FormAppService {
     public FormAppDTO createApp(FormAppSaveReq req) {
         String name = requireName(req == null ? null : req.getName(), "应用名称");
         String scope = normalizeScope(req == null ? null : req.getVisibleScopeType());
-        List<Long> userIds = normalizeUserIds(req == null ? null : req.getUserIds());
+        AppScopeSets scopeSets = readScopeSets(req);
         requireNameAvailable(name, null);
 
         FormAppEntity app = new FormAppEntity();
@@ -134,10 +139,11 @@ public class FormAppServiceImpl implements FormAppService {
         app.setSource(SOURCE_MANUAL);
         appMapper.insert(app);
         if (SCOPE_SPECIFIED.equals(scope)) {
-            insertUsers(app.getId(), userIds);
+            insertScopes(app.getId(), scopeSets);
         }
-        log.info("Created form app: id={}, name={}, scope={}, userCount={}", app.getId(), name, scope, userIds.size());
-        return toDTO(app, 0L, 0L, SCOPE_SPECIFIED.equals(scope) ? userIds : null);
+        log.info("Created form app: id={}, name={}, scope={}, scopeSize={}", app.getId(), name, scope, scopeSets.size());
+        return toDTO(app, 0L, 0L,
+                SCOPE_SPECIFIED.equals(scope) ? loadScopeRowsOf(app.getId()) : null);
     }
 
     @Override
@@ -147,7 +153,7 @@ public class FormAppServiceImpl implements FormAppService {
         String name = requireName(req == null ? null : req.getName(), "应用名称");
         requireNameAvailable(name, id);
         String scope = normalizeScope(req == null ? null : req.getVisibleScopeType());
-        List<Long> userIds = normalizeUserIds(req == null ? null : req.getUserIds());
+        AppScopeSets scopeSets = readScopeSets(req);
 
         app.setName(name);
         app.setIcon(trimToNull(req.getIcon()));
@@ -160,17 +166,18 @@ public class FormAppServiceImpl implements FormAppService {
         appMapper.updateById(app);
 
         // 可见范围集合整体重配：物理删除重建（SPECIFIED→ALL 时清空残留集合）。
-        appUserMapper.deletePhysicallyByAppId(id);
+        appScopeMapper.deletePhysicallyByAppId(id);
         if (SCOPE_SPECIFIED.equals(scope)) {
-            insertUsers(id, userIds);
+            insertScopes(id, scopeSets);
         }
-        log.info("Updated form app: id={}, name={}, scope={}, userCount={}", id, name, scope, userIds.size());
+        log.info("Updated form app: id={}, name={}, scope={}, scopeSize={}", id, name, scope, scopeSets.size());
         Long dirCount = dirMapper.selectCount(Wrappers.<FormAppDirEntity>lambdaQuery()
                 .eq(FormAppDirEntity::getAppId, id));
         Long formCount = formDefMapper.selectCount(Wrappers.<FormDefEntity>lambdaQuery()
                 .eq(FormDefEntity::getAppId, id)
                 .eq(FormDefEntity::getFormType, FORM_TYPE_BUSINESS));
-        return toDTO(app, formCount, dirCount, SCOPE_SPECIFIED.equals(scope) ? userIds : null);
+        return toDTO(app, formCount, dirCount,
+                SCOPE_SPECIFIED.equals(scope) ? loadScopeRowsOf(id) : null);
     }
 
     @Override
@@ -213,7 +220,7 @@ public class FormAppServiceImpl implements FormAppService {
                     "应用下仍有 " + formCount + " 个表单、" + dirCount + " 个目录，须先处理归属再删除");
         }
         appMapper.deleteById(id);
-        appUserMapper.deletePhysicallyByAppId(id);
+        appScopeMapper.deletePhysicallyByAppId(id);
         log.info("Deleted form app: id={}", id);
     }
 
@@ -313,10 +320,10 @@ public class FormAppServiceImpl implements FormAppService {
         if (apps.isEmpty()) {
             return List.of();
         }
-        Map<String, List<Long>> scopeUsers = loadScopeUsers();
+        Map<String, List<FormAppScopeEntity>> scopes = loadScopeRows();
         List<FormAppEntity> visible = apps.stream()
-                .filter(app -> isVisibleToUser(app, scopeUsers.getOrDefault(app.getId(), List.of()),
-                        loginUser.getUserId()))
+                .filter(app -> scopeMatcher.matches(app, loginUser,
+                        scopes.getOrDefault(app.getId(), List.of())))
                 .toList();
         if (visible.isEmpty()) {
             return List.of();
@@ -346,7 +353,7 @@ public class FormAppServiceImpl implements FormAppService {
         }
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null || loginUser.getUserId() == null
-                || !isVisibleToUser(app, loadScopeUsersOf(app.getId()), loginUser.getUserId())) {
+                || !scopeMatcher.matches(app, loginUser, loadScopeRowsOf(app.getId()))) {
             throw new BaseException(FormErrorCode.APP_NOT_FOUND);
         }
         List<FormAppDirEntity> dirs = listDirs(appId);
@@ -426,28 +433,76 @@ public class FormAppServiceImpl implements FormAppService {
         throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "可见范围类型不合法");
     }
 
-    private List<Long> normalizeUserIds(List<Long> userIds) {
-        if (userIds == null) {
+    private List<Long> normalizeIds(List<Long> ids, String dimension) {
+        if (ids == null) {
             return List.of();
         }
-        List<Long> normalized = userIds.stream()
+        List<Long> normalized = ids.stream()
                 .filter(Objects::nonNull)
                 .distinct()
                 .sorted()
                 .toList();
-        if (normalized.stream().anyMatch(userId -> userId <= 0)) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "可见范围用户 ID 无效");
+        if (normalized.stream().anyMatch(id -> id <= 0)) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    "可见范围" + dimension + " ID 无效");
         }
         return normalized;
     }
 
-    private void insertUsers(String appId, List<Long> userIds) {
-        for (Long userId : userIds) {
-            FormAppUserEntity relation = new FormAppUserEntity();
+    private List<String> normalizeCodes(List<String> codes) {
+        if (codes == null) {
+            return List.of();
+        }
+        return codes.stream()
+                .map(FormAppServiceImpl::trimToNull)
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+    }
+
+    /** 读取请求中全部可见范围维度（0.1.7 #1：用户/部门/角色/岗位/租户）。 */
+    private AppScopeSets readScopeSets(FormAppSaveReq req) {
+        return new AppScopeSets(
+                normalizeIds(req == null ? null : req.getUserIds(), "用户"),
+                normalizeIds(req == null ? null : req.getDeptIds(), "部门"),
+                normalizeCodes(req == null ? null : req.getRoleCodes()),
+                normalizeIds(req == null ? null : req.getPostIds(), "岗位"),
+                normalizeIds(req == null ? null : req.getTenantIds(), "租户"));
+    }
+
+    /** 各维度可见范围集合（落库专用载体）。 */
+    private record AppScopeSets(List<Long> userIds, List<Long> deptIds, List<String> roleCodes,
+                                List<Long> postIds, List<Long> tenantIds) {
+        private int size() {
+            return userIds.size() + deptIds.size() + roleCodes.size() + postIds.size()
+                    + tenantIds.size();
+        }
+    }
+
+    private void insertScopes(String appId, AppScopeSets sets) {
+        insertScope(appId, FormAppScopeTypes.USER, sets.userIds());
+        insertScope(appId, FormAppScopeTypes.DEPT, sets.deptIds());
+        insertScope(appId, FormAppScopeTypes.POST, sets.postIds());
+        insertScope(appId, FormAppScopeTypes.TENANT, sets.tenantIds());
+        for (String roleCode : sets.roleCodes()) {
+            FormAppScopeEntity relation = new FormAppScopeEntity();
             relation.setId(idGenerator.generate());
             relation.setAppId(appId);
-            relation.setUserId(userId);
-            appUserMapper.insert(relation);
+            relation.setScopeType(FormAppScopeTypes.ROLE);
+            relation.setScopeId(roleCode);
+            appScopeMapper.insert(relation);
+        }
+    }
+
+    private void insertScope(String appId, String scopeType, List<Long> ids) {
+        for (Long id : ids) {
+            FormAppScopeEntity relation = new FormAppScopeEntity();
+            relation.setId(idGenerator.generate());
+            relation.setAppId(appId);
+            relation.setScopeType(scopeType);
+            relation.setScopeId(String.valueOf(id));
+            appScopeMapper.insert(relation);
         }
     }
 
@@ -477,26 +532,14 @@ public class FormAppServiceImpl implements FormAppService {
                 .collect(Collectors.groupingBy(FormDefEntity::getAppId, Collectors.counting()));
     }
 
-    private Map<String, List<Long>> loadScopeUsers() {
-        return appUserMapper.selectList(Wrappers.<FormAppUserEntity>lambdaQuery()).stream()
-                .collect(Collectors.groupingBy(FormAppUserEntity::getAppId,
-                        Collectors.mapping(FormAppUserEntity::getUserId, Collectors.toList())));
+    private Map<String, List<FormAppScopeEntity>> loadScopeRows() {
+        return appScopeMapper.selectList(Wrappers.<FormAppScopeEntity>lambdaQuery()).stream()
+                .collect(Collectors.groupingBy(FormAppScopeEntity::getAppId));
     }
 
-    private List<Long> loadScopeUsersOf(String appId) {
-        return appUserMapper.selectList(Wrappers.<FormAppUserEntity>lambdaQuery()
-                        .eq(FormAppUserEntity::getAppId, appId)).stream()
-                .map(FormAppUserEntity::getUserId)
-                .sorted()
-                .toList();
-    }
-
-    private boolean isVisibleToUser(FormAppEntity app, List<Long> scopeUsers, Long userId) {
-        if (SCOPE_ALL.equals(app.getVisibleScopeType())) {
-            return true;
-        }
-        // SPECIFIED：集合空=无人可见
-        return scopeUsers != null && scopeUsers.stream().anyMatch(userId::equals);
+    private List<FormAppScopeEntity> loadScopeRowsOf(String appId) {
+        return appScopeMapper.selectList(Wrappers.<FormAppScopeEntity>lambdaQuery()
+                .eq(FormAppScopeEntity::getAppId, appId));
     }
 
     private FormAppContentDTO buildContent(FormAppEntity app, List<FormAppDirEntity> dirs,
@@ -544,7 +587,24 @@ public class FormAppServiceImpl implements FormAppService {
                 .build();
     }
 
-    private FormAppDTO toDTO(FormAppEntity app, Long formCount, Long dirCount, List<Long> scopeUsers) {
+    private FormAppDTO toDTO(FormAppEntity app, Long formCount, Long dirCount,
+                             List<FormAppScopeEntity> scopeRows) {
+        List<Long> visibleUserIds = null;
+        List<Long> visibleDeptIds = null;
+        List<String> visibleRoleCodes = null;
+        List<Long> visiblePostIds = null;
+        List<Long> visibleTenantIds = null;
+        if (scopeRows != null) {
+            visibleUserIds = scopeRowsOf(scopeRows, FormAppScopeTypes.USER)
+                    .map(Long::valueOf).sorted().toList();
+            visibleDeptIds = scopeRowsOf(scopeRows, FormAppScopeTypes.DEPT)
+                    .map(Long::valueOf).sorted().toList();
+            visibleRoleCodes = scopeRowsOf(scopeRows, FormAppScopeTypes.ROLE).sorted().toList();
+            visiblePostIds = scopeRowsOf(scopeRows, FormAppScopeTypes.POST)
+                    .map(Long::valueOf).sorted().toList();
+            visibleTenantIds = scopeRowsOf(scopeRows, FormAppScopeTypes.TENANT)
+                    .map(Long::valueOf).sorted().toList();
+        }
         return FormAppDTO.builder()
                 .id(app.getId())
                 .name(app.getName())
@@ -552,7 +612,11 @@ public class FormAppServiceImpl implements FormAppService {
                 .color(app.getColor())
                 .sortNo(app.getSortNo())
                 .visibleScopeType(app.getVisibleScopeType())
-                .visibleUserIds(scopeUsers == null ? null : scopeUsers.stream().sorted().toList())
+                .visibleUserIds(visibleUserIds)
+                .visibleDeptIds(visibleDeptIds)
+                .visibleRoleCodes(visibleRoleCodes)
+                .visiblePostIds(visiblePostIds)
+                .visibleTenantIds(visibleTenantIds)
                 .status(app.getStatus())
                 .source(app.getSource())
                 .legacyCategoryId(app.getLegacyCategoryId())
@@ -561,6 +625,14 @@ public class FormAppServiceImpl implements FormAppService {
                 .createTime(app.getCreateTime())
                 .updateTime(app.getUpdateTime())
                 .build();
+    }
+
+    private static java.util.stream.Stream<String> scopeRowsOf(List<FormAppScopeEntity> rows,
+                                                               String scopeType) {
+        return rows.stream()
+                .filter(row -> scopeType.equals(row.getScopeType()))
+                .map(FormAppScopeEntity::getScopeId)
+                .filter(Objects::nonNull);
     }
 
     private static String trimToNull(String value) {
