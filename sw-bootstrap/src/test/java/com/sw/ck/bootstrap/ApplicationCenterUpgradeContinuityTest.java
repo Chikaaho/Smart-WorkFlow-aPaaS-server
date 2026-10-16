@@ -29,8 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 升级连续性验证（H2 全链 + 真实 Flowable 引擎）：把“升级前建立的记录、冻结版本与运行任务”
- * 放在真实引擎运行态中，验证应用中心增量迁移（{@code V20261015190000}）后：
+ * 升级连续性验证（H2 全链 + 真实 Flowable 引擎，0.1.6 升级通道口径）：把“升级前建立的记录、
+ * 冻结版本与运行任务”放在真实引擎运行态中，验证 0.1.6 存量升级脚本
+ * （{@code upgrade-to-0.1.6-from-0.1.5.h2.sql}，应用中心增量 + 历史衔接）后：
  * <ol>
  *   <li>存量记录仍可读、字段值未变，迁移不新增记录/实例（零副作用回读）；</li>
  *   <li>已发布版本冻结：{@code sw_form_def.form_version} 与 {@code sw_form_snapshot} 内容逐字节未变，
@@ -40,8 +41,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>事项→表单绑定与分类关联保持，未被静默改写。</li>
  * </ol>
  * <p>
- * 存量夹具以受支持升级入口（0.1.5 基线）建立：先迁移到 0.1.5（target），插入存量对象，
- * 用真实引擎发起流程并留下待办，再应用增量迁移；全部断言在同一个库、同一组对象上完成。
+ * 存量夹具以受支持升级入口（0.1.5 边界）建立：先以升级通道 legacy 资源 + target=0.1.5
+ * 迁移到 0.1.5 边界，插入存量对象，用真实引擎发起流程并留下待办，再执行 0.1.6 升级脚本
+ * 并验证主链零重放；全部断言在同一个库、同一组对象上完成。
  * </p>
  */
 @DisplayName("应用中心升级连续性（H2 全链 + 真实引擎运行任务）")
@@ -70,6 +72,14 @@ class ApplicationCenterUpgradeContinuityTest {
             "classpath:db/migration/system/{vendor}"
     };
 
+    /** 基线阶段位置：主链位置 + 0.1.5 边界来源（升级通道 legacy 资源，仅基线阶段使用）。 */
+    private static String[] h2BaseLocations() {
+        String[] main = h2Locations();
+        String[] all = Arrays.copyOf(main, main.length + 1);
+        all[main.length] = "classpath:db/upgrade/0.1.6/legacy-0.1.5/h2";
+        return all;
+    }
+
     private static String[] h2Locations() {
         return Arrays.stream(APP_LOCATIONS)
                 .map(location -> location.replace("{vendor}", "h2"))
@@ -86,10 +96,10 @@ class ApplicationCenterUpgradeContinuityTest {
 
     @BeforeAll
     static void establishPreUpgradeStateAndUpgrade() throws SQLException {
-        // —— 1. 受支持升级入口：迁移到 0.1.5 基线（不含应用中心增量迁移）——
+        // —— 1. 受支持升级入口：迁移到 0.1.5 边界（target=0.1.5：只应用遗留 V0.1.5 种子）——
         MigrateResult base = Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
-                .locations(h2Locations())
+                .locations(h2BaseLocations())
                 .target(MigrationVersion.fromVersion("0.1.5"))
                 .load()
                 .migrate();
@@ -171,13 +181,23 @@ class ApplicationCenterUpgradeContinuityTest {
         System.out.println("[G3-continuity] 升级前：instance=" + preUpgradeInstanceId
                 + ", task=" + preUpgradeTaskId + ", assignee=" + task.getAssignee());
 
-        // —— 4. 应用应用中心增量迁移 ——
+        // —— 4. 执行 0.1.6 存量升级脚本（应用中心增量 + 历史衔接，发布资产原文）——
+        execScript(classpathResource(UPGRADE_SCRIPT));
+
+        // —— 4.1 主链衔接验证：零 versioned 重放、validate 通过 ——
         MigrateResult upgrade = Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())
                 .load()
                 .migrate();
-        assertTrue(upgrade.success, "应用中心增量迁移应成功");
+        assertTrue(upgrade.success, "主链衔接验证应成功");
+        assertEquals(0, upgrade.migrationsExecuted,
+                "升级脚本后主链不应重复执行任何迁移（R__ 已在基线阶段应用）");
+        Flyway.configure()
+                .dataSource(URL, USER, PASSWORD)
+                .locations(h2Locations())
+                .load()
+                .validate();
     }
 
     private static String bpmn() {
@@ -301,5 +321,43 @@ class ApplicationCenterUpgradeContinuityTest {
         System.out.println("[G3-continuity] 停用应用后原任务办理完成：task=" + afterUpgrade.getId()
                 + "，实例历史保留=" + (historyService.createHistoricProcessInstanceQuery()
                         .processInstanceBusinessKey(RECORD_ID).finished().count() == 1));
+    }
+
+    // ==================== 0.1.6 升级通道脚本执行 ====================
+
+    /** 0.1.6 存量升级脚本（发布资产原文，classpath 读取，测试即验证交付物本身）。 */
+    private static final String UPGRADE_SCRIPT = "db/upgrade/0.1.6/upgrade-to-0.1.6-from-0.1.5.h2.sql";
+
+    private static String classpathResource(String resource) throws SQLException {
+        try (var in = ApplicationCenterUpgradeContinuityTest.class.getClassLoader().getResourceAsStream(resource)) {
+            if (in == null) {
+                throw new IllegalStateException("发布资产缺失: " + resource);
+            }
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            throw new SQLException("读取发布资产失败: " + resource, e);
+        }
+    }
+
+    private static void execScript(String script) throws SQLException {
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+             Statement stmt = conn.createStatement()) {
+            for (String raw : script.split(";")) {
+                String sql = stripComments(raw);
+                if (!sql.isBlank()) {
+                    stmt.execute(sql);
+                }
+            }
+        }
+    }
+
+    private static String stripComments(String raw) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : raw.split("\n")) {
+            if (!line.strip().startsWith("--")) {
+                sb.append(line).append('\n');
+            }
+        }
+        return sb.toString();
     }
 }

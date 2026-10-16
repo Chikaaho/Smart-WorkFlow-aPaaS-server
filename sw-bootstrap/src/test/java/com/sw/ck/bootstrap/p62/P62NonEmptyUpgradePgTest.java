@@ -28,16 +28,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * 0.1.5 发布收敛升级通道常驻验证（隔离内嵌真实 PostgreSQL）。
  * <p>
- * 本类原为 LT05a「非空旧数据先于 P62 增量」时间链；0.1.5 发版收敛
- * （versioned 链 V0.1.0—V0.1.10 → 每方言单一 {@code V0.1.5__baseline_seed.sql}，
- * 旧链移入独立升级通道 {@code db/upgrade/0.1.5/}）后，原增量文件不再存在，
- * 时间链重写为升级通道的两条受控路径，非空数据无损语义延续：</p>
+ * 本类原为 LT05a「非空旧数据先于 P62 增量」时间链；0.1.5/0.1.6 两轮发版收敛
+ * （versioned 链 → 每方言单一 {@code V0.1.6__baseline_seed.sql}，旧链与 0.1.5 期迁移
+ * 移入独立升级通道 {@code db/upgrade/0.1.5/}、{@code db/upgrade/0.1.6/}）后，
+ * 时间链重写为升级通道的受控路径，非空数据无损语义延续：</p>
  * <ol>
  *   <li>通道A（历史衔接）：在役旧链全量库（0.1.10 终态 + 业务数据）→
- *       {@code transition-history-to-0.1.5.postgresql.sql} → validate 通过、
+ *       {@code transition-history-to-0.1.5.postgresql.sql} →
+ *       {@code upgrade-to-0.1.6-from-0.1.5.postgresql.sql} → validate 通过、
  *       重复 migrate 零执行、数据无损、目录与全新种子库一致；</li>
  *   <li>通道B（存量升级）：legacy 0.1.1 库（业务数据）→
- *       {@code upgrade-to-0.1.5-from-0.1.1.postgresql.sql} → 同上。</li>
+ *       {@code upgrade-to-0.1.5-from-0.1.1.postgresql.sql} →
+ *       {@code upgrade-to-0.1.6-from-0.1.5.postgresql.sql} → 同上。</li>
  * </ol>
  * <p>
  * 隔离性：zonky 内嵌 PostgreSQL（临时集群，随 JVM 退出销毁），不触碰共享库。
@@ -45,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * </p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@DisplayName("0.1.5 升级通道常驻验证：历史衔接与存量升级（内嵌真实 PostgreSQL）")
+@DisplayName("0.1.6 升级通道常驻验证：历史衔接与存量升级（内嵌真实 PostgreSQL）")
 class P62NonEmptyUpgradePgTest {
 
     private static final String PG_USER = "postgres";
@@ -56,6 +58,10 @@ class P62NonEmptyUpgradePgTest {
             "db/upgrade/0.1.5/transition-history-to-0.1.5.postgresql.sql";
     private static final String UPGRADE_FROM_0_1_1_SCRIPT =
             "db/upgrade/0.1.5/upgrade-to-0.1.5-from-0.1.1.postgresql.sql";
+    private static final String UPGRADE_FROM_0_1_5_SCRIPT =
+            "db/upgrade/0.1.6/upgrade-to-0.1.6-from-0.1.5.postgresql.sql";
+    private static final String TRANSITION_016_SCRIPT =
+            "db/upgrade/0.1.6/transition-history-to-0.1.6.postgresql.sql";
     private static final String LEGACY_DIR_RESOURCE = "db/upgrade/0.1.5/legacy-0.1.x/postgresql";
 
     private static final String LEGACY_TABLE = "lt05a_legacy_tbl";
@@ -78,7 +84,7 @@ class P62NonEmptyUpgradePgTest {
     }
 
     @Test
-    @DisplayName("通道A：在役旧链全量库（0.1.10 终态+业务数据）→ 历史衔接脚本 → validate 通过/零重复执行/数据无损/目录=全新种子")
+    @DisplayName("通道A：在役旧链全量库（0.1.10 终态+业务数据）→ 0.1.5 衔接 → 0.1.6 存量升级脚本 → validate 通过/零重复执行/数据无损/目录=全新种子")
     void legacyFullChainSurvivesHistoryTransition() throws Exception {
         String db = createDatabase("lt05a_tr_full");
 
@@ -92,10 +98,11 @@ class P62NonEmptyUpgradePgTest {
         String preDigest = legacyDigest(db);
         int preCount = legacyCount(db);
 
-        // 3) 历史衔接脚本（发布资产原文）
+        // 3) 历史衔接脚本（0.1.5，发布资产原文）→ 0.1.6 存量升级脚本（应用中心增量 + 历史衔接）
         execScript(db, classpathResource(TRANSITION_SCRIPT));
+        execScript(db, classpathResource(UPGRADE_FROM_0_1_5_SCRIPT));
 
-        // 4) 衔接后：主链继续升级到最新 + validate 通过 + 重复 migrate 零执行 + 终点=最新迁移
+        // 4) 衔接后：主链继续到最新 + validate 通过 + 重复 migrate 零执行 + 终点=0.1.6
         Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
                 .locations(appLocations()).load();
         MigrateResult upgrade = after.migrate();
@@ -103,7 +110,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接并升级后终点应为最新迁移").isEqualTo("20261015190000");
+        assertThat(currentVersion(db)).as("衔接并升级后终点应为 0.1.6").isEqualTo("0.1.6");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
@@ -114,12 +121,12 @@ class P62NonEmptyUpgradePgTest {
                 .locations(appLocations()).load().migrate();
         assertThat(catalogOf(db)).as("衔接后目录应与全新种子库一致")
                 .isEqualTo(catalogOf(fresh));
-        System.out.println("[P62-EV] r015.transition fullchain rows=" + legacyCount(db)
-                + " digest_sha256=" + sha256(preDigest) + " history=0.1.5 rerun=0 validate=pass");
+        System.out.println("[P62-EV] r016.transition fullchain rows=" + legacyCount(db)
+                + " digest_sha256=" + sha256(preDigest) + " history=0.1.6 rerun=0 validate=pass");
     }
 
     @Test
-    @DisplayName("通道B：legacy 0.1.1 库（业务数据）→ 增量升级脚本 → validate 通过/终点 0.1.5/数据无损/目录=全新种子")
+    @DisplayName("通道B：legacy 0.1.1 库（业务数据）→ 0.1.5 增量升级 → 0.1.6 存量升级脚本 → validate 通过/终点 0.1.6/数据无损/目录=全新种子")
     void legacy011UpgradesToSeedWithoutDataLoss() throws Exception {
         String db = createDatabase("lt05a_up_011");
 
@@ -133,10 +140,11 @@ class P62NonEmptyUpgradePgTest {
         String preDigest = legacyDigest(db);
         int preCount = legacyCount(db);
 
-        // 3) 增量升级脚本（V0.1.2—V0.1.10 DDL + 历史衔接，发布资产原文）
+        // 3) 增量升级脚本（0.1.5）→ 0.1.6 存量升级脚本（应用中心增量 + 历史衔接，发布资产原文）
         execScript(db, classpathResource(UPGRADE_FROM_0_1_1_SCRIPT));
+        execScript(db, classpathResource(UPGRADE_FROM_0_1_5_SCRIPT));
 
-        // 4) 升级后：主链继续升级到最新 + validate 通过 + 重复 migrate 零执行 + 终点=最新迁移
+        // 4) 升级后：主链继续到最新 + validate 通过 + 重复 migrate 零执行 + 终点=0.1.6
         Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
                 .locations(appLocations()).load();
         MigrateResult upgrade = after.migrate();
@@ -144,7 +152,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "升级后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("升级后终点应为最新迁移").isEqualTo("20261015190000");
+        assertThat(currentVersion(db)).as("升级后终点应为 0.1.6").isEqualTo("0.1.6");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("升级后行数不减").isEqualTo(preCount);
@@ -155,8 +163,68 @@ class P62NonEmptyUpgradePgTest {
                 .locations(appLocations()).load().migrate();
         assertThat(catalogOf(db)).as("升级后目录应与全新种子库一致")
                 .isEqualTo(catalogOf(fresh));
-        System.out.println("[P62-EV] r015.upgrade-from-0.1.1 rows=" + legacyCount(db)
-                + " digest_sha256=" + sha256(preDigest) + " history=0.1.5 rerun=0 validate=pass");
+        System.out.println("[P62-EV] r016.upgrade-from-0.1.1 rows=" + legacyCount(db)
+                + " digest_sha256=" + sha256(preDigest) + " history=0.1.6 rerun=0 validate=pass");
+    }
+
+    @Test
+    @DisplayName("通道C：已应用应用中心增量的库（0.1.5 + V20261015190000 + 业务数据）→ 0.1.6 历史衔接脚本 → validate 通过/零重复执行/数据无损")
+    void appliedIncrementSurvivesHistoryTransitionTo016() throws Exception {
+        String db = createDatabase("lt05a_tr_incr016");
+
+        // 1) 0.1.5 + 应用中心增量形态（模拟已执行时间戳 20261015190000 的在役库：
+        //    升级通道 legacy 资源 + 现行 R__ 副本临时目录，不含主链 V0.1.6 种子）
+        Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
+                .locations(legacy016Dir()).load().migrate();
+        assertThat(currentVersion(db)).isEqualTo("20261015190000");
+
+        // 2) 非空代表数据（衔接前已存在）
+        seedBusinessData(db);
+        String preDigest = legacyDigest(db);
+        int preCount = legacyCount(db);
+
+        // 3) 0.1.6 历史衔接脚本（发布资产原文）
+        execScript(db, classpathResource(TRANSITION_016_SCRIPT));
+
+        // 4) 衔接后：主链零重放 + validate 通过 + 重复 migrate 零执行 + 终点=0.1.6
+        Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
+                .locations(appLocations()).load();
+        assertThat(after.migrate().success).isTrue();
+        after.validate();
+        MigrateResult again = after.migrate();
+        assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
+        assertThat(currentVersion(db)).as("衔接后终点应为 0.1.6").isEqualTo("0.1.6");
+
+        // 5) 数据无损 + 目录与全新种子库一致
+        assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
+        assertThat(legacyDigest(db)).as("衔接后行内容摘要一致").isEqualTo(preDigest);
+        assertHistorySingleSeed(db);
+        String fresh = createDatabase("lt05a_tr_incr016_fresh");
+        Flyway.configure().dataSource(dbUrl(fresh), PG_USER, PG_PASSWORD)
+                .locations(appLocations()).load().migrate();
+        assertThat(catalogOf(db)).as("衔接后目录应与全新种子库一致")
+                .isEqualTo(catalogOf(fresh));
+        System.out.println("[P62-EV] r016.transition applied-increment rows=" + legacyCount(db)
+                + " digest_sha256=" + sha256(preDigest) + " history=0.1.6 rerun=0 validate=pass");
+    }
+
+    /** 0.1.5+增量形态位置 = 临时目录（0.1.6 通道 legacy 版本化文件 + 现行 10 个 R__ 副本）。 */
+    private static String[] legacy016Dir() throws Exception {
+        Path dir = Files.createTempDirectory("r016-legacy-pg-");
+        for (String v : new String[]{"V0.1.5__baseline_seed.sql", "V20261015190000__application_center.sql"}) {
+            Files.writeString(dir.resolve(v),
+                    classpathResource("db/upgrade/0.1.6/legacy-0.1.5/postgresql/" + v), StandardCharsets.UTF_8);
+        }
+        for (String r : new String[]{
+                "R__bf20261013_catalog_admin_menu.sql", "R__i6_notify_menu_reconciliation.sql",
+                "R__p62_form_txn_action_menu.sql", "R__p62_iot_command_verify_menu.sql",
+                "R__p62_resource_ops_menu.sql", "R__p62_txn_batch_menu.sql",
+                "R__p63_iot_reservation_menu.sql", "R__p64_approval_form_menu.sql",
+                "R__p64_position_delegate_menu.sql", "R__application_center_menu.sql"}) {
+            Files.writeString(dir.resolve(r), classpathResource("db/migration/postgresql/" + r),
+                    StandardCharsets.UTF_8);
+        }
+        return new String[]{"filesystem:" + dir.toAbsolutePath()};
     }
 
     // ==================== 数据与历史工具 ====================
@@ -247,17 +315,14 @@ class P62NonEmptyUpgradePgTest {
         return Integer.parseInt(queryString(db, "SELECT count(*)::text FROM \"" + LEGACY_TABLE + "\""));
     }
 
-    /** 历史口径：衔接产生 0.1.5、主链继续升级后加本轮迁移，versioned 恰两条；R__ 记录保留。 */
+    /** 历史口径：0.1.6 存量升级脚本直接收敛为单条 0.1.6 记录；R__ 记录保留。 */
     private static void assertHistorySingleSeed(String db) throws Exception {
         int versioned = Integer.parseInt(queryString(db,
                 "SELECT count(*)::text FROM \"flyway_schema_history\" WHERE \"version\" IS NOT NULL"));
-        assertEquals(2, versioned, "versioned 历史应恰两条（0.1.5 + 本轮迁移）");
+        assertEquals(1, versioned, "versioned 历史应恰一条（0.1.6 种子）");
         String seed = queryString(db, "SELECT \"version\" || '|' || \"success\"::text || '|' || \"checksum\""
-                + " FROM \"flyway_schema_history\" WHERE \"version\" = '0.1.5'");
-        assertThat(seed).as("0.1.5 成功记录及校验和").isNotNull().endsWith("|true|-454928747");
-        String latest = queryString(db, "SELECT \"version\" || '|' || \"success\"::text"
-                + " FROM \"flyway_schema_history\" WHERE \"version\" = '20261015190000'");
-        assertThat(latest).as("本轮迁移成功记录").isNotNull().endsWith("|true");
+                + " FROM \"flyway_schema_history\" WHERE \"version\" = '0.1.6'");
+        assertThat(seed).as("0.1.6 成功记录及校验和").isNotNull().endsWith("|true|-1768731444");
     }
 
     /** 目录口径：表集合 + 列定义 + 索引名（数据不计；时间戳/行序不构成目录差异）。 */
