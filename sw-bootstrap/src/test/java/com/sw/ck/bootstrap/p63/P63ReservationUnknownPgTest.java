@@ -60,6 +60,7 @@ class P63ReservationUnknownPgTest {
     private static final Long DEVICE_ID = 91711L;
     private static final Path PEER_LOG = Path.of("/tmp/p63ev/peer-received-noreceipt.jsonl");
 
+    private P63ControlledDevicePeer peer;
     private EmbeddedPostgres pg;
     private ConfigurableApplicationContext app;
     private JdbcTemplate jdbc;
@@ -71,6 +72,8 @@ class P63ReservationUnknownPgTest {
 
     @BeforeAll
     void setUp() throws Exception {
+        // 受控对端（noreceipt 模式）在测试生命周期内自启动（端口占用/探测失败即显式失败）
+        peer = P63ControlledDevicePeer.start("127.0.0.1", 9778, PEER_LOG, "noreceipt");
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
         Map<String, Object> props = new java.util.HashMap<>();
@@ -103,6 +106,11 @@ class P63ReservationUnknownPgTest {
                     provider.setPrimary(true);
                     ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63UnknownLoginContextProvider", provider);
+                    // 受控对端传输（default/CI 构建无 dev 装配）：bean 定义注册使 dev 装配条件互斥
+                    ((org.springframework.context.support.GenericApplicationContext) context)
+                            .registerBean("p63LoopbackPeerTransport",
+                                    com.sw.ck.iot.provider.DeviceControlProvider.class,
+                                    () -> new P63LoopbackPeerTransport("http://127.0.0.1:9778/device"));
                 })
                 .run();
         jdbc = app.getBean(JdbcTemplate.class);
@@ -191,6 +199,9 @@ class P63ReservationUnknownPgTest {
             }
         } catch (Exception ignored) {
             // 关闭容错
+        }
+        if (peer != null) {
+            peer.close();
         }
         LoginUserHolder.clear();
     }

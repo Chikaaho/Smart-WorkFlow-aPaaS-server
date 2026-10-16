@@ -45,6 +45,7 @@ class P63ImmediateMqttBrokerPgTest {
     private static final String DEVICE_KEY = "p63-mqtt-device";
     private static final Path RECEIVED_LOG = Path.of("/tmp/p63ev/mqtt-received.jsonl");
 
+    private P63ControlledMqttBroker broker;
     private EmbeddedPostgres pg;
     private ConfigurableApplicationContext app;
     private JdbcTemplate jdbc;
@@ -53,6 +54,8 @@ class P63ImmediateMqttBrokerPgTest {
 
     @BeforeAll
     void setUp() throws Exception {
+        // 受控隔离 broker 在测试生命周期内自启动（端口占用/协议探测失败即显式失败）
+        broker = P63ControlledMqttBroker.start("127.0.0.1", 18830, RECEIVED_LOG);
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
         Map<String, Object> props = new java.util.HashMap<>();
@@ -119,6 +122,9 @@ class P63ImmediateMqttBrokerPgTest {
             }
         } catch (Exception ignored) {
             // 关闭容错
+        }
+        if (broker != null) {
+            broker.close();
         }
     }
 
