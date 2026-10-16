@@ -15,7 +15,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 
 ## 当前可体验的业务闭环
 
-当前发布版本为 **0.1.5**（持续修复发布列车：BF20261013-001—053、登录页备案号与域名根路径部署、每个支持方言收敛为一个 `V0.1.5__baseline_seed.sql`；发布/升级/验收/回滚材料见工作区 `docs/ops/production-ops.md` §8/§9 与本仓 `sw-bootstrap/src/main/resources/db/upgrade/0.1.5/`，回执见工作区 `product/bugfix-20261013/receipts/`）。0.1.3（后台 SSO 配置管理、B 端手机号准入、种子基线，材料见工作区 `release/0.1.2/` 与 `release/0.1.3/`）与 0.1.0 为历史发布。0.1.0 已交付的业务闭环（办公审批/OA 场景）为主线，如下：
+当前发布版本为 **0.1.6**（应用中心与表单分类统一：应用→目录→表单归属与用户端应用中心；每个支持方言收敛为一个 `V0.1.6__baseline_seed.sql`，工程默认版本 `0.1.6-SNAPSHOT`、正式构建以 `-Drevision=0.1.6` 覆盖；发布/升级/验收/回滚材料见工作区 `docs/ops/production-ops.md` §8/§9 与本仓 `sw-bootstrap/src/main/resources/db/upgrade/0.1.6/`，回执见工作区 `product/0.1.6-release/receipts/`）。0.1.5（持续修复发布列车，UAT 直接部署、未建 tag/Release）、0.1.3（后台 SSO 配置管理、B 端手机号准入、种子基线，材料见工作区 `release/0.1.2/` 与 `release/0.1.3/`）与 0.1.0 为历史发布。0.1.0 已交付的业务闭环（办公审批/OA 场景）为主线，如下：
 
 > 用户从工作台找到可发起事项，填写或恢复业务草稿，提交申请；审批人处理待办并填写意见；发起人随后查看状态和结果，相关人员收到抄送，管理员在后台维护事项、表单、流程和通知记录。
 
@@ -59,7 +59,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 
 ## 当前版本
 
-当前正式发布版本为 **0.1.5**（持续修复发布列车，经运维手册在 UAT 直接部署；本仓未建 tag/Release）：BF20261013-001—053 持续修复、登录页备案号、域名根路径部署、每支持方言一个 `V0.1.5__baseline_seed.sql` 迁移收敛，工程默认版本 `0.1.5-SNAPSHOT`、正式构建以 `-Drevision=0.1.5` 覆盖。此前 **0.1.3**、**0.1.0**（以仓库 `0.1.0` 标签与 Release 为准；在 v0.0.2 已验收的 OA 业务闭环基础上完成 0.1.0 OA 全功能收口）及更早的 v0.0.2、v0.0.1 为历史发布，见仓库标签。
+当前正式发布版本为 **0.1.6**（annotated tag 与公开 Release `0.1.6`，经既有 CI 通道发布并在 UAT 就地升级部署）：应用中心与表单分类统一（`application-center-form-classification`，正式功能第 49 个）、每支持方言一个 `V0.1.6__baseline_seed.sql` 迁移收敛、`db/upgrade/0.1.6/` 存量升级通道（S1/S2 二选一），工程默认版本 `0.1.6-SNAPSHOT`、正式构建以 `-Drevision=0.1.6` 覆盖。此前 **0.1.5**（持续修复发布列车，UAT 直接部署、未建 tag/Release）、**0.1.3**、**0.1.0**（以仓库 `0.1.0` 标签与 Release 为准；在 v0.0.2 已验收的 OA 业务闭环基础上完成 0.1.0 OA 全功能收口）及更早的 v0.0.2、v0.0.1 为历史发布，见仓库标签。
 
 ## 项目入口
 
