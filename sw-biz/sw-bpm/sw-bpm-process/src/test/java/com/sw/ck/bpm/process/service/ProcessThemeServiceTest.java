@@ -8,6 +8,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -116,5 +118,53 @@ class ProcessThemeServiceTest {
         assertThatThrownBy(() -> service.validateRule("{SEQ:0}")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.validateRule("{SEQ:11}")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.validateRule("  ")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("0.1.7 #37：日期/时间要素按白名单格式物化（{DATE:pattern}/{TIME:pattern}）")
+    void generate_whenDateAndTimeElements_shouldFormatByPattern() {
+        String basic = service.generate("k_fmt", "{DATE:yyyyMMdd}-{TIME:HHmmss}", 1L);
+        assertThat(basic).matches("\\d{8}-\\d{6}");
+        assertThat(service.generate("k_fmt2", "{DATE:yyyy-MM-dd}", 1L))
+                .isEqualTo(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
+        assertThat(service.generate("k_fmt3", "{DATE:yyyyMM}", 1L))
+                .isEqualTo(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMM")));
+        assertThat(service.generate("k_fmt4", "{TIME:HH:mm}", 1L))
+                .isEqualTo(LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")));
+    }
+
+    @Test
+    @DisplayName("0.1.7 #37：自定义要素（受控表达式）读发起人/日期段/序号；取不到的变量按空处理")
+    void generate_whenExpressionElement_shouldEvaluateRestrictedExpression() {
+        // 发起人（无 facade：回退 ID 字符串）
+        assertThat(service.generate("k_expr", "P-{EXPR:initiatorName}", 7L)).isEqualTo("P-7");
+        // 日期段（只读变量；不执行脚本）
+        assertThat(service.generate("k_expr2", "{EXPR:yyyy}{EXPR:MM}", 1L))
+                .isEqualTo(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMM")));
+        // 引用 seq：与 {SEQ} 同一次取值（不额外占号）
+        assertThat(service.generate("k_expr3", "{SEQ:3}-{EXPR:seq}", 1L)).isEqualTo("001-1");
+        // 引用不存在的变量 → 空串（不抛异常、不阻断发起）
+        assertThat(service.generate("k_expr4", "P{EXPR:notExisting}", 1L)).isEqualTo("P");
+        // 比较表达式按受控解释器语义输出；表达式引用 seq 时按同一次取值参与比较（此处 1 > 0）
+        assertThat(service.generate("k_expr5", "{EXPR:seq > 0}", 1L)).isEqualTo("true");
+    }
+
+    @Test
+    @DisplayName("0.1.7 #37：要素校验——格式不在白名单、表达式语法错误、空表达式被拒")
+    void validateRule_whenElementsInvalid_shouldReject() {
+        assertThatCode(() -> service.validateRule("{DATE:yyyyMMdd}-{TIME:HH:mm:ss}"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> service.validateRule("{EXPR:initiatorName}")).doesNotThrowAnyException();
+        assertThatCode(() -> service.validateRule("{EXPR:seq >= 1}")).doesNotThrowAnyException();
+        // 任意格式串不进白名单
+        assertThatThrownBy(() -> service.validateRule("{DATE:yyyy/MM/dd}"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.validateRule("{TIME:hh}"))
+                .isInstanceOf(IllegalArgumentException.class);
+        // 表达式语法错误在保存时拦下（括号不闭合）
+        assertThatThrownBy(() -> service.validateRule("{EXPR:(seq > 1}"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.validateRule("{EXPR: }"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }
