@@ -57,7 +57,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 class P62NodeLevelGuaranteePgTest {
 
     private static final Long TENANT = 0L;
-    private static final Long USER = 92101L;
+    /**
+     * 夹具操作员 id。
+     * <p>
+     * 取值须避开产品迁移已占用的 id 命名空间：0.1.7 #41 演示种子
+     * （{@code R__0.1.7_org_demo_seed.sql}）使用 9001/9002（租户）、9501—9504（角色）、
+     * 9601—9634（用户角色）、91001—91007/92001—92007（部门）、91101—91114/92101—92114（用户）。
+     * 本测试原先用 92101，与种子用户 {@code demo_b_hq_1}（租户 9002）撞号；因插入带
+     * {@code ON CONFLICT (id) DO NOTHING}，夹具行被跳过 → 命令消费身份回查租户不匹配 →
+     * 批次项永不收敛。改用 97101（种子未占用）。
+     * </p>
+     */
+    private static final Long USER = 97101L;
     private static final String FORM_KEY = "p62_node_guarantee";
 
     private static EmbeddedPostgres pg;
@@ -132,7 +143,7 @@ class P62NodeLevelGuaranteePgTest {
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'node-g-operator', 'seed-not-a-login-secret', 'G3操作员', ?, 0) "
                 + "ON CONFLICT (id) DO NOTHING", USER, TENANT);
-        jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) VALUES (92101, ?, ?, 2) "
+        jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) VALUES (97101, ?, ?, 2) "
                 + "ON CONFLICT (id) DO NOTHING", TENANT, USER);
         seedForm();
         System.out.println("[P62-EV] g3 boot ok pgPort=" + pg.getPort() + " table=" + stockTable);
