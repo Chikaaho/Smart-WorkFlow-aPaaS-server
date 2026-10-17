@@ -34,7 +34,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <ol>
  *   <li>隔离库迁移到 0.1.5 边界（升级通道 legacy 资源 + target=0.1.5），写入存量业务对象；</li>
  *   <li>{@code pg_dump -Fc} 全库备份（升级前快照）；</li>
- *   <li>执行 0.1.6 存量升级脚本（应用中心增量 + 历史衔接）→ 新表/新列/菜单就位、主链零重放；</li>
+ *   <li>执行 0.1.6 存量升级脚本（应用中心增量 + 历史衔接）与 0.1.7 存量升级脚本（0.1.7 期增量
+ *       + 历史衔接）→ 新表/新列/菜单就位、主链零重放；</li>
  *   <li>模拟失败恢复：删库 → {@code pg_restore} 恢复备份 → 断言回到 0.1.5 边界：
  *       增量表不存在、存量对象逐项在、值未变；</li>
  *   <li>恢复后可用性：既有读取（查询存量记录）与写入（插入新记录/更新值）均成功。</li>
@@ -70,6 +71,9 @@ class ApplicationCenterRecoveryDrillPostgresTest {
 
     /** 0.1.6 存量升级脚本（发布资产原文，classpath 读取）。 */
     private static final String UPGRADE_SCRIPT = "db/upgrade/0.1.6/upgrade-to-0.1.6-from-0.1.5.postgresql.sql";
+
+    /** 0.1.7 存量升级脚本（发布资产原文，classpath 读取）。 */
+    private static final String UPGRADE_017_SCRIPT = "db/upgrade/0.1.7/upgrade-to-0.1.7-from-0.1.6.postgresql.sql";
 
     private static final String RECORD_TABLE = "sw_form_g4_drill";
     private static final String RECORD_ID = "rec-g4-1";
@@ -113,14 +117,15 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         assertTrue(dumpBytes > 0, "备份文件不应为空");
         System.out.println("[G4-drill] 备份完成：" + dumpFile + " (" + dumpBytes + " bytes)");
 
-        // —— 3. 执行 0.1.6 存量升级脚本（应用中心增量 + 历史衔接，发布资产原文）→ 主链零重放 ——
+        // —— 3. 执行 0.1.6/0.1.7 存量升级脚本（增量 + 历史衔接，发布资产原文）→ 主链零重放 ——
         execScript(classpathResource(UPGRADE_SCRIPT));
+        execScript(classpathResource(UPGRADE_017_SCRIPT));
         MigrateResult upgrade = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(pgLocations())
                 .load().migrate();
         assertTrue(upgrade.success, "主链衔接验证应成功");
         assertEquals(0, upgrade.migrationsExecuted, "升级脚本后主链不应重复执行任何迁移（R__ 已在基线阶段应用）");
-        assertEquals("0.1.6", currentVersion(), "升级后版本应为 0.1.6 种子登记");
+        assertEquals("0.1.7", currentVersion(), "升级后版本应为 0.1.7 种子登记");
         assertTrue(incrementalTablesPresent(), "升级后应存在应用中心增量表");
         assertTrue(count("SELECT COUNT(*) FROM sw_form_app WHERE id = 'lc201'") == 1L,
                 "升级后应有承接应用");
@@ -165,13 +170,14 @@ class ApplicationCenterRecoveryDrillPostgresTest {
                 + "\"version\", \"title\") VALUES ('rec-g4-2', 0, 0, 11, 0, '恢复后新增')");
         assertEquals(2L, count("SELECT COUNT(*) FROM \"" + RECORD_TABLE + "\" WHERE \"deleted\" = 0"),
                 "恢复后新增记录应成功");
-        // 恢复后仍可继续升级（再次执行 0.1.6 存量升级脚本）
+        // 恢复后仍可继续升级（再次执行 0.1.6 与 0.1.7 存量升级脚本）
         execScript(classpathResource(UPGRADE_SCRIPT));
+        execScript(classpathResource(UPGRADE_017_SCRIPT));
         MigrateResult reUpgrade = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(pgLocations()).load().migrate();
         assertTrue(reUpgrade.success, "恢复后再次升级应成功");
         assertEquals(0, reUpgrade.migrationsExecuted, "恢复后再次升级不应重复执行主链迁移");
-        assertEquals("0.1.6", currentVersion(), "恢复后再次升级应到达 0.1.6");
+        assertEquals("0.1.7", currentVersion(), "恢复后再次升级应到达 0.1.7");
         assertTrue(incrementalTablesPresent(), "再次升级后增量表应重新就位");
         System.out.println("[G4-drill] 恢复后读写可用且可再次升级到 " + currentVersion());
 
@@ -338,7 +344,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         }
     }
 
-    // ==================== 0.1.6 升级通道脚本执行 ====================
+    // ==================== 0.1.6 / 0.1.7 升级通道脚本执行 ====================
 
     private static String classpathResource(String resource) throws Exception {
         try (var in = ApplicationCenterRecoveryDrillPostgresTest.class.getClassLoader().getResourceAsStream(resource)) {

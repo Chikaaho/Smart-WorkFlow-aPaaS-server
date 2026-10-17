@@ -29,9 +29,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 升级连续性验证（H2 全链 + 真实 Flowable 引擎，0.1.6 升级通道口径）：把“升级前建立的记录、
+ * 升级连续性验证（H2 全链 + 真实 Flowable 引擎，0.1.6→0.1.7 升级通道口径）：把“升级前建立的记录、
  * 冻结版本与运行任务”放在真实引擎运行态中，验证 0.1.6 存量升级脚本
- * （{@code upgrade-to-0.1.6-from-0.1.5.h2.sql}，应用中心增量 + 历史衔接）后：
+ * （{@code upgrade-to-0.1.6-from-0.1.5.h2.sql}，应用中心增量 + 历史衔接）与 0.1.7 存量升级脚本
+ * （{@code upgrade-to-0.1.7-from-0.1.6.h2.sql}，0.1.7 期增量 + 历史衔接）后：
  * <ol>
  *   <li>存量记录仍可读、字段值未变，迁移不新增记录/实例（零副作用回读）；</li>
  *   <li>已发布版本冻结：{@code sw_form_def.form_version} 与 {@code sw_form_snapshot} 内容逐字节未变，
@@ -42,8 +43,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ol>
  * <p>
  * 存量夹具以受支持升级入口（0.1.5 边界）建立：先以升级通道 legacy 资源 + target=0.1.5
- * 迁移到 0.1.5 边界，插入存量对象，用真实引擎发起流程并留下待办，再执行 0.1.6 升级脚本
- * 并验证主链零重放；全部断言在同一个库、同一组对象上完成。
+ * 迁移到 0.1.5 边界，插入存量对象，用真实引擎发起流程并留下待办，再依次执行 0.1.6 与 0.1.7
+ * 升级脚本并验证主链零重放；全部断言在同一个库、同一组对象上完成。
  * </p>
  */
 @DisplayName("应用中心升级连续性（H2 全链 + 真实引擎运行任务）")
@@ -184,6 +185,9 @@ class ApplicationCenterUpgradeContinuityTest {
         // —— 4. 执行 0.1.6 存量升级脚本（应用中心增量 + 历史衔接，发布资产原文）——
         execScript(classpathResource(UPGRADE_SCRIPT));
 
+        // —— 4.0 执行 0.1.7 存量升级脚本（0.1.7 期增量 + 历史衔接，发布资产原文）——
+        execScript(classpathResource(UPGRADE_017_SCRIPT));
+
         // —— 4.1 主链衔接验证：零 versioned 重放、validate 通过 ——
         MigrateResult upgrade = Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
@@ -323,10 +327,13 @@ class ApplicationCenterUpgradeContinuityTest {
                         .processInstanceBusinessKey(RECORD_ID).finished().count() == 1));
     }
 
-    // ==================== 0.1.6 升级通道脚本执行 ====================
+    // ==================== 0.1.6 / 0.1.7 升级通道脚本执行 ====================
 
     /** 0.1.6 存量升级脚本（发布资产原文，classpath 读取，测试即验证交付物本身）。 */
     private static final String UPGRADE_SCRIPT = "db/upgrade/0.1.6/upgrade-to-0.1.6-from-0.1.5.h2.sql";
+
+    /** 0.1.7 存量升级脚本（发布资产原文，classpath 读取，测试即验证交付物本身）。 */
+    private static final String UPGRADE_017_SCRIPT = "db/upgrade/0.1.7/upgrade-to-0.1.7-from-0.1.6.h2.sql";
 
     private static String classpathResource(String resource) throws SQLException {
         try (var in = ApplicationCenterUpgradeContinuityTest.class.getClassLoader().getResourceAsStream(resource)) {

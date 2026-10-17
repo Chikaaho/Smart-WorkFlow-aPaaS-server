@@ -26,22 +26,22 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * P64 A12 追加迁移演练（真实 PostgreSQL）。
  * <p>
- * 原形式为「0.1.6 非空基线 → V0.1.7—V0.1.9 追加升级」；0.1.6 发版收敛后
- * versioned 链为单一种子 {@code V0.1.6__baseline_seed.sql}，中间版本不再存在，
+ * 原形式为「0.1.6 非空基线 → V0.1.7—V0.1.9 追加升级」；0.1.6/0.1.7 发版收敛后
+ * versioned 链为单一种子 {@code V0.1.7__baseline_seed.sql}，中间版本不再存在，
  * 追加升级语义按开发声明（development-declaration.md §1/§5）重写为
  * <b>开发时间戳命名</b>：{@code V<yyyymmddhhmmss>__<功能需求>.sql}。</p>
  * <p>
- * 本演练证明：0.1.6 种子全新库 + 非空存量（旧流程定义/运行实例/任务级审批动作）→
+ * 本演练证明：0.1.7 种子全新库 + 非空存量（旧流程定义/运行实例/任务级审批动作）→
  * 追加一支时间戳迁移（新建表，不触碰存量）→ 存量行原义逐字节保持、
  * 新表零写回、迁移历史恰一条时间戳成功记录、validate 通过、重复 migrate 零执行。
- * 即：发布基线（0.1.6）与开发时间戳迁移两套命名可在同一库内正确衔接，
+ * 即：发布基线（0.1.7）与开发时间戳迁移两套命名可在同一库内正确衔接，
  * 不会重复应用、跳过变化或重写历史。</p>
  * <p>
  * 沿既有配方：一次性临时库、连接不可用按外部环境事实跳过（等强度由
  * FlywayFullChainPostgresTest / H2 链承载）。
  * </p>
  */
-@DisplayName("P64 A12 真实 PG 0.1.6 种子基线 → 开发时间戳迁移追加升级演练")
+@DisplayName("P64 A12 真实 PG 0.1.7 种子基线 → 开发时间戳迁移追加升级演练")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class P64AppendMigrationUpgradePostgresTest {
 
@@ -75,7 +75,7 @@ class P64AppendMigrationUpgradePostgresTest {
     private String dbPassword;
 
     @Test
-    @DisplayName("0.1.6 种子非空库追加时间戳迁移：存量原义保持、新表零写回、历史恰一条时间戳记录")
+    @DisplayName("0.1.7 种子非空库追加时间戳迁移：存量原义保持、新表零写回、历史恰一条时间戳记录")
     void appendMigrationPreservesLegacyRows() throws Exception {
         probeConnection();
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);
@@ -84,11 +84,11 @@ class P64AppendMigrationUpgradePostgresTest {
             stmt.executeUpdate("CREATE DATABASE " + DB_NAME);
         }
 
-        // 1) 迁移到最新链（V0.1.6 种子）
+        // 1) 迁移到最新链（V0.1.7 种子）
         var baselineResult = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(baselineResult.success, "种子迁移应成功");
-        assertEquals("0.1.6", currentVersion(conn()), "基线终点应为最新迁移");
+        assertEquals("0.1.7", currentVersion(conn()), "基线终点应为最新迁移");
 
         // 2) 非空存量：旧流程定义 + 运行实例 + 任务级审批动作行（追加前真实业务行）
         String legacyGraphJson = "{\"processKey\":\"legacy_def_p64\",\"elements\":["
@@ -179,7 +179,7 @@ class P64AppendMigrationUpgradePostgresTest {
                 while (rs.next()) {
                     String version = rs.getString(1);
                     assertEquals(1, rs.getInt(2), version + " 应恰有一条成功迁移记录");
-                    assertTrue(version.equals("0.1.6") || version.equals(ts),
+                    assertTrue(version.equals("0.1.7") || version.equals(ts),
                             "versioned 历史应仅含基础种子与时间戳，实际: " + version);
                     seen++;
                 }
