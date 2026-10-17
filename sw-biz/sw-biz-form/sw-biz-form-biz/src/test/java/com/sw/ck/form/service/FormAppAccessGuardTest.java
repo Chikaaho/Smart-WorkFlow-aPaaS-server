@@ -108,6 +108,11 @@ class FormAppAccessGuardTest {
         }
 
         @Bean
+        public FormAppScopeMatcher formAppScopeMatcher(JdbcTemplate jdbcTemplate) {
+            return new FormAppScopeMatcher(jdbcTemplate);
+        }
+
+        @Bean
         public PlatformTransactionManager transactionManager(DataSource dataSource) {
             return new DataSourceTransactionManager(dataSource);
         }
@@ -351,11 +356,12 @@ class FormAppAccessGuardTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sw_form_app_user (
+                CREATE TABLE IF NOT EXISTS sw_form_app_scope (
                     id          varchar(36) not null primary key,
                     tenant_id   bigint      not null default 0,
                     app_id      varchar(36) not null,
-                    user_id     bigint      not null,
+                    scope_type  varchar(20) not null,
+                    scope_id    varchar(64) not null,
                     deleted     smallint    not null default 0,
                     create_time timestamp   not null default current_timestamp,
                     create_by   bigint,
@@ -364,6 +370,8 @@ class FormAppAccessGuardTest {
                     version     bigint      not null default 0
                 )
                 """);
+        jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_sw_form_app_scope_app "
+                + "ON sw_form_app_scope (tenant_id, app_id, deleted)");
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS sw_form_def (
                     id VARCHAR(36) PRIMARY KEY, form_key VARCHAR(100) NOT NULL,
@@ -427,8 +435,9 @@ class FormAppAccessGuardTest {
     }
 
     private void insertAppUser(String id, long tenantId, String appId, long userId) {
-        jdbcTemplate.update("INSERT INTO sw_form_app_user (id, tenant_id, app_id, user_id, deleted, version) "
-                + "VALUES (?, ?, ?, ?, 0, 0)", id, tenantId, appId, userId);
+        jdbcTemplate.update("INSERT INTO sw_form_app_scope "
+                + "(id, tenant_id, app_id, scope_type, scope_id, deleted, version) "
+                + "VALUES (?, ?, ?, 'USER', ?, 0, 0)", id, tenantId, appId, String.valueOf(userId));
     }
 
     /** 建已发布表单并把归属列写成指定应用（归属写入走 SQL，聚焦闸门本身）。 */

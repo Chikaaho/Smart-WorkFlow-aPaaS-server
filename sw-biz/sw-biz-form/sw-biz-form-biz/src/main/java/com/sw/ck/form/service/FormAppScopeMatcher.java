@@ -1,5 +1,6 @@
 package com.sw.ck.form.service;
 
+import com.sw.ck.form.dynamic.FixedTableSql;
 import com.sw.ck.form.entity.FormAppEntity;
 import com.sw.ck.form.entity.FormAppScopeEntity;
 import com.sw.ck.security.holder.LoginUser;
@@ -81,9 +82,7 @@ public class FormAppScopeMatcher {
             return Set.of();
         }
         try {
-            return jdbcTemplate.queryForList(
-                    "SELECT post_id FROM sys_user_post WHERE user_id = ? AND deleted = 0",
-                    Long.class, userId).stream()
+            return FixedTableSql.loadUserPostIds(jdbcTemplate, userId).stream()
                     .map(String::valueOf)
                     .collect(Collectors.toSet());
         } catch (Exception e) {

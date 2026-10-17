@@ -7,6 +7,7 @@ import com.sw.ck.form.api.dto.FormAppDirDTO;
 import com.sw.ck.form.api.dto.FormAppDirSaveReq;
 import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
+import com.sw.ck.form.dynamic.FixedTableSql;
 import com.sw.ck.form.service.FormAppService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -113,9 +114,7 @@ public class FormAppManageController {
     @GetMapping("/tenants")
     public R<List<Map<String, Object>>> listTenantOptions() {
         try {
-            return R.ok(jdbcTemplate.queryForList(
-                    "SELECT id AS \"id\", name AS \"name\" FROM sys_tenant "
-                            + "WHERE deleted = 0 ORDER BY id"));
+            return R.ok(FixedTableSql.listEnabledTenantOptions(jdbcTemplate));
         } catch (Exception e) {
             return R.ok(List.of());
         }

@@ -557,6 +557,11 @@ class FormAppServiceTest {
         }
 
         @Bean
+        public FormAppScopeMatcher formAppScopeMatcher(JdbcTemplate jdbcTemplate) {
+            return new FormAppScopeMatcher(jdbcTemplate);
+        }
+
+        @Bean
         public PlatformTransactionManager transactionManager(DataSource dataSource) {
             return new DataSourceTransactionManager(dataSource);
         }
