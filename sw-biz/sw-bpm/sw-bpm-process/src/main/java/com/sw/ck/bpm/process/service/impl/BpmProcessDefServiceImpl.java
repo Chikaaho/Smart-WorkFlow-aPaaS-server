@@ -237,24 +237,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         return result;
     }
 
-    @Override
-    @Transactional
-    public void deleteDef(Long id) {
-        BpmProcessDef entity = getExisting(id);
-        // 安全删除：仅无发布版本的草稿可删除（已有发布/运行/历史引用的版本不可删）
-        if (entity.getPublishedVersion() != null && entity.getPublishedVersion() > 0) {
-            throw new BaseException(BpmErrorCode.VERSION_STATE_INVALID);
-        }
-        long referenceCount = formBindingService.lambdaQuery()
-                .eq(BpmFormBinding::getProcessDefKey, entity.getProcessKey())
-                .eq(BpmFormBinding::getActive, Boolean.TRUE)
-                .count();
-        if (referenceCount > 0) {
-            throw new BaseException(BpmErrorCode.VERSION_STATE_INVALID);
-        }
-        mapper.deleteById(entity.getId());
-        log.info("Soft-deleted process def: id={}", id);
-    }
+    // 0.1.7 #21：流程定义禁删——删除入口整体移除，不存在条件放行。
 
     @Override
     public String getBpmnXml(Long id) {

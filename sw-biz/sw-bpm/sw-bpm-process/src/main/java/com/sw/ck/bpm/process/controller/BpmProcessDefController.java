@@ -227,20 +227,6 @@ public class BpmProcessDefController {
     }
 
     /**
-     * 软删流程定义。
-     *
-     * @param id 流程定义 ID
-     */
-    @Transactional
-    @PreAuthorize("@ss.hasPermi('workflow:def:delete')")
-    @DeleteMapping("/{id}")
-    public R<Void> deleteDef(@PathVariable Long id) {
-        bpmProcessDefService.deleteDef(id);
-        log.info("流程定义已删除: id={}", id);
-        return R.ok();
-    }
-
-    /**
      * 发布流程定义（DRAFT → PUBLISHED）。
      * <p>
      * 触发完整发布流水线：图校验 → 表单已发布检查 → process_key 冻结检查 →

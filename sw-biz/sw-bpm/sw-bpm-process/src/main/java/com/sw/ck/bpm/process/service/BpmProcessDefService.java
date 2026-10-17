@@ -124,12 +124,7 @@ public interface BpmProcessDefService {
      */
     PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey);
 
-    /**
-     * 软删流程定义。
-     *
-     * @param id 流程定义 ID
-     */
-    void deleteDef(Long id);
+    // 0.1.7 #21：流程定义不提供删除（发布/运行/历史引用不可逆，禁删）。
 
     /**
      * 返回流程定义已部署的 BPMN XML 字符串。

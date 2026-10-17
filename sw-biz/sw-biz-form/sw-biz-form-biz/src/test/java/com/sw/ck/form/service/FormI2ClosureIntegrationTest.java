@@ -255,23 +255,24 @@ class FormI2ClosureIntegrationTest {
     }
 
     @Test
-    @DisplayName("已发布表单删除被拒并记录 DELETE_DENIED 审计")
-    void deletePublished_shouldRejectAndAudit() {
+    @DisplayName("0.1.7 #21：已发布表单可软删——@TableLogic 过滤 + DELETE 审计")
+    void deletePublished_shouldSoftDeleteAndAudit() {
         FormDefEntity form = createPublishedForm("i2_delete_audit", """
                 {"fields":[{"name":"f","type":"TEXT"}]}
                 """);
 
-        assertThatThrownBy(() -> formDefService.deleteDraft(form.getId()))
-                .isInstanceOf(BaseException.class)
-                .satisfies(e -> assertThat(((BaseException) e).getCode())
-                        .isEqualTo(FormErrorCode.FORM_ALREADY_PUBLISHED.getCode()));
+        formDefService.deleteDraft(form.getId());
 
-        Integer deniedAudits = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'DELETE_DENIED'",
+        // 软删后 @TableLogic 自动过滤：selectById 不再命中，物理行仍保留
+        assertThat(formDefMapper.selectById(form.getId())).as("软删后列表/详情不可见").isNull();
+        Integer physicalRows = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sw_form_def WHERE id = ?", Integer.class, form.getId());
+        assertThat(physicalRows).as("软删不物理清除").isEqualTo(1);
+
+        Integer deleteAudits = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'DELETE'",
                 Integer.class, form.getId());
-        assertThat(deniedAudits).as("删除拒绝必须记录 DELETE_DENIED 审计").isEqualTo(1);
-        assertThat(formDefMapper.selectById(form.getId()).getStatus())
-                .isEqualTo(FormStatusEnum.PUBLISHED.getCode());
+        assertThat(deleteAudits).as("删除必须记录 DELETE 审计").isEqualTo(1);
     }
 
     @Test

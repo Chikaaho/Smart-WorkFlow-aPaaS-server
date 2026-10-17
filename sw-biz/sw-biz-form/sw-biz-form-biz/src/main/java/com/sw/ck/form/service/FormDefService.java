@@ -201,9 +201,10 @@ public interface FormDefService {
     FormSnapshotDetailDTO getSnapshot(String formId, Integer formVersion);
 
     /**
-     * 删除表单草稿（逻辑删除，仅 DRAFT 状态允许）。
+     * 删除表单（逻辑删除，0.1.7 #21 起任何状态均可删除）。
      * <p>
-     * 已发布表单已建物理宽表，禁止删除；需删除时先走后续的独立下线流程。
+     * 物理表/快照/数据全部保留（deleted=1），列表与填报入口经 @TableLogic 自动过滤；
+     * 删除粒度只区分表单（可软删）与流程定义（禁删）。
      *
      * @param id 表单 ID
      */

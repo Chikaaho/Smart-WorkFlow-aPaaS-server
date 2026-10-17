@@ -698,6 +698,10 @@ public class FormDefServiceImpl implements FormDefService {
         }
     }
 
+    /**
+     * 0.1.7 #21：表单任何状态均可删除（软删）。物理表/快照/数据全部保留（deleted=1），
+     * 列表/详情/填报入口经 @TableLogic 自动过滤；删除粒度只区分表单（可删）与流程定义（禁删）。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteDraft(String id) {
@@ -705,14 +709,9 @@ public class FormDefServiceImpl implements FormDefService {
         if (entity == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
         }
-        if (!"DRAFT".equals(entity.getStatus())) {
-            auditLifecycle(id, "DELETE_DENIED", "状态 " + entity.getStatus() + " 不允许删除");
-            throw new BaseException(FormErrorCode.FORM_ALREADY_PUBLISHED.getCode(),
-                    "已发布/已停用表单不能删除");
-        }
         formDefMapper.deleteById(id);
-        auditLifecycle(id, "DELETE", "草稿删除");
-        log.info("Form draft deleted: id={}", id);
+        auditLifecycle(id, "DELETE", "表单删除（软删，状态 " + entity.getStatus() + "）");
+        log.info("Form soft-deleted: id={}, status={}", id, entity.getStatus());
     }
 
     // ==================== I2：生命周期 / 列表配置 ====================
