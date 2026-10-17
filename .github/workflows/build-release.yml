@@ -99,3 +99,16 @@ jobs:
             --title "CH-aPaaS-Server ${{ steps.version.outputs.release_version }} build ${GITHUB_SHA}" \
             --notes "自动构建产物（提交 ${GITHUB_SHA}，分支 main，版本 ${{ steps.version.outputs.release_version }}）" \
             "${{ steps.locate.outputs.jar }}#${{ steps.locate.outputs.jar_name }}"
+
+      # 失败诊断：把各模块 surefire 的失败摘要以 ::error:: 注解输出。
+      # 目的=发布门禁失败时可从 check-run 注解（无需仓库管理员权限）直接读到失败测试类与计数，
+      # 不必依赖需要鉴权的 Actions 日志下载。本步骤只读报告、不改判定（作业已因上游步骤失败而失败）。
+      - name: "Report failing tests as annotations (diagnostics)"
+        if: failure()
+        run: |
+          set +e
+          find . -path '*/target/surefire-reports/*.txt' -print0 2>/dev/null \
+            | xargs -0 grep -h -E 'Tests run: [0-9]+, Failures: [1-9]|Tests run: [0-9]+, Failures: [0-9]+, Errors: [1-9]' 2>/dev/null \
+            | head -20 \
+            | while IFS= read -r line; do echo "::error::${line}"; done
+          exit 0
