@@ -647,14 +647,14 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         String endId = "node_end";
         String edgeId = "edge_1";
 
-        // 默认坐标（设计器画布可调整）
+        // 默认坐标（设计器画布可调整）：0.1.7 起默认走向 = 自上而下（TB）
         Map<String, Object> startStyle = new LinkedHashMap<>();
-        startStyle.put("x", 100);
-        startStyle.put("y", 300);
+        startStyle.put("x", 300);
+        startStyle.put("y", 120);
 
         Map<String, Object> endStyle = new LinkedHashMap<>();
-        endStyle.put("x", 700);
-        endStyle.put("y", 300);
+        endStyle.put("x", 300);
+        endStyle.put("y", 360);
 
         GraphElement startNode = GraphElement.builder()
                 .id(startId)
