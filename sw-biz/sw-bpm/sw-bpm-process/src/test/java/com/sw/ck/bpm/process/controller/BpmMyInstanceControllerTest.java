@@ -209,4 +209,68 @@ class BpmMyInstanceControllerTest {
         assertThat(cancelled.getApprovalResult()).isNull();
         assertThat(cancelled.getOpinionData()).isNull();
     }
+
+    @Test
+    @DisplayName("0.1.7 #30 统一详情关系：审批人返回 pendingTaskId/节点键/外挂流程信息，历史与我的详情同口径")
+    void instanceRelation_shouldReturnAttachedProcessInfoForApprover() {
+        BpmTaskDTO active = task("t-active", false);
+        active.setAssignee("2"); // 当前登录用户（setUp 中 userId=2）
+        when(bpmTaskFacade.queryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of(active)));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of(task("t-done", true))));
+        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
+        org.mockito.Mockito.doReturn(instance(999L))
+                .when(spy).findLatestInstance("leave_form", "rec-001");
+
+        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+
+        assertThat(result.get("relation")).isEqualTo("APPROVER");
+        assertThat(result.get("pendingTaskId")).isEqualTo("t-active");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> instanceInfo = (Map<String, Object>) result.get("instance");
+        assertThat(instanceInfo)
+                .containsEntry("processInstanceId", "pi-001")
+                .containsEntry("processDefKey", "leave_flow");
+        @SuppressWarnings("unchecked")
+        List<String> currentKeys = (List<String>) instanceInfo.get("currentNodeKeys");
+        assertThat(currentKeys).containsExactly("node_approve");
+        @SuppressWarnings("unchecked")
+        List<ApprovalHistoryItemDTO> history =
+                (List<ApprovalHistoryItemDTO>) result.get("approvalHistory");
+        assertThat(history).hasSize(1);
+        assertThat(history.get(0).getTaskId()).isEqualTo("t-done");
+        assertThat(history.get(0).getAssigneeName()).isEqualTo("张三");
+    }
+
+    @Test
+    @DisplayName("0.1.7 #30 统一详情关系：无关系 fail-closed——不回传实例与流程信息")
+    void instanceRelation_shouldFailClosedForStranger() {
+        when(bpmTaskFacade.queryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of(task("t-active", false))));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of(task("t-done", true))));
+        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
+        org.mockito.Mockito.doReturn(instance(999L))
+                .when(spy).findLatestInstance("leave_form", "rec-001");
+
+        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+
+        assertThat(result.get("relation")).isEqualTo("NONE");
+        assertThat(result).doesNotContainKeys("instance", "approvalHistory", "pendingTaskId");
+    }
+
+    @Test
+    @DisplayName("0.1.7 #30 统一详情关系：无实例（表单独立存在）→ NONE，不查询任何流程数据")
+    void instanceRelation_shouldReturnNoneWhenFormStandsAlone() {
+        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
+        org.mockito.Mockito.doReturn(null)
+                .when(spy).findLatestInstance("leave_form", "rec-001");
+
+        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+
+        assertThat(result.get("relation")).isEqualTo("NONE");
+        assertThat(result).doesNotContainKeys("instance", "approvalHistory");
+        org.mockito.Mockito.verifyNoInteractions(bpmTaskFacade);
+    }
 }

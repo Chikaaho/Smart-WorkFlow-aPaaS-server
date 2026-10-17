@@ -193,6 +193,34 @@ public class BpmMyInstanceController {
                         "assignee", task.getAssignee() == null ? "" : task.getAssignee()))
                 .collect(Collectors.toList());
 
+        List<ApprovalHistoryItemDTO> history = buildApprovalHistory(instance);
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("instance", instance);
+        result.put("processName", processName);
+        result.put("formKey", instance.getFormKey());
+        result.put("businessKey", instance.getBusinessKey());
+        result.put("status", instance.getStatus());
+        result.put("progress", progress);
+        result.put("history", history);
+        return R.ok(result);
+    }
+
+    /** 按表单键+业务键取最新实例（关系查询入口；独立成方法便于事务外单元测试与复用）。 */
+    BpmInstance findLatestInstance(String formKey, String businessKey) {
+        return bpmInstanceService.lambdaQuery()
+                .eq(BpmInstance::getFormKey, formKey)
+                .eq(BpmInstance::getBusinessKey, businessKey)
+                .orderByDesc(BpmInstance::getCreateTime)
+                .last("LIMIT 1")
+                .one();
+    }
+
+    /**
+     * 实例流转记录装配（我发起的详情与统一详情关系端点共用同一口径，避免两处漂移）：
+     * 引擎历史 + 审批动作（意见/结果）合并，参与人快照/任务级覆盖与冻结名富化。
+     */
+    List<ApprovalHistoryItemDTO> buildApprovalHistory(BpmInstance instance) {
         // 流转记录：引擎历史 + 审批动作（意见/结果）合并。
         // A1/C1 修复：已办理节点必须回显真实动作/结果/意见（否则前端对 null 结果
         // 一律显示"进行中"，流程已结束的终审节点仍显示进行中）；无动作记录的
@@ -279,16 +307,7 @@ public class BpmMyInstanceController {
                 }
             }
         }
-
-        Map<String, Object> result = new java.util.LinkedHashMap<>();
-        result.put("instance", instance);
-        result.put("processName", processName);
-        result.put("formKey", instance.getFormKey());
-        result.put("businessKey", instance.getBusinessKey());
-        result.put("status", instance.getStatus());
-        result.put("progress", progress);
-        result.put("history", history);
-        return R.ok(result);
+        return history;
     }
 
     /**
@@ -306,12 +325,7 @@ public class BpmMyInstanceController {
         Long userId = loginUser.getUserId();
         Map<String, Object> result = new java.util.HashMap<>();
 
-        BpmInstance instance = bpmInstanceService.lambdaQuery()
-                .eq(BpmInstance::getFormKey, formKey)
-                .eq(BpmInstance::getBusinessKey, businessKey)
-                .orderByDesc(BpmInstance::getCreateTime)
-                .last("LIMIT 1")
-                .one();
+        BpmInstance instance = findLatestInstance(formKey, businessKey);
         if (instance == null) {
             result.put("relation", "NONE");
             return R.ok(result);
@@ -371,8 +385,14 @@ public class BpmMyInstanceController {
                 .map(task -> task.getName() == null ? "" : task.getName())
                 .filter(name -> !name.isEmpty())
                 .collect(Collectors.toList()));
+        instanceInfo.put("currentNodeKeys", activeTasks.stream()
+                .map(BpmTaskDTO::getTaskDefinitionKey)
+                .filter(key -> key != null && !key.isEmpty())
+                .collect(Collectors.toList()));
         result.put("pendingTaskId", pendingTaskId);
         result.put("instance", instanceInfo);
+        // 有流程的表单详情：流程信息（外挂组件）与我的详情同装配口径
+        result.put("approvalHistory", buildApprovalHistory(instance));
         return R.ok(result);
     }
 
