@@ -291,6 +291,91 @@ public class BpmMyInstanceController {
         return R.ok(result);
     }
 
+    /**
+     * 0.1.7 #30：统一详情权限关系——按 formKey+businessKey 查询当前用户与实例的关系。
+     * <p>
+     * APPROVER=存在指派给当前用户的活动任务（附 pendingTaskId）；PARTICIPANT=发起人或
+     * 历史任务经办人；NONE=与本实例无关系。NONE 时不回传实例任何信息（fail-closed，
+     * 不向无关系者泄露实例存在性）。数据可见性仍由 form:data:query 行权限独立把关。
+     * </p>
+     */
+    @GetMapping("/relations")
+    public R<Map<String, Object>> instanceRelation(@RequestParam String formKey,
+                                                   @RequestParam String businessKey) {
+        LoginUser loginUser = LoginUserHolder.get();
+        Long userId = loginUser.getUserId();
+        Map<String, Object> result = new java.util.HashMap<>();
+
+        BpmInstance instance = bpmInstanceService.lambdaQuery()
+                .eq(BpmInstance::getFormKey, formKey)
+                .eq(BpmInstance::getBusinessKey, businessKey)
+                .orderByDesc(BpmInstance::getCreateTime)
+                .last("LIMIT 1")
+                .one();
+        if (instance == null) {
+            result.put("relation", "NONE");
+            return R.ok(result);
+        }
+
+        // empty = 实例标识缺失：按无活动任务/无历史处理，不漂移为 Optional
+        List<BpmTaskDTO> activeTasks = bpmTaskFacade
+                .queryByProcessInstance(instance.getProcessInstanceId())
+                .orElse(List.of());
+        String pendingTaskId = activeTasks.stream()
+                .filter(task -> userId != null && userId.toString().equals(task.getAssignee()))
+                .map(BpmTaskDTO::getTaskId)
+                .findFirst()
+                .orElse(null);
+
+        boolean initiator = userId != null && userId.equals(instance.getInitiatorId());
+        boolean historyParticipant = pendingTaskId != null || initiator;
+        if (!historyParticipant) {
+            List<BpmTaskDTO> historyTasks = bpmTaskFacade
+                    .queryHistoryByProcessInstance(instance.getProcessInstanceId())
+                    .orElse(List.of());
+            historyParticipant = historyTasks.stream()
+                    .anyMatch(task -> userId != null && userId.toString().equals(task.getAssignee()));
+        }
+
+        String relation = pendingTaskId != null ? "APPROVER"
+                : historyParticipant ? "PARTICIPANT" : "NONE";
+        result.put("relation", relation);
+        if ("NONE".equals(relation)) {
+            return R.ok(result);
+        }
+
+        String processName = null;
+        if (instance.getProcessDefKey() != null) {
+            BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(instance.getProcessDefKey());
+            processName = processDef == null ? null : processDef.getName();
+        }
+        String initiatorName = null;
+        if (userQueryFacade != null && instance.getInitiatorId() != null) {
+            initiatorName = userQueryFacade
+                    .getUserDisplayNames(java.util.Set.of(instance.getInitiatorId()))
+                    .orElse(Map.of())
+                    .get(instance.getInitiatorId());
+        }
+
+        Map<String, Object> instanceInfo = new java.util.HashMap<>();
+        instanceInfo.put("id", instance.getId());
+        instanceInfo.put("processInstanceId", instance.getProcessInstanceId());
+        instanceInfo.put("processDefKey", instance.getProcessDefKey());
+        instanceInfo.put("processName", processName);
+        instanceInfo.put("theme", instance.getTheme());
+        instanceInfo.put("status", instance.getStatus());
+        instanceInfo.put("initiatorId", instance.getInitiatorId());
+        instanceInfo.put("initiatorName", initiatorName);
+        instanceInfo.put("createTime", instance.getCreateTime());
+        instanceInfo.put("currentNodes", activeTasks.stream()
+                .map(task -> task.getName() == null ? "" : task.getName())
+                .filter(name -> !name.isEmpty())
+                .collect(Collectors.toList()));
+        result.put("pendingTaskId", pendingTaskId);
+        result.put("instance", instanceInfo);
+        return R.ok(result);
+    }
+
     /** 意见快照 JSON → Map；空/坏数据返回 null（不伪造意见）。 */
     @SuppressWarnings("unchecked")
     private Map<String, Object> parseOpinionData(String opinionDataJson) {
