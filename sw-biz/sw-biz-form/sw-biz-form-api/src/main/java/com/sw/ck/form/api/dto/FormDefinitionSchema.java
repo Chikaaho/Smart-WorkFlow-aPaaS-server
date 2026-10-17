@@ -103,6 +103,16 @@ public class FormDefinitionSchema implements Serializable {
         /** 字段最大长度（字符数） */
         private Integer length;
 
+        /**
+         * 字段描述（0.1.7 #38）。
+         * <p>
+         * 字段清单里可直接维护的字段说明（「发布过的字段只能改长度、名称和描述」中的描述）。
+         * 纯元数据：不参与发布校验、不产生动态列 DDL、不进入提交载荷，
+         * 仅随 definition JSON 原样存取（与 {@code label} 同级的可编辑项）。
+         * </p>
+         */
+        private String description;
+
         /** 字典类型编码（仅 DICT 类型使用，如 sys_user_sex） */
         private String dictType;
 
