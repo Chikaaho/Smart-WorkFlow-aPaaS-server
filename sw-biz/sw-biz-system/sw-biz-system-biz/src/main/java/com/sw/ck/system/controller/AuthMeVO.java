@@ -28,7 +28,7 @@ public class AuthMeVO {
     /** 角色 key（sys_role.code）数组 */
     private List<String> roles;
 
-    /** 是否超管（角色 code 含 'superadmin'） */
+    /** 是否超管（超级租户 0 身份且角色 code 含 'superadmin'） */
     private Boolean superAdmin;
 
     @Data

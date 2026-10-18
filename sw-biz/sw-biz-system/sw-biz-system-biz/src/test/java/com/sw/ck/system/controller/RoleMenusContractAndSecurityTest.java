@@ -405,6 +405,28 @@ class RoleMenusContractAndSecurityTest {
         assertThat(countRoleMenuRows(2L)).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("PUT /system/role 把已绑定普通角色改名为 code=superadmin → 保留编码拒绝，code 不变")
+    void updateRole_renamingToSuperadmin_shouldBeRejected() throws Exception {
+        TestAuthenticationFilter.permissions = List.of("system:role:update");
+        // 租户内编码查重看不到 0 租户的 superadmin 角色（uk 含 tenant_id），改名是取得
+        // 超管旁路的现实路径：成员重登时 roleCodes 含 superadmin 即短路租户过滤
+        MvcResult result = mockMvc.perform(put("/system/role")
+                        .header("X-Test-User", "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\":2,\"name\":\"普通管理员\",\"code\":\"superadmin\",\"sort\":1,\"status\":1}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(body.get("code").asInt())
+                .as("保留编码改名必须与 create 同等拒绝：HTTP 200 + body code=400")
+                .isEqualTo(400);
+        assertThat(body.get("msg").asText()).contains("保留编码");
+        assertThat(jdbcTemplate.queryForObject("SELECT code FROM sys_role WHERE id = 2", String.class))
+                .as("被改名角色的编码保持 admin")
+                .isEqualTo("admin");
+    }
+
     // ==================== A5 鉴权链 ====================
 
     @Test

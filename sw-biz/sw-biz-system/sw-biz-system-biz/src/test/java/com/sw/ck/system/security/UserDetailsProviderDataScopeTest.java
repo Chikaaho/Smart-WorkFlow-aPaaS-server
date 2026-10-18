@@ -290,6 +290,25 @@ class UserDetailsProviderDataScopeTest {
     }
 
     @Test
+    void superAdminCode_outsideSuperTenant_shouldNotBypass() {
+        // 漂移绑定模拟：非 0 租户账号绑到 code=superadmin 的角色（如直改库的历史遗留，
+        // 或租户内编码查重盲区留下的同名角色）。身份装载必须以超级租户 0 约束兜底
+        long id = seq.incrementAndGet();
+        jdbcTemplate.update("""
+                        INSERT INTO sys_user (id, username, password, status, dept_id, tenant_id) VALUES (?, ?, 'x', 0, 1, 9001)
+                        """,
+                id, "u_super_drift");
+        grantRole(id, seedRole("superadmin", null, 1));
+
+        LoginUser loginUser = provider.loadByUsername("u_super_drift");
+
+        assertThat(loginUser).isNotNull();
+        assertThat(loginUser.isSuperAdmin())
+                .as("非超级租户账号即使绑到 superadmin 编码角色也不得取得超管旁路")
+                .isFalse();
+    }
+
+    @Test
     void unknownUser_shouldReturnNull() {
         assertThat(provider.loadByUsername("u_not_exist")).isNull();
     }

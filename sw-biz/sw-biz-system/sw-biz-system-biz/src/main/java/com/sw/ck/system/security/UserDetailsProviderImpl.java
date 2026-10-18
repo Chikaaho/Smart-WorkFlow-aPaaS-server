@@ -29,7 +29,8 @@ import java.util.stream.Collectors;
  * sw-security SPI 实现：从组织架构 SysUser 表加载用户认证信息。
  * <p>
  * roles = 用户经 sys_user_role 关联的已启用 sys_role.code 集合；
- * superAdmin = roles 是否包含 'superadmin'；
+ * superAdmin = 身份属于超级租户 0 且 roles 包含 'superadmin'（系统超管唯一身份：
+ * 角色编码保留 + 超级租户约束双重防线，其它租户的漂移绑定不取得旁路）；
  * permissions = superAdmin 时为空数组（旁路），否则经 sys_role_menu→sys_menu 取
  * 已授权菜单上 permission 非空白的标识（含页面节点与按钮节点）。
  * </p>
@@ -43,6 +44,10 @@ import java.util.stream.Collectors;
 public class UserDetailsProviderImpl implements UserDetailsProvider {
 
     private static final String SUPER_ADMIN_ROLE_CODE = "superadmin";
+
+    /** 超管旁路仅限超级租户身份（CommonConstants.SUPER_TENANT_ID="0"）。 */
+    private static final long SUPER_TENANT_ID =
+            Long.parseLong(com.sw.ck.common.constant.CommonConstants.SUPER_TENANT_ID);
 
     /**
      * 数据范围宽窄排序（按枚举名比较，不按 ordinal 猜测）：
@@ -151,7 +156,11 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
 
-            superAdmin = roleCodes.contains(SUPER_ADMIN_ROLE_CODE);
+            // 超管判定：角色编码保留（create/update 双向拒绝）+ 超级租户 0 身份约束。
+            // 其它租户的漂移绑定（如直改库的历史遗留）不得取得跨租户旁路
+            superAdmin = roleCodes.contains(SUPER_ADMIN_ROLE_CODE)
+                    && user.getTenantId() != null
+                    && user.getTenantId() == SUPER_TENANT_ID;
         }
 
         // 3. 数据范围：多角色取最宽；无有效角色取最小可见档 SELF（I5 fail closed，

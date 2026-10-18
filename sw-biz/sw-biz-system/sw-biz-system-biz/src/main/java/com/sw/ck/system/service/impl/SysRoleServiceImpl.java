@@ -89,6 +89,12 @@ public class SysRoleServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public void update(SysRole role) {
         assertMutable(role.getId());
+        // 保留编码防线：角色编码查重是租户内的（uk 含 tenant_id），改名成 superadmin 绕过
+        // 跨租户查重后，已绑定成员重登即取得超管跨租户旁路，必须与 create 同等拒绝
+        if ("superadmin".equals(role.getCode())) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                    "superadmin 为超管保留编码，不可授予其它角色");
+        }
         // 校验编码唯一性（排除自身）
         SysRole existing = getByCode(role.getCode());
         if (existing != null && !existing.getId().equals(role.getId())) {
