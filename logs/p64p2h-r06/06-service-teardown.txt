@@ -1,0 +1,10 @@
+== backend (spring-boot:run mvn tree) ==
+8080 listener PID=42176
+Ёи╧╕: ряжуж╧ PID 40828 (йТсз PID 42176 вс╫ЬЁл)╣д╫ЬЁл║ё
+Ёи╧╕: ряжуж╧ PID 42176 (йТсз PID 40132 вс╫ЬЁл)╣д╫ЬЁл║ё
+== vite ==
+5173 listener PID=6608
+Ёи╧╕: ряжуж╧ PID 6608 (йТсз PID 3924 вс╫ЬЁл)╣д╫ЬЁл║ё
+== post-teardown listening check ==
+NETSTAT_EXIT=1 (1=И⌡╤Г⌡▒Е░╛)
+2026-10-11T15:44:23+0800

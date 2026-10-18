@@ -1,0 +1,7 @@
+type_ | user_id_ | group_id_
+candidate | 2108817586024214529 | NULL
+candidate | 2108817586892435457 | NULL
+candidate | 2108817587316060161 | NULL
+candidate | 2108817587727101954 | NULL
+candidate | 2108817588146532354 | NULL
+(5 rows)

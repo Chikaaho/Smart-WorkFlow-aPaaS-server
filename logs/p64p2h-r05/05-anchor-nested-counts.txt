@@ -1,0 +1,17 @@
+FlywayFullChainH2Test tests=17 failures=0 errors=0 skipped=0 files=1
+FlywayFullChainPostgresTest tests=12 failures=0 errors=0 skipped=0 files=1
+P64AppendMigrationUpgradePostgresTest tests=1 failures=0 errors=0 skipped=0 files=1
+P64RollbackBoundaryPostgresTest tests=1 failures=0 errors=0 skipped=0 files=1
+I6G7bOldBaselineUpgradePostgresTest tests=2 failures=0 errors=0 skipped=0 files=1
+ErrorCodeCatalogTest tests=8 failures=0 errors=0 skipped=0 files=1
+BilingualMessageContractTest tests=9 failures=0 errors=0 skipped=0 files=1
+ApiOptionalContractGateTest tests=6 failures=0 errors=0 skipped=0 files=1
+ANCHOR-TOTAL tests=56 failures=0 errors=0 skipped=0
+
+BpmTodoControllerTest$ClaimTests.xml 3 fail=0 err=0
+BpmTodoControllerTest$CompleteTests.xml 5 fail=0 err=0
+BpmTodoControllerTest$DetailTests.xml 9 fail=0 err=0
+BpmTodoControllerTest$ProcessedTests.xml 3 fail=0 err=0
+BpmTodoControllerTest$RejectTests.xml 4 fail=0 err=0
+BpmTodoControllerTest$TodoTests.xml 3 fail=0 err=0
+BpmTodoControllerTest.xml 0 fail=0 err=0

@@ -1,0 +1,1 @@
+SELECT node_key, task_id, actor_id, outcome FROM sw_bpm_consensus_vote WHERE process_instance_id='9c3aba21-c49d-11f1-8088-00ff9e2a8dfb' ORDER BY create_time;

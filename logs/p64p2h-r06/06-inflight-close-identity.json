@@ -1,0 +1,268 @@
+{
+  "at": "2026-10-11T07:37:17.503Z",
+  "parentDefId": "2108817690357526529",
+  "inflight": {
+    "parentRecordId": "ba547cec-a327-4258-a8ec-99be66aedc50",
+    "opsTaskId": "76ec0e22-c546-11f1-80b6-00ff9e2a8dfb",
+    "parentInstanceId": "76ec0e15-c546-11f1-80b6-00ff9e2a8dfb",
+    "batchBefore": [
+      {
+        "id": "2109186366755676161",
+        "batchKey": "CHILD:TRG:76ec0e15-c546-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+        "parentInstanceId": "76ec0e15-c546-11f1-80b6-00ff9e2a8dfb",
+        "triggerId": "trg_child",
+        "actionId": "act_child",
+        "roundNo": "1",
+        "waitPolicy": "ALL",
+        "waitCount": null,
+        "expectedCount": 2,
+        "settledCount": 0,
+        "status": "WAITING",
+        "blockReason": null,
+        "settledAt": null,
+        "parentDepth": 0,
+        "items": [
+          {
+            "id": "2109186366843756546",
+            "itemKey": "2108817586024214529",
+            "status": "DISPATCHED",
+            "sourceRowId": "905765db-4771-44f5-a522-b31bc7cae328",
+            "sourceRowVersion": "0",
+            "targetRecordId": null,
+            "targetInstanceId": null,
+            "writebackJson": null,
+            "writebackSource": null,
+            "errorText": null
+          },
+          {
+            "id": "2109186366944419842",
+            "itemKey": "2108817586460422146",
+            "status": "DISPATCHED",
+            "sourceRowId": "2c5765a3-5c6f-4523-9f94-06d54c693269",
+            "sourceRowVersion": "0",
+            "targetRecordId": null,
+            "targetInstanceId": null,
+            "writebackJson": null,
+            "writebackSource": null,
+            "errorText": null
+          }
+        ]
+      }
+    ],
+    "itemsBefore": [
+      {
+        "id": "2109186366843756546",
+        "status": "DISPATCHED",
+        "targetInstanceId": null
+      },
+      {
+        "id": "2109186366944419842",
+        "status": "DISPATCHED",
+        "targetInstanceId": null
+      }
+    ]
+  },
+  "closedEntry": {
+    "newVersion": 4,
+    "removedTriggerIds": [],
+    "removedWaitRefs": [
+      {
+        "nodeId": "wait_children",
+        "reconnected": {
+          "from": "node_ops",
+          "to": "node_review"
+        }
+      }
+    ],
+    "newEntry": {
+      "parentRecordId": "c8717856-30fb-414f-9e67-04757f29ba0b",
+      "instanceId": "7e991429-c546-11f1-80b6-00ff9e2a8dfb",
+      "batchCount": 0
+    }
+  },
+  "children": {
+    "zhangsan": {
+      "taskId": "7add1e93-c546-11f1-80b6-00ff9e2a8dfb",
+      "recordId": "b86f928b-9cee-4427-998a-571c87b83b6c"
+    },
+    "lisi": {
+      "taskId": "7add1e94-c546-11f1-80b6-00ff9e2a8dfb",
+      "recordId": "2d31ea31-af69-4a8c-8e1b-7607fa53a2e0"
+    }
+  },
+  "reviewDone": null,
+  "finalInstances": [],
+  "batchAfter": [
+    {
+      "id": "2109186366755676161",
+      "batchKey": "CHILD:TRG:76ec0e15-c546-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "76ec0e15-c546-11f1-80b6-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 2,
+      "settledCount": 0,
+      "status": "BLOCKED",
+      "blockReason": "CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置",
+      "settledAt": null,
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2109186366843756546",
+          "itemKey": "2108817586024214529",
+          "status": "WRITTEN",
+          "sourceRowId": "905765db-4771-44f5-a522-b31bc7cae328",
+          "sourceRowVersion": "0",
+          "targetRecordId": "b86f928b-9cee-4427-998a-571c87b83b6c",
+          "targetInstanceId": "7adcf76a-c546-11f1-80b6-00ff9e2a8dfb",
+          "writebackJson": "{\"rows\":{\"905765db-4771-44f5-a522-b31bc7cae328\":{\"feedback\":\"R06I-ZS-OK\"}},\"main\":{\"title\":\"R06I-ZS-FB\"}}",
+          "writebackSource": "child=7adcf76a-c546-11f1-80b6-00ff9e2a8dfb,batch=CHILD:TRG:76ec0e15-c546-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+          "errorText": null
+        },
+        {
+          "id": "2109186366944419842",
+          "itemKey": "2108817586460422146",
+          "status": "CONFLICT",
+          "sourceRowId": "2c5765a3-5c6f-4523-9f94-06d54c693269",
+          "sourceRowVersion": "0",
+          "targetRecordId": "2d31ea31-af69-4a8c-8e1b-7607fa53a2e0",
+          "targetInstanceId": "7adcf769-c546-11f1-80b6-00ff9e2a8dfb",
+          "writebackJson": null,
+          "writebackSource": null,
+          "errorText": "回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "A1 inflight parent submit",
+      "data": {
+        "code": 0,
+        "id": "ba547cec-a327-4258-a8ec-99be66aedc50"
+      }
+    },
+    {
+      "name": "ops complete ba547cec-a327-4258-a8ec-99be66aedc50",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "A2 inflight parent instance",
+      "data": {
+        "id": "76ec0e15-c546-11f1-80b6-00ff9e2a8dfb"
+      }
+    },
+    {
+      "name": "A3 inflight batch",
+      "data": {
+        "status": "WAITING",
+        "items": [
+          {
+            "id": "2109186366843756546",
+            "status": "DISPATCHED",
+            "targetInstanceId": null
+          },
+          {
+            "id": "2109186366944419842",
+            "status": "DISPATCHED",
+            "targetInstanceId": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "B1 draft graph saved (triggers+waitActionIds removed)",
+      "data": {
+        "code": 0,
+        "msg": "success",
+        "removedTriggerIds": [],
+        "removedWaitRefs": [
+          {
+            "nodeId": "wait_children",
+            "reconnected": {
+              "from": "node_ops",
+              "to": "node_review"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "B2 publish v4",
+      "data": {
+        "code": 0,
+        "msg": "success",
+        "defVersion": 4,
+        "status": "PUBLISHED"
+      }
+    },
+    {
+      "name": "ops complete c8717856-30fb-414f-9e67-04757f29ba0b",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "C1 new entry instance",
+      "data": {
+        "id": "7e991429-c546-11f1-80b6-00ff9e2a8dfb"
+      }
+    },
+    {
+      "name": "C2 new entry batches (expect empty)",
+      "data": {
+        "code": 0,
+        "count": 0
+      }
+    },
+    {
+      "name": "D child complete R06I-ZS",
+      "data": {
+        "taskId": "7add1e93-c546-11f1-80b6-00ff9e2a8dfb",
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "D child complete R06I-LS",
+      "data": {
+        "taskId": "7add1e94-c546-11f1-80b6-00ff9e2a8dfb",
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "D2 batch settled",
+      "data": {
+        "status": "BLOCKED",
+        "settled": [
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "name": "D3 review complete",
+      "data": null
+    },
+    {
+      "name": "E1 instances final",
+      "data": {
+        "mineE": []
+      }
+    },
+    {
+      "name": "E2 inflight readback after converge",
+      "data": {
+        "code": 0,
+        "status": "BLOCKED"
+      }
+    }
+  ]
+}

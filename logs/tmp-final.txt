@@ -1,0 +1,9 @@
+process_instance_id | status | business_key
+d2081e1c-c4c3-11f1-aad4-00ff9e2a8dfb | RUNNING | 1a8214c4-9fa9-4565-bbc8-4b2e2af123de
+d2081e1b-c4c3-11f1-aad4-00ff9e2a8dfb | RUNNING | b3097fde-e1a3-4c98-93ef-fedd419e8289
+2766d21d-c4c4-11f1-aad4-00ff9e2a8dfb | APPROVED | 1dfe628a-4ddd-4776-a95b-f5236179dd0a
+b6aa8ad7-c4c4-11f1-aad4-00ff9e2a8dfb | APPROVED | 3e6afb90-5403-4c0f-9b35-8e36b586b7f7
+97f89219-c4c4-11f1-aad4-00ff9e2a8dfb | APPROVED | 36176921-2195-4264-a817-d261f146bb81
+2766f93a-c4c4-11f1-aad4-00ff9e2a8dfb | APPROVED | 402ced73-ee29-479d-8431-bbbcd8d2f0ea
+b6aa8ad8-c4c4-11f1-aad4-00ff9e2a8dfb | APPROVED | a451947a-c614-44b1-9429-214b78923264
+(7 rows)

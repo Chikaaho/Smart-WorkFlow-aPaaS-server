@@ -1,0 +1,111 @@
+{
+  "parentInstance": "e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb",
+  "parentRecord": "7051dd92-93a9-4af6-a958-ab8ec77c2a6d",
+  "parentStatus": "APPROVED",
+  "parentRecordData": {
+    "id": "7051dd92-93a9-4af6-a958-ab8ec77c2a6d",
+    "create_time": "2026-10-10T06:00:26.380+00:00",
+    "create_by": "1",
+    "update_time": "2026-10-10T06:00:33.559+00:00",
+    "update_by": "1",
+    "version": "1",
+    "title": "反馈完成-张三",
+    "hosts": [
+      {
+        "id": "747e33a6-5df1-4279-b053-297b1a8e4144",
+        "parent_record_id": "7051dd92-93a9-4af6-a958-ab8ec77c2a6d",
+        "create_time": "2026-10-10T06:00:26.387+00:00",
+        "create_by": "1",
+        "update_time": "2026-10-10T06:00:26.387+00:00",
+        "update_by": "1",
+        "host_name": "host-01",
+        "owner": "张三",
+        "feedback": ""
+      },
+      {
+        "id": "f471a5c3-37b6-4da8-987f-a603d25e178f",
+        "parent_record_id": "7051dd92-93a9-4af6-a958-ab8ec77c2a6d",
+        "create_time": "2026-10-10T06:00:26.388+00:00",
+        "create_by": "1",
+        "update_time": "2026-10-10T06:00:26.388+00:00",
+        "update_by": "1",
+        "host_name": "host-02",
+        "owner": "张三",
+        "feedback": ""
+      }
+    ]
+  },
+  "childBatches": [
+    {
+      "id": "2108799821099954177",
+      "batchKey": "CHILD:TRG:e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 1,
+      "settledCount": 1,
+      "status": "SETTLED",
+      "blockReason": null,
+      "settledAt": "2026-10-10T14:00:33.570374",
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2108799821167063041",
+          "itemKey": "张三",
+          "status": "WRITTEN",
+          "sourceRowId": null,
+          "sourceRowVersion": null,
+          "targetRecordId": "d1ae6334-f2f1-40d1-ab03-4a607f6e831e",
+          "targetInstanceId": "e765100c-c46f-11f1-9dac-00ff9e2a8dfb",
+          "writebackJson": "{\"main\":{\"title\":\"反馈完成-张三\"}}",
+          "writebackSource": "child=e765100c-c46f-11f1-9dac-00ff9e2a8dfb,batch=CHILD:TRG:e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+          "errorText": null
+        }
+      ]
+    }
+  ],
+  "triggerExecs": [
+    {
+      "id": "2108799820982513665",
+      "processInstanceId": "e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "eventType": "NODE_ROUND_COMPLETED",
+      "nodeKey": "node_ops",
+      "roundNo": "1",
+      "execKey": "TRG:e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1",
+      "status": "MATCHED",
+      "resultType": "NUMBER",
+      "resultValue": "1",
+      "matchedBranchId": "b1",
+      "disposition": null,
+      "errorText": "动作 act_child 项 张三: 意图已受理 commandId=2108799821175451649",
+      "snapshot": "{\"variables\":{\"var_hosts\":[{\"host_name\":\"host-01\",\"owner\":\"张三\",\"feedback\":\"\",\"id\":\"747e33a6-5df1-4279-b053-297b1a8e4144\"},{\"host_name\":\"host-02\",\"owner\":\"张三\",\"feedback\":\"\",\"id\":\"f471a5c3-37b6-4da8-987f-a603d25e178f\"}]}}",
+      "durationMs": "952",
+      "createTime": "2026-10-10T14:00:31.585578"
+    }
+  ],
+  "actionRefs": [
+    {
+      "id": "2108799821141897218",
+      "execId": "2108799820982513665",
+      "processInstanceId": "e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "actionType": "START_GROUPED",
+      "itemKey": "张三",
+      "itemSummary": "{\"groupBy\":\"owner\",\"type\":\"GROUP\"}",
+      "commandKey": "P64ACT:TRG:e3dab0b8-c46f-11f1-9dac-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child:张三",
+      "commandId": "2108799821175451649",
+      "targetDefKey": "bpm_3a1671bafc154a20",
+      "targetFormKey": "p64p2_child_form",
+      "targetRecordId": "d1ae6334-f2f1-40d1-ab03-4a607f6e831e",
+      "targetInstanceId": "e765100c-c46f-11f1-9dac-00ff9e2a8dfb",
+      "status": "STARTED",
+      "errorText": null,
+      "createTime": "2026-10-10T14:00:31.624611"
+    }
+  ]
+}

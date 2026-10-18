@@ -1,0 +1,1 @@
+SELECT id, process_instance_id, business_key, status, def_version, create_time, update_time FROM sw_bpm_instance WHERE process_instance_id IN ('9c3aba21-c49d-11f1-8088-00ff9e2a8dfb','6e30b060-c49d-11f1-8088-00ff9e2a8dfb','552d083f-c49d-11f1-8088-00ff9e2a8dfb');

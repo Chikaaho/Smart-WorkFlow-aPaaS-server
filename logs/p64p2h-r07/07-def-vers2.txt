@@ -1,0 +1,7 @@
+version | status | has_trg
+--------------------------
+0 | PUBLISHED | true
+0 | PUBLISHED | true
+0 | PUBLISHED | true
+0 | PUBLISHED | false
+(4 rows)

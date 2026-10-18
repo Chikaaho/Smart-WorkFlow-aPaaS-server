@@ -1,0 +1,4 @@
+id | batch_key | status | block_reason | wait_policy | expected_count | settled_count
+-------------------------------------------------------------------------------------
+2108953698084405249 | CHILD:TRG:2e65f119-c4c5-11f1-aad4-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child | SETTLED | CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置 | ALL | 2 | 2
+(1 rows)

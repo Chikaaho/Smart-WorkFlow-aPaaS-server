@@ -1,0 +1,5 @@
+item_id | batch_id | parent_instance_id | item_key | status | source_row_id | target_record_id | target_instance_id
+-------------------------------------------------------------------------------------------------------------------
+2108953698336063490 | 2108953698084405249 | 2e65f119-c4c5-11f1-aad4-00ff9e2a8dfb | 2108817586024214529 | WRITTEN | 3a00d8f1-f74c-4aa3-a80a-af0768fcdb37 | 5276b840-7cfc-459e-a5f9-996cfd776081 | 52c09437-c4c5-11f1-aad4-00ff9e2a8dfb
+2108953698654830593 | 2108953698084405249 | 2e65f119-c4c5-11f1-aad4-00ff9e2a8dfb | 2108817586460422146 | WRITTEN | 4f30c8da-a4fd-460a-a815-3fcc2229e2fe | 61835090-8e82-4a89-b204-edcc3dc7279b | 52c09438-c4c5-11f1-aad4-00ff9e2a8dfb
+(2 rows)

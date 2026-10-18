@@ -1,0 +1,4 @@
+id | status | block_reason | settled_count | expected_count
+-----------------------------------------------------------
+2109177860094738434 | WAITING | NULL | 0 | 2
+(1 rows)

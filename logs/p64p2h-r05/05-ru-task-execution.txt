@@ -1,0 +1,4 @@
+ru_task_total | ru_exec_total
+-----------------------------
+1 | 2
+(1 rows)

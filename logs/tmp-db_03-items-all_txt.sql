@@ -1,0 +1,1 @@
+SELECT id, batch_id, item_key, status, source_row_id, source_row_version, source_rows_json, target_record_id, target_instance_id, writeback_time, writeback_source, error_text FROM sw_bpm_child_item ORDER BY batch_id, id;

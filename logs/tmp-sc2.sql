@@ -1,0 +1,1 @@
+SELECT id_, name_, task_def_key_, assignee_, start_time_, end_time_, delete_reason_ FROM act_hi_taskinst WHERE proc_inst_id_='02434573-c48a-11f1-bd5c-00ff9e2a8dfb' ORDER BY start_time_;

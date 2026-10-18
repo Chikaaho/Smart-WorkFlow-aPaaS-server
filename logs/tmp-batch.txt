@@ -1,0 +1,3 @@
+id | batch_key | status | expected_count | settled_count | block_reason
+2108949817950552066 | CHILD:TRG:0ff94fe9-c4c3-11f1-aad4-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child | WAITING | 2 | 0 | NULL
+(1 rows)

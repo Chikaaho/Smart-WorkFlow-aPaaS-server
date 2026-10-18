@@ -1,0 +1,4 @@
+batch_id | parent_instance_id | root_instance_id | batch_status | expected_count | wait_policy | round_no | item_count
+----------------------------------------------------------------------------------------------------------------------
+2108953698084405249 | 2e65f119-c4c5-11f1-aad4-00ff9e2a8dfb | 2e65f119-c4c5-11f1-aad4-00ff9e2a8dfb | SETTLED | 2 | ALL | 1 | 2
+(1 rows)

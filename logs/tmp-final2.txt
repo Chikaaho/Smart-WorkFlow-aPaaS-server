@@ -1,0 +1,3 @@
+id | status | settled_count
+2108952600518934530 | SETTLED | 2
+(1 rows)

@@ -1,0 +1,1 @@
+SELECT t.id_, t.name_, t.task_def_key_, t.assignee_, t.proc_inst_id_ FROM act_ru_task t WHERE t.proc_inst_id_='9c3aba21-c49d-11f1-8088-00ff9e2a8dfb';

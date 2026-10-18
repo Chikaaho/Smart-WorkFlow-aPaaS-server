@@ -1,0 +1,1 @@
+SELECT pv.version, pv.graph_version, pv.status, pv.name, pv.form_key, pv.published_at, char_length(pv.graph_json) AS graph_len FROM sw_bpm_process_def_version pv WHERE pv.def_id=2108817690357526529 AND pv.deleted=0 ORDER BY pv.version;

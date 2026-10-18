@@ -1,0 +1,1 @@
+SELECT i, substring((graph_json::jsonb->'triggers')::text from i for 270) AS chunk FROM sw_bpm_process_def_version, generate_series(1, length((graph_json::jsonb->'triggers')::text), 270) i WHERE def_id=2108817690357526529 AND graph_version=3 ORDER BY i;

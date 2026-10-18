@@ -1,0 +1,1 @@
+SELECT n->>'id' AS node_id, n->>'type' AS type, n->'config' AS config FROM sw_bpm_process_def_version pv, LATERAL jsonb_array_elements(pv.graph_json::jsonb->'elements') n WHERE pv.def_id=2108817690357526529 AND pv.graph_version=2 AND n->>'kind'='node' ORDER BY n->>'id';

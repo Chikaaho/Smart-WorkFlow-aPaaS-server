@@ -1,0 +1,23 @@
+column_name
+-----------
+id
+create_time
+create_by
+update_time
+update_by
+deleted
+tenant_id
+version
+def_id
+graph_version
+status
+name
+form_key
+form_version
+function_versions
+graph_json
+deployment_id
+process_definition_id
+published_by
+published_at
+(20 rows)

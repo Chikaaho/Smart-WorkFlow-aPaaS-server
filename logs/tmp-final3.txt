@@ -1,0 +1,3 @@
+status | business_key
+APPROVED | 5b1ad219-853e-460f-88a9-819cfe1ac305
+(1 rows)

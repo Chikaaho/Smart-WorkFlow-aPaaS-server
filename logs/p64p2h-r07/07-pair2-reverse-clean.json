@@ -1,0 +1,10 @@
+{
+  "at": "2026-10-11T08:55:51.982Z",
+  "direction": "yi→jia task complete (task ACTIVE, no race)",
+  "taskId": "8a0608f6-c551-11f1-beba-00ff9e2a8dfb",
+  "recordId": "c0db58a2-2faa-495d-8cb7-c900683c6b5d",
+  "http": 200,
+  "code": 0,
+  "msg": "success",
+  "jiaTaskStillActiveAfterCommandSettled": true
+}

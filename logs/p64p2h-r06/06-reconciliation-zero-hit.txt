@@ -1,0 +1,7 @@
+== reconciliation P64 零命中回读（2026-10-11 Executor，knowledge-first 授权内） ==
+-- grep -c P64 knowledge/feature-reconciliation-index.md
+0
+-- grep -c p64 knowledge/feature-reconciliation-index.md
+0
+-- 两者计数均为 0 = 对账索引不含 P64 任何键/提及（P64 为登记条目不晋级计数的不受影响依据）
+-- 回读文件与计数时点：2026-10-11T15:50:58+0800

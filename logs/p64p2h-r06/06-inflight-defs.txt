@@ -1,0 +1,4 @@
+def_version | published_version | status
+----------------------------------------
+4 | 4 | PUBLISHED
+(1 rows)

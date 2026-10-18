@@ -1,0 +1,6 @@
+LISTENER=34472 MVN_PARENT=33732
+== backend tree precise kill (mvn parent root) ==
+成功: 已终止 PID 6668 (属于 PID 34472 子进程)的进程。
+成功: 已终止 PID 34472 (属于 PID 33732 子进程)的进程。
+成功: 已终止 PID 33732 (属于 PID 5780 子进程)的进程。
+TASKKILL_EXIT=0

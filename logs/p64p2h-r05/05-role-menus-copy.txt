@@ -1,0 +1,4 @@
+copied_menus
+------------
+2
+(1 rows)

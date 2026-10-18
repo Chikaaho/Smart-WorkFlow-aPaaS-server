@@ -1,0 +1,25 @@
+# P64 回执05 本轮验证会话专用覆盖（不入库；logs/ 未跟踪）
+# 用途：local profile（纯 local 才允许 ch.dev.test-mock 固定验证码，I5 守卫）
+#       + 指向 PG 验证库 smart_workflow_p64p2c + 打开 BPM/form 模块开关
+# 等价于 prod 所需的最小配置集；不含任何秘密（秘密经 p64p2-session.env 注入）。
+ch:
+  dev:
+    test-mock: true
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+  datasource:
+    dynamic:
+      datasource:
+        master:
+          url: jdbc:postgresql://127.0.0.1:5432/smart_workflow_p64p2c?stringtype=unspecified
+          username: postgres
+          password: 123456
+  flowable:
+    database-schema-update: false
+sw:
+  bpm:
+    enabled: true
+  form:
+    enabled: true

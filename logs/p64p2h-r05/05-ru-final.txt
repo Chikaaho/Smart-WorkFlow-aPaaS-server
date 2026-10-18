@@ -1,0 +1,4 @@
+ru_task_total | ru_exec_total | running_instances
+-------------------------------------------------
+0 | 0 | 0
+(1 rows)

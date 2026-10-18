@@ -1,0 +1,5 @@
+process_instance_id | business_key | status | def_version
+---------------------------------------------------------
+76ec0e15-c546-11f1-80b6-00ff9e2a8dfb | ba547cec-a327-4258-a8ec-99be66aedc50 | APPROVED | 3
+7e991429-c546-11f1-80b6-00ff9e2a8dfb | c8717856-30fb-414f-9e67-04757f29ba0b | RUNNING | 4
+(2 rows)

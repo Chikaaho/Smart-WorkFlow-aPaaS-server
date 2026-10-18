@@ -1,0 +1,124 @@
+{
+  "at": "2026-10-11T08:50:29.490Z",
+  "parentRecordId": "83b273be-8e14-4bdb-a23e-c0811da681e2",
+  "parentInstanceId": "85498759-c550-11f1-beba-00ff9e2a8dfb",
+  "opsTaskId": "8549ae76-c550-11f1-beba-00ff9e2a8dfb",
+  "batchAfterSettle": [
+    {
+      "id": "2109204490045448193",
+      "batchKey": "CHILD:TRG:85498759-c550-11f1-beba-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "85498759-c550-11f1-beba-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 2,
+      "settledCount": 0,
+      "status": "BLOCKED",
+      "blockReason": "CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置",
+      "settledAt": null,
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2109204490360020993",
+          "itemKey": "2108817586892435457",
+          "status": "WRITTEN",
+          "sourceRowId": "fd802732-66dd-4c51-bbe8-1efe72b3b432",
+          "sourceRowVersion": "0",
+          "targetRecordId": "4efceab8-40a6-4daa-865c-0bf1891cf609",
+          "targetInstanceId": "8a66e2be-c550-11f1-beba-00ff9e2a8dfb",
+          "writebackJson": "{\"rows\":{\"fd802732-66dd-4c51-bbe8-1efe72b3b432\":{\"feedback\":\"R07-JIA-OK\"}},\"main\":{\"title\":\"R07-JIA-FB\"}}",
+          "writebackSource": "child=8a66e2be-c550-11f1-beba-00ff9e2a8dfb,batch=CHILD:TRG:85498759-c550-11f1-beba-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+          "errorText": null
+        },
+        {
+          "id": "2109204490452295681",
+          "itemKey": "2108817587316060161",
+          "status": "CONFLICT",
+          "sourceRowId": "3960da94-8a85-42b4-bbef-b595327bf273",
+          "sourceRowVersion": "0",
+          "targetRecordId": "510f4ad1-aba3-4d49-968d-4851b4de93f8",
+          "targetInstanceId": "8a66e2bd-c550-11f1-beba-00ff9e2a8dfb",
+          "writebackJson": null,
+          "writebackSource": null,
+          "errorText": "回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置"
+        }
+      ]
+    }
+  ],
+  "reviewDone": null,
+  "children": {
+    "jia": {
+      "taskId": "8a6709e8-c550-11f1-beba-00ff9e2a8dfb",
+      "recordId": "4efceab8-40a6-4daa-865c-0bf1891cf609"
+    },
+    "yi": {
+      "taskId": "8a6709e7-c550-11f1-beba-00ff9e2a8dfb",
+      "recordId": "510f4ad1-aba3-4d49-968d-4851b4de93f8"
+    }
+  },
+  "reverse": {
+    "at": "2026-10-11T08:49:43.850Z",
+    "direction": "yi→jia task complete",
+    "taskId": "8a6709e8-c550-11f1-beba-00ff9e2a8dfb",
+    "recordId": "4efceab8-40a6-4daa-865c-0bf1891cf609",
+    "http": 200,
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "commandId": "2109204790433112065",
+      "commandKey": "TASK_APPROVE:8a6709e8-c550-11f1-beba-00ff9e2a8dfb:2108817587316060161",
+      "commandType": "TASK_APPROVE",
+      "channel": "NORMAL",
+      "status": "ACCEPTED",
+      "duplicated": true
+    }
+  },
+  "steps": [
+    {
+      "name": "1 yi complete jia task (expect reject)",
+      "data": {
+        "http": 200,
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "2 jia complete",
+      "data": {
+        "code": 0,
+        "msg": "success",
+        "srcRowIds": [
+          "fd802732-66dd-4c51-bbe8-1efe72b3b432"
+        ]
+      }
+    },
+    {
+      "name": "3 yi complete (KEY)",
+      "data": {
+        "code": 0,
+        "msg": "success",
+        "srcRowIds": [
+          "3960da94-8a85-42b4-bbef-b595327bf273"
+        ]
+      }
+    },
+    {
+      "name": "4 batch settle",
+      "data": {
+        "parentInstId": "85498759-c550-11f1-beba-00ff9e2a8dfb",
+        "batchStatus": {
+          "status": "BLOCKED",
+          "settled": 0,
+          "expected": 2,
+          "blockReason": "CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置"
+        }
+      }
+    },
+    {
+      "name": "5 review complete",
+      "data": null
+    }
+  ]
+}

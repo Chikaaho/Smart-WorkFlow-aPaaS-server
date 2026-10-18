@@ -1,0 +1,4 @@
+id | code | data_scope
+----------------------
+2108954000100000001 | biz_handler_self | 3
+(1 rows)

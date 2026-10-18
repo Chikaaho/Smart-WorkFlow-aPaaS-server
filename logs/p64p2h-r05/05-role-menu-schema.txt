@@ -1,0 +1,23 @@
+column_name | data_type
+-----------------------
+id | bigint
+create_time | timestamp without time zone
+create_by | bigint
+update_time | timestamp without time zone
+update_by | bigint
+deleted | smallint
+tenant_id | bigint
+version | bigint
+role_id | bigint
+menu_id | bigint
+id | bigint
+create_time | timestamp without time zone
+create_by | bigint
+update_time | timestamp without time zone
+update_by | bigint
+deleted | smallint
+tenant_id | bigint
+version | bigint
+user_id | bigint
+role_id | bigint
+(20 rows)

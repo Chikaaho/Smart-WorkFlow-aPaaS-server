@@ -1,0 +1,73 @@
+{
+  "at": "2026-10-11T08:55:24.209Z",
+  "pair1": {
+    "retry": {
+      "code": 0
+    },
+    "settled": {
+      "status": "SETTLED",
+      "settled": 2,
+      "expected": 2,
+      "blockReason": null
+    },
+    "reviewDone": {
+      "taskId": "7f4ad783-c551-11f1-beba-00ff9e2a8dfb",
+      "code": 0,
+      "msg": "success"
+    }
+  },
+  "pair2": {
+    "parentRecordId": "dba606ee-92b4-4ec2-b532-233f3b38d054",
+    "parentInstanceId": "8609fbf7-c551-11f1-beba-00ff9e2a8dfb",
+    "children": {
+      "jia": {
+        "taskId": "8a0608f6-c551-11f1-beba-00ff9e2a8dfb",
+        "recordId": "c0db58a2-2faa-495d-8cb7-c900683c6b5d"
+      },
+      "yi": {
+        "taskId": "8a0608f5-c551-11f1-beba-00ff9e2a8dfb",
+        "recordId": "3fb90459-432f-44cb-b85d-60ed4bfee9fc"
+      }
+    },
+    "reverse": {
+      "at": "2026-10-11T08:55:51.982Z",
+      "direction": "yi→jia task complete (task ACTIVE, no race)",
+      "taskId": "8a0608f6-c551-11f1-beba-00ff9e2a8dfb",
+      "recordId": "c0db58a2-2faa-495d-8cb7-c900683c6b5d",
+      "http": 200,
+      "code": 0,
+      "msg": "success",
+      "jiaTaskStillActiveAfterCommandSettled": true
+    },
+    "completions": {
+      "jia": {
+        "code": 0,
+        "srcRowIds": [
+          "437fd003-c0d8-43f8-a201-7992c14975b2"
+        ]
+      },
+      "yi": {
+        "code": 0,
+        "srcRowIds": [
+          "0dc7f723-66cf-4b4a-9a68-ef4f63977525"
+        ]
+      }
+    },
+    "convergence": {
+      "retry": {
+        "code": 0
+      },
+      "settled": {
+        "status": "SETTLED",
+        "settled": 2,
+        "expected": 2,
+        "blockReason": null
+      },
+      "reviewDone": {
+        "taskId": "95e59601-c551-11f1-beba-00ff9e2a8dfb",
+        "code": 0,
+        "msg": "success"
+      }
+    }
+  }
+}

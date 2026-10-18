@@ -86,8 +86,8 @@ class SysDeptQueryIntegrationTest {
     void setUp() {
         // 物理清空，避免跨用例干扰（逻辑删除行会占用主键）
         jdbc.update("DELETE FROM sys_dept");
-        // 默认登录：租户 1 超管 ALL
-        login(1L, true, DataScopeType.ALL, 900L, 1L);
+        // 默认登录：租户 1 管理员（数据范围 ALL；非超管——超管跨租户可见性由 SuperTenantVisibilityTest 覆盖）
+        login(1L, DataScopeType.ALL, 900L, 1L);
         // ===== 租户 1 =====
         seed(1L, 0L, "总部", 1, 0, 900L, 1, 0);
         seed(2L, 1L, "研发部", 10, 0, 900L, 1, 0);
@@ -110,10 +110,15 @@ class SysDeptQueryIntegrationTest {
 
     // ==================== 工具方法 ====================
 
-    private void login(Long tenantId, boolean superAdmin, DataScopeType scopeType, Long userId, Long deptId) {
+    /**
+     * 登录身份固定为「租户内管理员」：dataScope=ALL、superAdmin=false。
+     * 本类断言租户边界与数据范围行为，不使用超管旁路；超管的跨租户可见性由
+     * {@code com.sw.ck.bootstrap.p4overlap.SuperTenantVisibilityTest} 单独覆盖。
+     */
+    private void login(Long tenantId, DataScopeType scopeType, Long userId, Long deptId) {
         LoginUser user = new LoginUser();
         user.setTenantId(tenantId);
-        user.setSuperAdmin(superAdmin);
+        user.setSuperAdmin(false);
         user.setUserId(userId);
         user.setDeptId(deptId);
         user.setDataScope(DataScope.valueOf(scopeType.name()));
@@ -269,10 +274,10 @@ class SysDeptQueryIntegrationTest {
     @Test
     @DisplayName("两租户同名部门互不可见：各自只返回本租户树")
     void tenantIsolation_sameNameDeptNotVisibleAcrossTenants() {
-        login(1L, true, DataScopeType.ALL, 900L, 1L);
+        login(1L, DataScopeType.ALL, 900L, 1L);
         assertThat(listTreeIds(query("研发部", null))).containsExactly(1L, 2L);
 
-        login(2L, true, DataScopeType.ALL, 900L, 1L);
+        login(2L, DataScopeType.ALL, 900L, 1L);
         assertThat(listTreeIds(query("研发部", null)))
                 .as("租户 2 只见自己的总部(100)+研发部(101)")
                 .containsExactly(100L, 101L);
@@ -284,7 +289,7 @@ class SysDeptQueryIntegrationTest {
         // 租户 1 的部门 8 其 parent_id 指向租户 2 的总部(100)：祖先补全经同一查询通道，
         // 租户拦截器会过滤掉 100，链自然截断，不得暴露另一租户任何节点
         seed(8L, 100L, "跨境部门", 80, 0, 900L, 1, 0);
-        login(1L, true, DataScopeType.ALL, 900L, 1L);
+        login(1L, DataScopeType.ALL, 900L, 1L);
 
         assertThat(listTreeIds(query("跨境部门", null)))
                 .as("仅命中自身；租户 2 的 100/101 不得因父链补全混入")
@@ -307,7 +312,7 @@ class SysDeptQueryIntegrationTest {
     void scopedChannel_selfScope_restrictsDeptQuery() {
         // 他人（create_by=901）创建的部门：SELF 范围下不可见
         seed(7L, 1L, "他人部门", 90, 0, 901L, 1, 0);
-        login(1L, false, DataScopeType.SELF, 900L, 1L);
+        login(1L, DataScopeType.SELF, 900L, 1L);
 
         List<SysDept> scoped = scopedMapper.selectScoped();
 

@@ -1,0 +1,1 @@
+SELECT node_key, task_id, round_no, status, submitted_by, data_text, submit_time FROM sw_bpm_task_form_data WHERE process_instance_id='9c3aba21-c49d-11f1-8088-00ff9e2a8dfb' AND deleted=0 ORDER BY submit_time;

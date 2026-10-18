@@ -41,11 +41,20 @@ public class CommonTenantLineHandler implements TenantLineHandler {
      * <p>
      * {@link DynamicDataSourceContextHolder#peek()} 返回当前线程绑定的数据源 key；
      * 无 {@code @DS} 注解时栈为空、兜底为 null，此时按主库逻辑处理。
+     * <p>
+     * 超管租户（系统超管，全系统仅此一个身份，见 {@link LoginContextProvider#isSuperAdmin()}）不追加
+     * tenant_id 条件：读可见全部租户数据，写不再受本租户约束；与数据范围（{@code DataScopeHandler}）
+     * 和权限校验（{@code PermissionService}）对超管的短路语义一致。新建行的 tenant_id 仍由
+     * {@code CommonMetaObjectHandler} 按登录租户（超管租户 0）填充，不因旁路而丢失归属。
      */
     @Override
     public boolean ignoreTable(String tableName) {
         // 认证身份装载期（登录前无租户上下文）挂起租户行过滤；业务读写不得使用
         if (TenantLineSuspension.isSuspended()) {
+            return true;
+        }
+        if (loginContextProvider.isSuperAdmin()) {
+            log.debug("TenantLineHandler: super admin bypasses tenant filter, table '{}'", tableName);
             return true;
         }
         String currentDs = DynamicDataSourceContextHolder.peek();

@@ -1,0 +1,43 @@
+{
+  "at": "2026-10-11T07:31:08.380Z",
+  "itemId": "2109184848438599681",
+  "retry": {
+    "code": 0,
+    "data": {
+      "status": "WRITTEN",
+      "message": "回写已按当前版本应用"
+    }
+  },
+  "after": [
+    {
+      "id": "2109184848128221186",
+      "batchKey": "CHILD:TRG:9da0754b-c545-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "9da0754b-c545-11f1-80b6-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 1,
+      "settledCount": 1,
+      "status": "SETTLED",
+      "blockReason": null,
+      "settledAt": "2026-10-11T15:31:00.240928",
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2109184848438599681",
+          "itemKey": "2108817586024214529",
+          "status": "WRITTEN",
+          "sourceRowId": "bc6dcbf7-5381-496a-8fd7-89f1e0362325",
+          "sourceRowVersion": "0",
+          "targetRecordId": "dbb7bbf6-b8ce-47cd-8064-61c46d0bf2ed",
+          "targetInstanceId": "a317b07f-c545-11f1-80b6-00ff9e2a8dfb",
+          "writebackJson": "{\"rows\":{\"bc6dcbf7-5381-496a-8fd7-89f1e0362325\":{\"feedback\":\"R06P-FB-OK\"}},\"main\":{\"title\":\"R06P-FB\"}}",
+          "writebackSource": "child=a317b07f-c545-11f1-80b6-00ff9e2a8dfb,batch=CHILD:TRG:9da0754b-c545-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+          "errorText": null
+        }
+      ]
+    }
+  ]
+}

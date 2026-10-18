@@ -1,0 +1,22 @@
+table_name
+----------
+sw_form_snapshot
+sw_form_config
+sw_form_trace
+sw_form_def
+sw_form_list_config
+sw_form_ext_query
+sw_form_lifecycle_audit
+sw_form_txn_action
+sw_form_txn_action_version
+sw_form_txn_invocation
+sw_form_txn_reservation
+sw_form_txn_ledger
+sw_form_c1_policy
+sw_form_i9y8tddba3
+sw_form_table_pucs20ea5b
+sw_form_ksi2xpttd2
+sw_form_table_bbb268d7te
+sw_form_qid2yx6hsz
+sw_form_lu40kgnnup
+(19 rows)

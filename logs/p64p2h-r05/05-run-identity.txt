@@ -1,0 +1,11 @@
+d773f1d26c8d272ce7326e7259c54533766d8a3c
+ M sw-biz/sw-biz-system/sw-biz-system-biz/src/main/java/com/sw/ck/system/service/impl/PositionDelegateFacadeImpl.java
+ M sw-biz/sw-biz-system/sw-biz-system-biz/src/test/java/com/sw/ck/system/service/impl/PositionDelegateFacadeImplTest.java
+ M sw-biz/sw-bpm/sw-bpm-process/src/main/java/com/sw/ck/bpm/process/service/ChildOrchestrationService.java
+ M sw-biz/sw-bpm/sw-bpm-process/src/test/java/com/sw/ck/bpm/process/service/ChildOrchestrationServiceTest.java
+?? logs/
+?? sw-bootstrap/logs/
+9f3fc1f7faf60012fc1778cb696d022919b486827eb90a42546f7d37c6845cbf *sw-biz/sw-biz-system/sw-biz-system-biz/src/main/java/com/sw/ck/system/service/impl/PositionDelegateFacadeImpl.java
+04c712935a1d23b95f6fcd294cb593e9a8632fe98b1c3e406ad073b6fc47ec17 *sw-biz/sw-biz-system/sw-biz-system-biz/src/test/java/com/sw/ck/system/service/impl/PositionDelegateFacadeImplTest.java
+c3573104b5ca30f4e224405013375eab84b17447777d878a3047153b106c3560 *sw-biz/sw-bpm/sw-bpm-process/src/main/java/com/sw/ck/bpm/process/service/ChildOrchestrationService.java
+c45e464f01a6191868300e9b95652dd8bf6a79fc6a1bb6d2ed10b887967a9a05 *sw-biz/sw-bpm/sw-bpm-process/src/test/java/com/sw/ck/bpm/process/service/ChildOrchestrationServiceTest.java

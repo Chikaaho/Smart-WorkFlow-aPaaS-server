@@ -1,0 +1,1 @@
+SELECT b.id, b.status, b.wait_policy, b.expected_count, b.settled_count, b.parent_instance_id, i.status AS parent_status FROM sw_bpm_child_batch b LEFT JOIN sw_bpm_instance i ON i.process_instance_id=b.parent_instance_id ORDER BY b.id;

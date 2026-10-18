@@ -1,0 +1,1 @@
+SELECT id, source_post_id, target_post_id, scope_type, status, deleted FROM sys_post_delegate;

@@ -1,0 +1,20 @@
+{
+  "at": "2026-10-11T09:03:33.083Z",
+  "parentRecordId": "2b3f7c48-5a43-4c6f-b636-25a71a194964",
+  "parentInstanceId": "5830a925-c552-11f1-beba-00ff9e2a8dfb",
+  "retry": {
+    "item": "2109207767914995713",
+    "code": 0
+  },
+  "settled": {
+    "status": "SETTLED",
+    "settled": 2,
+    "expected": 2,
+    "blockReason": null
+  },
+  "reviewDone": {
+    "taskId": "9be98a8f-c552-11f1-beba-00ff9e2a8dfb",
+    "code": 0,
+    "msg": "success"
+  }
+}

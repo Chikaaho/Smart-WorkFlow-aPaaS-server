@@ -1,0 +1,4 @@
+process_instance_id | trigger_id | status | error_text
+------------------------------------------------------
+b9bcfa78-c53e-11f1-9059-00ff9e2a8dfb | trg_child | FAILED | 触发器评估异常: 判断 worker 进程启动失败: worker 启动握手失败（无就绪应答）
+(1 rows)

@@ -1,0 +1,14 @@
+== post-teardown listen check ==
+  TCP    127.0.0.1:51840        127.0.0.1:8080         TIME_WAIT       0
+  TCP    127.0.0.1:51841        127.0.0.1:8080         TIME_WAIT       0
+NETSTAT_EXIT=0
+== killed PIDs ended check ==
+-- PID 33732 --
+信息: 没有运行的任务匹配指定标准。
+-- PID 34472 --
+信息: 没有运行的任务匹配指定标准。
+-- PID 6668 --
+信息: 没有运行的任务匹配指定标准。
+== Owner services untouched (PG 32080 alive) ==
+com.docker.backend.exe       32080 Console                    7    133,584 K
+2026-10-11T17:04:55+0800

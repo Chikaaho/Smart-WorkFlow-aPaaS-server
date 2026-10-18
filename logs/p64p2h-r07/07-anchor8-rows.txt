@@ -1,0 +1,12 @@
+CMD=node logs/p64p2h-r07/07-xml-sum.cjs sw-bootstrap/target/surefire-reports <out> ApiOptionalContractGateTest
+CMD=node logs/p64p2h-r07/07-xml-sum.cjs sw-bootstrap/target/surefire-reports <out> BilingualMessageContractTest
+CMD=node logs/p64p2h-r07/07-xml-sum.cjs sw-bootstrap/target/surefire-reports <out> ErrorCodeCatalogTest
+CMD=node logs/p64p2h-r07/07-xml-sum.cjs sw-bootstrap/target/surefire-reports <out> I6G7bOldBaselineUpgradePostgresTest
+CMD=node logs/p64p2h-r07/07-xml-sum.cjs sw-bootstrap/target/surefire-reports <out> P64AppendMigrationUpgradePostgresTest
+CMD=node logs/p64p2h-r07/07-xml-sum.cjs sw-bootstrap/target/surefire-reports <out> P64RollbackBoundaryPostgresTest
+com.sw.ck.bootstrap.BilingualMessageContractTest | tests=9 fail=0 err=0 skip=0 | 239cf2be4da3a356 | 2026-10-10T15:19:39.632Z | TEST-com.sw.ck.bootstrap.BilingualMessageContractTest.xml
+com.sw.ck.bootstrap.ErrorCodeCatalogTest | tests=8 fail=0 err=0 skip=0 | c55073f5071aa6e4 | 2026-10-10T15:19:39.891Z | TEST-com.sw.ck.bootstrap.ErrorCodeCatalogTest.xml
+com.sw.ck.bootstrap.architecture.ApiOptionalContractGateTest | tests=6 fail=0 err=0 skip=0 | 5a567bf5400ddbaf | 2026-10-10T15:19:35.907Z | TEST-com.sw.ck.bootstrap.architecture.ApiOptionalContractGateTest.xml
+com.sw.ck.bootstrap.i6.I6G7bOldBaselineUpgradePostgresTest | tests=2 fail=0 err=0 skip=0 | 22c2151131498640 | 2026-10-10T15:19:59.373Z | TEST-com.sw.ck.bootstrap.i6.I6G7bOldBaselineUpgradePostgresTest.xml
+com.sw.ck.bootstrap.p64.P64AppendMigrationUpgradePostgresTest | tests=1 fail=0 err=0 skip=0 | 6b88116788c2c5ff | 2026-10-10T15:20:01.086Z | TEST-com.sw.ck.bootstrap.p64.P64AppendMigrationUpgradePostgresTest.xml
+com.sw.ck.bootstrap.p64.P64RollbackBoundaryPostgresTest | tests=1 fail=0 err=0 skip=0 | b51b36a05982169b | 2026-10-10T15:20:05.397Z | TEST-com.sw.ck.bootstrap.p64.P64RollbackBoundaryPostgresTest.xml

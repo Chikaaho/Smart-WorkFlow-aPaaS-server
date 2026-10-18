@@ -1,0 +1,13 @@
+column_name
+-----------
+id
+tenant_id
+deleted
+create_time
+create_by
+update_time
+update_by
+version
+summary
+owner_id
+(10 rows)

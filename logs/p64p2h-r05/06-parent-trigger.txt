@@ -1,0 +1,4 @@
+?column?
+--------
+[{"triggerId":"trg_child","name":"按负责人派发子流程","event":"NODE_ROUND_COMPLETED","nodeKey":"node_ops","script":"return 1;","variables":["var_hosts"],"branches":[{"branchId":"b1","name":"命中","matchType":"NUMBER","matchValue":"1","actions":[{"actionId":"act_child","name":"按负责人派发子反馈","type":"START_GROUPED","sourceVariable":"var_hosts","groupBy":"owner","targetProcessDefKey":"bpm_37a3eed391d2481d","targetFormKey":"p64p2b_child_form","maxDispatch":50,"mapping":[{"targetField":"owner_id","sourceVarId":null,"itemField":"owner","literal":null}],"orchestration":"CHILD","waitPolicy":"ALL","waitCount":null,"writeBack":{"resultNodeKey":"node_result","tableField":"result_table","rowKeyField":"src_row_id","parentTableField":"hosts","fields":[{"fromField":"feedback","toField":"feedback"}],"mainFields":[{"from…
+(1 rows)

@@ -1,0 +1,7 @@
+version | status | has_trg | has_wait | glen
+--------------------------------------------
+0 | PUBLISHED | true | true | 2819
+0 | PUBLISHED | true | true | 2847
+0 | PUBLISHED | true | true | 2847
+0 | PUBLISHED | false | false | 1622
+(4 rows)

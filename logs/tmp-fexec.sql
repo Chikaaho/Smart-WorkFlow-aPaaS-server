@@ -1,0 +1,1 @@
+SELECT count(*) AS ru_executions FROM act_ru_execution;

@@ -1,0 +1,6 @@
+process_instance_id | business_key | status
+-------------------------------------------
+0b3aaf21-c540-11f1-9809-00ff9e2a8dfb | 29981acc-6b06-4021-b709-e47c966e1c34 | RUNNING
+10e7ee76-c540-11f1-9809-00ff9e2a8dfb | b2773946-a5fc-4b88-ab3d-16cf05265b34 | RUNNING
+10e7ee75-c540-11f1-9809-00ff9e2a8dfb | c947a14f-19ba-43f1-a51a-6fe86326d923 | RUNNING
+(3 rows)

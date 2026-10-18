@@ -1,0 +1,1 @@
+SELECT status, count(*) FROM sw_bpm_child_item GROUP BY status;

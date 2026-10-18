@@ -1,0 +1,26 @@
+column_name
+-----------
+id
+create_time
+create_by
+update_time
+update_by
+deleted
+tenant_id
+version
+process_key
+name
+form_key
+def_version
+status
+deployment_id
+process_definition_id
+graph_json
+category_id
+iot_access_enabled
+iot_device_action_json
+published_version
+source_template_id
+source_template_version
+theme_rule
+(23 rows)

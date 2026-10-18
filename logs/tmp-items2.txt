@@ -1,0 +1,4 @@
+item_key | status | target_record_id | error_text | writeback_json
+2108817586024214529 | WRITTEN | 402ced73-ee29-479d-8431-bbbcd8d2f0ea | NULL | {"rows":{"0476b430-af5c-435b-807c-7040502a8eae":{"feedback":null},"0c3e618a-0695-4d65-bb17-02743d0f9678":{"feedback":null}},"main":{"title":null}}
+2108817586460422146 | CONFLICT | 1dfe628a-4ddd-4776-a95b-f5236179dd0a | 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置 | NULL
+(2 rows)

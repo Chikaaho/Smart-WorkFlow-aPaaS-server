@@ -1,0 +1,1 @@
+SELECT h.parent_record_id, count(*) AS rows, string_agg(h.id || '=' || coalesce(h.feedback,'NULL'), ' ; ') AS rows_brief FROM sw_form_table_pucs20ea5b h WHERE h.deleted=0 GROUP BY h.parent_record_id ORDER BY h.parent_record_id;

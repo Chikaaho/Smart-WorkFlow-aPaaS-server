@@ -1,0 +1,1 @@
+SELECT t.id_, t.name_, t.task_def_key_, t.assignee_, t.proc_inst_id_, t.create_time_ FROM act_ru_task t WHERE t.id_ IN ('90b5298a-c49c-11f1-8088-00ff9e2a8dfb','9345bf92-c49c-11f1-8088-00ff9e2a8dfb','95cda300-c49c-11f1-8088-00ff9e2a8dfb','77954c26-c48a-11f1-bd5c-00ff9e2a8dfb','79761a24-c48a-11f1-bd5c-00ff9e2a8dfb','75b73d48-c48a-11f1-bd5c-00ff9e2a8dfb') ORDER BY t.create_time_;

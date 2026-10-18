@@ -1,0 +1,4 @@
+id | status | tgt | wb
+----------------------
+2109177860468031489 | DISPATCHED | false | -
+(1 rows)

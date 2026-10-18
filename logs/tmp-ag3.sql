@@ -1,0 +1,1 @@
+SELECT node_key, task_id, participant_id, participant_name, participant_status, invalid_reason FROM sw_bpm_participant_snapshot WHERE process_instance_id='9c3aba21-c49d-11f1-8088-00ff9e2a8dfb' ORDER BY create_time;

@@ -1,0 +1,4 @@
+process_instance_id | business_key | status | create_time | process_def_key
+---------------------------------------------------------------------------
+a8dff859-c528-11f1-9620-00ff9e2a8dfb | 94177cad-c964-4d1c-b1bb-5fb47d1c7eca | RUNNING | 2026-10-11 12:03:05.479125 | bpm_37a3eed391d2481d
+(1 rows)

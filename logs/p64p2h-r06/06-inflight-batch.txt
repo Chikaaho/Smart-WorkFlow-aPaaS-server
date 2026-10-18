@@ -1,0 +1,4 @@
+id | status | block_reason | settled_count | expected_count
+-----------------------------------------------------------
+2109186366755676161 | BLOCKED | CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置 | 0 | 2
+(1 rows)

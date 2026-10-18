@@ -1,0 +1,13 @@
+{
+  "at": "2026-10-11T07:05:55.574Z",
+  "taskId": "c2085cf3-c541-11f1-8ed7-00ff9e2a8dfb",
+  "complete": {
+    "http": 200,
+    "code": 0,
+    "msg": "success"
+  },
+  "nodeFormFields": [
+    "summary",
+    "owner_id"
+  ]
+}

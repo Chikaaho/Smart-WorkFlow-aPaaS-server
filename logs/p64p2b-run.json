@@ -1,0 +1,78 @@
+{
+  "parentRecord": "895020f8-3519-432c-b68a-ee736ff4d623",
+  "parentInstance": "53de3512-c482-11f1-baea-00ff9e2a8dfb",
+  "opsTask": "53e205af-c482-11f1-baea-00ff9e2a8dfb",
+  "batches": [
+    {
+      "id": "2108833033817776129",
+      "batchKey": "CHILD:TRG:53de3512-c482-11f1-baea-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "53de3512-c482-11f1-baea-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 2,
+      "settledCount": 0,
+      "status": "WAITING",
+      "blockReason": null,
+      "settledAt": null,
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2108833034082017282",
+          "itemKey": "2108817586024214529",
+          "status": "DISPATCHED",
+          "sourceRowId": "d07fade2-aee4-4f17-a7c1-1e1ce845628e",
+          "sourceRowVersion": "0",
+          "targetRecordId": null,
+          "targetInstanceId": null,
+          "writebackJson": null,
+          "writebackSource": null,
+          "errorText": null
+        },
+        {
+          "id": "2108833034178486273",
+          "itemKey": "2108817586460422146",
+          "status": "DISPATCHED",
+          "sourceRowId": "2f9d0e76-6669-4cbf-8bd7-102add33d932",
+          "sourceRowVersion": "0",
+          "targetRecordId": null,
+          "targetInstanceId": null,
+          "writebackJson": null,
+          "writebackSource": null,
+          "errorText": null
+        }
+      ]
+    }
+  ],
+  "childTodos": [],
+  "rows": [
+    {
+      "host_name": "host-01",
+      "owner": "2108817586024214529",
+      "feedback": ""
+    },
+    {
+      "host_name": "host-02",
+      "owner": "2108817586024214529",
+      "feedback": ""
+    },
+    {
+      "host_name": "host-03",
+      "owner": "2108817586460422146",
+      "feedback": ""
+    }
+  ],
+  "actors": {
+    "deptId": "2108817585407651842",
+    "opsPostId": "2108817585520898049",
+    "leadPostId": "2108817585617367042",
+    "zhangsanId": "2108817586024214529",
+    "lisiId": "2108817586460422146",
+    "jiaId": "2108817586892435457",
+    "yiId": "2108817587316060161",
+    "bingId": "2108817587727101954",
+    "dingId": "2108817588146532354"
+  }
+}

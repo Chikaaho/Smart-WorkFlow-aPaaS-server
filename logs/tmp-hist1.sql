@@ -1,0 +1,1 @@
+SELECT act_type_, act_id_, act_name_, assignee_, start_time_, end_time_ FROM act_hi_actinst WHERE proc_inst_id_='02434573-c48a-11f1-bd5c-00ff9e2a8dfb' ORDER BY start_time_;

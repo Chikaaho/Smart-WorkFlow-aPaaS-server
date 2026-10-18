@@ -1,0 +1,20 @@
+column_name
+-----------
+id
+form_key
+name
+logical_table_name
+status
+physical_table_name
+form_version
+description
+sub_table_mapping
+tenant_id
+deleted
+create_time
+create_by
+update_time
+update_by
+version
+visibility_scope
+(17 rows)

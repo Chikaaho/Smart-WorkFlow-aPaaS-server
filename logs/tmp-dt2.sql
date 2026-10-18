@@ -1,0 +1,1 @@
+SELECT il.task_id_, il.type_, il.group_id_, il.user_id_ FROM act_ru_identitylink il WHERE il.task_id_ IN ('90b5298a-c49c-11f1-8088-00ff9e2a8dfb','9345bf92-c49c-11f1-8088-00ff9e2a8dfb','95cda300-c49c-11f1-8088-00ff9e2a8dfb');

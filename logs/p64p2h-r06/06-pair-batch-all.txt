@@ -1,0 +1,6 @@
+id | batch_key | parent_instance_id | status | expected_count | settled_count
+-----------------------------------------------------------------------------
+2109177860094738434 | CHILD:TRG:bcd863dc-c541-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child | bcd863dc-c541-11f1-8ed7-00ff9e2a8dfb | WAITING | 2 | 0
+2109179546280443906 | CHILD:TRG:ada91a60-c542-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child | ada91a60-c542-11f1-8ed7-00ff9e2a8dfb | BLOCKED | 1 | 0
+2109179848136114178 | CHILD:TRG:d8912496-c542-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child | d8912496-c542-11f1-8ed7-00ff9e2a8dfb | BLOCKED | 1 | 0
+(3 rows)

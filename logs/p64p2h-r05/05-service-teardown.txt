@@ -1,0 +1,4 @@
+== r05 服务收尾（2026-10-11T12:5x+08） ==
+后端 PID 43556（local profile, 8080）taskkill 成功
+vite PID 41612（5173）taskkill 成功
+8080/5173 零监听

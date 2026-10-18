@@ -1,0 +1,11 @@
+id | parent_instance_id | action_id | status | source_record_id
+---------------------------------------------------------------
+2109138361126088705 | d0e68615-c52b-11f1-a317-00ff9e2a8dfb | act_child | CANCELLED | 6e3cc908-cce0-4cc7-a662-470896444461
+2109137959324348418 | 96d987e3-c52b-11f1-a317-00ff9e2a8dfb | act_child | CANCELLED | 550d578f-6bee-4e8b-afd2-bc037d1d5766
+2108953698084405249 | 2e65f119-c4c5-11f1-aad4-00ff9e2a8dfb | act_child | SETTLED | 5b1ad219-853e-460f-88a9-819cfe1ac305
+2108953151235244033 | 01500a41-c4c5-11f1-aad4-00ff9e2a8dfb | act_child | BLOCKED | 7992ad74-0499-4eec-8328-9e40e6eafb79
+2108952600518934530 | 97f89219-c4c4-11f1-aad4-00ff9e2a8dfb | act_child | SETTLED | 36176921-2195-4264-a817-d261f146bb81
+2108951592472494082 | 0e85f54f-c4c4-11f1-aad4-00ff9e2a8dfb | act_child | BLOCKED | 2d695288-2e14-4d15-8405-98c2056f9c33
+2108950990862499842 | b752322d-c4c3-11f1-aad4-00ff9e2a8dfb | act_child | BLOCKED | b5bb393e-f57a-49ed-9ac4-f3573d63affd
+2108950457766461442 | 6d4d5f6b-c4c3-11f1-aad4-00ff9e2a8dfb | act_child | BLOCKED | 17b5907b-f899-408b-8fe2-d687ac0a5343
+(8 rows)

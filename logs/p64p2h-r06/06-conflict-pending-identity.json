@@ -1,0 +1,90 @@
+{
+  "at": "2026-10-11T07:30:48.653Z",
+  "parentRecordId": "877aa725-2b57-4a7c-bd40-055a079bc29f",
+  "opsTaskId": "9da53048-c545-11f1-80b6-00ff9e2a8dfb",
+  "childTaskId": "a317d79c-c545-11f1-80b6-00ff9e2a8dfb",
+  "childRecordId": "dbb7bbf6-b8ce-47cd-8064-61c46d0bf2ed",
+  "parentInstanceId": "9da0754b-c545-11f1-80b6-00ff9e2a8dfb",
+  "pendingBatch": [
+    {
+      "id": "2109184848128221186",
+      "batchKey": "CHILD:TRG:9da0754b-c545-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "9da0754b-c545-11f1-80b6-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 1,
+      "settledCount": 0,
+      "status": "BLOCKED",
+      "blockReason": "CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置",
+      "settledAt": null,
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2109184848438599681",
+          "itemKey": "2108817586024214529",
+          "status": "CONFLICT",
+          "sourceRowId": "bc6dcbf7-5381-496a-8fd7-89f1e0362325",
+          "sourceRowVersion": "0",
+          "targetRecordId": "dbb7bbf6-b8ce-47cd-8064-61c46d0bf2ed",
+          "targetInstanceId": "a317b07f-c545-11f1-80b6-00ff9e2a8dfb",
+          "writebackJson": null,
+          "writebackSource": null,
+          "errorText": "回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "1 parent submit",
+      "data": {
+        "code": 0,
+        "id": "877aa725-2b57-4a7c-bd40-055a079bc29f"
+      }
+    },
+    {
+      "name": "2 ops complete",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "3 child task",
+      "data": {
+        "taskId": "a317d79c-c545-11f1-80b6-00ff9e2a8dfb",
+        "recordId": "dbb7bbf6-b8ce-47cd-8064-61c46d0bf2ed"
+      }
+    },
+    {
+      "name": "4 parent PUT",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "5 child complete",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "6 pending conflict",
+      "data": {
+        "batchStatus": "BLOCKED",
+        "blockReason": "CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置",
+        "items": [
+          {
+            "id": "2109184848438599681",
+            "status": "CONFLICT"
+          }
+        ]
+      }
+    }
+  ]
+}

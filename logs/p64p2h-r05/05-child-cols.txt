@@ -1,0 +1,13 @@
+column_name | data_type
+-----------------------
+id | character varying
+tenant_id | bigint
+deleted | smallint
+create_time | timestamp without time zone
+create_by | bigint
+update_time | timestamp without time zone
+update_by | bigint
+version | bigint
+summary | character varying
+owner_id | character varying
+(10 rows)

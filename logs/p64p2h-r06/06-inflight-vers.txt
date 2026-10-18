@@ -1,0 +1,6 @@
+graph_version | status
+----------------------
+4 | PUBLISHED
+3 | PUBLISHED
+2 | PUBLISHED
+(3 rows)

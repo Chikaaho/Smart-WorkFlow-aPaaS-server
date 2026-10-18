@@ -1,0 +1,1 @@
+SELECT count(*) AS running_tasks FROM act_ru_task;

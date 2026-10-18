@@ -1,0 +1,26 @@
+table_name | column_name
+------------------------
+sw_form_table_bbb268d7te | id
+sw_form_table_bbb268d7te | tenant_id
+sw_form_table_bbb268d7te | deleted
+sw_form_table_bbb268d7te | create_time
+sw_form_table_bbb268d7te | create_by
+sw_form_table_bbb268d7te | update_time
+sw_form_table_bbb268d7te | update_by
+sw_form_table_bbb268d7te | version
+sw_form_table_bbb268d7te | parent_record_id
+sw_form_table_bbb268d7te | src_row_id
+sw_form_table_bbb268d7te | feedback
+sw_form_table_pucs20ea5b | id
+sw_form_table_pucs20ea5b | tenant_id
+sw_form_table_pucs20ea5b | deleted
+sw_form_table_pucs20ea5b | create_time
+sw_form_table_pucs20ea5b | create_by
+sw_form_table_pucs20ea5b | update_time
+sw_form_table_pucs20ea5b | update_by
+sw_form_table_pucs20ea5b | version
+sw_form_table_pucs20ea5b | parent_record_id
+sw_form_table_pucs20ea5b | host_name
+sw_form_table_pucs20ea5b | owner
+sw_form_table_pucs20ea5b | feedback
+(23 rows)

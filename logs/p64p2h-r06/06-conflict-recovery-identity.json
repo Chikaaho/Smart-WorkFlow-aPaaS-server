@@ -1,0 +1,148 @@
+{
+  "at": "2026-10-11T07:17:21.044Z",
+  "parentRecordId": "5544cc7c-a2fa-4c57-aa4f-a34cb73ceb30",
+  "opsTaskId": "be01693d-c543-11f1-8ed7-00ff9e2a8dfb",
+  "childTaskId": "c2027e31-c543-11f1-8ed7-00ff9e2a8dfb",
+  "childRecordId": "2f70ac62-58d8-44d8-8df6-4606d966fcdd",
+  "conflictItemId": "2109181463211589633",
+  "parentInstanceId": "be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb",
+  "conflictBefore": [
+    {
+      "id": "2109181463098343425",
+      "batchKey": "CHILD:TRG:be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 1,
+      "settledCount": 0,
+      "status": "BLOCKED",
+      "blockReason": "CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置",
+      "settledAt": null,
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2109181463211589633",
+          "itemKey": "2108817586024214529",
+          "status": "CONFLICT",
+          "sourceRowId": "ea8055d3-7943-4670-a985-1403864279e5",
+          "sourceRowVersion": "0",
+          "targetRecordId": "2f70ac62-58d8-44d8-8df6-4606d966fcdd",
+          "targetInstanceId": "c2025714-c543-11f1-8ed7-00ff9e2a8dfb",
+          "writebackJson": null,
+          "writebackSource": null,
+          "errorText": "回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置"
+        }
+      ]
+    }
+  ],
+  "recoveredAfter": [
+    {
+      "id": "2109181463098343425",
+      "batchKey": "CHILD:TRG:be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 1,
+      "settledCount": 1,
+      "status": "SETTLED",
+      "blockReason": null,
+      "settledAt": "2026-10-11T15:17:15.863618",
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2109181463211589633",
+          "itemKey": "2108817586024214529",
+          "status": "WRITTEN",
+          "sourceRowId": "ea8055d3-7943-4670-a985-1403864279e5",
+          "sourceRowVersion": "0",
+          "targetRecordId": "2f70ac62-58d8-44d8-8df6-4606d966fcdd",
+          "targetInstanceId": "c2025714-c543-11f1-8ed7-00ff9e2a8dfb",
+          "writebackJson": "{\"rows\":{\"ea8055d3-7943-4670-a985-1403864279e5\":{\"feedback\":\"R06C-FB-OK\"}},\"main\":{\"title\":\"R06C-FB\"}}",
+          "writebackSource": "child=c2025714-c543-11f1-8ed7-00ff9e2a8dfb,batch=CHILD:TRG:be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+          "errorText": "回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "1 parent submit",
+      "data": {
+        "code": 0,
+        "id": "5544cc7c-a2fa-4c57-aa4f-a34cb73ceb30"
+      }
+    },
+    {
+      "name": "2 ops complete",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "3 zhangsan child task",
+      "data": {
+        "taskId": "c2027e31-c543-11f1-8ed7-00ff9e2a8dfb",
+        "recordId": "2f70ac62-58d8-44d8-8df6-4606d966fcdd"
+      }
+    },
+    {
+      "name": "4 parent current",
+      "data": {
+        "code": 0,
+        "version": "0"
+      }
+    },
+    {
+      "name": "4 parent PUT",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "5 child complete",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "6 conflict state",
+      "data": {
+        "code": 0,
+        "batch": "[{\"id\":\"2109181463098343425\",\"batchKey\":\"CHILD:TRG:be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child\",\"parentInstanceId\":\"be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb\",\"triggerId\":\"trg_child\",\"actionId\":\"act_child\",\"roundNo\":\"1\",\"waitPolicy\":\"ALL\",\"waitCount\":null,\"expectedCount\":1,\"settledCount\":0,\"status\":\"BLOCKED\",\"blockReason\":\"CONFLICT: 回写与父记录当前版本冲突（当前权威版本 1），已挂起等待有权处置\",\"settledAt\":null,\"parentDepth\":0,\"items\":[{\"id\":\"2109181463211589633\",\"itemKey\":\"2108817586024214529"
+      }
+    },
+    {
+      "name": "7 retry writeback",
+      "data": {
+        "code": 0,
+        "msg": "success",
+        "data": {
+          "status": "WRITTEN",
+          "message": "回写已按当前版本应用"
+        }
+      }
+    },
+    {
+      "name": "8 recovered state",
+      "data": {
+        "batch": "[{\"id\":\"2109181463098343425\",\"batchKey\":\"CHILD:TRG:be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child\",\"parentInstanceId\":\"be00ccf0-c543-11f1-8ed7-00ff9e2a8dfb\",\"triggerId\":\"trg_child\",\"actionId\":\"act_child\",\"roundNo\":\"1\",\"waitPolicy\":\"ALL\",\"waitCount\":null,\"expectedCount\":1,\"settledCount\":1,\"status\":\"SETTLED\",\"blockReason\":null,\"settledAt\":\"2026-10-11T15:17:15.863618\",\"parentDepth\":0,\"items\":[{\"id\":\"2109181463211589633\",\"itemKey\":\"2108817586024214529\",\"status\":\"WRIT"
+      }
+    },
+    {
+      "name": "9 child task after",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    }
+  ]
+}

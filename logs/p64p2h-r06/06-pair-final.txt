@@ -1,0 +1,4 @@
+id | status | block_reason | settled_count | item_status | err
+--------------------------------------------------------------
+2109177860094738434 | WAITING | NULL | 0 | FAILED | 必需回写缺失：子结果未包含本项授权来源行 [32bb710f-c50b-4f73-8f9b-fd111cc3221a]
+(1 rows)

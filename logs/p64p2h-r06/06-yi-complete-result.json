@@ -1,0 +1,18 @@
+{
+  "at": "2026-10-11T07:12:52.847Z",
+  "taskId": "c2085cfb-c541-11f1-8ed7-00ff9e2a8dfb",
+  "complete": {
+    "http": 200,
+    "code": 0,
+    "msg": "success"
+  },
+  "submitted": {
+    "result_summary": "R06-YI-反馈",
+    "result_table": [
+      {
+        "src_row_id": "9359f723-4cba-4a5f-88e3-3f3da414d2aa",
+        "feedback": "R06-YI-OK"
+      }
+    ]
+  }
+}

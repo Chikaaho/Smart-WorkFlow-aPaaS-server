@@ -1,0 +1,17 @@
+{
+  "pair1ParentInstanceId": "85498759-c550-11f1-beba-00ff9e2a8dfb",
+  "retry": {
+    "code": 0
+  },
+  "settled": {
+    "status": "SETTLED",
+    "settled": 2,
+    "expected": 2,
+    "blockReason": null
+  },
+  "reviewDone": {
+    "taskId": "7f4ad783-c551-11f1-beba-00ff9e2a8dfb",
+    "code": 0,
+    "msg": "success"
+  }
+}

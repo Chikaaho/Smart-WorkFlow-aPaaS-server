@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-11T08:49:43.850Z",
+  "direction": "yi→jia task complete",
+  "taskId": "8a6709e8-c550-11f1-beba-00ff9e2a8dfb",
+  "recordId": "4efceab8-40a6-4daa-865c-0bf1891cf609",
+  "http": 200,
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "commandId": "2109204790433112065",
+    "commandKey": "TASK_APPROVE:8a6709e8-c550-11f1-beba-00ff9e2a8dfb:2108817587316060161",
+    "commandType": "TASK_APPROVE",
+    "channel": "NORMAL",
+    "status": "ACCEPTED",
+    "duplicated": true
+  }
+}

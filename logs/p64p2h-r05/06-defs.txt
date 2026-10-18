@@ -1,0 +1,12 @@
+process_key | name | def_version | status
+-----------------------------------------
+bpm_33729ad794a142ee | P64B委托验证流程 | 1 | PUBLISHED
+bpm_37a3eed391d2481d | P64B子反馈流程 | 1 | PUBLISHED
+bpm_4182219413fd418a | P64B委托验证流程 | 1 | PUBLISHED
+bpm_6d040e159b044e3b | P64B委托验证流程 | 1 | PUBLISHED
+bpm_7a30fbdcaa564a05 | P64B委托验证流程 | 1 | PUBLISHED
+bpm_9803a73552ac4ea6 | P64B子反馈流程 | 1 | PUBLISHED
+bpm_c5e9fcfffb7745ee | P64B主机反馈父流程 | 3 | PUBLISHED
+bpm_ddb933f9cce14014 | P64H聚合会签验证流程 | 5 | PUBLISHED
+bpm_dffd2d23f73c4b89 | P64B主机反馈父流程 | 1 | DRAFT
+(9 rows)

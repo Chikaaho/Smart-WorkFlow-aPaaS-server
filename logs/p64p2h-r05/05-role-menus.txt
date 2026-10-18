@@ -1,0 +1,5 @@
+permission | cnt
+----------------
+form:data:query | 1
+form:data:submit | 1
+(2 rows)

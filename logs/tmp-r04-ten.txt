@@ -1,0 +1,4 @@
+id_ | tenant_id_ | business_key_
+cb5bfede-c4be-11f1-b10a-00ff9e2a8dfb | 0 | 1e033c7a-0499-4ad0-b035-14628cc1d9d7
+cb5fa867-c4be-11f1-b10a-00ff9e2a8dfb | 0 | NULL
+(2 rows)

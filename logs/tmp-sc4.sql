@@ -1,0 +1,1 @@
+SELECT act_id_, act_type_, count(*) AS cnt FROM act_hi_actinst WHERE proc_inst_id_='02434573-c48a-11f1-bd5c-00ff9e2a8dfb' AND act_id_ IN ('wait_children','node_review','node_ops') GROUP BY act_id_, act_type_;

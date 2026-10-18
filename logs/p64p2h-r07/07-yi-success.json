@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-11T08:49:48.129Z",
+  "taskId": "8a6709e7-c550-11f1-beba-00ff9e2a8dfb",
+  "recordId": "510f4ad1-aba3-4d49-968d-4851b4de93f8",
+  "tableField": "result_table",
+  "srcRowIds": [
+    "3960da94-8a85-42b4-bbef-b595327bf273"
+  ],
+  "recordReadCode": 0,
+  "submitted": {
+    "action": "APPROVE",
+    "nodeFormData": {
+      "summary": "R07-YI-FB",
+      "result_table": [
+        {
+          "src_row_id": "3960da94-8a85-42b4-bbef-b595327bf273",
+          "feedback": "R07-YI-OK"
+        }
+      ]
+    }
+  },
+  "http": 200,
+  "code": 0,
+  "msg": "success",
+  "note": "乙本人对系统分配对象合法完整载荷成功办理（与回执06 2426 原件区别：本轮载荷无未知字段、来源行取自本人子记录）"
+}

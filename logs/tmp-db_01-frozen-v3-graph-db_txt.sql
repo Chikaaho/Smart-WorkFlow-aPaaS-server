@@ -1,0 +1,1 @@
+SELECT version, graph_version, status, published_at, substring(graph_json from 1 for 900) AS graph_head FROM sw_bpm_process_def_version WHERE def_id=2108817690357526529 AND graph_version=3;

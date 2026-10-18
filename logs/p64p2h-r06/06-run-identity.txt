@@ -1,0 +1,9 @@
+== Server ==
+d594663af6d7a70f651e04f1492f0b415545a742
+d594663 fix(p64): 派发记录归属人接缝、恢复诊断清除与根链同根串行化
+ M sw-biz/sw-bpm/sw-bpm-process/src/main/java/com/sw/ck/bpm/process/service/ChildOrchestrationService.java
+ M sw-biz/sw-bpm/sw-bpm-process/src/test/java/com/sw/ck/bpm/process/service/ChildOrchestrationRootChainRaceTest.java
+ M sw-biz/sw-bpm/sw-bpm-process/src/test/java/com/sw/ck/bpm/process/service/ChildOrchestrationServiceTest.java
+== Web ==
+4333145a76e1ec4926e559802d6e7295af72a403
+4333145 fix(p64): 批次阻断与项诊断按当前/历史状态区分呈现

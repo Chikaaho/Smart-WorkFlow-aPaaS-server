@@ -40,7 +40,9 @@ class UserAssociationQueryIntegrationTest {
         jdbc.update("UPDATE sys_user SET deleted=1 WHERE id=103");
         jdbc.update("INSERT INTO sys_user_role (id,user_id,role_id,tenant_id) VALUES (1000,100,10,1),(1001,101,10,1),(1002,102,20,2),(1003,100,11,1)");
         jdbc.update("INSERT INTO sys_user_post (id,user_id,post_id,tenant_id) VALUES (2000,100,30,1),(2001,101,30,1),(2002,102,40,2),(2003,100,31,1)");
-        LoginUser login = new LoginUser(); login.setUserId(900L); login.setTenantId(1L); login.setSuperAdmin(true);
+        // 租户 1 管理员（dataScope=ALL，非超管）：本类断言关联查询与跨租户不泄漏，
+        // 超管跨租户可见性由 SuperTenantVisibilityTest 覆盖，不在本夹具内开启。
+        LoginUser login = new LoginUser(); login.setUserId(900L); login.setTenantId(1L); login.setSuperAdmin(false);
         login.setDataScope(DataScope.valueOf(DataScopeType.ALL.name())); LoginUserHolder.set(login);
     }
 

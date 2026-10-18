@@ -1,0 +1,17 @@
+1 | 0.1.0 | baseline seed | SQL | true
+2 | 0.1.1 | form local transaction actions | SQL | true
+3 | 0.1.2 | tiered command semantics | SQL | true
+4 | 0.1.3 | batch command | SQL | true
+5 | 0.1.4 | resource assurance | SQL | true
+6 | 0.1.5 | p63 dynamic branch semantics | SQL | true
+7 | 0.1.6 | p63 iot command reservation | SQL | true
+8 | 0.1.7 | p64 orchestration data action | SQL | true
+9 | 0.1.8 | p64 phase2 parent child | SQL | true
+10 | 0.1.9 | p64 position delegate | SQL | true
+11 | NULL | i6 notify menu reconciliation | SQL | true
+12 | NULL | p62 form txn action menu | SQL | true
+13 | NULL | p62 iot command verify menu | SQL | true
+14 | NULL | p62 resource ops menu | SQL | true
+15 | NULL | p62 txn batch menu | SQL | true
+16 | NULL | p63 iot reservation menu | SQL | true
+17 | NULL | p64 position delegate menu | SQL | true

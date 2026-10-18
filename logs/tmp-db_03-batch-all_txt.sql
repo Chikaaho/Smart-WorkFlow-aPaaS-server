@@ -1,0 +1,1 @@
+SELECT id, batch_key, parent_instance_id, root_instance_id, parent_depth, round_no, wait_policy, wait_count, expected_count, settled_count, status, block_reason, source_record_id, source_record_version, settled_at, create_time FROM sw_bpm_child_batch ORDER BY id;

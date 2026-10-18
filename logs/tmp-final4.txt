@@ -1,0 +1,4 @@
+item_key | status | writeback_json
+2108817586024214529 | WRITTEN | {"rows":{"3a00d8f1-f74c-4aa3-a80a-af0768fcdb37":{"feedback":null},"d9e5f0d3-56a0-42b2-9128-c67ecc6e2425":{"feedback":"R04-ZS-4"}},"main":{"title":null}}
+2108817586460422146 | WRITTEN | {"rows":{"4f30c8da-a4fd-460a-a815-3fcc2229e2fe":{"feedback":"R04-LS-2"}},"main":{"title":null}}
+(2 rows)

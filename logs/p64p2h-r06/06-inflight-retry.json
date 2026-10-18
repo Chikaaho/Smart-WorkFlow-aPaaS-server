@@ -1,0 +1,55 @@
+{
+  "at": "2026-10-11T07:38:30.189Z",
+  "itemId": "2109186366944419842",
+  "retry": {
+    "code": 0,
+    "data": {
+      "status": "WRITTEN",
+      "message": "回写已按当前版本应用"
+    }
+  },
+  "batchAfter": [
+    {
+      "id": "2109186366755676161",
+      "batchKey": "CHILD:TRG:76ec0e15-c546-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+      "parentInstanceId": "76ec0e15-c546-11f1-80b6-00ff9e2a8dfb",
+      "triggerId": "trg_child",
+      "actionId": "act_child",
+      "roundNo": "1",
+      "waitPolicy": "ALL",
+      "waitCount": null,
+      "expectedCount": 2,
+      "settledCount": 2,
+      "status": "SETTLED",
+      "blockReason": null,
+      "settledAt": "2026-10-11T15:38:20.048477",
+      "parentDepth": 0,
+      "items": [
+        {
+          "id": "2109186366843756546",
+          "itemKey": "2108817586024214529",
+          "status": "WRITTEN",
+          "sourceRowId": "905765db-4771-44f5-a522-b31bc7cae328",
+          "sourceRowVersion": "0",
+          "targetRecordId": "b86f928b-9cee-4427-998a-571c87b83b6c",
+          "targetInstanceId": "7adcf76a-c546-11f1-80b6-00ff9e2a8dfb",
+          "writebackJson": "{\"rows\":{\"905765db-4771-44f5-a522-b31bc7cae328\":{\"feedback\":\"R06I-ZS-OK\"}},\"main\":{\"title\":\"R06I-ZS-FB\"}}",
+          "writebackSource": "child=7adcf76a-c546-11f1-80b6-00ff9e2a8dfb,batch=CHILD:TRG:76ec0e15-c546-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+          "errorText": null
+        },
+        {
+          "id": "2109186366944419842",
+          "itemKey": "2108817586460422146",
+          "status": "WRITTEN",
+          "sourceRowId": "2c5765a3-5c6f-4523-9f94-06d54c693269",
+          "sourceRowVersion": "0",
+          "targetRecordId": "2d31ea31-af69-4a8c-8e1b-7607fa53a2e0",
+          "targetInstanceId": "7adcf769-c546-11f1-80b6-00ff9e2a8dfb",
+          "writebackJson": "{\"rows\":{\"2c5765a3-5c6f-4523-9f94-06d54c693269\":{\"feedback\":\"R06I-LS-OK\"}},\"main\":{\"title\":\"R06I-LS-FB\"}}",
+          "writebackSource": "child=7adcf769-c546-11f1-80b6-00ff9e2a8dfb,batch=CHILD:TRG:76ec0e15-c546-11f1-80b6-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child",
+          "errorText": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+process_instance_id | business_key | status | def_version | initiator_id
+------------------------------------------------------------------------
+b9bcfa78-c53e-11f1-9059-00ff9e2a8dfb | e5c5da6b-965a-42bb-a65c-b08fa34ecbc2 | RUNNING | 3 | 1
+(1 rows)

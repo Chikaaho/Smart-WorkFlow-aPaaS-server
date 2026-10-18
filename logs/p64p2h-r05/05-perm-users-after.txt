@@ -1,0 +1,8 @@
+id | username | role_code | data_scope
+--------------------------------------
+1 | admin | superadmin | NULL
+2108817586892435457 | jia | biz_handler_self | 3
+2108817586460422146 | lisi | biz_handler | 0
+2108817587316060161 | yi | biz_handler_self | 3
+2108817586024214529 | zhangsan | biz_handler | 0
+(5 rows)

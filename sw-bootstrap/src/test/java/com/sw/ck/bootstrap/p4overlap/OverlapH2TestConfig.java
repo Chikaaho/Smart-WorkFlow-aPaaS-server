@@ -116,7 +116,9 @@ public class OverlapH2TestConfig {
 
             @Override
             public boolean isSuperAdmin() {
-                return false;
+                // 与生产 SecurityLoginContextProvider 同语义：从登录态读取超管标识
+                var user = LoginUserHolder.get();
+                return user != null && user.isSuperAdmin();
             }
         };
     }

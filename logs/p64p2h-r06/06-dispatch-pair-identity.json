@@ -1,0 +1,69 @@
+{
+  "at": "2026-10-11T07:02:47.734Z",
+  "parentRecordId": "6f317205-9900-4ed0-a9e9-a24de3b2631c",
+  "opsTaskId": "bcdd9409-c541-11f1-8ed7-00ff9e2a8dfb",
+  "children": {
+    "jia": {
+      "taskId": "c2085cf3-c541-11f1-8ed7-00ff9e2a8dfb",
+      "recordId": "8605eb3b-ee25-44ec-abb9-348b4fc33586"
+    },
+    "yi": {
+      "taskId": "c2085cfb-c541-11f1-8ed7-00ff9e2a8dfb",
+      "recordId": "0fa51602-e4f3-4c0c-9c2a-6d65fca1dd16"
+    }
+  },
+  "instances": [],
+  "batches": [],
+  "steps": [
+    {
+      "name": "1 parent submit",
+      "data": {
+        "code": 0,
+        "id": "6f317205-9900-4ed0-a9e9-a24de3b2631c"
+      }
+    },
+    {
+      "name": "2 ops task",
+      "data": {
+        "found": true,
+        "taskId": "bcdd9409-c541-11f1-8ed7-00ff9e2a8dfb"
+      }
+    },
+    {
+      "name": "3 ops complete",
+      "data": {
+        "code": 0,
+        "msg": "success"
+      }
+    },
+    {
+      "name": "4 jia child task",
+      "data": {
+        "found": true,
+        "taskId": "c2085cf3-c541-11f1-8ed7-00ff9e2a8dfb",
+        "bk": "8605eb3b-ee25-44ec-abb9-348b4fc33586"
+      }
+    },
+    {
+      "name": "4 yi child task",
+      "data": {
+        "found": true,
+        "taskId": "c2085cfb-c541-11f1-8ed7-00ff9e2a8dfb",
+        "bk": "0fa51602-e4f3-4c0c-9c2a-6d65fca1dd16"
+      }
+    },
+    {
+      "name": "5 instances",
+      "data": {
+        "mine": []
+      }
+    },
+    {
+      "name": "6 batches",
+      "data": {
+        "code": 0,
+        "count": 0
+      }
+    }
+  ]
+}

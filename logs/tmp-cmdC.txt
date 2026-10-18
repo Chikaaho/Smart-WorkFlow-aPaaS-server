@@ -1,0 +1,3 @@
+command_key | command_type | status | initiator_id | failure_reason
+TASK_APPROVE:4c44a269-c4bf-11f1-b10a-00ff9e2a8dfb:2108817587316060161 | TASK_APPROVE | FAILED | 2108817587316060161 | 无权处理该任务
+(1 rows)

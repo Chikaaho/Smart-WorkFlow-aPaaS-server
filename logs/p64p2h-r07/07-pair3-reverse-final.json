@@ -1,0 +1,40 @@
+{
+  "at": "2026-10-11T09:01:28.072Z",
+  "pair3": {
+    "parentRecordId": "2b3f7c48-5a43-4c6f-b636-25a71a194964",
+    "children": {
+      "jia": {
+        "taskId": "5c1dc1fd-c552-11f1-beba-00ff9e2a8dfb",
+        "recordId": "693ffe98-0685-4860-870b-abcffef0729b"
+      },
+      "yi": {
+        "taskId": "5c1dc204-c552-11f1-beba-00ff9e2a8dfb",
+        "recordId": "c18dc07b-b8ab-48e6-a513-d9b270505e3e"
+      }
+    },
+    "reverseHttp": {
+      "http": 200,
+      "code": 0,
+      "msg": "success",
+      "at": "2026-10-11T09:01:41.406Z"
+    },
+    "reverseCommandFinal": {
+      "status": "FAILED",
+      "fail": "无权处理该任务",
+      "createBy": "2108817587316060161",
+      "finishedAt": "2026-10-11 17:01:57.165019",
+      "polledAt": "2026-10-11T09:02:01.685Z",
+      "pollRound": 4
+    },
+    "jiaTaskStillActive": true,
+    "completions": {
+      "jia": 0,
+      "yi": 0
+    },
+    "convergence": {
+      "parentInstanceId": "",
+      "retry": null,
+      "reviewDone": null
+    }
+  }
+}

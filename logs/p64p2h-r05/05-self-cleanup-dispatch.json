@@ -1,0 +1,35 @@
+{
+  "at": "2026-10-11T04:30:58.940Z",
+  "results": [
+    {
+      "id": "96d987e3-c52b-11f1-a317-00ff9e2a8dfb",
+      "http": 200,
+      "code": 0,
+      "msg": "success"
+    },
+    {
+      "id": "9bc5c127-c52b-11f1-a317-00ff9e2a8dfb",
+      "http": 200,
+      "code": 0,
+      "msg": "success"
+    },
+    {
+      "id": "d0e68615-c52b-11f1-a317-00ff9e2a8dfb",
+      "http": 200,
+      "code": 0,
+      "msg": "success"
+    },
+    {
+      "id": "d4d21839-c52b-11f1-a317-00ff9e2a8dfb",
+      "http": 200,
+      "code": 0,
+      "msg": "success"
+    }
+  ],
+  "leftover": {
+    "id": "a8dff859-c528-11f1-9620-00ff9e2a8dfb",
+    "http": 200,
+    "code": 0,
+    "note": "P2-04a 正向探针经表单提交绑定的流程自启动创建（jia 发起），已识别并 discard"
+  }
+}

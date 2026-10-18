@@ -1,0 +1,23 @@
+{
+  "def": {
+    "defId": "2108847663554310145",
+    "key": "bpm_4182219413fd418a"
+  },
+  "before": {
+    "zhangsanHasTask": false,
+    "lisiHasTask": true,
+    "lsTask": "75b73d48-c48a-11f1-bd5c-00ff9e2a8dfb"
+  },
+  "after": {
+    "zhangsanHasTask": false,
+    "lisiHasTask": true,
+    "lsTask": "77954c26-c48a-11f1-bd5c-00ff9e2a8dfb"
+  },
+  "afterOff": {
+    "zhangsanHasTask": true,
+    "lisiHasTask": true,
+    "zsTask": "79761a24-c48a-11f1-bd5c-00ff9e2a8dfb",
+    "lsTask": "77954c26-c48a-11f1-bd5c-00ff9e2a8dfb"
+  },
+  "delegateId": "2108847481303412738"
+}

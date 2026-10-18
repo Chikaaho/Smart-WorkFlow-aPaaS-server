@@ -1,0 +1,20 @@
+column_name
+-----------
+id
+create_time
+create_by
+update_time
+update_by
+deleted
+version
+parent_id
+name
+menu_type
+path
+component
+permission
+icon
+sort
+title
+hidden
+(17 rows)

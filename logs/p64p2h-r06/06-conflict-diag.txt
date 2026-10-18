@@ -1,0 +1,5 @@
+id | batch_key | parent_instance_id | status | block_reason | expected_count | settled_count
+--------------------------------------------------------------------------------------------
+2109179848136114178 | CHILD:TRG:d8912496-c542-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child | d8912496-c542-11f1-8ed7-00ff9e2a8dfb | BLOCKED | FAILED: 必需回写缺失：子结果未包含本项授权来源行 [fe5ac3b0-f853-45d1-a11d-5b90011e7a34] | 1 | 0
+2109179546280443906 | CHILD:TRG:ada91a60-c542-11f1-8ed7-00ff9e2a8dfb:trg_child:NODE_ROUND_COMPLETED:1:act_child | ada91a60-c542-11f1-8ed7-00ff9e2a8dfb | BLOCKED | FAILED: 必需回写缺失：子结果未包含本项授权来源行 [030db306-5349-47f6-b177-fe7cfd967a3d] | 1 | 0
+(2 rows)

@@ -1,0 +1,6 @@
+id | command_type | status | result | fail | create_by | create_time
+--------------------------------------------------------------------
+2109204790433112065 | TASK_APPROVE | FAILED | NULL | 节点已被处理 | 2108817587316060161 | 2026-10-11 16:49:43.827092
+2109204791192281089 | TASK_APPROVE | COMPLETED | {"status":"DONE","actionRecordId":2109204791997587457} | NULL | 2108817586892435457 | 2026-10-11 16:49:44.007194
+2109204808439259137 | TASK_APPROVE | COMPLETED | {"status":"DONE","actionRecordId":2109204810964230146} | NULL | 2108817587316060161 | 2026-10-11 16:49:48.119656
+(3 rows)

@@ -1,0 +1,85 @@
+{
+  "at": "2026-10-11T07:03:44.372Z",
+  "probes": [
+    {
+      "name": "A1 jia detail own",
+      "status": 200,
+      "code": 0,
+      "msg": "success",
+      "note": null,
+      "dataBrief": "{\"id\":\"8605eb3b-ee25-44ec-abb9-348b4fc33586\",\"create_time\":\"2026-10-11T07:02:43.825+00:00\",\"create_by\":\"2108817586892435457\",\"update_time\":\"2026-10-11T07:02:43.825+00:00\",\"update_by\":\"2108817586892435457\",\"version\":\"0\",\"summary\":null,\"owner_id\":\"21088175868924"
+    },
+    {
+      "name": "A2 jia list own-visible",
+      "status": 200,
+      "code": 0,
+      "msg": "success",
+      "note": null,
+      "dataBrief": "{\"records\":[{\"id\":\"8605eb3b-ee25-44ec-abb9-348b4fc33586\",\"create_time\":\"2026-10-11T07:02:43.825+00:00\",\"create_by\":\"2108817586892435457\",\"update_time\":\"2026-10-11T07:02:43.825+00:00\",\"update_by\":\"2108817586892435457\",\"summary\":null,\"owner_id\":\"2108817586892435"
+    },
+    {
+      "name": "A3 jia admin-list-contrast",
+      "status": 200,
+      "code": 0,
+      "msg": "success",
+      "note": null,
+      "dataBrief": "{\"records\":[{\"id\":\"8605eb3b-ee25-44ec-abb9-348b4fc33586\",\"create_time\":\"2026-10-11T07:02:43.825+00:00\",\"create_by\":\"2108817586892435457\",\"update_time\":\"2026-10-11T07:02:43.825+00:00\",\"update_by\":\"2108817586892435457\",\"summary\":null,\"owner_id\":\"2108817586892435"
+    },
+    {
+      "name": "A4 jia task detail own",
+      "status": 200,
+      "code": 0,
+      "msg": "success",
+      "note": null,
+      "dataBrief": "{\"taskId\":\"c2085cf3-c541-11f1-8ed7-00ff9e2a8dfb\",\"taskName\":\"子反馈填写\",\"taskStatus\":\"RUNNING\",\"instanceStatus\":\"RUNNING\",\"processInstanceId\":\"c20835d0-c541-11f1-8ed7-00ff9e2a8dfb\",\"processDefinitionKey\":\"bpm_37a3eed391d2481d\",\"processName\":\"P64B子反馈流程\",\"formKey\":\""
+    },
+    {
+      "name": "A5 jia node-form own",
+      "status": 200,
+      "code": 0,
+      "msg": "success",
+      "note": null,
+      "dataBrief": "{\"bound\":true,\"formKey\":\"p64p2b_child_form\",\"formName\":\"P64B子流程反馈表\",\"formVersion\":\"2\",\"definition\":{\"title\":\"P64B子流程反馈表\",\"fields\":[{\"name\":\"summary\",\"type\":\"TEXT\",\"label\":\"汇总说明\",\"required\":false},{\"name\":\"owner_id\",\"type\":\"TEXT\",\"label\":\"负责人ID\",\"required\":fals"
+    },
+    {
+      "name": "B1 jia detail other",
+      "status": 200,
+      "code": 1507,
+      "msg": "记录不存在或已删除",
+      "note": null,
+      "dataBrief": "null"
+    },
+    {
+      "name": "B2 jia task detail other",
+      "status": 200,
+      "code": 403,
+      "msg": "无权查看该任务",
+      "note": null,
+      "dataBrief": "null"
+    },
+    {
+      "name": "B3 jia write other (function perm)",
+      "status": 403,
+      "code": 403,
+      "msg": "您没有执行该操作的权限，请联系管理员分配相应权限",
+      "note": null,
+      "dataBrief": "null"
+    },
+    {
+      "name": "C1 yi detail jia-record",
+      "status": 200,
+      "code": 1507,
+      "msg": "记录不存在或已删除",
+      "note": null,
+      "dataBrief": "null"
+    },
+    {
+      "name": "C2 yi task detail jia-task",
+      "status": 200,
+      "code": 403,
+      "msg": "无权查看该任务",
+      "note": null,
+      "dataBrief": "null"
+    }
+  ]
+}

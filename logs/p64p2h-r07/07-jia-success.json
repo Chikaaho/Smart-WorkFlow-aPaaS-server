@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-11T08:49:44.021Z",
+  "taskId": "8a6709e8-c550-11f1-beba-00ff9e2a8dfb",
+  "recordId": "4efceab8-40a6-4daa-865c-0bf1891cf609",
+  "tableField": "result_table",
+  "srcRowIds": [
+    "fd802732-66dd-4c51-bbe8-1efe72b3b432"
+  ],
+  "recordReadCode": 0,
+  "submitted": {
+    "action": "APPROVE",
+    "nodeFormData": {
+      "summary": "R07-JIA-FB",
+      "result_table": [
+        {
+          "src_row_id": "fd802732-66dd-4c51-bbe8-1efe72b3b432",
+          "feedback": "R07-JIA-OK"
+        }
+      ]
+    }
+  },
+  "http": 200,
+  "code": 0,
+  "msg": "success"
+}

@@ -1,0 +1,4 @@
+id | create_by | create_time | owner_id | summary
+-------------------------------------------------
+94177cad-c964-4d1c-b1bb-5fb47d1c7eca | 2108817586892435457 | 2026-10-11 12:03:04.454819 | 2108817586892435457 | P2-04a positive self-record probe (jia)
+(1 rows)

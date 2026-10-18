@@ -1,0 +1,1 @@
+SELECT proc_inst_id_, id_, name_, assignee_, start_time_, end_time_ FROM act_hi_taskinst WHERE proc_inst_id_ IN ('049dd757-c48a-11f1-bd5c-00ff9e2a8dfb','049dd758-c48a-11f1-bd5c-00ff9e2a8dfb') ORDER BY start_time_;

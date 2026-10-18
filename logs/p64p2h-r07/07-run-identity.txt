@@ -1,0 +1,4 @@
+7fffef9ca1eb2663efde362b9d05d99846750fbb
+?? logs/
+?? sw-bootstrap/logs/
+GIT_IDENTITY_EXIT=0

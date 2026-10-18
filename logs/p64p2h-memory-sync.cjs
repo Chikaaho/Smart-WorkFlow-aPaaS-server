@@ -1,0 +1,22 @@
+const fs = require('fs');
+const NEW = 'P64=IN_PROGRESS；阶段ⅠPASSED锁定，阶段ⅡVERIFYING（2026-10-10 回执03 提交待规划独立验收），阶段Ⅲ未验收。回执03（证据树 phase2-03，62件62/62）按一级提示01 九行账本处置：设计器CHILD原流（可见会话编辑→保存PUT 200→发布POST 200→冻结v3语义一致）、业务页快照9件桌面+768与服务端逐请求69条（像素视觉仍未取得，如实）、SETTLED链对象原流（单次推进恰1、父APPROVED）、父行正确查询（3行终值对应冻结授权行集，失败SQL保留）+授权200/403×2、委托净链（候选组/直派/冻结逐对象，修复before相位污染）+聚合实机链（去重恰生成丁+丙、实例APPROVED、来源/轮次可追溯）、全新库17迁移至0.1.9原证+锚30/0（缺陷⑧基线计数14→17修复，Server 4319bb4）、门禁109/0+360/0带退出码、逐caseXML+20方法摘录、ADR-002层级措辞修正、自身收尾RUNNING=0双端口零监听。限制如实：登录后页面像素视觉未取得（正式A11视觉未通过）、候选任务详情无权查看为真实页面状态留规划裁决、负例=UNIT层。唯一动作=Planner按提示01矩阵独立验收回执03。47、46/22/22=90、ADV64、问题57、P63/VB、P62延期/策略OFF、gitlink78495dc保持；HK-Z前次核查通过/根因未定，HK-C按Owner继续挂起。';
+const files = [
+  'E:/code/Smart-WorkFlow-Agent-Workspace/memory/state.md',
+  'E:/code/Smart-WorkFlow-Agent-Workspace/memory/README.md',
+  'E:/code/Smart-WorkFlow-Agent-Workspace/memory/features.md',
+];
+for (const f of files) {
+  const lines = fs.readFileSync(f, 'utf8').split('\n');
+  const i = lines.findIndex((l) => l.startsWith('P64=IN_PROGRESS；阶段ⅠPASSED锁定，阶段ⅡVERIFYING'));
+  if (i < 0) { console.log('SKIP(no line): ' + f); continue; }
+  lines[i] = NEW;
+  fs.writeFileSync(f, lines.join('\n'), 'utf8');
+  console.log('updated line ' + (i + 1) + ': ' + f);
+}
+// features.md 的清单行
+const fp = 'E:/code/Smart-WorkFlow-Agent-Workspace/memory/features.md';
+let s = fs.readFileSync(fp, 'utf8');
+s = s.replace('- `p64-mes-advanced-orchestration`（P64，XL）：IN_PROGRESS·阶段ⅠPASSED；阶段ⅡVERIFYING（复审02未通过，一级提示01/回执03）；阶段Ⅲ及整体未验收。',
+  '- `p64-mes-advanced-orchestration`（P64，XL）：IN_PROGRESS·阶段ⅠPASSED；阶段ⅡVERIFYING（回执03 提交待规划独立验收）；阶段Ⅲ及整体未验收。');
+fs.writeFileSync(fp, s, 'utf8');
+console.log('features list line updated');
