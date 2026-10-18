@@ -59,7 +59,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 
 ## 当前版本
 
-当前正式发布版本为 **0.1.7**（annotated tag `0.1.7`，经既有 CI 通道发布并在 UAT 由 0.1.6 就地升级部署）：0.1.7 Bug 修复列车（43 项，Owner 整体收口；不新增业务功能数）、每支持方言一个 `V0.1.7__baseline_seed.sql` 迁移收敛、`db/upgrade/0.1.7/` 存量升级通道（S1/S2 二选一），工程默认版本 `0.1.7-SNAPSHOT`、正式构建以 `-Drevision=0.1.7` 覆盖。此前 **0.1.6**（应用中心与表单分类统一，正式功能第 49 个；同版本覆盖纳入验收修复）、**0.1.5**（持续修复发布列车，UAT 直接部署、未建 tag/Release）、**0.1.3**、**0.1.0**（以仓库 `0.1.0` 标签与 Release 为准；在 v0.0.2 已验收的 OA 业务闭环基础上完成 0.1.0 OA 全功能收口）及更早的 v0.0.2、v0.0.1 为历史发布，见仓库标签。
+当前正式发布版本为 **0.1.7**（annotated tag `0.1.7` 与公开 Release [`CH-aPaaS Server 0.1.7`](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server/releases/tag/0.1.7)（资产 `bootstrap-0.1.7.jar`），经既有 CI 通道发布并在 UAT 由 0.1.6 就地升级部署）：0.1.7 Bug 修复列车（43 项，Owner 整体收口；不新增业务功能数）、每支持方言一个 `V0.1.7__baseline_seed.sql` 迁移收敛、`db/upgrade/0.1.7/` 存量升级通道（S1/S2 二选一），工程默认版本 `0.1.7-SNAPSHOT`、正式构建以 `-Drevision=0.1.7` 覆盖。此前 **0.1.6**（应用中心与表单分类统一，正式功能第 49 个；同版本覆盖纳入验收修复）、**0.1.5**（持续修复发布列车，UAT 直接部署、未建 tag/Release）、**0.1.3**、**0.1.0**（以仓库 `0.1.0` 标签与 Release 为准；在 v0.0.2 已验收的 OA 业务闭环基础上完成 0.1.0 OA 全功能收口）及更早的 v0.0.2、v0.0.1 为历史发布，见仓库标签。
 
 ## 项目入口
 
