@@ -3,6 +3,7 @@ package com.sw.ck.iot.config;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.hook.TencentDeviceStatusHook;
+import com.sw.ck.iot.mqtt.MqttDownlinkPublisher;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.provider.MockCloudProvider;
 import com.sw.ck.iot.service.CommandQueueService;
@@ -132,6 +133,21 @@ class IotFeatureToggleContextTest {
         @Bean
         CommandQueueService commandQueueService() {
             return COMMAND_QUEUE_SERVICE;
+        }
+
+        /**
+         * 自建 MQTT 下行通道：本上下文只装配开关语义所需组件，通道依赖以 mock 提供。
+         * 解析不到启用中的 MQTT 连接（mapper 返回 null）即视为「非 MQTT 设备」，
+         * 与生产语义一致：通道缺失时由 provider 路径 fail closed。
+         */
+        @Bean
+        MqttDownlinkPublisher mqttDownlinkPublisher() {
+            return new MqttDownlinkPublisher(
+                    mock(com.sw.ck.iot.mapper.IotConnectionMapper.class),
+                    mock(com.sw.ck.iot.mapper.IotTopicMapper.class),
+                    mock(com.sw.ck.iot.mqtt.MqttBrokerManager.class),
+                    new org.springframework.beans.factory.support.DefaultListableBeanFactory()
+                            .getBeanProvider(com.sw.ck.iot.service.IotConnectionService.class));
         }
     }
 }

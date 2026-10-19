@@ -98,6 +98,22 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
     }
 
     @Override
+    public IotDevice getByDeviceKeyForTenant(Long tenantId, String deviceKey) {
+        if (tenantId == null || deviceKey == null || deviceKey.isBlank()) {
+            return null;
+        }
+        // 调度线程无登录态：挂起租户拦截器，以显式 tenantId 为边界过滤
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return baseMapper.selectOne(Wrappers.<IotDevice>lambdaQuery()
+                    .eq(IotDevice::getDeviceKey, deviceKey)
+                    .eq(IotDevice::getTenantId, tenantId)
+                    .eq(IotDevice::getDeleted, 0)
+                    .last("LIMIT 1"));
+        }
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public IotDeviceCommand dispatchCommand(String productId, String deviceName,
                                             String commandKey, String commandType,

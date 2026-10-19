@@ -40,6 +40,15 @@ public interface IotDeviceService extends BaseService<IotDevice> {
     IotDevice getByDeviceKey(String deviceKey);
 
     /**
+     * 以显式租户 + 设备业务标识解析设备行（调度线程无登录态时使用）。
+     *
+     * @param tenantId  租户 ID
+     * @param deviceKey 设备业务标识
+     * @return 设备行；不存在/跨租户为 null
+     */
+    IotDevice getByDeviceKeyForTenant(Long tenantId, String deviceKey);
+
+    /**
      * 下发控制命令（延迟生效语义）。
      * <p>
      * 命令落库为 QUEUED；设备在线时可立即尝试发送。
