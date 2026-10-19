@@ -49,6 +49,10 @@ import java.util.Map;
 @RequestMapping("/workflow")
 public class BpmTriggerController {
 
+    /** BF20261019-03：判断脚本执行超时毫秒（可配置；缺省沿用主方向 §3.5 的 5000ms）。 */
+    @org.springframework.beans.factory.annotation.Value("${sw.bpm.script.timeout-ms:5000}")
+    private long scriptTimeoutMs = BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS;
+
     private final BpmTaskFacade bpmTaskFacade;
     private final BpmInstanceService bpmInstanceService;
     private final NodeFormDataService nodeFormDataService;
@@ -141,7 +145,7 @@ public class BpmTriggerController {
                         ? com.sw.ck.bpm.api.script.ScriptFunctionContext.EMPTY
                         : scriptFunctionContextFactory.build(trigger.getScript(), instanceId, tenantId);
         BpmScriptEvaluatePort.ScriptOutcome run = scriptRunner
-                .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS,
+                .run(trigger.getScript(), snapshot.values(), scriptTimeoutMs,
                         functionContext)
                 .orElseThrow(() -> new IllegalStateException(
                         "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
