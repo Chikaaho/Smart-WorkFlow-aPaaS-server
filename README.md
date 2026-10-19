@@ -15,7 +15,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 
 ## 当前可体验的业务闭环
 
-当前发布版本为 **0.1.7**（Bug 修复列车：应用可见范围五维度 `sw_form_app_scope`、后台菜单调整、应用中心/设计器与详情填写交互版式收敛、全局列表降噪、搜索 bar 12 格栅格、按钮文案≤4 字、流程中心版式与组织架构演示种子；每个支持方言收敛为一个 `V0.1.7__baseline_seed.sql`，工程默认版本 `0.1.7-SNAPSHOT`、正式构建以 `-Drevision=0.1.7` 覆盖；发布/升级/验收/回滚材料见工作区 `docs/ops/production-ops.md` §8/§9 与本仓 `sw-bootstrap/src/main/resources/db/upgrade/0.1.7/`，回执见工作区 `product/0.1.7-bugfix/receipts/`）。0.1.6（应用中心与表单分类统一，同版本覆盖纳入验收修复）、0.1.5（持续修复发布列车，UAT 直接部署、未建 tag/Release）、0.1.3（后台 SSO 配置管理、B 端手机号准入、种子基线，材料见工作区 `release/0.1.2/` 与 `release/0.1.3/`）与 0.1.0 为历史发布。0.1.0 已交付的业务闭环（办公审批/OA 场景）为主线，如下：
+当前发布版本为 **0.1.8**（修复批次：**原生 MQTT 设备控制通道**——自建 MQTT 连接（`conn_type=MQTT`）上的设备可按流程驱动控制（预约/延迟语义），按设备承载连接解析下行主题（`{deviceKey}` 替换、按配置 QoS 或默认 1）并真实发布、以 Broker 确认判定发送成功，通道缺失保持 fail closed；新增用户态端点 `GET /workflow/my/instances/count`；DB 无新增迁移（沿用 0.1.7 终点），工程默认版本 `0.1.8-SNAPSHOT`、正式构建以 `-Drevision=0.1.8` 覆盖；发布/升级/验收/回滚材料见工作区 `docs/ops/production-ops.md` §8/§9，回执见工作区 `product/iot-native-mqtt-submit-detect/receipts/`）。0.1.7（Bug 修复列车 43 项＋第 41 项线上返修＋openapi 回调租户上下文修复，同版本覆盖两次）、0.1.6（应用中心与表单分类统一，同版本覆盖纳入验收修复）、0.1.5（持续修复发布列车，UAT 直接部署、未建 tag/Release）、0.1.3（后台 SSO 配置管理、B 端手机号准入、种子基线，材料见工作区 `release/0.1.2/` 与 `release/0.1.3/`）与 0.1.0 为历史发布。0.1.0 已交付的业务闭环（办公审批/OA 场景）为主线，如下：
 
 > 用户从工作台找到可发起事项，填写或恢复业务草稿，提交申请；审批人处理待办并填写意见；发起人随后查看状态和结果，相关人员收到抄送，管理员在后台维护事项、表单、流程和通知记录。
 
@@ -59,7 +59,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 
 ## 当前版本
 
-当前正式发布版本为 **0.1.7**（annotated tag `0.1.7` 与公开 Release [`CH-aPaaS Server 0.1.7`](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server/releases/tag/0.1.7)（资产 `bootstrap-0.1.7.jar`；2026-10-18 经 Owner 授权**同版本覆盖（两次）**，最终改绑 openapi 回调租户上下文修复提交，tag→`00e0a73`、资产 sha256 `d8b390c1…`，此前 `c6a7c06`·`b016b5cc…` 与原 `5af1329` 历史保留于发布说明），经既有 CI 通道发布并在 UAT 部署同一制品）：0.1.7 Bug 修复列车（43 项，Owner 整体收口；不新增业务功能数）、每支持方言一个 `V0.1.7__baseline_seed.sql` 迁移收敛、`db/upgrade/0.1.7/` 存量升级通道（S1/S2 二选一），工程默认版本 `0.1.7-SNAPSHOT`、正式构建以 `-Drevision=0.1.7` 覆盖。此前 **0.1.6**（应用中心与表单分类统一，正式功能第 49 个；同版本覆盖纳入验收修复）、**0.1.5**（持续修复发布列车，UAT 直接部署、未建 tag/Release）、**0.1.3**、**0.1.0**（以仓库 `0.1.0` 标签与 Release 为准；在 v0.0.2 已验收的 OA 业务闭环基础上完成 0.1.0 OA 全功能收口）及更早的 v0.0.2、v0.0.1 为历史发布，见仓库标签。
+当前正式发布版本为 **0.1.8**（annotated tag `0.1.8` 与公开 Release [`CH-aPaaS Server 0.1.8`](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server/releases/tag/0.1.8)（资产 `bootstrap-0.1.8.jar` 218,042,791 B，sha256 `5c0e66bd…`），经既有 CI 通道发布并在 UAT 部署同一制品）：0.1.8 修复批次（不新增业务功能数）——原生 MQTT 设备控制通道（自建 MQTT 连接设备按流程驱动控制、预约到点真实发布、通道缺失 fail closed）、提交后实例探测用户态端点 `GET /workflow/my/instances/count`；**DB 无新增迁移**（终点保持 `V0.1.7`），工程默认版本 `0.1.8-SNAPSHOT`、正式构建以 `-Drevision=0.1.8` 覆盖。此前 **0.1.7**（Bug 修复列车 43 项＋第 41 项返修与 openapi 回调修复；同版本覆盖两次，最终 tag→`00e0a73`·资产 sha256 `d8b390c1…`）、**0.1.6**（应用中心与表单分类统一，正式功能第 49 个；同版本覆盖纳入验收修复）、**0.1.5**（持续修复发布列车，UAT 直接部署、未建 tag/Release）、**0.1.3**、**0.1.0**（以仓库 `0.1.0` 标签与 Release 为准；在 v0.0.2 已验收的 OA 业务闭环基础上完成 0.1.0 OA 全功能收口）及更早的 v0.0.2、v0.0.1 为历史发布，见仓库标签。
 
 ## 项目入口
 
