@@ -66,6 +66,13 @@ public class ScriptWorkerPool {
     @Value("${sw.bpm.script.tenant-queue-capacity:4}")
     private int tenantQueueCapacity;
 
+    /**
+     * BF20261019-02：worker 启动握手等待上限。worker 在 JVM 启动后先完成 GraalJS 预热再握手，
+     * 慢宿主上 JVM 冷启动 + 预热可超过 15s，缺省放宽到 30s（可按宿主调低/调高）。
+     */
+    @Value("${sw.bpm.script.worker-startup-timeout-ms:30000}")
+    private long workerStartupTimeoutMs = 30_000L;
+
     private final Semaphore globalPermits = new Semaphore(2);
     private final Map<Long, Semaphore> tenantPermits = new ConcurrentHashMap<>();
     private final Map<String, Worker> liveWorkers = new ConcurrentHashMap<>();
@@ -233,7 +240,7 @@ public class ScriptWorkerPool {
         }
         Worker created;
         try {
-            created = Worker.spawn(this, objectMapper);
+            created = Worker.spawn(this, objectMapper, workerStartupTimeoutMs);
         } catch (IOException e) {
             throw new IllegalStateException("判断 worker 进程启动失败: " + e.getMessage(), e);
         }
@@ -303,8 +310,8 @@ public class ScriptWorkerPool {
     /** 单个 worker 进程句柄。 */
     static final class Worker {
 
-        /** 启动握手等待上限：JVM 冷启动远小于此，仅防病态失败挂起。 */
-        private static final long STARTUP_HANDSHAKE_TIMEOUT_MS = 15_000L;
+        /** 测试接缝默认值：JVM 冷启动 + 预热远小于此，仅防病态失败挂起；运行时按池配置覆盖。 */
+        private static final long DEFAULT_STARTUP_HANDSHAKE_TIMEOUT_MS = 15_000L;
 
         private final String id = UUID.randomUUID().toString();
         private final Process process;
@@ -312,47 +319,60 @@ public class ScriptWorkerPool {
         private final OutputStreamWriter stdin;
         private final ObjectMapper mapper;
         private final ScriptWorkerPool pool;
+        private final long startupHandshakeTimeoutMs;
         private boolean busy;
         private boolean destroyedByDeadline;
         private long maxHeapBytes = -1L;
 
-        private Worker(ScriptWorkerPool pool, ObjectMapper mapper, Process process) {
+        private Worker(ScriptWorkerPool pool, ObjectMapper mapper, Process process,
+                       long startupHandshakeTimeoutMs) {
             this.pool = pool;
             this.mapper = mapper;
             this.process = process;
+            this.startupHandshakeTimeoutMs = startupHandshakeTimeoutMs;
             this.stdout = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
             this.stdin = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8);
         }
 
-        static Worker spawn(ScriptWorkerPool pool, ObjectMapper mapper) throws IOException {
+        static Worker spawn(ScriptWorkerPool pool, ObjectMapper mapper,
+                            long startupHandshakeTimeoutMs) throws IOException {
             String javaBin = ProcessHandle.current().info().command().orElse("java");
-            // Windows/命令行上限与 Spring Boot fat-jar 场景下 java.class.path 可能超长或不可直接
-            // 复用于子进程：支持显式覆盖（pathing jar 或精简类路径），缺省保持原语义。
-            String override = System.getProperty("sw.bpm.script.worker-classpath",
-                    System.getenv("SW_BPM_SCRIPT_WORKER_CLASSPATH"));
-            String classpath = override != null && !override.isBlank()
-                    ? override : System.getProperty("java.class.path");
-            List<String> command = new ArrayList<>(List.of(javaBin, "-Xms32m", "-Xmx" + HEAP_CAP,
-                    "-Dfile.encoding=UTF-8", "-cp", classpath,
-                    ScriptWorkerMain.class.getName()));
-            log.info("P64 判断 worker 启动: {} (heap cap {})", command.get(command.size() - 1), HEAP_CAP);
+            // BF20261019-01：按宿主运行形态解析拉起计划——fat jar 部署改经 PropertiesLauncher
+            // 在归档内拉起（无需运维解包），显式覆盖仍优先；exploded/测试形态语义不变
+            WorkerLaunchPlan plan = WorkerLaunchPlan.resolve(
+                    System.getProperty("sw.bpm.script.worker-classpath",
+                            System.getenv("SW_BPM_SCRIPT_WORKER_CLASSPATH")));
+            List<String> command = new ArrayList<>();
+            command.add(javaBin);
+            command.add("-Xms32m");
+            command.add("-Xmx" + HEAP_CAP);
+            command.add("-Dfile.encoding=UTF-8");
+            plan.systemProperties.forEach((key, value) -> command.add("-D" + key + "=" + value));
+            command.add("-cp");
+            command.add(plan.classpath);
+            command.add(plan.mainClass);
+            log.info("P64 判断 worker 启动: {} (heap cap {}, launch: {})",
+                    plan.mainClass, HEAP_CAP, plan.describe());
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.redirectErrorStream(false);
             // worker 的日志（stderr）并入宿主 stderr：不占用协议流，也避免无人读取的管道阻塞
             builder.redirectError(ProcessBuilder.Redirect.INHERIT);
             Process process = builder.start();
-            Worker worker = new Worker(pool, mapper, process);
+            Worker worker = new Worker(pool, mapper, process,
+                    startupHandshakeTimeoutMs > 0 ? startupHandshakeTimeoutMs : DEFAULT_STARTUP_HANDSHAKE_TIMEOUT_MS);
             worker.handshake();
             return worker;
         }
 
-        /** 启动握手：确认 worker 已就绪并核对本进程实际堆上限（-Xmx 生效值）。 */
+        /** 启动握手：确认 worker 已就绪（含预热完成）并核对本进程实际堆上限（-Xmx 生效值）。 */
         private void handshake() throws IOException {
             destroyedByDeadline = false;
-            String line = readProtocolLine("__ready__", STARTUP_HANDSHAKE_TIMEOUT_MS);
+            String line = readProtocolLine("__ready__", startupHandshakeTimeoutMs);
             if (line == null) {
                 destroyAndAwait();
-                throw new IOException("worker 启动握手失败（无就绪应答）");
+                throw new IOException("worker 启动握手失败（" + startupHandshakeTimeoutMs
+                        + "ms 内无就绪应答；启动含 GraalJS 预热，慢宿主可上调 "
+                        + "sw.bpm.script.worker-startup-timeout-ms）");
             }
             Map<?, ?> hello;
             try {

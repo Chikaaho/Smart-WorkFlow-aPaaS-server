@@ -33,11 +33,18 @@ public final class ScriptWorkerMain {
         // 进程内日志框架的控制台输出改道 stderr，避免污染应答行
         System.setOut(System.err);
         ObjectMapper mapper = new ObjectMapper();
-        BpmScriptRunner runner = new BpmScriptRunner(mapper);
+        // BF20261019-02：进程内共享 Engine + 预热后再握手——首个真实判断不再支付
+        // GraalJS 语言初始化冷启动（慢宿主上曾超固定 5s 预算被宿主销毁后每次冷启动）
+        org.graalvm.polyglot.Engine engine = org.graalvm.polyglot.Engine.newBuilder().build();
+        BpmScriptRunner runner = new BpmScriptRunner(mapper, engine);
         // 启动握手：宿主据此确认 worker 就绪并核对本 JVM 实际堆上限（-Xmx 生效值）
         Map<String, Object> hello = new LinkedHashMap<>();
         hello.put("id", "__ready__");
-        hello.put("ready", true);
+        BpmScriptRunner.Result warmUp = runner.warmUp();
+        hello.put("ready", warmUp.kind() == BpmScriptRunner.Result.Kind.OK);
+        if (!hello.get("ready").equals(Boolean.TRUE)) {
+            hello.put("errorMessage", "worker 预热失败（" + warmUp.kind() + "）: " + warmUp.errorMessage());
+        }
         hello.put("maxHeapBytes", Runtime.getRuntime().maxMemory());
         protocolOut.println(mapper.writeValueAsString(hello));
         protocolOut.flush();
