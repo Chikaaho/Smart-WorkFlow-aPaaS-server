@@ -66,6 +66,13 @@ class WorkerLaunchPlanTest {
                 .isEqualTo(fatJar.toString());
         assertThat(WorkerLaunchPlan.nestedJarPathOf("jar:file:" + encoded + "!/BOOT-INF/classes"))
                 .isEqualTo(fatJar.toString());
+        // Spring Boot 嵌套 URL 实际形态：jar 路径与 '!entry' 之间带 '/'（真实 fat jar 排障发现）
+        assertThat(WorkerLaunchPlan.nestedJarPathOf("nested:file:" + encoded + "/!BOOT-INF.classes"))
+                .isEqualTo(fatJar.toString());
+        // 组合协议前缀（真实 fat jar 代码源实测：jar:nested:…!），双层嵌套条目收尾 '!/'
+        assertThat(WorkerLaunchPlan.nestedJarPathOf(
+                "jar:nested:" + encoded + "/!BOOT-INF/lib/sw-bpm-engine.jar!/"))
+                .isEqualTo(fatJar.toString());
         // 嵌套指向不存在的文件 → 非法目标，回退 null（原语义）
         assertThat(WorkerLaunchPlan.nestedJarPathOf(
                 "nested:/nonexistent/path/app.jar/!BOOT-INF/classes")).isNull();

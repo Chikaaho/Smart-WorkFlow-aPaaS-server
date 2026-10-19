@@ -342,6 +342,10 @@ public class ScriptWorkerPool {
             WorkerLaunchPlan plan = WorkerLaunchPlan.resolve(
                     System.getProperty("sw.bpm.script.worker-classpath",
                             System.getenv("SW_BPM_SCRIPT_WORKER_CLASSPATH")));
+            log.info("P64 判断 worker 启动: (heap cap {}, codeSource={}, launch: {})",
+                    HEAP_CAP,
+                    ScriptWorkerMain.class.getProtectionDomain().getCodeSource().getLocation(),
+                    plan.describe());
             List<String> command = new ArrayList<>();
             command.add(javaBin);
             command.add("-Xms32m");
@@ -351,8 +355,6 @@ public class ScriptWorkerPool {
             command.add("-cp");
             command.add(plan.classpath);
             command.add(plan.mainClass);
-            log.info("P64 判断 worker 启动: {} (heap cap {}, launch: {})",
-                    plan.mainClass, HEAP_CAP, plan.describe());
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.redirectErrorStream(false);
             // worker 的日志（stderr）并入宿主 stderr：不占用协议流，也避免无人读取的管道阻塞
@@ -369,7 +371,14 @@ public class ScriptWorkerPool {
             destroyedByDeadline = false;
             String line = readProtocolLine("__ready__", startupHandshakeTimeoutMs);
             if (line == null) {
+                boolean dead = !process.isAlive();
+                int exitCode = dead ? exitCodeQuietly() : Integer.MIN_VALUE;
                 destroyAndAwait();
+                if (dead) {
+                    // 进程提前退出（如类路径不可达的 Could not load main class）：stderr 已并入宿主日志
+                    throw new IOException("worker 启动握手失败：进程提前退出（exitCode=" + exitCode
+                            + "），原因见宿主 stderr；launch 计划见上方「P64 判断 worker 启动」日志");
+                }
                 throw new IOException("worker 启动握手失败（" + startupHandshakeTimeoutMs
                         + "ms 内无就绪应答；启动含 GraalJS 预热，慢宿主可上调 "
                         + "sw.bpm.script.worker-startup-timeout-ms）");
@@ -536,6 +545,14 @@ public class ScriptWorkerPool {
                 process.onExit().get(5, TimeUnit.SECONDS);
             } catch (Exception e) {
                 log.warn("P64 判断 worker 销毁等待异常: {}", e.getMessage());
+            }
+        }
+
+        private int exitCodeQuietly() {
+            try {
+                return process.exitValue();
+            } catch (IllegalStateException e) {
+                return Integer.MIN_VALUE;
             }
         }
 

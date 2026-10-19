@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.CodeSource;
+import java.util.List;
 import java.util.Map;
 import java.util.jar.JarFile;
 
@@ -111,15 +112,22 @@ final class WorkerLaunchPlan {
         }
         int bang = text.indexOf('!');
         String before = bang >= 0 ? text.substring(0, bang) : text;
-        before = stripPrefix(before, "nested:");
-        before = stripPrefix(before, "jar:");
-        before = stripPrefix(before, "file:");
+        // 协议前缀可组合（真实 fat jar 实测为 jar:nested:…），循环剥离直到无前缀可去
+        boolean stripped = true;
+        while (stripped) {
+            stripped = false;
+            for (String prefix : List.of("jar:", "nested:", "file:")) {
+                if (before.startsWith(prefix)) {
+                    before = prefix.length() == before.length() ? "" : before.substring(prefix.length());
+                    stripped = true;
+                }
+            }
+        }
         String decoded = URLDecoder.decode(before, StandardCharsets.UTF_8);
-        return Files.isRegularFile(Path.of(decoded)) ? decoded : null;
-    }
-
-    private static String stripPrefix(String value, String prefix) {
-        return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
+        // 嵌套 URL 在 jar 路径与 '!entry' 之间带 '/'（nested:file:/app.jar/!BOOT-INF.classes），
+        // 截断后留下尾部斜杠——文件路径带尾斜杠 isRegularFile 判 false，必须剥掉
+        String trimmed = decoded.replaceAll("/+$", "");
+        return Files.isRegularFile(Path.of(trimmed)) ? trimmed : null;
     }
 
     static boolean containsEntry(Path jar, String entry) throws IOException {
