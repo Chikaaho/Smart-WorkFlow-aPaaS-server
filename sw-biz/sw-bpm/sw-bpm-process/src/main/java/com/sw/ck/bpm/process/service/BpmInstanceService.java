@@ -61,4 +61,16 @@ public interface BpmInstanceService extends BaseService<BpmInstance> {
      * @return 分页结果（records 为 BpmInstance 列表）
      */
     PageResult<BpmInstance> pageInstances(PageParam pageParam, InstanceFilterDTO filter);
+
+    /**
+     * 统计指定发起人在「表单键 + 业务键」下的实例数（提交后探测用，用户态口径）。
+     *
+     * <p>发起人条件为强制项：调用方不得以他人身份统计；无匹配恒为 0。</p>
+     *
+     * @param formKey      表单键
+     * @param businessKey  业务键（表单记录 ID）
+     * @param initiatorId  发起人 ID（必填）
+     * @return 实例数
+     */
+    long countByFormKeyAndBusinessKeyAndInitiator(String formKey, String businessKey, Long initiatorId);
 }

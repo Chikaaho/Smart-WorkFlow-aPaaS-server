@@ -89,4 +89,19 @@ public class BpmInstanceServiceImpl
         result.setPageSize(pageParam.getPageSize());
         return result;
     }
+
+    @Override
+    public long countByFormKeyAndBusinessKeyAndInitiator(String formKey, String businessKey,
+                                                         Long initiatorId) {
+        if (formKey == null || formKey.isBlank() || businessKey == null || businessKey.isBlank()
+                || initiatorId == null) {
+            return 0L;
+        }
+        // 租户经 MyBatis-Plus 拦截器注入；发起人为强制条件，不接受跨用户统计
+        return lambdaQuery()
+                .eq(BpmInstance::getFormKey, formKey)
+                .eq(BpmInstance::getBusinessKey, businessKey)
+                .eq(BpmInstance::getInitiatorId, initiatorId)
+                .count();
+    }
 }

@@ -119,6 +119,26 @@ public class BpmMyInstanceController {
     }
 
     /**
+     * 提交后实例探测（用户态）：按表单键+业务键统计「当前用户为发起人」的实例数。
+     *
+     * <p>表单提交后的确认提示需要判断实例是否已真实创建；该判定不得依赖工作流监控
+     * 权限（{@code workflow:monitor:view}），否则普通用户会得到假阴性。本端点沿用
+     * 「我发起的」的强制发起人口径：只统计本人实例，他人实例恒为 0（不泄露存在性）。</p>
+     */
+    @GetMapping("/count")
+    public R<Map<String, Object>> myInstanceCount(@RequestParam String formKey,
+                                                  @RequestParam String businessKey) {
+        LoginUser loginUser = LoginUserHolder.get();
+        Long userId = loginUser == null ? null : loginUser.getUserId();
+        long count = bpmInstanceService.countByFormKeyAndBusinessKeyAndInitiator(formKey, businessKey, userId);
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("count", count);
+        result.put("formKey", formKey);
+        result.put("businessKey", businessKey);
+        return R.ok(result);
+    }
+
+    /**
      * 实例条目富化（V012-BUG-022）：流程名称（按定义键去重解析）与发起人展示名
      * （批量解析）；解析失败降级 null，不阻断列表。
      */
