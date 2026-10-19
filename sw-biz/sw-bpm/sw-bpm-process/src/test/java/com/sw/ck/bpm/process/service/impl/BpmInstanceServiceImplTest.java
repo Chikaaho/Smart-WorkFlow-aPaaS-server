@@ -182,6 +182,38 @@ class BpmInstanceServiceImplTest {
         }
     }
 
+    @Nested
+    @DisplayName("countByFormKeyAndBusinessKeyAndInitiator 方法（提交后探测）")
+    class CountByFormKeyAndBusinessKeyAndInitiatorTests {
+
+        @Test
+        @DisplayName("正常：只统计指定发起人的实例，他人实例不计入")
+        void count_shouldScopeToInitiator() {
+            mapper.insert(createInstance(11L, "RUNNING", "process_a", 1L));
+            mapper.insert(createInstance(12L, "RUNNING", "process_a", 1L));
+            mapper.insert(createInstance(13L, "RUNNING", "process_a", 2L));
+
+            // 同一记录（bk-11 与 bk-12 属不同记录），仅按业务键精确匹配
+            long own = service.countByFormKeyAndBusinessKeyAndInitiator(
+                    "form_process_a", "bk-11", 1L);
+            assertThat(own).as("本人该业务键下的实例数").isEqualTo(1L);
+
+            long otherUser = service.countByFormKeyAndBusinessKeyAndInitiator(
+                    "form_process_a", "bk-11", 2L);
+            assertThat(otherUser).as("他人发起人不计入").isZero();
+        }
+
+        @Test
+        @DisplayName("反向：缺参或缺失发起人恒为 0，不落入全量统计")
+        void count_shouldFailClosedOnMissingArgs() {
+            mapper.insert(createInstance(21L, "RUNNING", "process_b", 1L));
+
+            assertThat(service.countByFormKeyAndBusinessKeyAndInitiator(null, "bk-21", 1L)).isZero();
+            assertThat(service.countByFormKeyAndBusinessKeyAndInitiator("form_process_b", " ", 1L)).isZero();
+            assertThat(service.countByFormKeyAndBusinessKeyAndInitiator("form_process_b", "bk-21", null)).isZero();
+        }
+    }
+
     // ==================== 测试上下文配置 ====================
 
     @Configuration

@@ -273,4 +273,32 @@ class BpmMyInstanceControllerTest {
         assertThat(result).doesNotContainKeys("instance", "approvalHistory");
         org.mockito.Mockito.verifyNoInteractions(bpmTaskFacade);
     }
+
+    /**
+     * 提交后实例探测（用户态）：统计本人实例数，且不依赖工作流监控权限。
+     * 反向断言：发起人 = 当前登录用户强制传入，不接受客户端指定他人身份。
+     */
+    @Test
+    @DisplayName("提交探测：按表单键+业务键统计本人实例数，发起人取当前登录用户")
+    void myInstanceCount_shouldCountOwnInstancesOnly() {
+        when(bpmInstanceService.countByFormKeyAndBusinessKeyAndInitiator("leave_form", "rec-001", 2L))
+                .thenReturn(1L);
+
+        Map<String, Object> result = controller.myInstanceCount("leave_form", "rec-001").getData();
+
+        assertThat(result.get("count")).isEqualTo(1L);
+        assertThat(result.get("formKey")).isEqualTo("leave_form");
+        assertThat(result.get("businessKey")).isEqualTo("rec-001");
+    }
+
+    /** 反向断言：未登录恒为 0（发起人缺失不落入「无发起人条件」的全量统计）。 */
+    @Test
+    @DisplayName("提交探测：未登录恒为 0")
+    void myInstanceCount_shouldFailClosedWithoutUser() {
+        LoginUserHolder.clear();
+
+        Map<String, Object> anonymous = controller.myInstanceCount("leave_form", "rec-001").getData();
+
+        assertThat(anonymous.get("count")).isEqualTo(0L);
+    }
 }

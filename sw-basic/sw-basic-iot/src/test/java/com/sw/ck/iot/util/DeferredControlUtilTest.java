@@ -3,6 +3,7 @@ package com.sw.ck.iot.util;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotDeviceCommand;
+import com.sw.ck.iot.mqtt.MqttDownlinkPublisher;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
@@ -13,6 +14,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -30,6 +33,9 @@ class DeferredControlUtilTest {
     @Mock
     private DeviceControlProvider deviceControlProvider;
 
+    @Mock
+    private MqttDownlinkPublisher mqttDownlinkPublisher;
+
     private DeferredControlUtil deferredControlUtil;
 
     private DeferredControlUtil deferredControlUtilWithoutProvider;
@@ -40,12 +46,13 @@ class DeferredControlUtilTest {
     void setUp() {
         // provider 可缺省：装配存在与否决定控制通道是否可用
         deferredControlUtil = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(deviceControlProvider), java.time.Clock.systemUTC());
+                provider(deviceControlProvider), mqttDownlinkPublisher, java.time.Clock.systemUTC());
         deferredControlUtilWithoutProvider = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(null), java.time.Clock.systemUTC());
+                provider(null), mqttDownlinkPublisher, java.time.Clock.systemUTC());
 
         testDevice = new IotDevice();
         testDevice.setId(1L);
+        testDevice.setTenantId(9001L);
         testDevice.setProductId("test-product");
         testDevice.setDeviceName("test-device");
         testDevice.setDeviceKey("test-device-key");
@@ -148,6 +155,8 @@ class DeferredControlUtilTest {
     void testSendCommand_withoutProvider_marksFailedNeverSent() {
         IotDeviceCommand command = new IotDeviceCommand();
         command.setId(7L);
+        command.setTenantId(9001L);
+        command.setDeviceKey("test-device-key");
         command.setProductId("test-product");
         command.setDeviceName("test-device");
         command.setCommandType("PROPERTY");
@@ -159,5 +168,85 @@ class DeferredControlUtilTest {
         verify(commandQueueService, never()).markSending(anyLong());
         verify(commandQueueService, never()).markSent(anyLong(), anyString());
         verifyNoInteractions(deviceControlProvider);
+    }
+
+    /**
+     * 原生 MQTT 通道：设备由自建 MQTT 连接承载且无云厂商 provider 时，
+     * 延迟控制仍可入队并即时外发——Broker 确认即 markSent（不依赖 provider）。
+     */
+    @Test
+    void testControlProperty_mqttDevice_withoutProvider_sendsViaBroker() {
+        when(iotDeviceService.getByProductAndDeviceName("test-product", "test-device")).thenReturn(testDevice);
+        when(mqttDownlinkPublisher.isMqttBacked(testDevice)).thenReturn(true);
+        when(commandQueueService.enqueue(any(IotDeviceCommand.class))).thenAnswer(invocation -> {
+            IotDeviceCommand cmd = invocation.getArgument(0);
+            cmd.setId(11L);
+            return cmd;
+        });
+        when(iotDeviceService.getByDeviceKeyForTenant(9001L, "test-device-key")).thenReturn(testDevice);
+        when(commandQueueService.markSending(11L)).thenAnswer(invocation -> {
+            IotDeviceCommand cmd = new IotDeviceCommand();
+            cmd.setId(11L);
+            return cmd;
+        });
+        when(mqttDownlinkPublisher.publishDownlink(testDevice, "{\"power\":true}", null))
+                .thenReturn(Optional.of(new MqttDownlinkPublisher.PublishOutcome(
+                        88L, "sw/9001/cmd/test-device-key", 1, true, 4242)));
+
+        IotDeviceCommand result = deferredControlUtilWithoutProvider.controlProperty(
+                "test-product", "test-device", "{\"power\":true}", "inst-1");
+
+        assertNotNull(result);
+        assertEquals(9001L, result.getTenantId(), "命令须带显式租户，调度线程才能解析设备");
+        verify(mqttDownlinkPublisher).publishDownlink(testDevice, "{\"power\":true}", null);
+        verify(commandQueueService).markSent(11L, "MQTT:sw/9001/cmd/test-device-key:4242");
+        verify(commandQueueService, never()).markFailed(anyLong(), anyString());
+        verifyNoInteractions(deviceControlProvider);
+    }
+
+    /**
+     * 原生 MQTT 通道反向断言：Broker 未确认时记可重试失败，绝不落「已发送」。
+     */
+    @Test
+    void testSendCommand_mqttDevice_withoutBrokerAck_marksFailedNeverSent() {
+        IotDeviceCommand command = new IotDeviceCommand();
+        command.setId(12L);
+        command.setTenantId(9001L);
+        command.setDeviceKey("test-device-key");
+        command.setCommandType("PROPERTY");
+        command.setPayload("{\"power\":true}");
+        when(iotDeviceService.getByDeviceKeyForTenant(9001L, "test-device-key")).thenReturn(testDevice);
+        when(mqttDownlinkPublisher.isMqttBacked(testDevice)).thenReturn(true);
+        when(mqttDownlinkPublisher.publishDownlink(testDevice, "{\"power\":true}", null))
+                .thenReturn(Optional.of(new MqttDownlinkPublisher.PublishOutcome(
+                        88L, "sw/9001/cmd/test-device-key", 1, false, null)));
+
+        deferredControlUtilWithoutProvider.sendCommand(command);
+
+        verify(commandQueueService).markFailed(12L, DeferredControlUtil.MQTT_NO_BROKER_ACK_REASON);
+        verify(commandQueueService, never()).markSent(anyLong(), anyString());
+        verifyNoInteractions(deviceControlProvider);
+    }
+
+    /**
+     * 通道不可用反向断言：MQTT 发布抛出（无下行主题/连接失败）时同样只记可重试失败。
+     */
+    @Test
+    void testSendCommand_mqttDevice_publishThrows_marksFailedNeverSent() {
+        IotDeviceCommand command = new IotDeviceCommand();
+        command.setId(13L);
+        command.setTenantId(9001L);
+        command.setDeviceKey("test-device-key");
+        command.setCommandType("ACTION");
+        command.setPayload("{\"power\":true}");
+        when(iotDeviceService.getByDeviceKeyForTenant(9001L, "test-device-key")).thenReturn(testDevice);
+        when(mqttDownlinkPublisher.isMqttBacked(testDevice)).thenReturn(true);
+        when(mqttDownlinkPublisher.publishDownlink(testDevice, "{\"power\":true}", null))
+                .thenThrow(new IllegalStateException("无可用下行主题: connId=88"));
+
+        deferredControlUtilWithoutProvider.sendCommand(command);
+
+        verify(commandQueueService).markFailed(13L, "无可用下行主题: connId=88");
+        verify(commandQueueService, never()).markSent(anyLong(), anyString());
     }
 }

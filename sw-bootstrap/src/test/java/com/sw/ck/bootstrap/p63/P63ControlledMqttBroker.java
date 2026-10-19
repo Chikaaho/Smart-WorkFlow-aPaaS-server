@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@link #close} 关闭监听与全部连接、有界等待处理线程退出。端口/记录路径由测试契约给定，
  * 不依赖外部 broker、真实设备或共享服务。</p>
  */
-final class P63ControlledMqttBroker implements Closeable {
+public final class P63ControlledMqttBroker implements Closeable {
 
     private static final int TYPE_CONNECT = 1;
     private static final int TYPE_CONNACK = 2;
@@ -71,7 +71,7 @@ final class P63ControlledMqttBroker implements Closeable {
      *
      * @throws IllegalStateException 端口占用、绑定失败或协议探测失败（原文含具体原因）
      */
-    static P63ControlledMqttBroker start(String host, int port, Path receivedLog) {
+    public static P63ControlledMqttBroker start(String host, int port, Path receivedLog) {
         try {
             if (receivedLog.getParent() != null) {
                 Files.createDirectories(receivedLog.getParent());
