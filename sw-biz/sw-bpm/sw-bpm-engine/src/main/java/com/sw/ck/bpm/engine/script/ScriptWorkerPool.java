@@ -331,6 +331,7 @@ public class ScriptWorkerPool {
         private boolean busy;
         private boolean destroyedByDeadline;
         private long maxHeapBytes = -1L;
+        private long warmUpTimeoutMs = -1L;
 
         private Worker(ScriptWorkerPool pool, ObjectMapper mapper, Process process,
                        long startupHandshakeTimeoutMs) {
@@ -409,7 +410,10 @@ public class ScriptWorkerPool {
                 throw new IOException("worker 启动握手失败: " + line);
             }
             this.maxHeapBytes = ((Number) Objects.requireNonNullElse(hello.get("maxHeapBytes"), -1L)).longValue();
-            log.info("P64 判断 worker 就绪: pid={} maxHeapBytes={}", process.pid(), maxHeapBytes);
+            // BF20261019-04：就绪行同时报出生效预热预算，现场可直接核对宿主下发是否到达 worker
+            this.warmUpTimeoutMs = ((Number) Objects.requireNonNullElse(hello.get("warmUpTimeoutMs"), -1L)).longValue();
+            log.info("P64 判断 worker 就绪: pid={} maxHeapBytes={} warmUpTimeoutMs={}",
+                    process.pid(), maxHeapBytes, warmUpTimeoutMs);
         }
 
         String id() {
@@ -422,6 +426,11 @@ public class ScriptWorkerPool {
 
         long maxHeapBytes() {
             return maxHeapBytes;
+        }
+
+        /** 最近一次握手自报的预热预算（-1 = 未上报；BF20261019-04 现场核对用）。 */
+        long warmUpTimeoutMs() {
+            return warmUpTimeoutMs;
         }
 
         synchronized void claim() {
