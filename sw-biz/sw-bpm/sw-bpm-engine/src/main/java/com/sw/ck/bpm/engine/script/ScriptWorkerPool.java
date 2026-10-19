@@ -73,6 +73,14 @@ public class ScriptWorkerPool {
     @Value("${sw.bpm.script.worker-startup-timeout-ms:30000}")
     private long workerStartupTimeoutMs = 30_000L;
 
+    /**
+     * BF20261019-04：worker 预热预算（下发给 worker，随握手等待）。GraalJS 首次语言初始化
+     * 在慢宿主上可远超单次判断的 5s 预算；预热独立计价后，握手等待按 max(启动上限,
+     * 预热预算 + 20s) 放宽，避免预热尚未完成就被握手缺口截断。
+     */
+    @Value("${sw.bpm.script.warmup-timeout-ms:30000}")
+    private long warmUpTimeoutMs = 30_000L;
+
     private final Semaphore globalPermits = new Semaphore(2);
     private final Map<Long, Semaphore> tenantPermits = new ConcurrentHashMap<>();
     private final Map<String, Worker> liveWorkers = new ConcurrentHashMap<>();
@@ -351,6 +359,9 @@ public class ScriptWorkerPool {
             command.add("-Xms32m");
             command.add("-Xmx" + HEAP_CAP);
             command.add("-Dfile.encoding=UTF-8");
+            long warmUpBudget = pool.warmUpTimeoutMs > 0
+                    ? pool.warmUpTimeoutMs : ScriptWorkerMain.DEFAULT_WARMUP_TIMEOUT_MS;
+            command.add("-Dsw.bpm.script.warmup-timeout-ms=" + warmUpBudget);
             plan.systemProperties.forEach((key, value) -> command.add("-D" + key + "=" + value));
             command.add("-cp");
             command.add(plan.classpath);
@@ -360,8 +371,11 @@ public class ScriptWorkerPool {
             // worker 的日志（stderr）并入宿主 stderr：不占用协议流，也避免无人读取的管道阻塞
             builder.redirectError(ProcessBuilder.Redirect.INHERIT);
             Process process = builder.start();
-            Worker worker = new Worker(pool, mapper, process,
-                    startupHandshakeTimeoutMs > 0 ? startupHandshakeTimeoutMs : DEFAULT_STARTUP_HANDSHAKE_TIMEOUT_MS);
+            // BF20261019-04：握手等待同时覆盖 JVM 启动与预热，预热预算调大时自动放宽
+            long handshakeBudget = startupHandshakeTimeoutMs > 0
+                    ? startupHandshakeTimeoutMs : DEFAULT_STARTUP_HANDSHAKE_TIMEOUT_MS;
+            handshakeBudget = Math.max(handshakeBudget, warmUpBudget + 20_000L);
+            Worker worker = new Worker(pool, mapper, process, handshakeBudget);
             worker.handshake();
             return worker;
         }
