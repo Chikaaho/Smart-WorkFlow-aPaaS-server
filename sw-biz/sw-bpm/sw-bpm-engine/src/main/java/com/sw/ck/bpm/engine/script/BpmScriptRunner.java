@@ -97,7 +97,17 @@ public class BpmScriptRunner {
      * 首个真实判断不再支付冷启动（慢宿主上曾超出固定 5s 预算导致 worker 被销毁后每次冷启动）。
      */
     public Result warmUp() {
-        return run("return 1;", Map.of(), DEFAULT_TIMEOUT_MS, ScriptFunctionContext.EMPTY);
+        return warmUp(DEFAULT_TIMEOUT_MS);
+    }
+
+    /**
+     * BF20261019-04：按调用方预算预热。GraalJS 首次语言初始化在慢宿主上可远超单次判断
+     * 的 5s 预算（实测 2 vCPU/1.6G 主机约需 6s 以上），预热必须使用 worker 启动预算，
+     * 不能复用 {@link #DEFAULT_TIMEOUT_MS}。
+     */
+    public Result warmUp(long timeoutMs) {
+        return run("return 1;", Map.of(),
+                timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS, ScriptFunctionContext.EMPTY);
     }
 
     private String jsonOf(Object value) {

@@ -23,6 +23,12 @@ import java.util.Map;
  */
 public final class ScriptWorkerMain {
 
+    /**
+     * BF20261019-04：预热预算缺省值。宿主按 {@code sw.bpm.script.warmup-timeout-ms}
+     * 下发（与 worker 启动握手预算同源），慢宿主可单独调大。
+     */
+    static final long DEFAULT_WARMUP_TIMEOUT_MS = 30_000L;
+
     private ScriptWorkerMain() {
     }
 
@@ -40,11 +46,13 @@ public final class ScriptWorkerMain {
         // 启动握手：宿主据此确认 worker 就绪并核对本 JVM 实际堆上限（-Xmx 生效值）
         Map<String, Object> hello = new LinkedHashMap<>();
         hello.put("id", "__ready__");
-        BpmScriptRunner.Result warmUp = runner.warmUp();
+        long warmUpTimeoutMs = warmUpTimeoutMs();
+        BpmScriptRunner.Result warmUp = runner.warmUp(warmUpTimeoutMs);
         hello.put("ready", warmUp.kind() == BpmScriptRunner.Result.Kind.OK);
         if (!hello.get("ready").equals(Boolean.TRUE)) {
             hello.put("errorMessage", "worker 预热失败（" + warmUp.kind() + "）: " + warmUp.errorMessage());
         }
+        hello.put("warmUpTimeoutMs", warmUpTimeoutMs);
         hello.put("maxHeapBytes", Runtime.getRuntime().maxMemory());
         protocolOut.println(mapper.writeValueAsString(hello));
         protocolOut.flush();
@@ -89,6 +97,23 @@ public final class ScriptWorkerMain {
             protocolOut.println(response);
             protocolOut.flush();
         }
+    }
+
+    /**
+     * BF20261019-04：读取预热预算（系统属性优先，其次环境变量），缺省
+     * {@link #DEFAULT_WARMUP_TIMEOUT_MS}；非法值回退缺省，下限 1s 防止误配立即超时。
+     */
+    static long warmUpTimeoutMs() {
+        String raw = System.getProperty("sw.bpm.script.warmup-timeout-ms",
+                System.getenv("SW_BPM_SCRIPT_WARMUP_TIMEOUT_MS"));
+        if (raw != null && !raw.isBlank()) {
+            try {
+                return Math.max(1_000L, Long.parseLong(raw.trim()));
+            } catch (NumberFormatException ignore) {
+                // 非法配置回退缺省（不影响 worker 启动，仅记录自报预算）
+            }
+        }
+        return DEFAULT_WARMUP_TIMEOUT_MS;
     }
 
     /**
