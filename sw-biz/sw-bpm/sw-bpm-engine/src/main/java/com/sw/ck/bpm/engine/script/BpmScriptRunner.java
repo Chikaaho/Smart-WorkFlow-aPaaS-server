@@ -3,6 +3,7 @@ package com.sw.ck.bpm.engine.script;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Value;
@@ -75,8 +76,28 @@ public class BpmScriptRunner {
 
     private final ObjectMapper objectMapper;
 
+    /**
+     * BF20261019-02：可共享的 Polyglot {@link Engine}（worker 进程专用）。共享后语言初始化
+     * 与 JS 内建编译只付一次；进程内路径（validate/单测）保持 null = 每次 Context 独立 Engine。
+     */
+    private final Engine sharedEngine;
+
+    @org.springframework.beans.factory.annotation.Autowired
     public BpmScriptRunner(ObjectMapper objectMapper) {
+        this(objectMapper, null);
+    }
+
+    public BpmScriptRunner(ObjectMapper objectMapper, Engine sharedEngine) {
         this.objectMapper = objectMapper;
+        this.sharedEngine = sharedEngine;
+    }
+
+    /**
+     * BF20261019-02：worker 启动预热——在握手自报就绪前完成语言初始化与 JS 内建编译，
+     * 首个真实判断不再支付冷启动（慢宿主上曾超出固定 5s 预算导致 worker 被销毁后每次冷启动）。
+     */
+    public Result warmUp() {
+        return run("return 1;", Map.of(), DEFAULT_TIMEOUT_MS, ScriptFunctionContext.EMPTY);
     }
 
     private String jsonOf(Object value) {
@@ -135,7 +156,7 @@ public class BpmScriptRunner {
         }
         ScriptFunctionContext ctxData = functionContext == null ? ScriptFunctionContext.EMPTY : functionContext;
         try {
-            context = Context.newBuilder("js")
+            Context.Builder builder = Context.newBuilder("js")
                     .allowAllAccess(false)
                     .allowHostAccess(HostAccess.NONE)
                     .allowHostClassLoading(false)
@@ -148,8 +169,12 @@ public class BpmScriptRunner {
                     .resourceLimits(ResourceLimits.newBuilder()
                             .statementLimit(MAX_STATEMENTS, null)
                             .onLimit(event -> statementLimitTripped.set(true))
-                            .build())
-                    .build();
+                            .build());
+            if (sharedEngine != null) {
+                // 共享 Engine：语言初始化只付一次，Context 隔离（绑定/ResourceLimits）不受影响
+                builder = builder.engine(sharedEngine);
+            }
+            context = builder.build();
             final Context ctx = context;
             Map<String, Object> snapshot = variables == null ? Map.of() : variables;
 
@@ -210,14 +235,10 @@ public class BpmScriptRunner {
             bindings.putMember(FN_PARENT_DEPT, parentDept);
             bindings.putMember(FN_PARENT_DEPT_ALIAS, parentDept);
 
-            // 函数体包裹：脚本顶层 return 即函数返回
-            context.eval("js", "function __p64Handle__() {\n" + compiled + "\n}");
-            Value handle = bindings.getMember("__p64Handle__");
-            if (handle == null || !handle.canExecute()) {
-                return new Result(Result.Kind.SCRIPT_ERROR, null, null, "脚本缺少可执行函数体",
-                        elapsed(begin), writes);
-            }
-            Value out = handle.execute();
+            // 函数体包裹：以匿名函数表达式求值（BF20261019-02）——不向全局对象绑定任何名字。
+            // 共享 Engine 下语言实例跨 Context 复用，具名函数声明会污染后续判断的全局查找；
+            // 匿名表达式只返回函数值，配合每次独立 Context 保持脚本间零残留。
+            Value out = context.eval("js", "(function() {\n" + compiled + "\n})").execute();
             finished.set(true);
             watcher.interrupt();
             return classify(out, elapsed(begin), writes);

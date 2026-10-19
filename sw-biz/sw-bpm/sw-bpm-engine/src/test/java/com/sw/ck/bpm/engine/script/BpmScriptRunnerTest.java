@@ -30,6 +30,27 @@ class BpmScriptRunnerTest {
     }
 
     @Test
+    @DisplayName("BF20261019-02：共享 Engine 预热（warmUp OK）后同一 runner 连续判断正常且上下文隔离")
+    void shouldWarmUpOnSharedEngineAndKeepContextsIsolated() {
+        org.graalvm.polyglot.Engine engine = org.graalvm.polyglot.Engine.newBuilder().build();
+        try {
+            BpmScriptRunner warmed = new BpmScriptRunner(new ObjectMapper(), engine);
+            assertThat(warmed.warmUp().kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
+            // 预热后首个真实判断（此前该判断支付 GraalJS 冷启动，慢宿主超 5s 预算）
+            assertThat(warmed.run("return 流程变量取值('k') + '!';", vars("k", "v")).value()).isEqualTo("v!");
+            // 上下文隔离：前一 Context 的全局残留不得进入后续判断（每次独立 Context，仅语言层共享）
+            assertThat(warmed.run("globalThis.leaked = 1; return 1;", vars()).kind())
+                    .isEqualTo(BpmScriptRunner.Result.Kind.OK);
+            assertThat(warmed.run("return typeof globalThis.leaked === 'undefined';", vars()).value())
+                    .isEqualTo(Boolean.TRUE);
+            assertThat(warmed.run("return typeof __p64Handle__ === 'undefined';", vars()).value())
+                    .isEqualTo(Boolean.TRUE);
+        } finally {
+            engine.close();
+        }
+    }
+
+    @Test
     @DisplayName("返回 Number/String/Boolean/null 四类合法结果")
     void shouldReturnTypedResults() {
         assertThat(runner.run("return 1;", vars()).kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);

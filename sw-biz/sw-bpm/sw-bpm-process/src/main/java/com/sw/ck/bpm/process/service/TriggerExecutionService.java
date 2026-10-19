@@ -55,6 +55,13 @@ public class TriggerExecutionService {
     /** BF20261013-022⑥：流程发起（实例创建成功）。 */
     public static final String EVENT_PROCESS_START = "PROCESS_START";
 
+    /**
+     * BF20261019-03：判断脚本执行超时毫秒（可配置；缺省沿用主方向 §3.5 的 5000ms）。
+     * 字段缺省值兜底非 Spring 装配的测试构造。
+     */
+    @org.springframework.beans.factory.annotation.Value("${sw.bpm.script.timeout-ms:5000}")
+    private long scriptTimeoutMs = BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS;
+
     private static final int DEFAULT_MAX_DISPATCH = 50;
     private static final int HARD_MAX_DISPATCH = 200;
 
@@ -321,7 +328,7 @@ public class TriggerExecutionService {
             com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext =
                     scriptFunctionContext(trigger.getScript(), instance.getProcessInstanceId(), tenantId);
             BpmScriptEvaluatePort.ScriptOutcome result = scriptRunner
-                    .run(trigger.getScript(), snapshot.values(), BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS,
+                    .run(trigger.getScript(), snapshot.values(), scriptTimeoutMs,
                             functionContext)
                     .orElseThrow(() -> new IllegalStateException(
                             "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
@@ -732,7 +739,7 @@ public class TriggerExecutionService {
             com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext = scriptFunctionContext(
                     mapping.getScript(), instance.getProcessInstanceId(), instance.getTenantId());
             BpmScriptEvaluatePort.ScriptOutcome outcome = scriptRunner
-                    .run(mapping.getScript(), snapshot, BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS,
+                    .run(mapping.getScript(), snapshot, scriptTimeoutMs,
                             functionContext)
                     .orElseThrow(() -> new IllegalStateException(
                             "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
