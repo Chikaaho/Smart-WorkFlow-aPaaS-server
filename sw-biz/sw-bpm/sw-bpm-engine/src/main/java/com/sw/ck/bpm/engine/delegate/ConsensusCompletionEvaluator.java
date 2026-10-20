@@ -1,7 +1,9 @@
 package com.sw.ck.bpm.engine.delegate;
 
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.ConsensusSettlementPort;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
+import com.sw.ck.common.exception.BaseException;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +42,55 @@ public class ConsensusCompletionEvaluator {
     }
 
     public boolean shouldComplete(DelegateExecution execution, String mode, int ratio) {
+        // 异步作业线程无登录态：按流程父执行/实例变量还原权威租户（与动作节点同一范式），
+        // 否则会签计数查询在租户行拦截器处 fail closed（作业死信、完成命令超期）。
+        com.sw.ck.security.holder.LoginUser previous =
+                com.sw.ck.security.holder.LoginUserHolder.get();
+        boolean restoreNeeded = previous == null;
+        if (restoreNeeded) {
+            Long tenantId = tenantOf(execution);
+            if (tenantId == null) {
+                throw new BaseException(BpmErrorCode.APPROVER_TENANT_ID_MISSING.getCode(),
+                        "会签完成判定缺少租户上下文（tenantId 流程变量缺失）");
+            }
+            com.sw.ck.security.holder.LoginUser owner = new com.sw.ck.security.holder.LoginUser();
+            owner.setTenantId(tenantId);
+            Object submitter = execution.getVariable("submitter");
+            if (submitter != null) {
+                owner.setUserId(Long.parseLong(String.valueOf(submitter)));
+            }
+            com.sw.ck.security.holder.LoginUserHolder.set(owner);
+        }
+        try {
+            return doShouldComplete(execution, mode, ratio);
+        } finally {
+            if (restoreNeeded) {
+                com.sw.ck.security.holder.LoginUserHolder.clear();
+            }
+        }
+    }
+
+    /** 租户来源：执行本身（异步作业已带租户）优先，其次流程变量 tenantId。 */
+    private Long tenantOf(DelegateExecution execution) {
+        if (execution.getTenantId() != null && !execution.getTenantId().isBlank()) {
+            try {
+                return Long.valueOf(execution.getTenantId());
+            } catch (NumberFormatException ignore) {
+                // 非数字租户交由流程变量兜底
+            }
+        }
+        Object tenantId = execution.getVariable("tenantId");
+        if (tenantId == null) {
+            return null;
+        }
+        try {
+            return Long.valueOf(String.valueOf(tenantId));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private boolean doShouldComplete(DelegateExecution execution, String mode, int ratio) {
         int total = resolveTotal(execution);
         int approved = count(execution, "APPROVE", "consensusApprovedCount");
         int rejected = count(execution, "DISAPPROVE", "consensusRejectedCount");

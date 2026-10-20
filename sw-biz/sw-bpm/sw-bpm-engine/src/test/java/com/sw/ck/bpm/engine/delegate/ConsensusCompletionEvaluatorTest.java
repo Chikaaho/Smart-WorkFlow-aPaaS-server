@@ -80,6 +80,32 @@ class ConsensusCompletionEvaluatorTest {
         assertThat(reached).isTrue();
     }
 
+    @Test
+    void asyncJobRestoresTenantContextAndClearsIt() {
+        // 异步作业线程无登录态：按执行租户还原身份完成计数查询，结束后清理，不泄漏到线程池。
+        DelegateExecution execution = execution(2, 2, 0, 2);
+        when(execution.getTenantId()).thenReturn("9001");
+        when(execution.getVariable("tenantId")).thenReturn(9001L);
+        when(execution.getVariable("submitter")).thenReturn(91103L);
+        com.sw.ck.security.holder.LoginUserHolder.clear();
+
+        boolean result = evaluator.shouldComplete(execution, "ALL", 100);
+
+        assertThat(result).isTrue();
+        assertThat(com.sw.ck.security.holder.LoginUserHolder.get()).isNull();
+
+        // 已有登录态时不覆盖调用方身份
+        com.sw.ck.security.holder.LoginUser caller = new com.sw.ck.security.holder.LoginUser();
+        caller.setTenantId(9002L);
+        com.sw.ck.security.holder.LoginUserHolder.set(caller);
+        try {
+            assertThat(evaluator.shouldComplete(execution, "ALL", 100)).isTrue();
+            assertThat(com.sw.ck.security.holder.LoginUserHolder.get().getTenantId()).isEqualTo(9002L);
+        } finally {
+            com.sw.ck.security.holder.LoginUserHolder.clear();
+        }
+    }
+
     private DelegateExecution execution(int total, int approved, int rejected, int completed) {
         DelegateExecution execution = mock(DelegateExecution.class);
         when(execution.getVariable("consensusTotal")).thenReturn(total);
@@ -87,6 +113,8 @@ class ConsensusCompletionEvaluatorTest {
         when(execution.getVariable("consensusRejectedCount")).thenReturn(rejected);
         when(execution.getVariable("nrOfCompletedInstances")).thenReturn(completed);
         when(execution.getVariable("nrOfInstances")).thenReturn(total);
+        when(execution.getTenantId()).thenReturn("9001");
+        when(execution.getVariable("tenantId")).thenReturn(9001L);
         return execution;
     }
 }
