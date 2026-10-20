@@ -10,7 +10,6 @@ import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
-import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 import org.flowable.bpmn.model.FieldExtension;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.ImplementationType;
@@ -123,14 +122,18 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
             Object expression = participant.get("value");
             if (!(expression instanceof String text) || text.isBlank()) {
                 return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "EXPRESSION 必须配置受控表达式")));
+                        "EXPRESSION 必须配置审批人表达式脚本（以 return 返回参与人）")));
             }
+            // 流程表达式＝计算值适配器：脚本以 return 返回参与人
             try {
-                // 仅做语法校验：结果按新契约返回 Optional，本处不消费求值结果
-                RestrictedExpressionEvaluator.value(text, Map.of());
-            } catch (RuntimeException e) {
+                com.sw.ck.bpm.engine.script.ScriptSugar.transpile(text);
+            } catch (IllegalArgumentException e) {
                 return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "EXPRESSION 语法不合法")));
+                        "EXPRESSION 脚本语法不合法: " + e.getMessage())));
+            }
+            if (!text.contains("return")) {
+                return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "EXPRESSION 脚本必须以 return 返回参与人")));
             }
         }
         return Optional.of(List.of());

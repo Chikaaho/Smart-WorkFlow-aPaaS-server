@@ -11,7 +11,6 @@ import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
-import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 import org.flowable.bpmn.model.ExtensionAttribute;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.FlowableListener;
@@ -229,13 +228,18 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
         } else if (ParticipantStrategy.EXPRESSION.equalsIgnoreCase(strategy)) {
             if (!(value instanceof String expression) || expression.isBlank()) {
                 return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "EXPRESSION 必须配置受控表达式");
+                        "EXPRESSION 必须配置审批人表达式脚本（以 return 返回参与人）");
             }
+            // 流程表达式＝计算值适配器：脚本以 return 返回参与人，与触发器共用同一脚本引擎
             try {
-                RestrictedExpressionEvaluator.value(expression, Map.of());
-            } catch (RuntimeException e) {
+                com.sw.ck.bpm.engine.script.ScriptSugar.transpile(expression);
+            } catch (IllegalArgumentException e) {
                 return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
-                        "EXPRESSION 语法不合法");
+                        "EXPRESSION 脚本语法不合法: " + e.getMessage());
+            }
+            if (!expression.contains("return")) {
+                return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                        "EXPRESSION 脚本必须以 return 返回参与人");
             }
         }
         return null;
