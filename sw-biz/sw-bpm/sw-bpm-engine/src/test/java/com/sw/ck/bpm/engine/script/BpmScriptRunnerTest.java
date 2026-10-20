@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,6 +52,18 @@ class BpmScriptRunnerTest {
     }
 
     @Test
+    @DisplayName("审批人表达式：标量数组返回为 OK（4KiB 上限内），嵌套对象元素拒绝")
+    void shouldAllowScalarArrayResult() {
+        BpmScriptRunner.Result list = runner.run("return [101, '102', true];", vars());
+        assertThat(list.kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
+        assertThat(list.typeName()).isEqualTo("ARRAY");
+        assertThat(list.value()).isEqualTo(List.of(101L, "102", true));
+
+        assertThat(runner.run("return [{a: 1}];", vars()).kind())
+                .isEqualTo(BpmScriptRunner.Result.Kind.TYPE_ERROR);
+    }
+
+    @Test
     @DisplayName("返回 Number/String/Boolean/null 四类合法结果")
     void shouldReturnTypedResults() {
         assertThat(runner.run("return 1;", vars()).kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
@@ -73,12 +86,14 @@ class BpmScriptRunnerTest {
     }
 
     @Test
-    @DisplayName("非法返回类型（对象/数组/函数）判 TYPE_ERROR")
+    @DisplayName("非法返回类型（对象/函数）判 TYPE_ERROR；标量数组自 BF20261020-01 起合法（列表计算）")
     void shouldRejectIllegalReturnTypes() {
         assertThat(runner.run("return {a:1};", vars()).kind())
                 .isEqualTo(BpmScriptRunner.Result.Kind.TYPE_ERROR);
-        assertThat(runner.run("return [1,2];", vars()).kind())
+        assertThat(runner.run("return function(){};", vars()).kind())
                 .isEqualTo(BpmScriptRunner.Result.Kind.TYPE_ERROR);
+        assertThat(runner.run("return [1,2];", vars()).kind())
+                .isEqualTo(BpmScriptRunner.Result.Kind.OK);
     }
 
     @Test

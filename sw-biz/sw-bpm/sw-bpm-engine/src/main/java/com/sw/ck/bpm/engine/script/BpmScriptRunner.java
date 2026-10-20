@@ -13,7 +13,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -49,6 +51,8 @@ public class BpmScriptRunner {
     public static final long DEFAULT_TIMEOUT_MS = 5_000L;
     /** 输出序列化字节上限（主方向 §3.5：标量输出最多 4KiB）。 */
     public static final int MAX_OUTPUT_BYTES = 4 * 1024;
+    /** 数组返回值元素上限（审批人表达式等列表计算用；仍受 {@link #MAX_OUTPUT_BYTES} 约束）。 */
+    public static final int MAX_ARRAY_ELEMENTS = 1_000;
     /** 设置流程变量单值序列化上限（BF20261013-021）。 */
     public static final int MAX_WRITE_BYTES = 64 * 1024;
     /** 变量名长度上限（BF20261013-021）。 */
@@ -445,9 +449,36 @@ public class BpmScriptRunner {
         } else if (out.isString()) {
             value = out.asString();
             typeName = "STRING";
+        } else if (out.hasArrayElements()) {
+            // 列表计算（审批人表达式）：允许标量数组，仍受输出字节上限约束
+            long size = out.getArraySize();
+            if (size > MAX_ARRAY_ELEMENTS) {
+                return new Result(Result.Kind.RESOURCE_LIMIT, null, null,
+                        "脚本返回数组超过 " + MAX_ARRAY_ELEMENTS + " 个元素上限", durationMs, writes);
+            }
+            List<Object> items = new ArrayList<>((int) size);
+            for (long i = 0; i < size; i++) {
+                org.graalvm.polyglot.Value item = out.getArrayElement(i);
+                if (item == null || item.isNull()) {
+                    continue;
+                }
+                if (item.isNumber()) {
+                    items.add(item.fitsInLong() ? (Object) item.asLong() : (Object) item.asDouble());
+                } else if (item.isString()) {
+                    items.add(item.asString());
+                } else if (item.isBoolean()) {
+                    items.add(item.asBoolean());
+                } else {
+                    return new Result(Result.Kind.TYPE_ERROR, null, null,
+                            "脚本返回数组只支持 Number/String/Boolean 元素，实际: " + item.toString(),
+                            durationMs, writes);
+                }
+            }
+            value = items;
+            typeName = "ARRAY";
         } else {
             return new Result(Result.Kind.TYPE_ERROR, null, null,
-                    "脚本返回类型必须是 Number/String/Boolean/null，实际: " + out.toString(), durationMs, writes);
+                    "脚本返回类型必须是 Number/String/Boolean/null/数组，实际: " + out.toString(), durationMs, writes);
         }
         String serialized = jsonOf(value);
         if (serialized != null && serialized.getBytes(StandardCharsets.UTF_8).length > MAX_OUTPUT_BYTES) {
