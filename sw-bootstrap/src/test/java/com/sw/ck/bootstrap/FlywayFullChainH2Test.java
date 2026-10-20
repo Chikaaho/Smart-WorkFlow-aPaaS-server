@@ -26,8 +26,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * 使用独立内存库 + 独立 Flyway 实例，10 个 locations 与 {@code application.yml}
  * 完全一致（{vendor} 按 H2 连接解析为 h2）。0.1.7 发版收敛后，versioned 迁移为
  * 单一基线 {@code V0.1.7__baseline_seed.sql}（0.1.6 基线种子与 0.1.7 菜单/应用范围
- * 增量按版本序逐字节合并），加 12 个可重复对账 R__，
- * 全新库共执行 13 条（V0.1.7 基线 + 12 个 R__ 可重复对账）。
+ * 增量按版本序逐字节合并），加 13 个可重复对账 R__，
+ * 全新库共执行 14 条（V0.1.7 基线 + 13 个 R__ 可重复对账）。
  * 历史版本升级演练随 0.1.3「仅支持全新建库」与 0.1.5「单一种子 + 独立升级通道」
  * 的边界一并退役；本测试保留并延续全部终态数据/语义断言。
  * </p>
@@ -81,18 +81,18 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(13, result.migrationsExecuted,
-                "全新库应执行 13 条（V0.1.7 基线 + 12 个 R__ 可重复对账），实际: "
+        assertEquals(14, result.migrationsExecuted,
+                "全新库应执行 14 条（V0.1.7 基线 + 13 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
         assertEquals("0.1.7", flyway.info().current().getVersion().getVersion(),
                 "终点当前版本应为最后一个 versioned 迁移（0.1.7）");
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 13 条（V0.1.7 基线 + 12 个可重复对账）")
+    @DisplayName("种子迁移后：info().applied() 共 14 条（V0.1.7 基线 + 13 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(13, applied.length, "已应用迁移数应为 13（V0.1.7 基线 + 12 个 R__）");
+        assertEquals(14, applied.length, "已应用迁移数应为 14（V0.1.7 基线 + 13 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -103,7 +103,7 @@ class FlywayFullChainH2Test {
             }
         }
         assertTrue(seedSeen, "V0.1.7 种子应已应用");
-        assertEquals(12, repeatableCount, "12 个 R__ 可重复对账应已应用");
+        assertEquals(13, repeatableCount, "13 个 R__ 可重复对账应已应用");
     }
 
     @Test
@@ -512,6 +512,26 @@ class FlywayFullChainH2Test {
                 assertFalse(rs.next(), "普通角色绑定应只有一条有效关系");
             }
             System.out.println("[S3-production] H2 baseline menu=(218,batch-send,notify/views/NotifyBatchSend,notify:batch:send), button=(219,notify:batch:send), ordinaryRole=(id=2,code=admin,built_in=false) boundMenu=219, queryExit=0");
+        }
+    }
+
+    // ==================== BF20261020-05：表单数据动作权限授予管理员角色 ====================
+
+    @Test
+    @DisplayName("BF20261020-05：管理员角色具备全部 form:data:* 动作权限")
+    void formDataPermissions_shouldBeGrantedToAdminRole() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(
+                     "SELECT COUNT(DISTINCT m.permission) FROM sys_role_menu rm "
+                             + "JOIN sys_role r ON r.id = rm.role_id "
+                             + "JOIN sys_menu m ON m.id = rm.menu_id "
+                             + "WHERE r.code = 'admin' AND r.id = 2 AND r.deleted = 0 "
+                             + "AND rm.deleted = 0 AND m.deleted = 0 "
+                             + "AND m.permission LIKE 'form:data:%'")) {
+            assertTrue(rs.next(), "管理员角色权限统计应有结果");
+            assertEquals(7, rs.getInt(1),
+                    "管理员角色应具备 template/import/export/submit/edit/delete/query 七项表单数据权限");
         }
     }
 }

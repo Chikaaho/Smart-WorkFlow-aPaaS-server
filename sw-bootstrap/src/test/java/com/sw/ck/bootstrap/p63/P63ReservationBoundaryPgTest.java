@@ -219,11 +219,11 @@ class P63ReservationBoundaryPgTest {
     void frozenFutureThenDueCatchesUpExactlyOnce() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
         // 冻结时未来 2 秒（合法未来预约）；有界等待到点后触发真实调度入口
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Map<String, Object> intent = awaitIntentRow(pi);
         assertThat(String.valueOf(intent.get("status"))).as("冻结时未来：意图 PENDING").isEqualTo("PENDING");
-        Thread.sleep(3500); // 有界场景等待：预约时刻到达（合法冻结后的到点，非代理轮询）
+        Thread.sleep(10500); // 有界场景等待：预约时刻到达（合法冻结后的到点，非代理轮询）
 
         dispatchJob.dispatchDueReservations();
         int afterFirst = commandsFor(pi);
@@ -306,13 +306,13 @@ class P63ReservationBoundaryPgTest {
     void softDeleteActualTargetFailsAtDue() throws Exception {
         Long softDelId = 91513L;
         BpmProcessDef def = publishReservationProcessWithDevice("Asia/Shanghai", 3600, softDelId);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
         assertThat(intentStatus(pi)).isEqualTo("PENDING");
         // 到点前软删实际被预约目标
         jdbc.update("UPDATE sw_iot_device SET deleted = 1, update_time = now() WHERE id = ?", softDelId);
-        Thread.sleep(3500); // 有界场景等待：预约时刻到达
+        Thread.sleep(10500); // 有界场景等待：预约时刻到达
         dispatchJob.dispatchDueReservations();
         assertThat(intentStatus(pi)).as("软删实际目标：到点 FAILED 可查").isEqualTo("FAILED");
         String reason = jdbc.queryForObject(
@@ -348,14 +348,14 @@ class P63ReservationBoundaryPgTest {
     @DisplayName("G03a N5：批准后到点前撤销执行授权（access 1→0）→ 到点 FAILED 可查、零外发")
     void accessRevokedBeforeDueFailsAtDue() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
         assertThat(intentStatus(pi)).isEqualTo("PENDING");
         // 到点前撤销执行授权（同租户）
         jdbc.update("UPDATE sw_iot_device SET process_access_enabled = 0, update_time = now() WHERE id = ?",
                 DEVICE_ID);
-        Thread.sleep(3500); // 有界场景等待：预约时刻到达
+        Thread.sleep(10500); // 有界场景等待：预约时刻到达
         dispatchJob.dispatchDueReservations();
         assertThat(intentStatus(pi)).as("执行授权撤销：到点 FAILED 可查").isEqualTo("FAILED");
         String reason = jdbc.queryForObject(
@@ -401,10 +401,10 @@ class P63ReservationBoundaryPgTest {
     void claimWinsMakesCancelNotCancellable() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
         // 冻结时未来 2 秒（合法未来预约），到点后认领
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
-        Thread.sleep(3500); // 有界场景等待：预约时刻到达
+        Thread.sleep(10500); // 有界场景等待：预约时刻到达
 
         dispatchJob.dispatchDueReservations();
         String claimed = intentStatus(pi);
@@ -432,10 +432,10 @@ class P63ReservationBoundaryPgTest {
         for (int round = 1; round <= 3; round++) {
             BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
             // 冻结时未来 2 秒（合法未来预约），到点后进入竞争
-            String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(2)));
+            String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
             String pi = awaitInstanceStarted(recordId);
             Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
-            Thread.sleep(3500); // 有界场景等待：预约时刻到达
+            Thread.sleep(10500); // 有界场景等待：预约时刻到达
 
             CountDownLatch start = new CountDownLatch(1);
             final int roundNo = round;

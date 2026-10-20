@@ -333,6 +333,11 @@ abstract class Phase4PgSupport {
             }
             try (java.sql.Statement stmt = bound.createStatement()) {
                 stmt.execute("select pg_terminate_backend(" + pid + ")");
+            } catch (java.sql.SQLException e) {
+                // 终止自身连接时 PG 会先回 FATAL(57P01)；连接已断即注入成功。
+                if (!"57P01".equals(e.getSQLState())) {
+                    throw e;
+                }
             }
             return pid;
         } catch (Exception e) {

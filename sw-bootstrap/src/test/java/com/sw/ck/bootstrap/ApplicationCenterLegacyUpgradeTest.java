@@ -275,11 +275,14 @@ class ApplicationCenterLegacyUpgradeTest {
         // 2.1) 0.1.7 存量升级脚本（0.1.7 期增量 + 历史衔接，发布资产原文）
         execScriptOn(url, classpathResource(UPGRADE_017_SCRIPT));
 
-        // 3) 主链零重放 + validate 通过 + 终点 0.1.7
+        // 3) 版本化迁移零重放 + 新增 R__ 应用 + validate 通过 + 终点 0.1.7
         Flyway after = Flyway.configure()
                 .dataSource(url, USER, PASSWORD)
                 .locations(h2Locations())
                 .load();
+        MigrateResult upgrade = after.migrate();
+        assertTrue(upgrade.success, "衔接后主链应迁移成功");
+        assertEquals(1, upgrade.migrationsExecuted, "衔接后仅应执行新增的 R__，不得重放版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后主链不应重复执行任何迁移");

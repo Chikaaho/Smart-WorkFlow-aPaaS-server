@@ -138,7 +138,11 @@ class Phase4PgStartWindowCrashTest extends Phase4PgSupport {
                 + " engineInstances=0 businessInstances=0 engineOnlyOrphans=0");
 
         // 生产恢复路径：退避到点后由命令调度重试 → 最终恰好一次
-        // （退避在测试里显式放长，使窗口状态可确定性断言；此处把到期时间提前以驱动重试）
+        // 先等调度器把失败重试写回（PENDING + retry_count），再提前到期时间；
+        // 否则测试写入会被调度器随后的退避写回覆盖，重试落到准入截止之后。
+        await("g3b-flow-retry-scheduled", () -> count(
+                "select count(*) from sw_bpm_command where command_key = ? and status = ? and retry_count >= 1",
+                commandKey, CommandStatusEnum.PENDING.getCode()) == 1L, 10_000);
         jdbc.update("update sw_bpm_command set next_retry_at = ? where command_key = ?",
                 LocalDateTime.now().minusSeconds(1), commandKey);
         await("g3b-flow-recovered", () -> count("select count(*) from sw_bpm_command where command_key = ? and status = ?",
