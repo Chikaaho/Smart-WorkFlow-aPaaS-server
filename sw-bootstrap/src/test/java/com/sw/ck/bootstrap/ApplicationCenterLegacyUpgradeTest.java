@@ -232,6 +232,9 @@ class ApplicationCenterLegacyUpgradeTest {
         // 后台应用管理菜单 + 用户端应用中心菜单
         assertEquals("form:app:manage", queryString("SELECT permission FROM sys_menu WHERE id = 9130"));
         assertEquals("form/views/AppManageList", queryString("SELECT component FROM sys_menu WHERE id = 9130"));
+        // 0.1.7 #6：应用管理上提顶级、排序 15（全新库由 R__ 对账收敛，不依赖 V 阶段 UPDATE）
+        assertEquals(0L, queryLong("SELECT parent_id FROM sys_menu WHERE id = 9130"));
+        assertEquals(15L, queryLong("SELECT sort FROM sys_menu WHERE id = 9130"));
         assertEquals("form/app-center", queryString("SELECT path FROM sys_menu WHERE id = 9131"));
         // 授权：管理员 role 2 与系统管理员 role 1
         assertEquals(2L, queryLong("SELECT COUNT(*) FROM sys_role_menu WHERE menu_id = 9130 AND role_id IN (1,2)"));
@@ -282,7 +285,9 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult upgrade = after.migrate();
         assertTrue(upgrade.success, "衔接后主链应迁移成功");
-        assertEquals(1, upgrade.migrationsExecuted, "衔接后仅应执行新增的 R__，不得重放版本化迁移");
+        // 0.1.10 起 R__application_center_menu 追加菜单对账（checksum 变化重放一次），
+        // 故衔接后执行 2 条：既有 R__ 重放 + 新增 R__；版本化迁移仍不得重放。
+        assertEquals(2, upgrade.migrationsExecuted, "衔接后执行既有 R__ 对账重放与新增 R__，不得重放版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后主链不应重复执行任何迁移");

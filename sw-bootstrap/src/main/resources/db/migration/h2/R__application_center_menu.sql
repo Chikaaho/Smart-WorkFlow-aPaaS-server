@@ -44,3 +44,14 @@ WHERE NOT EXISTS (SELECT 1 FROM sys_role_menu WHERE id = 9333)
   AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = 1 AND rm.menu_id = 9131 AND rm.deleted = 0)
   AND EXISTS (SELECT 1 FROM sys_menu m WHERE m.id = 9131 AND m.deleted = 0)
   AND EXISTS (SELECT 1 FROM sys_role r WHERE r.id = 1 AND r.deleted = 0);
+
+-- 0.1.7 #6 菜单口径对账（幂等）：应用管理（9130）上提顶级、排序 15（系统管理 10 与
+-- 表单管理 20 之间的第二项）。该口径原写在 V0.1.7 基线内的 UPDATE，但全新库上
+-- 9130 由本脚本后置插入，V 阶段 UPDATE 空转，导致新装环境应用管理残留在表单管理
+-- 下；此处随插入一并收敛，存量库已正确的不再变化。
+
+update sys_menu
+set parent_id = 0, sort = 15
+where id = 9130
+  and deleted = 0
+  and (parent_id <> 0 or sort <> 15);
