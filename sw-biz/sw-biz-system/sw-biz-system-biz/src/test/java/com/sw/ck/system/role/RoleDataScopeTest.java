@@ -178,6 +178,25 @@ class RoleDataScopeTest {
         }
     }
 
+    @Test
+    void page_withTenantId_shouldOnlyReturnRolesOfThatTenant() {
+        sysRoleService.create(newRole("r_tenant_0", 1, null));
+        SysRole otherTenant = newRole("r_tenant_9001", 1, null);
+        otherTenant.setTenantId(9001L);
+        sysRoleService.create(otherTenant);
+
+        PageParam pageParam = new PageParam();
+        pageParam.setPageNum(1);
+        pageParam.setPageSize(10);
+        SysRole query = new SysRole();
+        query.setTenantId(9001L);
+        PageResult<SysRole> result = sysRoleService.page(pageParam, query);
+
+        assertThat(result.getTotal()).as("只应返回目标租户的角色").isEqualTo(1);
+        assertThat(result.getRecords()).extracting(SysRole::getCode)
+                .containsExactly("r_tenant_9001");
+    }
+
     // ==================== 测试上下文配置 ====================
 
     @Configuration
