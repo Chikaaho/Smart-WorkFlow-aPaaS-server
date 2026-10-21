@@ -330,7 +330,7 @@ class I5SsoBindingSessionBootTest {
                 new javax.crypto.spec.OAEPParameterSpec("SHA-256", "MGF1",
                         java.security.spec.MGF1ParameterSpec.SHA256, javax.crypto.spec.PSource.PSpecified.DEFAULT));
         String encrypted = java.util.Base64.getEncoder().encodeToString(
-                cipher.doFinal("admin123".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                cipher.doFinal("AdminP@ssw0rd".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         String body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(java.util.Map.of(
                 "username", username, "password", encrypted,
                 "captcha", "1234", "captchaId", ch.captchaId(),
