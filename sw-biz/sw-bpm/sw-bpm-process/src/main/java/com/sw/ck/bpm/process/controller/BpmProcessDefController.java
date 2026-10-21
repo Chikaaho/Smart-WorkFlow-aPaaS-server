@@ -249,6 +249,36 @@ public class BpmProcessDefController {
     }
 
     /**
+     * 版本列表回填发布人展示名：优先发布人，缺省回退最近修改人。
+     */
+    private void fillPublisherNames(List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions) {
+        if (versions == null || versions.isEmpty()) {
+            return;
+        }
+        Set<Long> publisherIds = versions.stream()
+                .map(this::publisherIdOf)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (publisherIds.isEmpty()) {
+            return;
+        }
+        userQueryFacade.getUserDisplayNames(publisherIds)
+                .ifPresent(names -> versions.forEach(version -> {
+                    Long publisherId = publisherIdOf(version);
+                    if (publisherId != null) {
+                        version.setPublisherName(names.get(publisherId));
+                    }
+                }));
+    }
+
+    private Long publisherIdOf(com.sw.ck.bpm.process.entity.BpmProcessDefVersion version) {
+        if (version.getPublishedBy() != null) {
+            return version.getPublishedBy();
+        }
+        return version.getUpdateBy() != null ? version.getUpdateBy() : version.getCreateBy();
+    }
+
+    /**
      * 发布流程定义（DRAFT → PUBLISHED）。
      * <p>
      * 触发完整发布流水线：图校验 → 表单已发布检查 → process_key 冻结检查 →
@@ -284,7 +314,10 @@ public class BpmProcessDefController {
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping("/{id}/versions")
     public R<List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion>> listVersions(@PathVariable Long id) {
-        return R.ok(bpmProcessDefService.listVersions(id));
+        List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions =
+                bpmProcessDefService.listVersions(id);
+        fillPublisherNames(versions);
+        return R.ok(versions);
     }
 
     /** 读取指定发布版本的冻结图。 */
