@@ -42,8 +42,8 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                 new BpmNodeTopology(1, 1, 1, 1),
                 List.of(new BpmNodeConfigField("participant", "审批人", "object", true, Map.of()),
                         new BpmNodeConfigField("mode", "结算方式", "string", true,
-                                Map.of("values", List.of("ALL", "ANY", "RATIO", "VETO"))),
-                        new BpmNodeConfigField("ratio", "通过比例", "integer", false,
+                                Map.of("values", List.of("COUNT", "RATIO", "ALL", "ANY", "VETO"))),
+                        new BpmNodeConfigField("ratio", "通过人数 / 比例", "integer", false,
                                 Map.of("min", 1, "max", 100)),
                         new BpmNodeConfigField("nodeForm", "节点业务表单（P64）", "object", false,
                                 Map.of("shape", "{formKey}"))),
@@ -112,7 +112,7 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
         // mode 缺省时 translate 按 ALL 结算（getOrDefault），校验只拒绝显式非法值；
         // 不可变 List.contains(null) 会 NPE，必须先判空。
         String mode = config.get("mode") == null ? null : String.valueOf(config.get("mode"));
-        if (mode != null && !List.of("ALL", "ANY", "RATIO", "VETO").contains(mode)) {
+        if (mode != null && !List.of("COUNT", "RATIO", "ALL", "ANY", "VETO").contains(mode)) {
             return Optional.of(List.of(error(node, "会签方式不合法")));
         }
         if ("RATIO".equals(mode)) {
@@ -122,6 +122,14 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                     return Optional.of(List.of(error(node, "会签比例必须为 1-100")));
                 }
             } catch (Exception e) { return Optional.of(List.of(error(node, "会签比例必须为整数"))); }
+        } else if ("COUNT".equals(mode)) {
+            // 人数模式：必须是大于 0 的整数；达到或超过实际审批人数时按全部通过结算。
+            try {
+                int count = Integer.parseInt(String.valueOf(config.get("ratio")));
+                if (count < 1) {
+                    return Optional.of(List.of(error(node, "会签通过人数必须大于 0")));
+                }
+            } catch (Exception e) { return Optional.of(List.of(error(node, "会签通过人数必须为整数"))); }
         }
         return Optional.of(List.of());
     }
