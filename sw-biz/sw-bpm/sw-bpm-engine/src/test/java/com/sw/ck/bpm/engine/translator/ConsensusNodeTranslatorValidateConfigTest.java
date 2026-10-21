@@ -59,6 +59,36 @@ class ConsensusNodeTranslatorValidateConfigTest {
     }
 
     @Test
+    void countModeRequiresPositiveCount() {
+        List<GraphValidationError> errors = translator
+                .validateConfig(consensus(Map.of(
+                        "mode", "COUNT",
+                        "ratio", 0,
+                        "participant", Map.of(
+                                "strategy", "FORM_FIELD",
+                                "value", Map.of(
+                                        "objectType", "USER", "scope", "MAIN",
+                                        "field", "field_approvers")))))
+                .orElseThrow();
+        assertThat(errors).anyMatch(e -> e.getMessage().contains("通过人数必须大于 0"));
+    }
+
+    @Test
+    void countModeAcceptsPositiveCount() {
+        List<GraphValidationError> errors = translator
+                .validateConfig(consensus(Map.of(
+                        "mode", "COUNT",
+                        "ratio", 2,
+                        "participant", Map.of(
+                                "strategy", "FORM_FIELD",
+                                "value", Map.of(
+                                        "objectType", "USER", "scope", "MAIN",
+                                        "field", "field_approvers")))))
+                .orElseThrow();
+        assertThat(errors).isEmpty();
+    }
+
+    @Test
     void formFieldParticipantWithoutFieldIsRejected() {
         List<GraphValidationError> errors = translator
                 .validateConfig(consensus(Map.of(

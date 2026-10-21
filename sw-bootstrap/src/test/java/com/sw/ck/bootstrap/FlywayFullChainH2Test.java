@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * 完全一致（{vendor} 按 H2 连接解析为 h2）。0.1.7 发版收敛后，versioned 迁移为
  * 单一基线 {@code V0.1.7__baseline_seed.sql}（0.1.6 基线种子与 0.1.7 菜单/应用范围
  * 增量按版本序逐字节合并），加 13 个可重复对账 R__，
- * 全新库共执行 14 条（V0.1.7 基线 + 13 个 R__ 可重复对账）。
+ * 全新库共执行 15 条（V0.1.7 基线 + 14 个 R__ 可重复对账）。
  * 历史版本升级演练随 0.1.3「仅支持全新建库」与 0.1.5「单一种子 + 独立升级通道」
  * 的边界一并退役；本测试保留并延续全部终态数据/语义断言。
  * </p>
@@ -81,18 +81,18 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(14, result.migrationsExecuted,
-                "全新库应执行 14 条（V0.1.7 基线 + 13 个 R__ 可重复对账），实际: "
+        assertEquals(15, result.migrationsExecuted,
+                "全新库应执行 15 条（V0.1.7 基线 + 14 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
         assertEquals("0.1.7", flyway.info().current().getVersion().getVersion(),
                 "终点当前版本应为最后一个 versioned 迁移（0.1.7）");
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 14 条（V0.1.7 基线 + 13 个可重复对账）")
+    @DisplayName("种子迁移后：info().applied() 共 15 条（V0.1.7 基线 + 13 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(14, applied.length, "已应用迁移数应为 14（V0.1.7 基线 + 13 个 R__）");
+        assertEquals(15, applied.length, "已应用迁移数应为 14（V0.1.7 基线 + 14 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -103,7 +103,7 @@ class FlywayFullChainH2Test {
             }
         }
         assertTrue(seedSeen, "V0.1.7 种子应已应用");
-        assertEquals(13, repeatableCount, "13 个 R__ 可重复对账应已应用");
+        assertEquals(14, repeatableCount, "14 个 R__ 可重复对账应已应用");
     }
 
     @Test

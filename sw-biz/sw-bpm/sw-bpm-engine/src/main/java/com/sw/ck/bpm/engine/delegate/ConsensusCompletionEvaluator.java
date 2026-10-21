@@ -108,6 +108,14 @@ public class ConsensusCompletionEvaluator {
             // 一票否决：任何否决即节点负向
             positive = approved >= total;
             negative = rejected > 0;
+        } else if ("COUNT".equals(mode)) {
+            if (total <= 0) {
+                return false;
+            }
+            // 人数模式：需要指定人数通过；达到或超过实际审批人数时等同全部通过。
+            int required = Math.max(1, Math.min(ratio, total));
+            positive = approved >= required;
+            negative = !positive && completed >= total && approved < required;
         } else if ("ALL".equals(mode)) {
             positive = total > 0 && approved >= total;
             negative = !positive && rejected > 0;

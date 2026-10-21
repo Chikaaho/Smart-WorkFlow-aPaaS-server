@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
@@ -42,7 +43,9 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import java.io.IOException;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -153,7 +156,10 @@ class BpmProcessDefControllerAuthorizationTest {
             // capabilities 当前契约恒 present（注册结果构造期已保证定义集非空）：桩需兑现契约
             org.mockito.Mockito.when(registry.capabilities())
                     .thenReturn(java.util.Optional.of(List.of()));
-            return new BpmProcessDefController(mock(BpmProcessDefService.class),
+            BpmProcessDefService service = mock(BpmProcessDefService.class);
+            // 列表网关放行后控制器读取分页结果，桩需返回真实空页而非 null
+            when(service.listDefs(any(), any())).thenReturn(PageResult.empty());
+            return new BpmProcessDefController(service,
                     new ObjectMapper(), mock(UserQueryFacade.class), registry,
                     mock(com.sw.ck.bpm.process.service.ProcessThemeService.class));
         }

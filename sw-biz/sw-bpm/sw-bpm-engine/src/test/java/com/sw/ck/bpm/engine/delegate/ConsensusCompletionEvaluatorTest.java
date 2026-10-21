@@ -81,6 +81,45 @@ class ConsensusCompletionEvaluatorTest {
     }
 
     @Test
+    void countModeRequiresConfiguredApprovals() {
+        DelegateExecution execution = execution(3, 1, 0, 1);
+
+        boolean below = evaluator.shouldComplete(execution, "COUNT", 2);
+        printCase("COUNT", 2, 3, 1, 0, 1, below, "count-2-of-3-one-approval");
+        assertThat(below).isFalse();
+
+        when(execution.getVariable("consensusApprovedCount")).thenReturn(2);
+        when(execution.getVariable("nrOfCompletedInstances")).thenReturn(2);
+        boolean reached = evaluator.shouldComplete(execution, "COUNT", 2);
+        printCase("COUNT", 2, 3, 2, 0, 2, reached, "count-2-of-3-two-approvals");
+        assertThat(reached).isTrue();
+    }
+
+    @Test
+    void countAtOrAboveTotalRequiresAllApprovals() {
+        DelegateExecution execution = execution(3, 2, 0, 2);
+
+        boolean below = evaluator.shouldComplete(execution, "COUNT", 5);
+        printCase("COUNT", 5, 3, 2, 0, 2, below, "count-above-total-two-approvals");
+        assertThat(below).isFalse();
+
+        when(execution.getVariable("consensusApprovedCount")).thenReturn(3);
+        when(execution.getVariable("nrOfCompletedInstances")).thenReturn(3);
+        boolean reached = evaluator.shouldComplete(execution, "COUNT", 5);
+        printCase("COUNT", 5, 3, 3, 0, 3, reached, "count-above-total-all-approved");
+        assertThat(reached).isTrue();
+    }
+
+    @Test
+    void countModeSettlesNegativeWhenAllVotedWithoutEnoughApprovals() {
+        DelegateExecution execution = execution(3, 1, 2, 3);
+
+        boolean result = evaluator.shouldComplete(execution, "COUNT", 2);
+        printCase("COUNT", 2, 3, 1, 2, 3, result, "count-all-voted-not-enough");
+        assertThat(result).isTrue();
+    }
+
+    @Test
     void asyncJobRestoresTenantContextAndClearsIt() {
         // 异步作业线程无登录态：按执行租户还原身份完成计数查询，结束后清理，不泄漏到线程池。
         DelegateExecution execution = execution(2, 2, 0, 2);

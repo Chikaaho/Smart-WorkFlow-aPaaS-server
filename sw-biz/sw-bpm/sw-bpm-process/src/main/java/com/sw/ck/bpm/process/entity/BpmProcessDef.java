@@ -108,4 +108,10 @@ public class BpmProcessDef extends BaseEntity {
 
     @TableField("source_template_version")
     private Integer sourceTemplateVersion;
+
+    /**
+     * 创建人展示名（列表响应回填，非表列）：由 createBy 批量解析 real_name/username。
+     */
+    @TableField(exist = false)
+    private String creatorName;
 }

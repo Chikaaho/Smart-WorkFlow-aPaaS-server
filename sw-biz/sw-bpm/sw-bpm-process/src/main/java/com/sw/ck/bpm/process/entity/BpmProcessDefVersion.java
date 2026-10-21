@@ -66,6 +66,10 @@ public class BpmProcessDefVersion extends BaseEntity {
     @TableField("published_at")
     private java.time.LocalDateTime publishedAt;
 
+    /** 发布人展示名（版本列表回填，非表列）。 */
+    @TableField(exist = false)
+    private String publisherName;
+
     @com.fasterxml.jackson.annotation.JsonIgnore
     public String getGraphJson() {
         return graphJson;

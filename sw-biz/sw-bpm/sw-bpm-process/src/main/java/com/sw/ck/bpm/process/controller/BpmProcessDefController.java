@@ -23,6 +23,9 @@ import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 流程定义控制器 —— 图设计器后端。
@@ -223,7 +226,56 @@ public class BpmProcessDefController {
     public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
                                                  @RequestParam(required = false) String formKey) {
         PageResult<BpmProcessDef> result = bpmProcessDefService.listDefs(pageParam, formKey);
+        fillCreatorNames(result.getRecords());
         return R.ok(result);
+    }
+
+    /**
+     * 列表回填创建人展示名：createBy 批量解析；查询上下文缺失时保持空值（前端显示占位）。
+     */
+    private void fillCreatorNames(List<BpmProcessDef> records) {
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+        Set<Long> creatorIds = records.stream()
+                .map(BpmProcessDef::getCreateBy)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (creatorIds.isEmpty()) {
+            return;
+        }
+        userQueryFacade.getUserDisplayNames(creatorIds)
+                .ifPresent(names -> records.forEach(def -> def.setCreatorName(names.get(def.getCreateBy()))));
+    }
+
+    /**
+     * 版本列表回填发布人展示名：优先发布人，缺省回退最近修改人。
+     */
+    private void fillPublisherNames(List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions) {
+        if (versions == null || versions.isEmpty()) {
+            return;
+        }
+        Set<Long> publisherIds = versions.stream()
+                .map(this::publisherIdOf)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (publisherIds.isEmpty()) {
+            return;
+        }
+        userQueryFacade.getUserDisplayNames(publisherIds)
+                .ifPresent(names -> versions.forEach(version -> {
+                    Long publisherId = publisherIdOf(version);
+                    if (publisherId != null) {
+                        version.setPublisherName(names.get(publisherId));
+                    }
+                }));
+    }
+
+    private Long publisherIdOf(com.sw.ck.bpm.process.entity.BpmProcessDefVersion version) {
+        if (version.getPublishedBy() != null) {
+            return version.getPublishedBy();
+        }
+        return version.getUpdateBy() != null ? version.getUpdateBy() : version.getCreateBy();
     }
 
     /**
@@ -262,7 +314,10 @@ public class BpmProcessDefController {
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping("/{id}/versions")
     public R<List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion>> listVersions(@PathVariable Long id) {
-        return R.ok(bpmProcessDefService.listVersions(id));
+        List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions =
+                bpmProcessDefService.listVersions(id);
+        fillPublisherNames(versions);
+        return R.ok(versions);
     }
 
     /** 读取指定发布版本的冻结图。 */

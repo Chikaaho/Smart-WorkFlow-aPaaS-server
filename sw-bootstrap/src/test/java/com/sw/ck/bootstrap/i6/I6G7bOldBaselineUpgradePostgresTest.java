@@ -99,8 +99,8 @@ class I6G7bOldBaselineUpgradePostgresTest {
         var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(14, result.migrationsExecuted,
-                "全新库应执行 14 条（V0.1.7 种子 + 13 个 R__）");
+        assertEquals(15, result.migrationsExecuted,
+                "全新库应执行 15 条（V0.1.7 种子 + 14 个 R__）");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
@@ -183,8 +183,8 @@ class I6G7bOldBaselineUpgradePostgresTest {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT COUNT(*) FROM flyway_schema_history WHERE success = true")) {
                 assertTrue(rs.next());
-                assertEquals(14, rs.getInt(1),
-                        "历史表应恰有 14 条成功记录（V0.1.7 种子 + 13 个 R__）");
+                assertEquals(15, rs.getInt(1),
+                        "历史表应恰有 15 条成功记录（V0.1.7 种子 + 14 个 R__）");
             }
         }
     }

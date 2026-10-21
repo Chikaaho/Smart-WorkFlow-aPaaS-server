@@ -149,6 +149,11 @@ public class SysRoleServiceImpl
             if (query.getStatus() != null) {
                 wrapper.eq(SysRole::getStatus, query.getStatus());
             }
+            // 用户管理配置角色：超管按目标用户所属租户取角色；非超管由 TenantLineHandler
+            // 再叠加本租户条件，传入其它租户只会得到空集，不构成越权读取
+            if (query.getTenantId() != null) {
+                wrapper.eq(SysRole::getTenantId, query.getTenantId());
+            }
         }
         wrapper.orderByAsc(SysRole::getCreateTime);
         PageResult<SysRole> pageResult = baseMapper.selectPage(pageParam, wrapper);
