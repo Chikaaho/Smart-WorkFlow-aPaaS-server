@@ -23,6 +23,9 @@ import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 流程定义控制器 —— 图设计器后端。
@@ -223,7 +226,26 @@ public class BpmProcessDefController {
     public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
                                                  @RequestParam(required = false) String formKey) {
         PageResult<BpmProcessDef> result = bpmProcessDefService.listDefs(pageParam, formKey);
+        fillCreatorNames(result.getRecords());
         return R.ok(result);
+    }
+
+    /**
+     * 列表回填创建人展示名：createBy 批量解析；查询上下文缺失时保持空值（前端显示占位）。
+     */
+    private void fillCreatorNames(List<BpmProcessDef> records) {
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+        Set<Long> creatorIds = records.stream()
+                .map(BpmProcessDef::getCreateBy)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (creatorIds.isEmpty()) {
+            return;
+        }
+        userQueryFacade.getUserDisplayNames(creatorIds)
+                .ifPresent(names -> records.forEach(def -> def.setCreatorName(names.get(def.getCreateBy()))));
     }
 
     /**

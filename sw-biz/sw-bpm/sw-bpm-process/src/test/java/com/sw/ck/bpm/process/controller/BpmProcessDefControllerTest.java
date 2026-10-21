@@ -2,12 +2,19 @@ package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.page.PageParam;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -30,6 +37,49 @@ class BpmProcessDefControllerTest {
     private final BpmProcessDefController controller = new BpmProcessDefController(
             bpmProcessDefService, objectMapper, userQueryFacade, null,
             mock(com.sw.ck.bpm.process.service.ProcessThemeService.class));
+
+    // ==================== GET /workflow/defs ====================
+
+    @Nested
+    @DisplayName("GET /workflow/defs")
+    class ListDefsTests {
+
+        @Test
+        @DisplayName("列表按 createBy 回填创建人展示名")
+        void listDefs_shouldFillCreatorNames() {
+            BpmProcessDef def = new BpmProcessDef();
+            def.setId(1L);
+            def.setCreateBy(7L);
+            PageResult<BpmProcessDef> page = new PageResult<>();
+            page.setRecords(List.of(def));
+            page.setTotal(1);
+            when(bpmProcessDefService.listDefs(any(PageParam.class), eq("form-1"))).thenReturn(page);
+            when(userQueryFacade.getUserDisplayNames(anyCollection()))
+                    .thenReturn(Optional.of(Map.of(7L, "系统管理员")));
+
+            R<PageResult<BpmProcessDef>> result = controller.listDefs(new PageParam(), "form-1");
+
+            assertThat(result.getData().getRecords().get(0).getCreatorName()).isEqualTo("系统管理员");
+        }
+
+        @Test
+        @DisplayName("查询上下文缺失时创建人保持空值，不影响列表返回")
+        void listDefs_shouldTolerateMissingNameContext() {
+            BpmProcessDef def = new BpmProcessDef();
+            def.setId(2L);
+            def.setCreateBy(8L);
+            PageResult<BpmProcessDef> page = new PageResult<>();
+            page.setRecords(List.of(def));
+            page.setTotal(1);
+            when(bpmProcessDefService.listDefs(any(PageParam.class), isNull())).thenReturn(page);
+            when(userQueryFacade.getUserDisplayNames(anyCollection())).thenReturn(Optional.empty());
+
+            R<PageResult<BpmProcessDef>> result = controller.listDefs(new PageParam(), null);
+
+            assertThat(result.getData().getRecords()).hasSize(1);
+            assertThat(result.getData().getRecords().get(0).getCreatorName()).isNull();
+        }
+    }
 
     // ==================== GET /workflow/defs/{id}/bpmn-xml ====================
 
