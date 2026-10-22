@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.re2j.Pattern;
+import com.google.re2j.PatternSyntaxException;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -1302,11 +1304,66 @@ public class FormDefServiceImpl implements FormDefService {
                     "字段 '" + name + "' 的 colSpan 必须是 1—24 的整数");
         }
 
+        validateTextConstraints(node);
+
         JsonNode subFields = node.get("subFields");
         if (subFields != null && subFields.isArray()) {
             for (JsonNode subField : subFields) {
                 validateLayoutFieldNode(subField);
             }
+        }
+    }
+
+    private void validateTextConstraints(JsonNode node) {
+        String name = node.path("name").asText("<unknown>");
+        String type = node.path("type").asText("");
+        JsonNode min = node.get("minLength");
+        JsonNode max = node.get("length");
+        JsonNode pattern = node.get("pattern");
+        JsonNode message = node.get("patternMessage");
+        boolean configured = min != null || pattern != null || message != null;
+        if (configured && !("TEXT".equals(type) || "RICH_TEXT".equals(type))) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "字段「" + name + "」的长度或正则约束仅适用于文本字段");
+        }
+        int minValue = 0;
+        if (min != null && !min.isNull()) {
+            if (!min.isIntegralNumber() || !min.canConvertToInt()
+                    || min.asInt() < 0 || min.asInt() > 1_000_000) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的最小长度必须为 0—1000000 的整数");
+            }
+            minValue = min.asInt();
+        }
+        if (max != null && !max.isNull()) {
+            if (!max.isIntegralNumber() || !max.canConvertToInt()
+                    || max.asInt() < 0 || max.asInt() > 1_000_000) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的最大长度必须为 0—1000000 的整数");
+            }
+            if (max.asInt() > 0 && minValue > max.asInt()) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的最小长度不能大于最大长度");
+            }
+        }
+        if (message != null && !message.isNull()) {
+            if (!message.isTextual() || message.asText().length() > 200) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的校验提示必须是不超过 200 个字符的文本");
+            }
+        }
+        if (pattern == null || pattern.isNull() || pattern.asText().isBlank()) {
+            return;
+        }
+        if (!pattern.isTextual() || pattern.asText().length() > 512) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "字段「" + name + "」的正则必须是不超过 512 个字符的文本");
+        }
+        try {
+            Pattern.compile(pattern.asText());
+        } catch (PatternSyntaxException invalid) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "字段「" + name + "」的正则语法无效，请检查后重试");
         }
     }
 

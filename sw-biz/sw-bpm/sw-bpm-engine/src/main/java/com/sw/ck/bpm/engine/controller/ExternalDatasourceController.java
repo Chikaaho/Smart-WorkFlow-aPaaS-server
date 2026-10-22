@@ -6,6 +6,9 @@ import com.sw.ck.bpm.api.dto.SqlExecutionResult;
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.executor.SqlExecutor;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
 import com.sw.ck.form.api.exception.FormErrorCode;
@@ -22,7 +25,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * 外部数据源管理 + SQL 执行控制器。
@@ -35,6 +42,12 @@ public class ExternalDatasourceController {
 
     private final ExternalDatasourceService datasourceService;
     private final SqlExecutor sqlExecutor;
+
+    private static final Map<String, String> DRIVER_TYPES = Map.of(
+            "postgresql", "org.postgresql.Driver",
+            "mysql", "com.mysql.cj.jdbc.Driver",
+            "h2", "org.h2.Driver",
+            "oracle", "oracle.jdbc.OracleDriver");
 
     public ExternalDatasourceController(ExternalDatasourceService datasourceService,
                                         SqlExecutor sqlExecutor) {
@@ -68,6 +81,7 @@ public class ExternalDatasourceController {
     @PostMapping
     @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
     public R<Long> create(@Valid @RequestBody ExternalDatasourceRequest request) {
+        validateConnection(request);
         ExternalDatasource entity = toEntity(request);
         datasourceService.saveWithEncryption(entity, request.getPassword());
         return R.ok(entity.getId());
@@ -77,6 +91,7 @@ public class ExternalDatasourceController {
     @PutMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
     public R<Void> update(@PathVariable Long id, @Valid @RequestBody ExternalDatasourceRequest request) {
+        validateConnection(request);
         ExternalDatasource entity = toEntity(request);
         entity.setId(id);
         datasourceService.updateWithEncryption(entity, request.getPassword());
@@ -99,6 +114,31 @@ public class ExternalDatasourceController {
         return R.ok(entity);
     }
 
+    /** 当前租户的数据源清单，密码和密文不进入响应。 */
+    @GetMapping("/page")
+    @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
+    public R<PageResult<ExternalDatasource>> page(
+            @RequestParam(defaultValue = "1") long pageNum,
+            @RequestParam(defaultValue = "20") long pageSize,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) Integer enabled) {
+        long current = Math.max(1, pageNum);
+        long size = Math.min(Math.max(1, pageSize), 100);
+        var page = datasourceService.page(
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(current, size),
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<ExternalDatasource>lambdaQuery()
+                        .like(name != null && !name.isBlank(), ExternalDatasource::getName,
+                                name == null ? null : name.trim())
+                        .eq(enabled != null, ExternalDatasource::getEnabled, enabled)
+                        .orderByDesc(ExternalDatasource::getUpdateTime));
+        PageResult<ExternalDatasource> result = new PageResult<>();
+        result.setRecords(page.getRecords());
+        result.setTotal(page.getTotal());
+        result.setPageNum(page.getCurrent());
+        result.setPageSize(page.getSize());
+        return R.ok(result);
+    }
+
     private ExternalDatasource toEntity(ExternalDatasourceRequest request) {
         ExternalDatasource entity = new ExternalDatasource();
         entity.setName(request.getName());
@@ -109,5 +149,25 @@ public class ExternalDatasourceController {
         entity.setReadOnly(request.getReadOnly());
         entity.setEnabled(request.getEnabled());
         return entity;
+    }
+
+    private void validateConnection(ExternalDatasourceRequest request) {
+        String type = request.getType() == null ? "" : request.getType().trim().toLowerCase(Locale.ROOT);
+        String expectedDriver = DRIVER_TYPES.get(type);
+        if (expectedDriver == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "不支持的数据源类型");
+        }
+        if (request.getDriverClass() != null && !request.getDriverClass().isBlank()
+                && !expectedDriver.equals(request.getDriverClass().trim())) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "驱动类与数据源类型不匹配");
+        }
+        String url = request.getJdbcUrl() == null ? "" : request.getJdbcUrl().trim();
+        String expectedPrefix = "jdbc:" + type + ":";
+        String lower = url.toLowerCase(Locale.ROOT);
+        if (!lower.startsWith(expectedPrefix) || lower.contains("password=")
+                || lower.contains("user=")) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                    "数据源地址与类型不匹配，用户名和密码必须填写在独立字段");
+        }
     }
 }

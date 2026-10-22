@@ -131,6 +131,13 @@ public class FormDataQueryService {
         this.appAccessGuard = appAccessGuard;
     }
 
+    private FormFieldEnrichmentService enrichment;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setEnrichment(FormFieldEnrichmentService enrichment) {
+        this.enrichment = enrichment;
+    }
+
     // ==================== 主入口 ====================
 
     /**
@@ -183,6 +190,9 @@ public class FormDataQueryService {
         }
         if (!formDefService.isCurrentUserVisible(formKey)) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
+        }
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "view");
         }
         // 应用范围闸门：绑定应用的表单，应用不可见/停用时不允许列表访问（批量新访问，无记录级回退）。
         if (appAccessGuard != null) {
@@ -306,6 +316,9 @@ public class FormDataQueryService {
         }
         if (!"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
+        }
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "view");
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {

@@ -103,6 +103,15 @@ public class FormDefinitionSchema implements Serializable {
         /** 字段最大长度（字符数） */
         private Integer length;
 
+        /** 非空文本值的 Unicode 码点最小长度。 */
+        private Integer minLength;
+
+        /** 文本值完整匹配所使用、由受控线性时间引擎执行的正则。 */
+        private String pattern;
+
+        /** 正则不匹配时向填报人展示的提示。 */
+        private String patternMessage;
+
         /**
          * 字段描述（0.1.7 #38）。
          * <p>

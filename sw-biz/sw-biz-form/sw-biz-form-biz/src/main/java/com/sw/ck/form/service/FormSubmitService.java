@@ -202,6 +202,9 @@ public class FormSubmitService {
         if (!isVisibleToCurrentUser(formDef)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "create");
+        }
         Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
         if (enrichment != null) {
             enrichment.enrichForWrite(formDef.getId(), effectiveData);
@@ -368,6 +371,9 @@ public class FormSubmitService {
         }
         if (!isVisibleToCurrentUser(formDef)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
+        }
+        if (enrichment != null && recordOwnerUserId == null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "create");
         }
         // 应用范围闸门：绑定应用的表单，应用不可见/停用时不允许新提交（即新发起），
         // 拒绝发生在任何写入之前——不产生记录、不产生实例。系统/派发归属提交

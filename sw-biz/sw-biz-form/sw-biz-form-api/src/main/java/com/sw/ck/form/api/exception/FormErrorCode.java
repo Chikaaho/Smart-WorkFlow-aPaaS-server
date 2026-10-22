@@ -24,6 +24,7 @@ public enum FormErrorCode implements ErrorCode {
     FORM_DELETE_RESTRICTED(1104, "form.delete_restricted", "表单存在有效引用，不能删除"),
     FIELD_EDIT_DENIED(1105, "form.field_edit_denied", "当前身份无该字段编辑权限"),
     FIELD_VIEW_DENIED(1106, "form.field_view_denied", "当前身份无该字段查看权限"),
+    ACTION_PERMISSION_DENIED(1107, "form.action_permission_denied", "当前身份无权执行该表单操作"),
 
     // ==================== 发布校验（1200-1299） ====================
     INVALID_COLUMN_NAME(1200, "form.invalid_column_name", "字段名不合法"),

@@ -274,7 +274,9 @@ public class FormFieldEnrichmentService {
                 for (JsonNode sub : subs) {
                     String subKey = sub.path("name").asText();
                     if (!subKey.isBlank()) {
-                        labels.put(subKey, displayOf(sub, subKey));
+                        String subDisplay = displayOf(sub, subKey);
+                        labels.put(subKey, subDisplay);
+                        labels.put(field.path("name").asText() + "." + subKey, subDisplay);
                     }
                 }
             }
@@ -291,6 +293,25 @@ public class FormFieldEnrichmentService {
     /** 当前身份是否具备表单 definition 顶层动作权限。 */
     public boolean canCurrentUserPerformAction(String formId, String action) {
         return fieldPermissionService.canAction(LoginUserHolder.get(), action, loadDefinitionJson(formId));
+    }
+
+    /** 在业务写入/查询前执行 definition 动作权限；未配置该动作时保持原授权。 */
+    public void assertCurrentUserCanPerformAction(String formId, String action) {
+        boolean allowed;
+        try {
+            allowed = canCurrentUserPerformAction(formId, action);
+        } catch (BaseException rejected) {
+            throw rejected;
+        } catch (RuntimeException unavailable) {
+            log.warn("动作权限读取失败: formId={}, action={}, error={}", formId, action,
+                    unavailable.getClass().getSimpleName());
+            throw new BaseException(FormErrorCode.DYNAMIC_TABLE_METADATA_UNAVAILABLE,
+                    "表单权限信息暂时不可用，已拒绝本次操作");
+        }
+        if (!allowed) {
+            throw new BaseException(FormErrorCode.ACTION_PERMISSION_DENIED,
+                    "您没有执行该表单操作的权限");
+        }
     }
 
     // ==================== 各类型增补 ====================

@@ -3,6 +3,7 @@ package com.sw.ck.form.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.re2j.Pattern;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.FieldType;
@@ -84,6 +85,10 @@ public class FormFieldValidator {
                 String name = nameNode.asText();
                 String type = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
                 boolean required = fieldNode.has("required") && fieldNode.get("required").asBoolean();
+                Integer length = integerValue(fieldNode.get("length"));
+                Integer minLength = integerValue(fieldNode.get("minLength"));
+                String pattern = textValue(fieldNode.get("pattern"));
+                String patternMessage = textValue(fieldNode.get("patternMessage"));
                 String dictType = fieldNode.has("dictType") ? fieldNode.get("dictType").asText() : null;
                 boolean multiple = fieldNode.has("multiple") && fieldNode.get("multiple").asBoolean();
                 String format = fieldNode.has("format") && !fieldNode.get("format").asText().isBlank()
@@ -107,6 +112,10 @@ public class FormFieldValidator {
                             if (subName == null) continue;
                             String subType = sub.has("type") ? sub.get("type").asText() : "TEXT";
                             boolean subRequired = sub.has("required") && sub.get("required").asBoolean();
+                            Integer subLength = integerValue(sub.get("length"));
+                            Integer subMinLength = integerValue(sub.get("minLength"));
+                            String subPattern = textValue(sub.get("pattern"));
+                            String subPatternMessage = textValue(sub.get("patternMessage"));
                             String subDictType = sub.has("dictType") ? sub.get("dictType").asText() : null;
                             boolean subMultiple = sub.has("multiple") && sub.get("multiple").asBoolean();
                             String subFormat = sub.has("format") && !sub.get("format").asText().isBlank()
@@ -120,7 +129,8 @@ public class FormFieldValidator {
                             String subLabel = sub.has("label") && !sub.get("label").asText().isBlank()
                                     ? sub.get("label").asText() : null;
                             subFields.add(new FieldDef(subName, subType, subRequired, subDictType, null,
-                                    subDefault, subLabel, subMultiple, subFormat, subSource, subOptionKeys));
+                                    subDefault, subLabel, subMultiple, subFormat, subSource, subOptionKeys,
+                                    subLength, subMinLength, subPattern, subPatternMessage));
                         }
                     }
                 }
@@ -128,7 +138,8 @@ public class FormFieldValidator {
                 String label = fieldNode.has("label") && !fieldNode.get("label").asText().isBlank()
                         ? fieldNode.get("label").asText() : null;
                 fieldDefs.put(name, new FieldDef(name, type, required, dictType, subFields,
-                        defaultValue, label, multiple, format, source, optionKeys));
+                        defaultValue, label, multiple, format, source, optionKeys,
+                        length, minLength, pattern, patternMessage));
             }
 
             // 检查未知字段
@@ -237,6 +248,9 @@ public class FormFieldValidator {
     private void validateSingleValue(FieldDef def, Object value, DictFacade dictFacade) {
             if (value == null || (value instanceof String s && s.isBlank())) {
                 return;
+            }
+            if ("TEXT".equals(def.type) || "RICH_TEXT".equals(def.type)) {
+                validateTextConstraints(def, String.valueOf(value));
             }
             switch (def.type) {
                 case "NUMBER" -> {
@@ -353,6 +367,25 @@ public class FormFieldValidator {
             }
     }
 
+    private void validateTextConstraints(FieldDef def, String text) {
+        int codePoints = text.codePointCount(0, text.length());
+        if (def.minLength() != null && def.minLength() > 0 && codePoints < def.minLength()) {
+            throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                    "字段「" + def.displayName() + "」至少需要 " + def.minLength() + " 个字符");
+        }
+        if (def.length() != null && def.length() > 0 && codePoints > def.length()) {
+            throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
+                    "字段「" + def.displayName() + "」不能超过 " + def.length() + " 个字符");
+        }
+        if (def.pattern() != null && !def.pattern().isBlank()
+                && !Pattern.matches(def.pattern(), text)) {
+            String message = def.patternMessage() == null || def.patternMessage().isBlank()
+                    ? "字段「" + def.displayName() + "」格式不符合要求"
+                    : def.patternMessage();
+            throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH, message);
+        }
+    }
+
     // ==================== BOOL 转换 ====================
 
     /**
@@ -436,6 +469,14 @@ public class FormFieldValidator {
         return keys;
     }
 
+    private static Integer integerValue(JsonNode node) {
+        return node != null && node.isIntegralNumber() && node.canConvertToInt() ? node.asInt() : null;
+    }
+
+    private static String textValue(JsonNode node) {
+        return node != null && node.isTextual() && !node.asText().isBlank() ? node.asText() : null;
+    }
+
     /**
      * BF20261013-009：DICT 值域判定。
      * source=custom → 对候选键校验（未配置候选时不拦截，与字典缺 dictType 同口径）；
@@ -477,7 +518,15 @@ public class FormFieldValidator {
             /** BF20261013-009：数据来源（dict / custom / null=按类型缺省）。 */
             String source,
             /** BF20261013-009：source=custom 的候选键（提交值域判定；空列表=未配置不拦截）。 */
-            List<String> optionKeys
+            List<String> optionKeys,
+            /** 最大 Unicode 码点数；null/0=旧定义未设上限。 */
+            Integer length,
+            /** 非空值最小 Unicode 码点数。 */
+            Integer minLength,
+            /** RE2 完整匹配表达式。 */
+            String pattern,
+            /** 正则失败时展示给填报人的文本。 */
+            String patternMessage
     ) {
         /**
          * 用户可见的字段名：优先设计者填写的显示名，缺省回退字段键（不产生空名称）。
@@ -492,14 +541,22 @@ public class FormFieldValidator {
                         List<FieldDef> subFields, Object defaultValue, String label,
                         boolean multiple, String format) {
             this(name, type, required, dictType, subFields, defaultValue, label, multiple, format,
-                    null, null);
+                    null, null, null, null, null, null);
         }
 
         /** 兼容既有 7 参构造（multiple=false、format=null：既有语义不变）。 */
         public FieldDef(String name, String type, boolean required, String dictType,
                         List<FieldDef> subFields, Object defaultValue, String label) {
             this(name, type, required, dictType, subFields, defaultValue, label, false, null,
-                    null, null);
+                    null, null, null, null, null, null);
+        }
+
+        /** 兼容既有 11 参构造：长度/正则约束为空。 */
+        public FieldDef(String name, String type, boolean required, String dictType,
+                        List<FieldDef> subFields, Object defaultValue, String label,
+                        boolean multiple, String format, String source, List<String> optionKeys) {
+            this(name, type, required, dictType, subFields, defaultValue, label, multiple, format,
+                    source, optionKeys, null, null, null, null);
         }
     }
 }
