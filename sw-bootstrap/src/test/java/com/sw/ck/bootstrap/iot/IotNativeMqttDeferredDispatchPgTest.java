@@ -92,6 +92,10 @@ class IotNativeMqttDeferredDispatchPgTest {
                             .registerBeanDefinition("natMqttLoginContextProvider", provider);
                 })
                 .run();
+        // 本用例显式调用生产调度入口；取消自动任务，避免后台先认领导致手动调用提前返回。
+        // 在插入任何预约或命令前完成取消，生产调度配置保持不变。
+        app.getBean(org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor.class)
+                .getScheduledTasks().forEach(task -> task.cancel(false));
         jdbc = app.getBean(JdbcTemplate.class);
         dispatchJob = app.getBean(IotReservationDispatchJob.class);
 
@@ -165,7 +169,8 @@ class IotNativeMqttDeferredDispatchPgTest {
                 .as("外发引用指向 MQTT 通道").startsWith("MQTT:nat/" + DEVICE_KEY + "/cmd:");
         assertThat(command.get("last_error")).as("无失败原因残留").isNull();
 
-        String received = awaitReceivedLineGrowth(before);
+        // QoS1 发布同步等待 PUBACK；Broker 在确认前已持久化接收行。
+        String received = receivedLineAfterPublish(before);
         assertThat(received).as("受控 Broker 实际收到预约命令（主题+载荷）")
                 .contains("nat/" + DEVICE_KEY + "/cmd").contains("机房断电").contains("火警告警");
         System.out.println("[NAT-EV] reservation-mqtt reservationId=" + reservationId + " commandId=" + commandId
@@ -225,20 +230,10 @@ class IotNativeMqttDeferredDispatchPgTest {
         }
     }
 
-    private String awaitReceivedLineGrowth(long before) throws Exception {
-        long deadline = System.currentTimeMillis() + 30_000L;
-        while (System.currentTimeMillis() < deadline) {
-            if (Files.exists(RECEIVED_LOG)) {
-                List<String> lines = Files.readAllLines(RECEIVED_LOG);
-                for (int i = (int) Math.min(before, lines.size()); i < lines.size(); i++) {
-                    if (lines.get(i).contains(DEVICE_KEY)) {
-                        return lines.get(i);
-                    }
-                }
-            }
-            Thread.sleep(200);
-        }
-        throw new AssertionError("30s 内受控 broker 未实际收到预约命令");
+    private String receivedLineAfterPublish(long before) throws Exception {
+        List<String> lines = Files.readAllLines(RECEIVED_LOG);
+        return lines.stream().skip(before).filter(line -> line.contains(DEVICE_KEY))
+                .findFirst().orElseThrow(() -> new AssertionError("QoS1 发布完成但 Broker 接收记录缺失"));
     }
 
     private static String generatedRsaPkcs8Base64() {
