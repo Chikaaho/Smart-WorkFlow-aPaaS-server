@@ -94,8 +94,8 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(16, result.migrationsExecuted,
-                "全新库应执行 16 条（V0.1.7 基线 + V0.1.8 租户用户名索引 + 14 个 R__ 可重复对账），实际: "
+        assertEquals(17, result.migrationsExecuted,
+                "全新库应执行 17 条（V0.1.7 基线 + V0.1.8 用户名索引 + V0.1.9 管理员关联 + 14 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
     }
 
@@ -110,7 +110,7 @@ class FlywayFullChainPostgresTest {
     @DisplayName("种子迁移后：info().applied() 共 15 条（0.1.7 基线 + 13 个可重复对账），终点 0.1.7")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
-        assertEquals(16, applied.length, "已应用迁移数应为 16（V0.1.7 基线 + V0.1.8 + 14 个 R__）");
+        assertEquals(17, applied.length, "已应用迁移数应为 17（V0.1.7 基线 + V0.1.8 + V0.1.9 + 14 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -122,7 +122,7 @@ class FlywayFullChainPostgresTest {
         }
         assertTrue(seedSeen, "V0.1.7 种子应已应用");
         assertEquals(14, repeatableCount, "14 个 R__ 可重复对账应已应用");
-        assertEquals("0.1.8", flyway().info().current().getVersion().getVersion(),
+        assertEquals("0.1.9", flyway().info().current().getVersion().getVersion(),
                 "终点当前版本应为最后一个 versioned 迁移");
     }
 
@@ -137,8 +137,8 @@ class FlywayFullChainPostgresTest {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway().migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.1.8", flyway().info().current().getVersion().getVersion(),
-                "版本应保持最后一个 versioned 迁移（0.1.8）");
+        assertEquals("0.1.9", flyway().info().current().getVersion().getVersion(),
+                "版本应保持最后一个 versioned 迁移（0.1.9）");
     }
 
     @Test
@@ -156,7 +156,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立基线库应成功");
-        assertEquals(16, first.migrationsExecuted, "种子库应含 16 条（V0.1.7 基线 + V0.1.8 + 14 R__），实际: " + first.migrationsExecuted);
+        assertEquals(17, first.migrationsExecuted, "种子库应含 17 条（V0.1.7 基线 + V0.1.8 + V0.1.9 + 14 R__），实际: " + first.migrationsExecuted);
 
         try (Connection conn = DriverManager.getConnection(tamperedUrl, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {

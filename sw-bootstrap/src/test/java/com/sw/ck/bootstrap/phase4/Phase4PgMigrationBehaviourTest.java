@@ -47,7 +47,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         MigrateResult result = flyway.migrate();
         assertThat(result.success).isTrue();
         String version = latestVersion();
-        assertThat(version).isEqualTo("0.1.8");
+        assertThat(version).isEqualTo("0.1.9");
         assertThat(tableExists("sw_openapi_callback_task")).isTrue();
         assertThat(indexExists("uk_sw_openapi_cb_task")).isTrue();
         assertThat(indexExists("idx_sw_openapi_cb_task_due")).isTrue();
@@ -67,7 +67,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         flyway.clean();
         MigrateResult toBaseline = flyway.migrate();
         assertThat(toBaseline.success).isTrue();
-        assertThat(latestVersion()).isEqualTo("0.1.8");
+        assertThat(latestVersion()).isEqualTo("0.1.9");
 
         // 基线结构下的真实业务行：省略 retry_count / next_retry_time / error，验证列默认值与可空落点
         try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
@@ -140,7 +140,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         // 既不留 failed 历史行，也不推进版本号——与非事务型 DDL 方言需要 repair 的边界不同。
         long failedRecords = countRows("select count(*) from flyway_schema_history where success = false");
         // 失败点（V1001）之前已就绪的最新链正常应用；失败点整体回滚，版本停在最新已应用迁移
-        assertThat(latestVersion()).as("失败迁移不得推进到失败版本").isEqualTo("0.1.8");
+        assertThat(latestVersion()).as("失败迁移不得推进到失败版本").isEqualTo("0.1.9");
         assertThat(countRows("select count(*) from flyway_schema_history where version = '1001'"))
                 .as("事务型方言失败后不留下 1001 号历史行").isZero();
         assertThat(failedRecords).as("事务型 DDL 下失败迁移整体回滚，无残留失败行").isZero();
@@ -155,7 +155,7 @@ class Phase4PgMigrationBehaviourTest extends Phase4PgSupport {
         recovered.repair();
         MigrateResult afterRepair = recovered.migrate();
         assertThat(afterRepair.success).isTrue();
-        assertThat(latestVersion()).isEqualTo("0.1.8");
+        assertThat(latestVersion()).isEqualTo("0.1.9");
         assertThat(countRows("select count(*) from sw_iot_process_trigger where id = 96201"))
                 .as("恢复后既有数据仍必须存在").isEqualTo(1L);
         assertThat(tableExists("sw_openapi_callback_task")).isTrue();

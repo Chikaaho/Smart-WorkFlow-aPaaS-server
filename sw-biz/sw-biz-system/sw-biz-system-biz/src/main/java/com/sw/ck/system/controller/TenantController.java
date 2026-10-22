@@ -44,6 +44,8 @@ public class TenantController {
         private String adminUsername;
         @NotBlank(message = "初始密码不能为空")
         private String adminPassword;
+        @NotBlank(message = "创建请求标识不能为空")
+        private String requestId;
     }
 
     /** 编辑租户名称请求。 */
@@ -58,6 +60,20 @@ public class TenantController {
     public static class TenantStatusRequest {
         @NotNull(message = "租户状态不能为空")
         private Integer status;
+    }
+
+    @Data
+    public static class AssignAdministratorRequest {
+        @NotNull(message = "请选择管理员")
+        private Long adminUserId;
+    }
+
+    @Data
+    public static class CreateAdministratorRequest {
+        @NotBlank(message = "管理员账号不能为空")
+        private String adminUsername;
+        @NotBlank(message = "初始密码不能为空")
+        private String adminPassword;
     }
 
     @GetMapping("/page")
@@ -79,7 +95,7 @@ public class TenantController {
     @PreAuthorize("@ss.hasPermi('system:tenant:list')")
     public R<Long> create(@Valid @RequestBody CreateTenantRequest request) {
         Long id = tenantAdminService.create(new TenantAdminService.CreateTenantCommand(
-                request.getName(), request.getAdminUsername(), request.getAdminPassword()));
+                request.getName(), request.getAdminUsername(), request.getAdminPassword(), request.getRequestId()));
         return R.ok(id);
     }
 
@@ -95,6 +111,27 @@ public class TenantController {
     public R<Void> updateStatus(@PathVariable Long id, @Valid @RequestBody TenantStatusRequest request) {
         tenantAdminService.updateStatus(id, request.getStatus());
         return R.ok();
+    }
+
+    @GetMapping("/{id}/administrators")
+    @PreAuthorize("@ss.hasPermi('system:tenant:list')")
+    public R<java.util.List<TenantAdminService.AdminCandidate>> administrators(@PathVariable Long id) {
+        return R.ok(tenantAdminService.adminCandidates(id));
+    }
+
+    @PutMapping("/{id}/administrator")
+    @PreAuthorize("@ss.hasPermi('system:tenant:list')")
+    public R<Void> assignAdministrator(@PathVariable Long id,
+                                      @Valid @RequestBody AssignAdministratorRequest request) {
+        tenantAdminService.assignAdministrator(id, request.getAdminUserId());
+        return R.ok();
+    }
+
+    @PostMapping("/{id}/administrator")
+    @PreAuthorize("@ss.hasPermi('system:tenant:list')")
+    public R<Long> createAdministrator(@PathVariable Long id,
+                                       @Valid @RequestBody CreateAdministratorRequest request) {
+        return R.ok(tenantAdminService.createAdministrator(id, request.getAdminUsername(), request.getAdminPassword()));
     }
 }
 

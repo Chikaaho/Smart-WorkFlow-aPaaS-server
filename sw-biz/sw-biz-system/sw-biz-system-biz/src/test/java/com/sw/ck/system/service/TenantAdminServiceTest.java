@@ -21,6 +21,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
 
@@ -49,7 +51,8 @@ class TenantAdminServiceTest {
     private final SysUserRoleMapper userRoleMapper = mock(SysUserRoleMapper.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final TenantAdminService service = new TenantAdminService(
-            tenantMapper, deptMapper, userMapper, roleMapper, roleMenuMapper, userRoleMapper, passwordEncoder);
+            tenantMapper, deptMapper, userMapper, roleMapper, roleMenuMapper, userRoleMapper, passwordEncoder,
+            mock(PlatformTransactionManager.class));
 
     @BeforeEach
     void setUp() {
@@ -82,6 +85,8 @@ class TenantAdminServiceTest {
     void createInitializesTenantAdminDeptAndRoleTemplateAtomically() {
         when(userMapper.selectCount(any())).thenReturn(0L);
         when(passwordEncoder.encode("secret123")).thenReturn("encoded");
+        when(tenantMapper.updateById(any(SysTenant.class))).thenReturn(1);
+        when(deptMapper.updateById(any(SysDept.class))).thenReturn(1);
         SysRole template = new SysRole();
         template.setId(2L);
         template.setName("管理员");
@@ -113,7 +118,7 @@ class TenantAdminServiceTest {
             return 1;
         }).when(roleMapper).insert(any(SysRole.class));
 
-        Long tenantId = service.create(new TenantAdminService.CreateTenantCommand("深圳中心", "sz_admin", "secret123"));
+        Long tenantId = service.create(new TenantAdminService.CreateTenantCommand("深圳中心", "sz_admin", "secret123", "tenant-request-0001"));
 
         assertThat(tenantId).isEqualTo(100L);
         ArgumentCaptor<SysUser> userCaptor = ArgumentCaptor.forClass(SysUser.class);
@@ -133,6 +138,59 @@ class TenantAdminServiceTest {
         assertThat(bindingCaptor.getValue().getTenantId()).isEqualTo(100L);
         assertThat(bindingCaptor.getValue().getUserId()).isEqualTo(300L);
         assertThat(bindingCaptor.getValue().getRoleId()).isEqualTo(400L);
+        ArgumentCaptor<SysTenant> tenantCaptor = ArgumentCaptor.forClass(SysTenant.class);
+        verify(tenantMapper).updateById(tenantCaptor.capture());
+        assertThat(tenantCaptor.getValue().getAdminUserId()).isEqualTo(300L);
+        assertThat(tenantCaptor.getValue().getCreationRequestId()).isEqualTo("tenant-request-0001");
+    }
+
+    @Test
+    void repeatedCreateReturnsOriginalTenantWithoutCreatingAnotherAdmin() {
+        SysTenant existing = new SysTenant();
+        existing.setId(91L);
+        when(tenantMapper.selectOne(any())).thenReturn(existing);
+        assertThat(service.create(new TenantAdminService.CreateTenantCommand(
+                "深圳中心", "sz_admin", "secret123", "tenant-request-0001"))).isEqualTo(91L);
+        verify(tenantMapper, never()).insert(any(SysTenant.class));
+        verify(userMapper, never()).insert(any(SysUser.class));
+    }
+
+    @Test
+    void concurrentDuplicateReturnsCommittedTenantAfterSavepointRollback() {
+        SysTenant existing = new SysTenant();
+        existing.setId(91L);
+        when(tenantMapper.selectOne(any())).thenReturn(null, existing);
+        when(tenantMapper.insert(any(SysTenant.class))).thenThrow(new DuplicateKeyException("request"));
+        assertThat(service.create(new TenantAdminService.CreateTenantCommand(
+                "深圳中心", "sz_admin", "secret123", "tenant-request-0001"))).isEqualTo(91L);
+        verify(userMapper, never()).insert(any(SysUser.class));
+    }
+
+    @Test
+    void missingRequestIdIsRejectedBeforeWriting() {
+        assertThatThrownBy(() -> service.create(new TenantAdminService.CreateTenantCommand(
+                "深圳中心", "sz_admin", "secret123", null))).isInstanceOf(BaseException.class)
+                .hasMessageContaining("请求标识");
+        verify(tenantMapper, never()).insert(any(SysTenant.class));
+    }
+
+    @Test
+    void listUsesStableAdminIdentityAndFailsClosedOnCrossTenantLink() {
+        SysTenant tenant = new SysTenant();
+        tenant.setId(91L);
+        tenant.setAdminUserId(301L);
+        when(tenantMapper.selectGlobalById(91L)).thenReturn(tenant);
+        SysUser admin = new SysUser();
+        admin.setId(301L);
+        admin.setTenantId(91L);
+        admin.setStatus(0);
+        admin.setUsername("renamed_admin");
+        when(userMapper.selectById(301L)).thenReturn(admin);
+        assertThat(service.detail(91L).adminUsername()).isEqualTo("renamed_admin");
+        assertThat(service.detail(91L).adminUserId()).isEqualTo(301L);
+        verify(roleMapper, never()).selectList(any());
+        admin.setTenantId(92L);
+        assertThat(service.detail(91L).adminUsername()).isNull();
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
+import com.sw.ck.common.persistence.IdempotentInsert;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SysDept;
@@ -21,7 +22,9 @@ import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -51,6 +54,7 @@ public class TenantAdminService {
     private final SysRoleMenuMapper roleMenuMapper;
     private final SysUserRoleMapper userRoleMapper;
     private final PasswordEncoder passwordEncoder;
+    private final PlatformTransactionManager transactionManager;
 
     public TenantAdminService(SysTenantMapper tenantMapper,
                               SysDeptMapper deptMapper,
@@ -58,7 +62,8 @@ public class TenantAdminService {
                               SysRoleMapper roleMapper,
                               SysRoleMenuMapper roleMenuMapper,
                               SysUserRoleMapper userRoleMapper,
-                              PasswordEncoder passwordEncoder) {
+                              PasswordEncoder passwordEncoder,
+                              PlatformTransactionManager transactionManager) {
         this.tenantMapper = tenantMapper;
         this.deptMapper = deptMapper;
         this.userMapper = userMapper;
@@ -66,14 +71,17 @@ public class TenantAdminService {
         this.roleMenuMapper = roleMenuMapper;
         this.userRoleMapper = userRoleMapper;
         this.passwordEncoder = passwordEncoder;
+        this.transactionManager = transactionManager;
     }
 
     /** 新建租户命令。 */
-    public record CreateTenantCommand(String name, String adminUsername, String adminPassword) {}
+    public record CreateTenantCommand(String name, String adminUsername, String adminPassword, String requestId) {}
 
     /** 列表行。adminUsername 为空表示未配置首任管理员。 */
     public record TenantView(Long id, String code, String name, Long adminUserId, String adminUsername,
                              Integer status, java.time.LocalDateTime createTime) {}
+
+    public record AdminCandidate(Long id, String username, String realName) {}
 
     /** 分页查询（按名称模糊、状态精确）。 */
     public PageResult<TenantView> page(long pageNum, long pageSize, String name, Integer status) {
@@ -112,75 +120,43 @@ public class TenantAdminService {
         if (command == null) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户信息不能为空");
         }
+        String requestId = trim(command.requestId());
+        if (!requestId.matches("[A-Za-z0-9_-]{16,64}")) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "创建请求标识无效，请重新打开新增窗口");
+        }
+        SysTenant previous = findByCreationRequest(requestId);
+        if (previous != null) {
+            return previous.getId();
+        }
         String name = trim(command.name());
         String username = trim(command.adminUsername());
         String password = command.adminPassword();
         if (name.isEmpty() || name.length() > 64) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户名称不能为空且不超过 64 个字符");
         }
-        if (username.isEmpty() || username.length() > 50 || username.matches(".*\\s.*")) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员账号不能为空、不能含空白且不超过 50 个字符");
-        }
-        if (password == null || password.length() < 6 || password.length() > 64) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR, "初始密码长度需为 6-64 个字符");
-        }
+        validateAdminCredentials(username, password);
         SysTenant tenant = new SysTenant();
         tenant.setName(name);
         tenant.setCode("t" + UUID.randomUUID().toString().replace("-", "").substring(0, 10));
         tenant.setStatus(0);
+        tenant.setCreationRequestId(requestId);
         tenant.setDescription("0.2.0 新建租户");
-        tenantMapper.insert(tenant);
+        try {
+            IdempotentInsert.execute(transactionManager, () -> tenantMapper.insert(tenant));
+        } catch (DuplicateKeyException duplicate) {
+            // 唯一键冲突只回滚保存点；并发首请求提交后返回同一租户，不再次初始化。
+            SysTenant existing = findByCreationRequest(requestId);
+            if (existing != null) return existing.getId();
+            throw duplicate;
+        }
         Long tenantId = tenant.getId();
 
-        SysDept rootDept = new SysDept();
-        rootDept.setTenantId(tenantId);
-        rootDept.setParentId(0L);
-        rootDept.setName(name);
-        rootDept.setCode("root");
-        rootDept.setSort(0);
-        rootDept.setStatus(0);
-        deptMapper.insert(rootDept);
+        Long adminUserId = initializeAdministrator(tenant, username, password, true);
 
-        SysUser admin = new SysUser();
-        admin.setTenantId(tenantId);
-        admin.setUsername(username);
-        admin.setRealName(username);
-        admin.setDeptId(rootDept.getId());
-        admin.setStatus(0);
-        admin.setIsAdmin(0);
-        admin.setPassword(passwordEncoder.encode(password));
-        userMapper.insert(admin);
-
-        SysRole template = findAdminRoleTemplate();
-        SysRole role = new SysRole();
-        role.setTenantId(tenantId);
-        role.setName(template.getName());
-        role.setCode(template.getCode());
-        role.setSort(template.getSort());
-        role.setStatus(template.getStatus());
-        role.setDataScope(template.getDataScope());
-        role.setBuiltIn(false);
-        role.setDescription("由租户 0 管理员角色模板复制");
-        roleMapper.insert(role);
-
-        List<SysRoleMenu> templateMenus;
-        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
-            templateMenus = roleMenuMapper.selectList(Wrappers.<SysRoleMenu>lambdaQuery()
-                    .eq(SysRoleMenu::getRoleId, template.getId()));
+        tenant.setAdminUserId(adminUserId);
+        if (tenantMapper.updateById(tenant) != 1) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员关联保存失败，请重试");
         }
-        for (SysRoleMenu templateMenu : templateMenus) {
-            SysRoleMenu copy = new SysRoleMenu();
-            copy.setTenantId(tenantId);
-            copy.setRoleId(role.getId());
-            copy.setMenuId(templateMenu.getMenuId());
-            roleMenuMapper.insert(copy);
-        }
-
-        SysUserRole userRole = new SysUserRole();
-        userRole.setTenantId(tenantId);
-        userRole.setUserId(admin.getId());
-        userRole.setRoleId(role.getId());
-        userRoleMapper.insert(userRole);
 
         return tenantId;
     }
@@ -216,6 +192,70 @@ public class TenantAdminService {
         tenantMapper.updateById(tenant);
     }
 
+    /** 只列出目标租户内仍有效且拥有租户管理员角色的用户。 */
+    public List<AdminCandidate> adminCandidates(Long id) {
+        assertSuperAdmin();
+        assertMutableTenant(requireTenant(id));
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            return userMapper.selectActiveUserIdsByRoleCodes(List.of(ADMIN_ROLE_CODE), id).stream()
+                    .map(userMapper::selectById).filter(user -> user != null && id.equals(user.getTenantId())
+                            && Integer.valueOf(0).equals(user.getStatus()))
+                    .map(user -> new AdminCandidate(user.getId(), user.getUsername(), user.getRealName()))
+                    .toList();
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void assignAdministrator(Long id, Long adminUserId) {
+        assertSuperAdmin();
+        SysTenant tenant = lockMutableTenant(id);
+        if (adminUserId == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "请选择管理员");
+        }
+        boolean eligible = adminCandidates(id).stream().anyMatch(user -> adminUserId.equals(user.id()));
+        if (!eligible) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "请选择该租户内有效的管理员");
+        }
+        tenant.setAdminUserId(adminUserId);
+        if (tenantMapper.updateById(tenant) != 1) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员关联保存失败，请重试");
+        }
+    }
+
+    /** 对尚未配置管理员的存量租户，原子创建并绑定首任管理员。 */
+    @Transactional(rollbackFor = Exception.class)
+    public Long createAdministrator(Long id, String adminUsername, String adminPassword) {
+        assertSuperAdmin();
+        SysTenant tenant = lockMutableTenant(id);
+        if (tenant.getAdminUserId() != null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "已配置管理员，请选择现有管理员维护关联");
+        }
+        String username = trim(adminUsername);
+        validateAdminCredentials(username, adminPassword);
+        Long userId = initializeAdministrator(tenant, username, adminPassword, false);
+        tenant.setAdminUserId(userId);
+        if (tenantMapper.updateById(tenant) != 1) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员关联保存失败，请重试");
+        }
+        return userId;
+    }
+
+    private SysTenant lockMutableTenant(Long id) {
+        if (id == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户标识不能为空");
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            SysTenant tenant = tenantMapper.selectGlobalByIdForUpdate(id);
+            if (tenant == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户不存在或已删除");
+            assertMutableTenant(tenant);
+            return tenant;
+        }
+    }
+
+    private void assertMutableTenant(SysTenant tenant) {
+        if (Long.valueOf(ROOT_TENANT_ID).equals(tenant.getId())) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "超管租户为保留对象，不能编辑");
+        }
+    }
+
     private SysTenant requireTenant(Long id) {
         if (id == null) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户标识不能为空");
@@ -230,31 +270,106 @@ public class TenantAdminService {
     }
 
     private TenantView toView(SysTenant tenant) {
-        return new TenantView(tenant.getId(), tenant.getCode(), tenant.getName(), null,
-                resolveAdminUsername(tenant.getId()), tenant.getStatus(), tenant.getCreateTime());
+        SysUser admin = null;
+        if (tenant.getAdminUserId() != null) {
+            try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+                admin = userMapper.selectById(tenant.getAdminUserId());
+            }
+        }
+        String username = admin != null && tenant.getId().equals(admin.getTenantId())
+                && Integer.valueOf(0).equals(admin.getStatus()) ? admin.getUsername() : null;
+        return new TenantView(tenant.getId(), tenant.getCode(), tenant.getName(), tenant.getAdminUserId(),
+                username, tenant.getStatus(), tenant.getCreateTime());
     }
 
-    /**
-     * 从已有明确授权关系唯一确认首任管理员：同一租户内 code=admin 的角色恰有一个持有者时返回其账号。
-     * 零个或多个候选一律返回 null（页面显示「未配置」），不随机取人，也不按账号文本猜测。
-     */
-    private String resolveAdminUsername(Long tenantId) {
+    private SysTenant findByCreationRequest(String requestId) {
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
-            List<SysRole> adminRoles = roleMapper.selectList(Wrappers.<SysRole>lambdaQuery()
-                    .eq(SysRole::getTenantId, tenantId)
-                    .eq(SysRole::getCode, ADMIN_ROLE_CODE));
-            if (adminRoles.size() != 1) {
-                return null;
-            }
-            List<SysUserRole> bindings = userRoleMapper.selectList(Wrappers.<SysUserRole>lambdaQuery()
-                    .eq(SysUserRole::getTenantId, tenantId)
-                    .eq(SysUserRole::getRoleId, adminRoles.get(0).getId()));
-            if (bindings.size() != 1) {
-                return null;
-            }
-            SysUser admin = userMapper.selectById(bindings.get(0).getUserId());
-            return admin == null ? null : admin.getUsername();
+            return tenantMapper.selectOne(Wrappers.<SysTenant>lambdaQuery()
+                    .eq(SysTenant::getCreationRequestId, requestId));
         }
+    }
+
+    private Long initializeAdministrator(SysTenant tenant, String username, String password, boolean newTenant) {
+        Long tenantId = tenant.getId();
+        if (userMapper.selectCount(Wrappers.<SysUser>lambdaQuery()
+                .eq(SysUser::getTenantId, tenantId).eq(SysUser::getUsername, username)) > 0) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "该租户内账号已存在");
+        }
+        SysDept rootDept = new SysDept();
+        rootDept.setTenantId(tenantId);
+        rootDept.setParentId(0L);
+        rootDept.setName(tenant.getName());
+        rootDept.setCode("root");
+        rootDept.setSort(0);
+        rootDept.setStatus(0);
+        if (!newTenant) {
+            List<SysDept> roots = deptMapper.selectList(Wrappers.<SysDept>lambdaQuery()
+                    .eq(SysDept::getTenantId, tenantId).eq(SysDept::getParentId, 0L)
+                    .eq(SysDept::getCode, "root").eq(SysDept::getStatus, 0));
+            if (roots.size() == 1) rootDept = roots.get(0);
+            else rootDept.setCode("admin_" + UUID.randomUUID().toString().substring(0, 8));
+        }
+        boolean createdRoot = rootDept.getId() == null;
+        if (createdRoot) deptMapper.insert(rootDept);
+
+        SysUser admin = new SysUser();
+        admin.setTenantId(tenantId);
+        admin.setUsername(username);
+        admin.setRealName(username);
+        admin.setDeptId(rootDept.getId());
+        admin.setStatus(0);
+        admin.setIsAdmin(0);
+        admin.setPassword(passwordEncoder.encode(password));
+        userMapper.insert(admin);
+
+        SysRole role = null;
+        if (!newTenant) {
+            role = roleMapper.selectOne(Wrappers.<SysRole>lambdaQuery()
+                    .eq(SysRole::getTenantId, tenantId).eq(SysRole::getCode, ADMIN_ROLE_CODE));
+            if (role != null && !Integer.valueOf(1).equals(role.getStatus())) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户管理员角色已停用，请先启用");
+            }
+        }
+        if (role == null) {
+            SysRole template = findAdminRoleTemplate();
+            role = new SysRole();
+            role.setTenantId(tenantId);
+            role.setName(template.getName());
+            role.setCode(template.getCode());
+            role.setSort(template.getSort());
+            role.setStatus(template.getStatus());
+            role.setDataScope(template.getDataScope());
+            role.setBuiltIn(false);
+            role.setDescription("由租户 0 管理员角色模板复制");
+            roleMapper.insert(role);
+
+            List<SysRoleMenu> templateMenus;
+            try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+                templateMenus = roleMenuMapper.selectList(Wrappers.<SysRoleMenu>lambdaQuery()
+                        .eq(SysRoleMenu::getRoleId, template.getId()));
+            }
+            for (SysRoleMenu templateMenu : templateMenus) {
+                SysRoleMenu copy = new SysRoleMenu();
+                copy.setTenantId(tenantId);
+                copy.setRoleId(role.getId());
+                copy.setMenuId(templateMenu.getMenuId());
+                roleMenuMapper.insert(copy);
+            }
+        }
+
+        SysUserRole userRole = new SysUserRole();
+        userRole.setTenantId(tenantId);
+        userRole.setUserId(admin.getId());
+        userRole.setRoleId(role.getId());
+        userRoleMapper.insert(userRole);
+
+        if (createdRoot) {
+            rootDept.setLeaderId(admin.getId());
+            if (deptMapper.updateById(rootDept) != 1) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR, "根部门管理员关联保存失败");
+            }
+        }
+        return admin.getId();
     }
 
     private SysRole findAdminRoleTemplate() {
@@ -265,6 +380,9 @@ public class TenantAdminService {
                     .last("LIMIT 1"));
             if (role == null) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少管理员角色模板，无法初始化租户");
+            }
+            if (!Integer.valueOf(1).equals(role.getStatus())) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员角色模板已停用，无法初始化租户");
             }
             return role;
         }
@@ -280,6 +398,15 @@ public class TenantAdminService {
 
     private static String trim(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static void validateAdminCredentials(String username, String password) {
+        if (username.isEmpty() || username.length() > 50 || username.matches(".*\\s.*")) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员账号不能为空、不能含空白且不超过 50 个字符");
+        }
+        if (password == null || password.length() < 6 || password.length() > 64) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "初始密码长度需为 6-64 个字符");
+        }
     }
 }
 

@@ -124,7 +124,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
                 .locations(pgLocations())
                 .load().migrate();
         assertTrue(upgrade.success, "主链衔接验证应成功");
-        assertEquals(1, upgrade.migrationsExecuted, "升级脚本后只应执行新增的 V0.1.8 租户用户名索引，不重放历史迁移");
+        assertEquals(2, upgrade.migrationsExecuted, "升级脚本后只应执行新增的 V0.1.8 用户名索引与 V0.1.9 管理员关联，不重放历史迁移");
         assertEquals("0.1.7", currentVersion(), "升级后版本应为 0.1.7 种子登记");
         assertTrue(incrementalTablesPresent(), "升级后应存在应用中心增量表");
         assertTrue(count("SELECT COUNT(*) FROM sw_form_app WHERE id = 'lc201'") == 1L,
