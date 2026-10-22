@@ -51,6 +51,37 @@ class TenantAdministrationDatabaseTest {
 
     @ParameterizedTest
     @EnumSource(Database.class)
+    void cachedSessionAdmissionReadsCurrentTenantStatusAndExpiry(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false)) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            Long adminId = f.service.detail(tenantId).adminUserId();
+            LoginUser cached = new LoginUser();
+            cached.setUserId(adminId);
+            cached.setTenantId(tenantId);
+            var provider = new com.sw.ck.system.security.UserDetailsProviderImpl(
+                    f.users, null, null, null, null, null, f.validity);
+            // 身份缓存未变；每次准入读取真实租户行，不依赖清理 Redis 的时机。
+            assertThat(provider.isCachedIdentityValid(cached)).isTrue();
+            f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+            assertThat(provider.isCachedIdentityValid(cached)).isFalse();
+            f.jdbc.update("UPDATE sys_tenant SET status = 0, expire_time = ? WHERE id = ?",
+                    java.time.LocalDateTime.now().minusMinutes(1), tenantId);
+            assertThat(provider.isCachedIdentityValid(cached)).isFalse();
+            f.jdbc.update("UPDATE sys_tenant SET expire_time = ? WHERE id = ?",
+                    java.time.LocalDateTime.now().plusDays(1), tenantId);
+            assertThat(provider.isCachedIdentityValid(cached)).isTrue();
+            f.jdbc.update("UPDATE sys_tenant SET deleted = 1 WHERE id = ?", tenantId);
+            assertThat(provider.isCachedIdentityValid(cached)).isFalse();
+            cached.setTenantId(null);
+            assertThat(provider.isCachedIdentityValid(cached)).isFalse();
+            assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(0L);
+            assertThat(f.count("SELECT COUNT(*) FROM sys_user WHERE tenant_id = ?", tenantId)).isEqualTo(1);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
     void creationIsStableAcrossRetryRenameAndAnotherAdministrator(Database database) throws Exception {
         try (Fixture f = new Fixture(database, false)) {
             rootIdentity();
@@ -325,6 +356,7 @@ class TenantAdministrationDatabaseTest {
         final com.sw.ck.system.service.SysUserService users;
         final com.sw.ck.system.service.SysDeptService departments;
         final com.sw.ck.system.service.ManagementTenantContext management;
+        final com.sw.ck.system.service.TenantValidityService validity;
         final com.sw.ck.system.controller.UserController userController;
         final com.sw.ck.system.controller.DeptController deptController;
 
@@ -383,8 +415,8 @@ class TenantAdministrationDatabaseTest {
                 var deptProxy = new ProxyFactory(deptTarget);
                 deptProxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
                 departments = (com.sw.ck.system.service.SysDeptService) deptProxy.getProxy();
-                management = new com.sw.ck.system.service.ManagementTenantContext(template.getMapper(SysTenantMapper.class),
-                        new com.sw.ck.system.service.TenantValidityService(template.getMapper(SysTenantMapper.class)));
+                validity = new com.sw.ck.system.service.TenantValidityService(template.getMapper(SysTenantMapper.class));
+                management = new com.sw.ck.system.service.ManagementTenantContext(template.getMapper(SysTenantMapper.class), validity);
                 userController = new com.sw.ck.system.controller.UserController(users, null, management);
                 deptController = new com.sw.ck.system.controller.DeptController(departments, management);
             } catch (Exception failure) {

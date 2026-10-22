@@ -95,6 +95,16 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     }
 
     @Override
+    public boolean isCachedIdentityValid(LoginUser cached) {
+        if (tenantValidityService == null) {
+            // 兼容只提供用户服务的独立装配；完整生产装配始终注入权威租户校验。
+            return UserDetailsProvider.super.isCachedIdentityValid(cached);
+        }
+        return cached != null && cached.getUserId() != null
+                && tenantValidityService.isValid(cached.getTenantId());
+    }
+
+    @Override
     public LoginUser loadByUsername(String username) {
         // 登录前无租户上下文：身份装载必须跨租户全局进行（用户名全局唯一），租户隔离由
         // 装载完成的 LoginUser.tenantId 在后续业务请求中生效
