@@ -195,6 +195,10 @@ public class CommandDispatcher {
         }
         LoginUser loginUser;
         try {
+            if (userDetailsProvider != null && !ownsClaim(envelope)) {
+                log.info("命令租约已失效，跳过旧消费者: commandId={}", envelope.getCommandId());
+                return;
+            }
             loginUser = restoreCurrentIdentity(envelope);
         } catch (RuntimeException exception) {
             rejectBeforeHandle(envelope, "消费身份回查失败: " + exception.getMessage(), exception);
@@ -256,12 +260,23 @@ public class CommandDispatcher {
 
         // 先注入租户以便 UserDetailsProvider 的正式查询走同一租户边界。
         LoginUserHolder.set(fallback);
-        LoginUser current = userDetailsProvider.loadByUserId(envelope.getInitiatorId());
+        LoginUser current = userDetailsProvider.loadClaimedWorkIdentity(envelope.getInitiatorId(), envelope.getTenantId());
         if (current == null || !Objects.equals(current.getUserId(), envelope.getInitiatorId())
                 || !Objects.equals(current.getTenantId(), envelope.getTenantId())) {
             return null;
         }
         return current;
+    }
+
+    private boolean ownsClaim(CommandEnvelope envelope) {
+        if (envelope.getClaimToken() == null || envelope.getClaimToken().isBlank()) return false;
+        try (var ignored = com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            return commandQueue.findById(envelope.getCommandId()).filter(current ->
+                    "PROCESSING".equals(current.getStatus())
+                            && Objects.equals(current.getClaimToken(), envelope.getClaimToken())
+                            && Objects.equals(current.getTenantId(), envelope.getTenantId())
+                            && Objects.equals(current.getInitiatorId(), envelope.getInitiatorId())).isPresent();
+        }
     }
 
     private boolean hasP0Permission(LoginUser loginUser) {

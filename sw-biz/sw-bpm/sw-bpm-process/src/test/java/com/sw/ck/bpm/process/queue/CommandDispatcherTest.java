@@ -219,6 +219,25 @@ class CommandDispatcherTest {
     }
 
     @Test
+    void stalePersistentLeaseDoesNotRestoreIdentityOrRunFailureCompensation() throws Exception {
+        BpmCommandHandler handler = mock(BpmCommandHandler.class);
+        when(handler.types()).thenReturn(Set.of(CommandTypeEnum.TASK_APPROVE));
+        UserDetailsProvider provider = mock(UserDetailsProvider.class);
+        CommandDispatcher d = configure(new CommandDispatcher(commandQueue, List.of(handler), provider));
+        CommandEnvelope stale = envelope(CommandTypeEnum.TASK_APPROVE);
+        CommandEnvelope current = envelope(CommandTypeEnum.TASK_APPROVE);
+        current.setStatus("PROCESSING");
+        current.setClaimToken("new-owner-token");
+        when(commandQueue.findById(11L)).thenReturn(java.util.Optional.of(current));
+        when(commandQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 20)).thenReturn(List.of(stale));
+        d.pollNormal();
+        org.mockito.Mockito.verifyNoInteractions(provider);
+        verify(handler, never()).handle(any());
+        verify(handler, never()).onFinalFailure(any(), any());
+        verify(commandQueue, never()).reject(anyLong(), any(), any());
+    }
+
+    @Test
     @DisplayName("P0 消费前回查最新权限：撤权后拒绝且不进入 Handler")
     void p0ShouldRejectWhenPermissionRevokedAfterAccept() throws Exception {
         BpmCommandHandler handler = mock(BpmCommandHandler.class);
@@ -228,10 +247,12 @@ class CommandDispatcherTest {
         current.setUserId(2L);
         current.setTenantId(1L);
         current.setPermissions(List.of());
-        when(provider.loadByUserId(2L)).thenReturn(current);
+        when(provider.loadClaimedWorkIdentity(2L, 1L)).thenReturn(current);
         CommandDispatcher d = configure(new CommandDispatcher(commandQueue, List.of(handler), provider));
         CommandEnvelope env = envelope(CommandTypeEnum.TASK_APPROVE);
         env.setChannel(CommandChannelEnum.P0);
+        env.setStatus("PROCESSING");
+        when(commandQueue.findById(11L)).thenReturn(java.util.Optional.of(env));
         when(commandQueue.claimDue(List.of(CommandChannelEnum.P0), 5)).thenReturn(List.of(env));
 
         d.pollP0();

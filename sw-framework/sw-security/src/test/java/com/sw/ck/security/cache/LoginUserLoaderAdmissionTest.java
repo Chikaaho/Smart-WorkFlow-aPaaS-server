@@ -56,6 +56,17 @@ class LoginUserLoaderAdmissionTest {
     }
 
     @Test
+    void compatibilityClaimedIdentityRequiresMatchingUserAndTenant() {
+        UserDetailsProvider compatibility = mock(UserDetailsProvider.class, CALLS_REAL_METHODS);
+        when(compatibility.loadByUserId(8L)).thenReturn(identity(8L, 41L), identity(9L, 41L), identity(8L, 42L));
+        assertThat(compatibility.loadClaimedWorkIdentity(8L, 41L)).isNotNull();
+        assertThat(compatibility.loadClaimedWorkIdentity(8L, 41L)).isNull();
+        assertThat(compatibility.loadClaimedWorkIdentity(8L, 41L)).isNull();
+        assertThat(compatibility.loadClaimedWorkIdentity(8L, null)).isNull();
+        assertThat(compatibility.loadClaimedWorkIdentity(null, 41L)).isNull();
+    }
+
+    @Test
     void compatibilityProviderReloadMustMatchUserAndTenant() {
         UserDetailsProvider compatibility = mock(UserDetailsProvider.class, CALLS_REAL_METHODS);
         LoginUser cached = identity(8L, 41L);

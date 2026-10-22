@@ -51,6 +51,49 @@ class TenantAdministrationDatabaseTest {
 
     @ParameterizedTest
     @EnumSource(Database.class)
+    void claimedDispatcherFinishesAfterTenantDisableWithoutRestoringNewSession(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false)) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            Long adminId = f.service.detail(tenantId).adminUserId();
+            f.jdbc.update("INSERT INTO sw_bpm_command (id, tenant_id, command_key, command_type, channel, status, payload, retry_count, initiator_id, deleted, create_time) VALUES (882211, ?, 't020-claimed-dispatch', 'TASK_APPROVE', 'NORMAL', 'PENDING', '{}', 0, ?, 0, ?)",
+                    tenantId, adminId, java.time.LocalDateTime.now());
+            var queue = org.mockito.Mockito.spy(f.commandQueue);
+            org.mockito.Mockito.doAnswer(call -> {
+                Object claimed = call.callRealMethod();
+                f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+                return claimed;
+            }).when(queue).claimDue(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyInt());
+            var executions = new java.util.concurrent.atomic.AtomicInteger();
+            var handler = new com.sw.ck.bpm.process.queue.BpmCommandHandler() {
+                public java.util.Set<com.sw.ck.bpm.process.entity.CommandTypeEnum> types() {
+                    return java.util.Set.of(com.sw.ck.bpm.process.entity.CommandTypeEnum.TASK_APPROVE);
+                }
+                public String handle(com.sw.ck.bpm.process.queue.CommandEnvelope envelope) {
+                    assertThat(LoginUserHolder.get().getUserId()).isEqualTo(adminId);
+                    assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(tenantId);
+                    assertThat(LoginUserHolder.get().isSuperAdmin()).isFalse();
+                    executions.incrementAndGet();
+                    return "{\"controlled\":true}";
+                }
+            };
+            var dispatcher = new com.sw.ck.bpm.process.queue.CommandDispatcher(queue, java.util.List.of(handler), f.identities);
+            org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "batchSize", 1);
+            org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "staleSeconds", 60L);
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(dispatcher, "pollNormal");
+            assertThat(executions).hasValue(1);
+            assertThat(f.jdbc.queryForObject("SELECT status FROM sw_bpm_command WHERE id = 882211", String.class)).isEqualTo("COMPLETED");
+            assertThat(LoginUserHolder.get()).isNull();
+            assertThat(f.identities.loadByUserId(adminId)).isNull();
+            assertThat(f.identities.loadClaimedWorkIdentity(adminId, tenantId + 1)).isNull();
+            f.jdbc.update("UPDATE sys_user SET status = 1 WHERE id = ?", adminId);
+            assertThat(f.identities.loadClaimedWorkIdentity(adminId, tenantId)).isNull();
+            assertThat(f.identities.isCachedIdentityValid(null)).isFalse();
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
     void realBpmQueuePausesPendingTenantAndResumesOriginalCommand(Database database) throws Exception {
         try (Fixture f = new Fixture(database, false)) {
             rootIdentity();
@@ -449,6 +492,7 @@ class TenantAdministrationDatabaseTest {
         final com.sw.ck.system.service.TenantValidityService validity;
         final com.sw.ck.system.service.TenantWorkAdmissionService workAdmission;
         final com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue commandQueue;
+        final com.sw.ck.system.security.UserDetailsProviderImpl identities;
         final com.sw.ck.system.controller.UserController userController;
         final com.sw.ck.system.controller.DeptController deptController;
 
@@ -484,6 +528,7 @@ class TenantAdministrationDatabaseTest {
                 var sessions = factory.getObject();
                 for (Class<?> mapper : new Class<?>[]{SysTenantMapper.class, SysDeptMapper.class, SysUserMapper.class, SysRoleMapper.class, SysRoleMenuMapper.class, SysUserRoleMapper.class,
                         com.sw.ck.system.mapper.SysPostMapper.class, com.sw.ck.system.mapper.SysUserPostMapper.class,
+                        com.sw.ck.system.mapper.SysMenuMapper.class, com.sw.ck.system.mapper.SysRoleDeptMapper.class,
                         com.sw.ck.bpm.process.mapper.BpmCommandMapper.class}) {
                     sessions.getConfiguration().addMapper(mapper);
                 }
@@ -510,6 +555,11 @@ class TenantAdministrationDatabaseTest {
                 var userProxy = new ProxyFactory(userTarget);
                 userProxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
                 users = (com.sw.ck.system.service.SysUserService) userProxy.getProxy();
+                identities = new com.sw.ck.system.security.UserDetailsProviderImpl(users,
+                        template.getMapper(SysUserRoleMapper.class), template.getMapper(SysRoleMapper.class),
+                        template.getMapper(SysRoleMenuMapper.class), template.getMapper(com.sw.ck.system.mapper.SysMenuMapper.class),
+                        template.getMapper(com.sw.ck.system.mapper.SysRoleDeptMapper.class),
+                        new com.sw.ck.system.service.TenantValidityService(template.getMapper(SysTenantMapper.class)));
                 var deptTarget = new com.sw.ck.system.service.impl.SysDeptServiceImpl(users);
                 org.springframework.test.util.ReflectionTestUtils.setField(deptTarget, "baseMapper", template.getMapper(SysDeptMapper.class));
                 var deptProxy = new ProxyFactory(deptTarget);
