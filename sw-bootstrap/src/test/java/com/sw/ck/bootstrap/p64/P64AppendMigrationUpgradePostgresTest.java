@@ -88,7 +88,7 @@ class P64AppendMigrationUpgradePostgresTest {
         var baselineResult = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(baselineResult.success, "种子迁移应成功");
-        assertEquals("0.1.7", currentVersion(conn()), "基线终点应为最新迁移");
+        assertEquals("0.1.8", currentVersion(conn()), "基线终点应为最新迁移");
 
         // 2) 非空存量：旧流程定义 + 运行实例 + 任务级审批动作行（追加前真实业务行）
         String legacyGraphJson = "{\"processKey\":\"legacy_def_p64\",\"elements\":["

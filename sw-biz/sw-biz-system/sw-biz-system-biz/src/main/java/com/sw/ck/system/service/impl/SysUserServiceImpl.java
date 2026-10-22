@@ -82,7 +82,9 @@ public class SysUserServiceImpl
     public Long create(SysUser user, String plainPassword) {
         Objects.requireNonNull(plainPassword, "密码不能为空");
         // 用户名唯一性前置校验：唯一索引兜底会以 DuplicateKeyException 形式漏出为 500
-        if (user.getUsername() != null && getByUsername(user.getUsername()) != null) {
+        // 用户名按租户唯一（0.2.0）：查重在当前租户上下文内进行，跨租户同名由唯一索引放行。
+        if (user.getUsername() != null
+                && lambdaQuery().eq(SysUser::getUsername, user.getUsername()).count() > 0) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "用户名已存在");
         }
         user.setPassword(passwordEncoder.encode(plainPassword));
@@ -158,8 +160,14 @@ public class SysUserServiceImpl
 
     @Override
     public SysUser getByUsername(String username) {
-        // 登录前无租户上下文：用户名全局唯一（uk 不含 tenant_id），必须跨租户解析，否则非 0 租户账号无法认证
-        return baseMapper.selectGlobalByUsername(username);
+        // 用户名按租户唯一（0.2.0）：跨租户不唯一时 fail closed，重名账号须用租户编码定位
+        java.util.List<SysUser> rows = baseMapper.selectGlobalByUsernameAll(username);
+        return rows.size() == 1 ? rows.get(0) : null;
+    }
+
+    @Override
+    public SysUser findByTenantCodeAndUsername(String tenantCode, String username) {
+        return baseMapper.selectByTenantCodeAndUsername(tenantCode.trim(), username);
     }
 
     @Override

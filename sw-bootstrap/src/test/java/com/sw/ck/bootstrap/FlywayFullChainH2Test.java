@@ -81,18 +81,18 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(15, result.migrationsExecuted,
-                "全新库应执行 15 条（V0.1.7 基线 + 14 个 R__ 可重复对账），实际: "
+        assertEquals(16, result.migrationsExecuted,
+                "全新库应执行 16 条（V0.1.7 基线 + V0.1.8 租户用户名索引 + 14 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
-        assertEquals("0.1.7", flyway.info().current().getVersion().getVersion(),
-                "终点当前版本应为最后一个 versioned 迁移（0.1.7）");
+        assertEquals("0.1.8", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移（0.1.8）");
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 15 条（V0.1.7 基线 + 13 个可重复对账）")
+    @DisplayName("种子迁移后：info().applied() 共 16 条（V0.1.7 基线 + V0.1.8 + 14 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(15, applied.length, "已应用迁移数应为 14（V0.1.7 基线 + 14 个 R__）");
+        assertEquals(16, applied.length, "已应用迁移数应为 16（V0.1.7 基线 + V0.1.8 + 14 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -117,8 +117,8 @@ class FlywayFullChainH2Test {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway.migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.1.7", flyway.info().current().getVersion().getVersion(),
-                "版本应保持最后一个 versioned 迁移（0.1.7）");
+        assertEquals("0.1.8", flyway.info().current().getVersion().getVersion(),
+                "版本应保持最后一个 versioned 迁移（0.1.8）");
     }
 
     @Test

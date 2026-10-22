@@ -116,7 +116,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接并升级后终点应为 0.1.7").isEqualTo("0.1.7");
+        assertThat(currentVersion(db)).as("衔接并升级后终点应为 0.1.8").isEqualTo("0.1.8");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
@@ -160,7 +160,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "升级后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("升级后终点应为 0.1.7").isEqualTo("0.1.7");
+        assertThat(currentVersion(db)).as("升级后终点应为 0.1.8").isEqualTo("0.1.8");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("升级后行数不减").isEqualTo(preCount);
@@ -202,7 +202,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接后终点应为 0.1.7").isEqualTo("0.1.7");
+        assertThat(currentVersion(db)).as("衔接后终点应为 0.1.8").isEqualTo("0.1.8");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);

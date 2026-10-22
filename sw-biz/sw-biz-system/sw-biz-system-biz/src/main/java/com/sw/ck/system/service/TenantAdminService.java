@@ -124,14 +124,6 @@ public class TenantAdminService {
         if (password == null || password.length() < 6 || password.length() > 64) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "初始密码长度需为 6-64 个字符");
         }
-        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
-            Long existing = userMapper.selectCount(Wrappers.<SysUser>lambdaQuery()
-                    .eq(SysUser::getUsername, username));
-            if (existing != null && existing > 0) {
-                throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员账号已存在");
-            }
-        }
-
         SysTenant tenant = new SysTenant();
         tenant.setName(name);
         tenant.setCode("t" + UUID.randomUUID().toString().replace("-", "").substring(0, 10));

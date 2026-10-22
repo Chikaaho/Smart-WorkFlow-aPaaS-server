@@ -42,9 +42,9 @@ class I6G7UpgradeDrillH2Test {
                 .load();
         var result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(15, result.migrationsExecuted,
-                "全新库应执行 15 条（V0.1.7 种子 + 14 个 R__）");
-        assertEquals("0.1.7", flyway.info().current().getVersion().getVersion(),
+        assertEquals(16, result.migrationsExecuted,
+                "全新库应执行 16 条（V0.1.7 种子 + V0.1.8 租户用户名索引 + 14 个 R__）");
+        assertEquals("0.1.8", flyway.info().current().getVersion().getVersion(),
                 "终点当前版本应为最后一个 versioned 迁移");
 
         // ---------- 2. 写入代表性数据（真实 INSERT，非 schema 构造） ----------

@@ -136,17 +136,6 @@ class TenantAdminServiceTest {
     }
 
     @Test
-    void duplicateAdminUsernameIsRejectedBeforeAnyInsert() {
-        when(userMapper.selectCount(any())).thenReturn(1L);
-
-        assertThatThrownBy(() -> service.create(
-                new TenantAdminService.CreateTenantCommand("深圳中心", "admin", "secret123")))
-                .isInstanceOf(BaseException.class)
-                .hasMessageContaining("账号已存在");
-        verify(tenantMapper, never()).insert(any(SysTenant.class));
-    }
-
-    @Test
     void rootTenantCannotBeRenamedOrDisabled() {
         SysTenant root = new SysTenant();
         root.setId(0L);
