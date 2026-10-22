@@ -97,4 +97,16 @@ class WorkerLaunchPlanTest {
         assertThat(WorkerLaunchPlan.containsEntry(empty, WorkerLaunchPlan.PROPERTIES_LAUNCHER_ENTRY))
                 .isFalse();
     }
+
+    @Test
+    @DisplayName("文件 URI 保留加号与 Unicode，非法转义返回不可解析")
+    void nestedFileUriPreservesPathCharacters() throws Exception {
+        Path jar = Files.createFile(tempDir.resolve("判断 + worker.jar"));
+        String uri = jar.toUri().toASCIIString();
+        assertThat(WorkerLaunchPlan.nestedJarPathOf("jar:" + uri + "!/BOOT-INF/classes"))
+                .isEqualTo(jar.toString());
+        assertThat(WorkerLaunchPlan.nestedJarPathOf("jar:nested:" + uri.substring("file:".length()) + "/!BOOT-INF/classes"))
+                .isEqualTo(jar.toString());
+        assertThat(WorkerLaunchPlan.nestedJarPathOf("nested:/invalid%ZZ/app.jar!/BOOT-INF/classes")).isNull();
+    }
 }
