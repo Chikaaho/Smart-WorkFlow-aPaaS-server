@@ -14,6 +14,7 @@ import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
@@ -29,6 +30,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 人工节点办理时限调度（I3 §4.8）。
@@ -52,6 +54,7 @@ public class TaskDeadlineScheduler {
     private final org.springframework.beans.factory.ObjectProvider<UserQueryFacade> userQueryFacade;
     private final DomainEventPublisher domainEventPublisher;
     private final ObjectMapper objectMapper;
+    private final TenantWorkAdmission tenantWorkAdmission;
 
     @Autowired
     private org.springframework.transaction.PlatformTransactionManager transactionManager;
@@ -72,7 +75,8 @@ public class TaskDeadlineScheduler {
                                  org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.TaskActionService> taskActionService,
                                  org.springframework.beans.factory.ObjectProvider<UserQueryFacade> userQueryFacade,
                                  DomainEventPublisher domainEventPublisher,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 TenantWorkAdmission tenantWorkAdmission) {
         this.deadlineMapper = deadlineMapper;
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
@@ -80,6 +84,7 @@ public class TaskDeadlineScheduler {
         this.userQueryFacade = userQueryFacade;
         this.domainEventPublisher = domainEventPublisher;
         this.objectMapper = objectMapper;
+        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
     }
 
     /** 每 60 秒扫描一批到期时限；单批次量受控，错峰触发。 */
@@ -114,7 +119,7 @@ public class TaskDeadlineScheduler {
             // empty = 该任务不存在（原 null 返回路径）：与“任务已消失”同判
             java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(record.getTaskId());
             if (taskLookup.isEmpty()) {
-                markDoneWithResult(record.getId(), "TASK_GONE");
+                markDoneWithResult(record, "TASK_GONE");
                 return;
             }
             BpmTaskDTO task = taskLookup.get();
@@ -129,7 +134,7 @@ public class TaskDeadlineScheduler {
             boolean escalated = record.getEscalationFired() != null
                     && record.getEscalationFired() == 1;
             if (!escalated) {
-                if (markClaimed(record.getId()) <= 0) {
+                if (markClaimed(record) <= 0) {
                     log.info("时限已被其他实例认领，本实例跳过: deadlineId={}, taskId={}",
                             record.getId(), record.getTaskId());
                     return;
@@ -157,7 +162,7 @@ public class TaskDeadlineScheduler {
             return;
         }
         // 认领：原子 UPDATE 型推进（PENDING → DONE 一次性占位）
-        int claimed = markClaimed(record.getId());
+        int claimed = markClaimed(record);
         if (claimed <= 0) {
             // 认领竞争：另一实例/重复调度已抢先推进——留证同一 deadline 的双实例扫描事实
             log.info("时限已被其他实例认领，本实例跳过: deadlineId={}, taskId={}",
@@ -233,26 +238,34 @@ public class TaskDeadlineScheduler {
     }
 
     /** 原子认领：仅 PENDING 行推进为 DONE；0 行=已处理。 */
-    private int markClaimed(Long id) {
+    private int markClaimed(BpmTaskDeadline record) {
+        return tenantWorkAdmission.claim(record.getTenantId(), () -> markClaimedPersisted(record));
+    }
+
+    private int markClaimedPersisted(BpmTaskDeadline record) {
         BpmTaskDeadline patch = new BpmTaskDeadline();
         patch.setRunState("DONE");
         patch.setHandledAt(LocalDateTime.now());
         return deadlineMapper.update(patch,
                 Wrappers.<BpmTaskDeadline>lambdaUpdate()
-                        .eq(BpmTaskDeadline::getId, id)
+                        .eq(BpmTaskDeadline::getId, record.getId())
+                        .eq(BpmTaskDeadline::getTenantId, record.getTenantId())
                         .eq(BpmTaskDeadline::getRunState, "PENDING"));
     }
 
     /** 任务已消失分支的原子推进：仅 PENDING 行写 DONE/TASK_GONE，不覆盖胜者结果。 */
-    private void markDoneWithResult(Long id, String result) {
-        BpmTaskDeadline patch = new BpmTaskDeadline();
-        patch.setRunState("DONE");
-        patch.setHandledAt(LocalDateTime.now());
-        patch.setResultStatus(result);
-        deadlineMapper.update(patch,
-                Wrappers.<BpmTaskDeadline>lambdaUpdate()
-                        .eq(BpmTaskDeadline::getId, id)
-                        .eq(BpmTaskDeadline::getRunState, "PENDING"));
+    private void markDoneWithResult(BpmTaskDeadline record, String result) {
+        tenantWorkAdmission.claim(record.getTenantId(), () -> {
+            BpmTaskDeadline patch = new BpmTaskDeadline();
+            patch.setRunState("DONE");
+            patch.setHandledAt(LocalDateTime.now());
+            patch.setResultStatus(result);
+            return deadlineMapper.update(patch,
+                    Wrappers.<BpmTaskDeadline>lambdaUpdate()
+                            .eq(BpmTaskDeadline::getId, record.getId())
+                            .eq(BpmTaskDeadline::getTenantId, record.getTenantId())
+                            .eq(BpmTaskDeadline::getRunState, "PENDING"));
+        });
     }
 
     /** 认领后补充结果标注（仅写 result_status，不改 run_state）。 */

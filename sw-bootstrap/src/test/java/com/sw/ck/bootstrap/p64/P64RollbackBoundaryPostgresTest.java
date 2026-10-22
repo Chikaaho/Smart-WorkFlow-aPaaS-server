@@ -65,7 +65,7 @@ class P64RollbackBoundaryPostgresTest {
                 .locations(P64AppendMigrationUpgradePostgresTest.appLocations()).load().migrate();
         assertTrue(result.success, "种子链迁移应成功");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
-            assertEquals("0.1.9", currentVersion(conn), "在役基线应为最新迁移");
+            assertEquals("0.1.10", currentVersion(conn), "在役基线应为最新迁移");
         }
 
         // 2) 旧代码等价迁移集：从 classpath 真实复制 0.1.5 期版本化迁移（V0.1.5 种子 + 应用中心增量）

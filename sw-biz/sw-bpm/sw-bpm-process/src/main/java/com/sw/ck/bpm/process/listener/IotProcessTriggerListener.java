@@ -8,6 +8,7 @@ import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.ProcessThemeService;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
@@ -48,6 +49,7 @@ public class IotProcessTriggerListener {
     private final ObjectProvider<BpmInstanceService> instanceServiceProvider;
     private final ObjectProvider<ProcessThemeService> themeServiceProvider;
     private final ObjectProvider<BpmTaskFacade> taskFacadeProvider;
+    private final TenantWorkAdmission tenantWorkAdmission;
     /** G3b：流程发起与业务实例记录必须落在同一提交边界（引擎命令按 REQUIRED 加入本事务）。 */
     private final ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactionManagerProvider;
 
@@ -60,7 +62,8 @@ public class IotProcessTriggerListener {
                                      ObjectProvider<com.sw.ck.iot.api.IotDeviceFacade> deviceFacadeProvider,
                                      ObjectProvider<com.sw.ck.iot.api.IotDeviceQueryFacade> deviceQueryFacadeProvider,
                                      ObjectProvider<org.springframework.transaction.PlatformTransactionManager>
-                                             transactionManagerProvider) {
+                                             transactionManagerProvider,
+                                     TenantWorkAdmission tenantWorkAdmission) {
         this.runtimeFacadeProvider = runtimeFacadeProvider;
         this.processDefServiceProvider = processDefServiceProvider;
         this.triggerFacadeProvider = triggerFacadeProvider;
@@ -70,11 +73,19 @@ public class IotProcessTriggerListener {
         this.deviceFacadeProvider = deviceFacadeProvider;
         this.deviceQueryFacadeProvider = deviceQueryFacadeProvider;
         this.transactionManagerProvider = transactionManagerProvider;
+        this.tenantWorkAdmission = tenantWorkAdmission;
     }
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onIotTrigger(IotProcessTriggerEvent event) {
+        if (event == null || event.getTenantId() == null
+                || tenantWorkAdmission.claim(event.getTenantId(), () -> 1) == 0) {
+            log.info("IoT 触发暂停：租户未启用、已过期或缺失: tenantId={}, idempotentKey={}",
+                    event == null ? null : event.getTenantId(),
+                    event == null ? null : event.getIdempotentKey());
+            return;
+        }
         // Phase 4：异步线程无登录态，显式从事件还原租户上下文，否则租户过滤查询/回写全部 fail-closed
         com.sw.ck.security.holder.LoginUser loginUser = new com.sw.ck.security.holder.LoginUser();
         loginUser.setTenantId(event.getTenantId());

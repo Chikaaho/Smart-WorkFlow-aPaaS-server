@@ -2,6 +2,7 @@ package com.sw.ck.openapi.biz.job;
 
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.entity.OpenApiCallbackTask;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 出站回调恢复调度（Phase 4 可靠业务事件 —— OpenAPI 回调 MUST_DELIVER）。
@@ -44,13 +46,16 @@ public class OpenApiCallbackRecoveryJob {
     private final OpenApiCallbackTaskMapper taskMapper;
     private final OpenApiAppMapper appMapper;
     private final OpenApiCallbackDeliveryService deliveryService;
+    private final TenantWorkAdmission tenantWorkAdmission;
 
     public OpenApiCallbackRecoveryJob(OpenApiCallbackTaskMapper taskMapper,
                                       OpenApiAppMapper appMapper,
-                                      OpenApiCallbackDeliveryService deliveryService) {
+                                      OpenApiCallbackDeliveryService deliveryService,
+                                      TenantWorkAdmission tenantWorkAdmission) {
         this.taskMapper = taskMapper;
         this.appMapper = appMapper;
         this.deliveryService = deliveryService;
+        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Scheduled(fixedDelayString = "${sw.openapi.callback.recovery.fixed-delay-ms:60000}")
@@ -80,28 +85,41 @@ public class OpenApiCallbackRecoveryJob {
      * 预算已耗尽转可审计终态，否则退回可重试失败并由同一轮扫描接管。
      */
     private void reclaimStaleLeases() {
+        List<OpenApiCallbackTask> stale;
         try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
                      com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
             LocalDateTime staleBefore = LocalDateTime.now().minusMinutes(STALE_LEASE_MINUTES);
-            int exhausted = taskMapper.update(null,
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
-                            .set(OpenApiCallbackTask::getStatus, "RETRY_EXHAUSTED")
-                            .set(OpenApiCallbackTask::getLastError, "投递租约过期且重试预算耗尽，可由手工重发入口重投")
-                            .set(OpenApiCallbackTask::getNextRetryTime, null)
+            stale = taskMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaQuery()
                             .eq(OpenApiCallbackTask::getStatus, "SENDING")
-                            .ge(OpenApiCallbackTask::getAttempts, MAX_ATTEMPTS)
-                            .le(OpenApiCallbackTask::getUpdateTime, staleBefore));
-            int reclaimed = taskMapper.update(null,
+                            .le(OpenApiCallbackTask::getUpdateTime, staleBefore)
+                            .last("LIMIT " + MAX_BATCH));
+        }
+        int reclaimed = 0;
+        int exhausted = 0;
+        for (OpenApiCallbackTask task : stale) {
+            int attempts = task.getAttempts() == null ? 0 : task.getAttempts();
+            boolean budgetExhausted = attempts >= MAX_ATTEMPTS;
+            int changed = tenantWorkAdmission.claim(task.getTenantId(), () -> taskMapper.update(null,
                     com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
-                            .set(OpenApiCallbackTask::getStatus, "FAILED")
-                            .set(OpenApiCallbackTask::getLastError, "投递租约过期（投递者可能已崩溃）")
-                            .set(OpenApiCallbackTask::getNextRetryTime, LocalDateTime.now())
-                            .eq(OpenApiCallbackTask::getStatus, "SENDING")
-                            .lt(OpenApiCallbackTask::getAttempts, MAX_ATTEMPTS)
-                            .le(OpenApiCallbackTask::getUpdateTime, staleBefore));
-            if (reclaimed > 0 || exhausted > 0) {
-                log.warn("回收滞留回调投递租约: reclaimed={}, exhausted={}", reclaimed, exhausted);
+                            .set(OpenApiCallbackTask::getStatus,
+                                    budgetExhausted ? "RETRY_EXHAUSTED" : "FAILED")
+                            .set(OpenApiCallbackTask::getLastError, budgetExhausted
+                                    ? "投递租约过期且重试预算耗尽，可由手工重发入口重投"
+                                    : "投递租约过期（投递者可能已崩溃）")
+                            .set(OpenApiCallbackTask::getNextRetryTime,
+                                    budgetExhausted ? null : LocalDateTime.now())
+                            .eq(OpenApiCallbackTask::getId, task.getId())
+                            .eq(OpenApiCallbackTask::getTenantId, task.getTenantId())
+                            .eq(OpenApiCallbackTask::getStatus, "SENDING")));
+            if (budgetExhausted) {
+                exhausted += changed;
+            } else {
+                reclaimed += changed;
             }
+        }
+        if (reclaimed > 0 || exhausted > 0) {
+            log.warn("回收滞留回调投递租约: reclaimed={}, exhausted={}", reclaimed, exhausted);
         }
     }
 
@@ -161,14 +179,15 @@ public class OpenApiCallbackRecoveryJob {
      * （与 {@link #findDue()} 同口径），否则认领恒失败、恢复链整体失效。
      */
     private boolean claim(OpenApiCallbackTask task) {
-        int affected = taskMapper.update(null,
+        int affected = tenantWorkAdmission.claim(task.getTenantId(), () -> taskMapper.update(null,
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
                         .set(OpenApiCallbackTask::getStatus, "SENDING")
                         .set(OpenApiCallbackTask::getAttempts,
                                 (task.getAttempts() == null ? 0 : task.getAttempts()) + 1)
                         .set(OpenApiCallbackTask::getUpdateTime, LocalDateTime.now())
                         .eq(OpenApiCallbackTask::getId, task.getId())
-                        .in(OpenApiCallbackTask::getStatus, "PENDING", "FAILED"));
+                        .eq(OpenApiCallbackTask::getTenantId, task.getTenantId())
+                        .in(OpenApiCallbackTask::getStatus, "PENDING", "FAILED")));
         return affected == 1;
     }
 

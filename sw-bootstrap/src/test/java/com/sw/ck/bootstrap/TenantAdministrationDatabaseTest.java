@@ -51,6 +51,34 @@ class TenantAdministrationDatabaseTest {
 
     @ParameterizedTest
     @EnumSource(Database.class)
+    void tenantStatusChangeWritesActorReasonAndEffectiveAdmissionResult(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false)) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            f.service.updateStatus(tenantId, 1, "季度暂停");
+
+            assertThat(f.jdbc.queryForObject(
+                    "SELECT action FROM sys_tenant_status_audit WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
+                    String.class, tenantId)).isEqualTo("DISABLE");
+            assertThat(f.jdbc.queryForObject(
+                    "SELECT reason FROM sys_tenant_status_audit WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
+                    String.class, tenantId)).isEqualTo("季度暂停");
+            assertThat(f.jdbc.queryForObject(
+                    "SELECT operator_id FROM sys_tenant_status_audit WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
+                    Long.class, tenantId)).isEqualTo(1L);
+            assertThat(f.workAdmission.claim(tenantId, () -> 1)).isZero();
+
+            rootIdentity();
+            f.service.updateStatus(tenantId, 0, "季度恢复");
+            assertThat(f.jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sys_tenant_status_audit WHERE tenant_id = ?", Long.class, tenantId))
+                    .isEqualTo(2L);
+            assertThat(f.workAdmission.claim(tenantId, () -> 1)).isEqualTo(1);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
     void notificationPausePreservesIntentAndResumesOneHttpDelivery(Database database) throws Exception {
         try (Fixture f = new Fixture(database, false); var peer = new ControlledNotificationPeer()) {
             rootIdentity();
@@ -662,6 +690,7 @@ class TenantAdministrationDatabaseTest {
                 for (Class<?> mapper : new Class<?>[]{SysTenantMapper.class, SysDeptMapper.class, SysUserMapper.class, SysRoleMapper.class, SysRoleMenuMapper.class, SysUserRoleMapper.class,
                         com.sw.ck.system.mapper.SysPostMapper.class, com.sw.ck.system.mapper.SysUserPostMapper.class,
                         com.sw.ck.system.mapper.SysMenuMapper.class, com.sw.ck.system.mapper.SysRoleDeptMapper.class,
+                        com.sw.ck.system.mapper.SysTenantStatusAuditMapper.class,
                         com.sw.ck.notify.mapper.NotifyMessageMapper.class, com.sw.ck.notify.mapper.NotifySendAttemptMapper.class,
                         com.sw.ck.bpm.process.mapper.BpmCommandMapper.class}) {
                     sessions.getConfiguration().addMapper(mapper);
@@ -681,7 +710,8 @@ class TenantAdministrationDatabaseTest {
                         org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.ResourceReleaseService.class), resourceAdmission, workAdmission);
                 var target = new TenantAdminService(template.getMapper(SysTenantMapper.class), template.getMapper(SysDeptMapper.class),
                         template.getMapper(SysUserMapper.class), template.getMapper(SysRoleMapper.class), template.getMapper(SysRoleMenuMapper.class),
-                        template.getMapper(SysUserRoleMapper.class), encoder, transactions);
+                        template.getMapper(SysUserRoleMapper.class),
+                        template.getMapper(com.sw.ck.system.mapper.SysTenantStatusAuditMapper.class), encoder, transactions);
                 var proxy = new ProxyFactory(target);
                 proxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
                 service = (TenantAdminService) proxy.getProxy();

@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 租户管理控制器（T020）。
  * <p>
@@ -60,6 +62,8 @@ public class TenantController {
     public static class TenantStatusRequest {
         @NotNull(message = "租户状态不能为空")
         private Integer status;
+        @NotBlank(message = "变更原因不能为空")
+        private String reason;
     }
 
     @Data
@@ -109,8 +113,14 @@ public class TenantController {
     @PutMapping("/{id}/status")
     @PreAuthorize("@ss.hasPermi('system:tenant:list')")
     public R<Void> updateStatus(@PathVariable Long id, @Valid @RequestBody TenantStatusRequest request) {
-        tenantAdminService.updateStatus(id, request.getStatus());
+        tenantAdminService.updateStatus(id, request.getStatus(), request.getReason());
         return R.ok();
+    }
+
+    @GetMapping("/{id}/status-audits")
+    @PreAuthorize("@ss.hasPermi('system:tenant:list')")
+    public R<List<TenantAdminService.StatusAuditView>> statusAudits(@PathVariable Long id) {
+        return R.ok(tenantAdminService.statusAudits(id));
     }
 
     @GetMapping("/{id}/administrators")

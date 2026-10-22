@@ -92,16 +92,26 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
      * 超过租约时长即回收为可重试失败，由同一轮的到期扫描接管。
      */
     private void reclaimStaleLeases() {
+        List<NotifyMessage> stale;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
-            int reclaimed = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
-                    .set(NotifyMessage::getDeliveryStatus, "FAILED")
-                    .set(NotifyMessage::getFailureClass, "RETRYABLE")
-                    .set(NotifyMessage::getNextRetryTime, LocalDateTime.now())
+            stale = messageMapper.selectList(Wrappers.<NotifyMessage>lambdaQuery()
                     .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
-                    .le(NotifyMessage::getUpdateTime, LocalDateTime.now().minusMinutes(STALE_LEASE_MINUTES)));
-            if (reclaimed > 0) {
-                log.warn("回收滞留投递租约（投递者可能已崩溃）: count={}", reclaimed);
-            }
+                    .le(NotifyMessage::getUpdateTime, LocalDateTime.now().minusMinutes(STALE_LEASE_MINUTES))
+                    .last("LIMIT " + MAX_BATCH));
+        }
+        int reclaimed = 0;
+        for (NotifyMessage message : stale) {
+            reclaimed += tenantWorkAdmission.claim(message.getTenantId(), () -> messageMapper.update(null,
+                    Wrappers.<NotifyMessage>lambdaUpdate()
+                            .set(NotifyMessage::getDeliveryStatus, "FAILED")
+                            .set(NotifyMessage::getFailureClass, "RETRYABLE")
+                            .set(NotifyMessage::getNextRetryTime, LocalDateTime.now())
+                            .eq(NotifyMessage::getId, message.getId())
+                            .eq(NotifyMessage::getTenantId, message.getTenantId())
+                            .eq(NotifyMessage::getDeliveryStatus, "RESENDING")));
+        }
+        if (reclaimed > 0) {
+            log.warn("回收滞留投递租约（投递者可能已崩溃）: count={}", reclaimed);
         }
     }
 
@@ -110,16 +120,26 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
      * 涨到上限的行会永远停留在 RETRYABLE 且不可见。此处把这类行改判为可审计终态。
      */
     private void exhaustRetryBudget() {
+        List<NotifyMessage> exhaustedRows;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
-            int exhausted = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
-                    .set(NotifyMessage::getFailureClass, "RETRY_EXHAUSTED")
-                    .set(NotifyMessage::getNextRetryTime, null)
+            exhaustedRows = messageMapper.selectList(Wrappers.<NotifyMessage>lambdaQuery()
                     .eq(NotifyMessage::getFailureClass, "RETRYABLE")
                     .in(NotifyMessage::getDeliveryStatus, "FAILED", "TIMEOUT", "PENDING")
-                    .ge(NotifyMessage::getRetryCount, MAX_RETRY_COUNT));
-            if (exhausted > 0) {
-                log.warn("投递重试预算耗尽，转可审计终态: count={}", exhausted);
-            }
+                    .ge(NotifyMessage::getRetryCount, MAX_RETRY_COUNT)
+                    .last("LIMIT " + MAX_BATCH));
+        }
+        int exhausted = 0;
+        for (NotifyMessage message : exhaustedRows) {
+            exhausted += tenantWorkAdmission.claim(message.getTenantId(), () -> messageMapper.update(null,
+                    Wrappers.<NotifyMessage>lambdaUpdate()
+                            .set(NotifyMessage::getFailureClass, "RETRY_EXHAUSTED")
+                            .set(NotifyMessage::getNextRetryTime, null)
+                            .eq(NotifyMessage::getId, message.getId())
+                            .eq(NotifyMessage::getTenantId, message.getTenantId())
+                            .eq(NotifyMessage::getFailureClass, "RETRYABLE")));
+        }
+        if (exhausted > 0) {
+            log.warn("投递重试预算耗尽，转可审计终态: count={}", exhausted);
         }
     }
 

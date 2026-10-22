@@ -116,7 +116,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接并升级后终点应为 0.1.9").isEqualTo("0.1.9");
+        assertThat(currentVersion(db)).as("衔接并升级后终点应为 0.1.10").isEqualTo("0.1.10");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
@@ -160,7 +160,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "升级后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("升级后终点应为 0.1.9").isEqualTo("0.1.9");
+        assertThat(currentVersion(db)).as("升级后终点应为 0.1.10").isEqualTo("0.1.10");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("升级后行数不减").isEqualTo(preCount);
@@ -202,7 +202,7 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接后终点应为 0.1.9").isEqualTo("0.1.9");
+        assertThat(currentVersion(db)).as("衔接后终点应为 0.1.10").isEqualTo("0.1.10");
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
@@ -329,8 +329,8 @@ class P62NonEmptyUpgradePgTest {
     private static void assertHistorySeedAndTenantMigrations(String db) throws Exception {
         int versioned = Integer.parseInt(queryString(db,
                 "SELECT count(*)::text FROM \"flyway_schema_history\" WHERE \"version\" IS NOT NULL"));
-        assertEquals(3, versioned, "versioned 历史应为 0.1.7 种子及 0.1.8/0.1.9 增量");
-        assertEquals("0.1.7,0.1.8,0.1.9", queryString(db,
+        assertEquals(4, versioned, "versioned 历史应为 0.1.7 种子及 0.1.8/0.1.9/0.1.10 增量");
+        assertEquals("0.1.7,0.1.8,0.1.9,0.1.10", queryString(db,
                 "SELECT string_agg(version, ',' ORDER BY installed_rank) FROM flyway_schema_history"
                         + " WHERE version IS NOT NULL AND success = true"));
         String seed = queryString(db, "SELECT \"version\" || '|' || \"success\"::text || '|' || \"checksum\""

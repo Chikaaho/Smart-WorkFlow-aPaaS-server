@@ -13,12 +13,14 @@ import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysRole;
 import com.sw.ck.system.entity.SysRoleMenu;
 import com.sw.ck.system.entity.SysTenant;
+import com.sw.ck.system.entity.SysTenantStatusAudit;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.entity.SysUserRole;
 import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.mapper.SysRoleMapper;
 import com.sw.ck.system.mapper.SysRoleMenuMapper;
 import com.sw.ck.system.mapper.SysTenantMapper;
+import com.sw.ck.system.mapper.SysTenantStatusAuditMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -30,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 /**
  * 租户管理服务（T020 / DR02）。
@@ -53,6 +56,7 @@ public class TenantAdminService {
     private final SysRoleMapper roleMapper;
     private final SysRoleMenuMapper roleMenuMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final SysTenantStatusAuditMapper statusAuditMapper;
     private final PasswordEncoder passwordEncoder;
     private final PlatformTransactionManager transactionManager;
 
@@ -62,6 +66,7 @@ public class TenantAdminService {
                               SysRoleMapper roleMapper,
                               SysRoleMenuMapper roleMenuMapper,
                               SysUserRoleMapper userRoleMapper,
+                              SysTenantStatusAuditMapper statusAuditMapper,
                               PasswordEncoder passwordEncoder,
                               PlatformTransactionManager transactionManager) {
         this.tenantMapper = tenantMapper;
@@ -70,6 +75,7 @@ public class TenantAdminService {
         this.roleMapper = roleMapper;
         this.roleMenuMapper = roleMenuMapper;
         this.userRoleMapper = userRoleMapper;
+        this.statusAuditMapper = statusAuditMapper;
         this.passwordEncoder = passwordEncoder;
         this.transactionManager = transactionManager;
     }
@@ -82,6 +88,11 @@ public class TenantAdminService {
                              Integer status, java.time.LocalDateTime createTime) {}
 
     public record AdminCandidate(Long id, String username, String realName) {}
+
+    /** 租户启停与过期记录。 */
+    public record StatusAuditView(Long id, String action, Integer oldStatus, Integer newStatus,
+                                  LocalDateTime expireTime, String reason, Long operatorId,
+                                  LocalDateTime occurredAt, String result) {}
 
     /** 分页查询（按名称模糊、状态精确）。 */
     public PageResult<TenantView> page(long pageNum, long pageSize, String name, Integer status) {
@@ -179,7 +190,7 @@ public class TenantAdminService {
 
     /** 启用/停用（0=启用 1=停用；租户 0 只读）。 */
     @Transactional(rollbackFor = Exception.class)
-    public void updateStatus(Long id, Integer status) {
+    public void updateStatus(Long id, Integer status, String reason) {
         assertSuperAdmin();
         if (status == null || (status != 0 && status != 1)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户状态只能为启用或停用");
@@ -188,8 +199,34 @@ public class TenantAdminService {
         if (ROOT_TENANT_ID == tenant.getId()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "超管租户为保留对象，不能停用");
         }
+        String normalizedReason = trim(reason);
+        if (normalizedReason.isEmpty() || normalizedReason.length() > 500) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "请填写变更原因，且不超过 500 个字符");
+        }
+        Integer previousStatus = tenant.getStatus();
         tenant.setStatus(status);
-        tenantMapper.updateById(tenant);
+        if (tenantMapper.updateById(tenant) != 1) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户状态更新失败，请重试");
+        }
+        recordStatusAudit(id, status == 1 ? "DISABLE" : "ENABLE", previousStatus, status,
+                tenant.getExpireTime(), normalizedReason, status == 1 ? "已停用" : "已启用");
+    }
+
+    /** 查询租户最近的状态变更；包含手工启停与系统过期识别。 */
+    public List<StatusAuditView> statusAudits(Long id) {
+        assertSuperAdmin();
+        requireTenant(id);
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            return statusAuditMapper.selectList(Wrappers.<SysTenantStatusAudit>lambdaQuery()
+                            .eq(SysTenantStatusAudit::getTenantId, id)
+                            .orderByDesc(SysTenantStatusAudit::getOccurredAt)
+                            .last("LIMIT 50"))
+                    .stream()
+                    .map(row -> new StatusAuditView(row.getId(), row.getAction(), row.getOldStatus(),
+                            row.getNewStatus(), row.getExpireTime(), row.getReason(), row.getOperatorId(),
+                            row.getOccurredAt(), row.getResult()))
+                    .toList();
+        }
     }
 
     /** 只列出目标租户内仍有效且拥有租户管理员角色的用户。 */
@@ -385,6 +422,32 @@ public class TenantAdminService {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "管理员角色模板已停用，无法初始化租户");
             }
             return role;
+        }
+    }
+
+    private void recordStatusAudit(Long tenantId, String action, Integer oldStatus, Integer newStatus,
+                                   LocalDateTime expireTime, String reason, String result) {
+        LoginUser login = LoginUserHolder.get();
+        Long operatorId = login == null || login.getUserId() == null ? 0L : login.getUserId();
+        LocalDateTime now = LocalDateTime.now();
+        SysTenantStatusAudit audit = new SysTenantStatusAudit();
+        audit.setTenantId(tenantId);
+        audit.setAction(action);
+        audit.setOldStatus(oldStatus);
+        audit.setNewStatus(newStatus);
+        audit.setExpireTime(expireTime);
+        audit.setReason(reason);
+        audit.setOperatorId(operatorId);
+        audit.setOccurredAt(now);
+        audit.setResult(result);
+        audit.setCreateTime(now);
+        audit.setCreateBy(operatorId);
+        audit.setUpdateTime(now);
+        audit.setUpdateBy(operatorId);
+        audit.setDeleted(0);
+        audit.setVersion(0L);
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            statusAuditMapper.insert(audit);
         }
     }
 

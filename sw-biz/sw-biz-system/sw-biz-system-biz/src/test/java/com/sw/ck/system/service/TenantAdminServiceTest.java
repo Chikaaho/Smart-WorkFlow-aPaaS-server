@@ -13,6 +13,7 @@ import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.mapper.SysRoleMapper;
 import com.sw.ck.system.mapper.SysRoleMenuMapper;
 import com.sw.ck.system.mapper.SysTenantMapper;
+import com.sw.ck.system.mapper.SysTenantStatusAuditMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -49,9 +50,10 @@ class TenantAdminServiceTest {
     private final SysRoleMapper roleMapper = mock(SysRoleMapper.class);
     private final SysRoleMenuMapper roleMenuMapper = mock(SysRoleMenuMapper.class);
     private final SysUserRoleMapper userRoleMapper = mock(SysUserRoleMapper.class);
+    private final SysTenantStatusAuditMapper statusAuditMapper = mock(SysTenantStatusAuditMapper.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final TenantAdminService service = new TenantAdminService(
-            tenantMapper, deptMapper, userMapper, roleMapper, roleMenuMapper, userRoleMapper, passwordEncoder,
+            tenantMapper, deptMapper, userMapper, roleMapper, roleMenuMapper, userRoleMapper, statusAuditMapper, passwordEncoder,
             mock(PlatformTransactionManager.class));
 
     @BeforeEach
@@ -204,7 +206,7 @@ class TenantAdminServiceTest {
         assertThatThrownBy(() -> service.rename(0L, "新名字"))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("保留对象");
-        assertThatThrownBy(() -> service.updateStatus(0L, 1))
+        assertThatThrownBy(() -> service.updateStatus(0L, 1, "保留对象验证"))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("保留对象");
         verify(tenantMapper, never()).updateById(any(SysTenant.class));
@@ -212,9 +214,34 @@ class TenantAdminServiceTest {
 
     @Test
     void statusMustBeEnableOrDisable() {
-        assertThatThrownBy(() -> service.updateStatus(1L, 2))
+        assertThatThrownBy(() -> service.updateStatus(1L, 2, "非法状态验证"))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("启用或停用");
+    }
+
+    @Test
+    void statusChangeRequiresReasonAndWritesAuditableResult() {
+        SysTenant tenant = new SysTenant();
+        tenant.setId(93L);
+        tenant.setStatus(0);
+        when(tenantMapper.selectGlobalById(93L)).thenReturn(tenant);
+        when(tenantMapper.updateById(tenant)).thenReturn(1);
+
+        assertThatThrownBy(() -> service.updateStatus(93L, 1, "  "))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("变更原因");
+        service.updateStatus(93L, 1, "季度暂停");
+
+        ArgumentCaptor<com.sw.ck.system.entity.SysTenantStatusAudit> audit =
+                ArgumentCaptor.forClass(com.sw.ck.system.entity.SysTenantStatusAudit.class);
+        verify(statusAuditMapper).insert(audit.capture());
+        assertThat(audit.getValue().getTenantId()).isEqualTo(93L);
+        assertThat(audit.getValue().getAction()).isEqualTo("DISABLE");
+        assertThat(audit.getValue().getOldStatus()).isEqualTo(0);
+        assertThat(audit.getValue().getNewStatus()).isEqualTo(1);
+        assertThat(audit.getValue().getReason()).isEqualTo("季度暂停");
+        assertThat(audit.getValue().getOperatorId()).isEqualTo(1L);
+        assertThat(audit.getValue().getResult()).isEqualTo("已停用");
     }
 }
 
