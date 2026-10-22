@@ -35,7 +35,18 @@ class NotifyFacadeAdapterIdempotencyTest {
                 .thenReturn(null)
                 .thenReturn(existing);
 
-        NotifyFacadeImpl facade = new NotifyFacadeImpl(messageService, java.util.List.of(adapter));
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+                NotifyMessage.class);
+        var mapper = mock(com.sw.ck.notify.mapper.NotifyMessageMapper.class);
+        when(messageService.getBaseMapper()).thenReturn(mapper);
+        when(mapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        when(messageService.save(any(NotifyMessage.class))).thenAnswer(call -> {
+            call.getArgument(0, NotifyMessage.class).setId(901L);
+            return true;
+        });
+        NotifyFacadeImpl facade = new NotifyFacadeImpl(messageService, java.util.List.of(adapter), null,
+                (tenantId, claim) -> claim.getAsInt());
         NotifySendRequest request = NotifySendRequest.builder()
                 .recipientId(2095490569284018177L)
                 .title("P58 Z7 replay")

@@ -809,7 +809,7 @@ class I6NotifyClosureIntegrationTest {
 
         @Bean
         public NotifyFacade notifyFacade(NotifyMessageService svc) {
-            return new com.sw.ck.notify.impl.NotifyFacadeImpl(svc);
+            return new com.sw.ck.notify.impl.NotifyFacadeImpl(svc, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
 
         @Bean
@@ -834,7 +834,8 @@ class I6NotifyClosureIntegrationTest {
                 com.sw.ck.notify.mapper.NotifyMessageMapper mm,
                 com.sw.ck.notify.mapper.NotifySendAttemptMapper am,
                 com.sw.ck.notify.api.NotifyFacade facade) {
-            return new com.sw.ck.notify.service.impl.NotifyRecordServiceImpl(mm, am, facade);
+            return new com.sw.ck.notify.service.impl.NotifyRecordServiceImpl(mm, am, facade,
+                    (tenantId, claim) -> claim.getAsInt());
         }
 
         @Bean

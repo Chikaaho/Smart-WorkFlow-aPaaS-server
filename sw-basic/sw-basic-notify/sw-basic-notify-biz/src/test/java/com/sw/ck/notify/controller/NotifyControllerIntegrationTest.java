@@ -726,7 +726,7 @@ class NotifyControllerIntegrationTest {
 
         @Bean
         public NotifyFacade notifyFacade(NotifyMessageService notifyMessageService) {
-            return new NotifyFacadeImpl(notifyMessageService);
+            return new NotifyFacadeImpl(notifyMessageService, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
 
         @Bean

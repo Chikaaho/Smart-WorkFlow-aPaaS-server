@@ -2,6 +2,7 @@ package com.sw.ck.notify.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.notify.api.NotifyBizType;
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 投递恢复与重试实现（I6）。
@@ -44,13 +46,16 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
     private final NotifyMessageMapper messageMapper;
     private final NotifySendAttemptMapper attemptMapper;
     private final NotifyFacade notifyFacade;
+    private final TenantWorkAdmission tenantWorkAdmission;
 
     public NotifyDeliveryRecoveryServiceImpl(NotifyMessageMapper messageMapper,
                                              NotifySendAttemptMapper attemptMapper,
-                                             NotifyFacade notifyFacade) {
+                                             NotifyFacade notifyFacade,
+                                             TenantWorkAdmission tenantWorkAdmission) {
         this.messageMapper = messageMapper;
         this.attemptMapper = attemptMapper;
         this.notifyFacade = notifyFacade;
+        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Override
@@ -125,14 +130,15 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         // 恢复轮运行在无登录身份的调度线程：跨租户扫描与写回均显式挂起租户过滤，
         // 每次写回都携带行自身的权威 tenant_id，业务列不受切换影响。
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
-            int claim = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
+            int claim = tenantWorkAdmission.claim(msg.getTenantId(), () -> messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
                     .set(NotifyMessage::getDeliveryStatus, "RESENDING")
                     .setSql("retry_count = retry_count + 1")
                     // 领取即刷新租约时间：崩溃后 stale 回收据此判定（wrapper 更新不会自动填充）
                     .set(NotifyMessage::getUpdateTime, LocalDateTime.now())
                     .eq(NotifyMessage::getId, msg.getId())
+                    .eq(NotifyMessage::getTenantId, msg.getTenantId())
                     .eq(NotifyMessage::getDeliveryStatus, msg.getDeliveryStatus())
-                    .eq(NotifyMessage::getRetryCount, priorRetry));
+                    .eq(NotifyMessage::getRetryCount, priorRetry)));
             if (claim == 0) {
                 return false;
             }
@@ -199,6 +205,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
                 .set(NotifyMessage::getFailureClass, failureClass)
                 .set(NotifyMessage::getNextRetryTime, done ? null : nextBackoff(claimedRetry))
                 .eq(NotifyMessage::getId, msg.getId())
+                .eq(NotifyMessage::getTenantId, msg.getTenantId())
                 .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
                 .eq(NotifyMessage::getRetryCount, claimedRetry));
         if (updated == 0) {

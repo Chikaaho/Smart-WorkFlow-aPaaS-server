@@ -51,6 +51,136 @@ class TenantAdministrationDatabaseTest {
 
     @ParameterizedTest
     @EnumSource(Database.class)
+    void notificationPausePreservesIntentAndResumesOneHttpDelivery(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false); var peer = new ControlledNotificationPeer()) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            Long adminId = f.service.detail(tenantId).adminUserId();
+            LoginUser actor = new LoginUser(); actor.setUserId(adminId); actor.setTenantId(tenantId); LoginUserHolder.set(actor);
+            var facade = f.notifications(peer.adapter());
+            var recovery = new com.sw.ck.notify.service.impl.NotifyDeliveryRecoveryServiceImpl(f.notificationMapper, f.notificationAttempts, facade, f.workAdmission);
+            var request = notificationRequest(tenantId, adminId, "paused-notification");
+            assertThat(facade.recordIntent(request).orElseThrow().getStatus()).isEqualTo("PENDING");
+            Long id = f.jdbc.queryForObject("SELECT id FROM sw_notify_message WHERE tenant_id = ? AND idempotency_key = ?", Long.class, tenantId, request.getIdempotencyKey());
+            f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+            assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("PENDING");
+            assertThat(recovery.recoverDue()).isZero();
+            assertThat(peer.requests).hasValue(0);
+            assertThat(f.jdbc.queryForObject("SELECT retry_count FROM sw_notify_message WHERE id = ?", Integer.class, id)).isZero();
+            assertThat(f.jdbc.queryForObject("SELECT delivery_status FROM sw_notify_message WHERE id = ?", String.class, id)).isEqualTo("PENDING");
+            f.jdbc.update("UPDATE sys_tenant SET status = 0 WHERE id = ?", tenantId);
+            assertThat(recovery.recoverDue()).isEqualTo(1);
+            LoginUserHolder.set(actor);
+            assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("SUCCESS");
+            assertThat(recovery.recoverDue()).isZero();
+            assertThat(peer.requests).hasValue(1);
+            assertThat(f.count("SELECT COUNT(*) FROM sw_notify_message WHERE tenant_id = ? AND idempotency_key = ?", tenantId, request.getIdempotencyKey())).isEqualTo(1);
+            assertThat(f.count("SELECT COUNT(*) FROM sw_notify_send_attempt WHERE message_id = ?", id)).isEqualTo(1);
+            assertThat(f.jdbc.queryForObject("SELECT delivery_status FROM sw_notify_message WHERE id = ?", String.class, id)).isEqualTo("SUCCESS");
+            System.out.println("[T020-" + database + "] paused notification=" + id + " resumed same intent, HTTP=1, attempts=1");
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
+    void externalNotificationInsideBusinessTransactionWaitsForCommit(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false); var peer = new ControlledNotificationPeer()) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            Long adminId = f.service.detail(tenantId).adminUserId();
+            LoginUser actor = new LoginUser(); actor.setUserId(adminId); actor.setTenantId(tenantId); LoginUserHolder.set(actor);
+            var facade = f.notifications(peer.adapter());
+            var request = notificationRequest(tenantId, adminId, "transactional-notification");
+            var tx = new org.springframework.transaction.support.TransactionTemplate(new DataSourceTransactionManager(f.dataSource));
+            tx.executeWithoutResult(status -> {
+                assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("PENDING");
+                assertThat(peer.requests).hasValue(0);
+                status.setRollbackOnly();
+            });
+            assertThat(f.count("SELECT COUNT(*) FROM sw_notify_message WHERE tenant_id = ? AND idempotency_key = ?", tenantId, request.getIdempotencyKey())).isZero();
+            assertThat(peer.requests).hasValue(0);
+            tx.executeWithoutResult(status -> assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("PENDING"));
+            assertThat(peer.requests).hasValue(0);
+            var recovery = new com.sw.ck.notify.service.impl.NotifyDeliveryRecoveryServiceImpl(f.notificationMapper, f.notificationAttempts, facade, f.workAdmission);
+            assertThat(recovery.recoverDue()).isEqualTo(1);
+            assertThat(peer.requests).hasValue(1);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
+    void claimedNotificationRecordsRealResultAfterDisableDuringHttp(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false); var peer = new ControlledNotificationPeer()) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            Long adminId = f.service.detail(tenantId).adminUserId();
+            LoginUser actor = new LoginUser(); actor.setUserId(adminId); actor.setTenantId(tenantId); LoginUserHolder.set(actor);
+            var facade = f.notifications(peer.adapter());
+            var request = notificationRequest(tenantId, adminId, "inflight-notification");
+            facade.recordIntent(request);
+            peer.onSend = () -> {
+                assertThat(f.jdbc.queryForObject("SELECT delivery_status FROM sw_notify_message WHERE tenant_id = ? AND idempotency_key = ?", String.class, tenantId, request.getIdempotencyKey())).isEqualTo("RESENDING");
+                f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+            };
+            assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("SUCCESS");
+            assertThat(peer.requests).hasValue(1);
+            assertThat(f.jdbc.queryForObject("SELECT status FROM sys_tenant WHERE id = ?", Integer.class, tenantId)).isEqualTo(1);
+            assertThat(f.jdbc.queryForObject("SELECT delivery_status FROM sw_notify_message WHERE tenant_id = ? AND idempotency_key = ?", String.class, tenantId, request.getIdempotencyKey())).isEqualTo("SUCCESS");
+            assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("SUCCESS");
+            assertThat(peer.requests).hasValue(1);
+        }
+    }
+
+    private static com.sw.ck.notify.api.NotifySendRequest notificationRequest(Long tenantId, Long recipient, String key) {
+        return com.sw.ck.notify.api.NotifySendRequest.builder().tenantId(tenantId).recipientId(recipient)
+                .channel(com.sw.ck.notify.api.NotifyChannel.SMS).title("T020 controlled notification").content("fixture")
+                .bizType(com.sw.ck.notify.api.NotifyBizType.SYSTEM).bizId(key).eventType("T020").idempotencyKey(key).build();
+    }
+
+    private static final class ControlledNotificationPeer implements AutoCloseable {
+        final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
+        final com.sun.net.httpserver.HttpServer server;
+        final java.util.concurrent.ExecutorService executor = Executors.newSingleThreadExecutor();
+        final java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build();
+        volatile Runnable onSend = () -> {};
+
+        ControlledNotificationPeer() throws Exception {
+            server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            server.setExecutor(executor);
+            server.createContext("/delivery", exchange -> {
+                requests.incrementAndGet();
+                int status = 200;
+                try { onSend.run(); } catch (Throwable failed) { status = 500; }
+                exchange.sendResponseHeaders(status, -1); exchange.close();
+            });
+            server.start();
+        }
+
+        com.sw.ck.notify.api.NotifyChannelAdapter adapter() {
+            return new com.sw.ck.notify.api.NotifyChannelAdapter() {
+                public java.util.Optional<com.sw.ck.notify.api.NotifyChannel> channel() {
+                    return java.util.Optional.of(com.sw.ck.notify.api.NotifyChannel.SMS);
+                }
+                public java.util.Optional<com.sw.ck.notify.api.NotifySendResult> send(com.sw.ck.notify.api.NotifySendRequest request) {
+                    try {
+                        var response = client.send(java.net.http.HttpRequest.newBuilder(
+                                java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/delivery"))
+                                .timeout(java.time.Duration.ofSeconds(3)).POST(java.net.http.HttpRequest.BodyPublishers.noBody()).build(),
+                                java.net.http.HttpResponse.BodyHandlers.discarding());
+                        return java.util.Optional.of(com.sw.ck.notify.api.NotifySendResult.builder()
+                                .channel(com.sw.ck.notify.api.NotifyChannel.SMS).status(response.statusCode() == 200 ? "SUCCESS" : "FAILED").build());
+                    } catch (Exception failed) { throw new IllegalStateException(failed); }
+                }
+            };
+        }
+
+        public void close() throws Exception {
+            server.stop(0); client.close(); executor.shutdownNow(); executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
     void claimedDispatcherFinishesAfterTenantDisableWithoutRestoringNewSession(Database database) throws Exception {
         try (Fixture f = new Fixture(database, false)) {
             rootIdentity();
@@ -493,6 +623,9 @@ class TenantAdministrationDatabaseTest {
         final com.sw.ck.system.service.TenantWorkAdmissionService workAdmission;
         final com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue commandQueue;
         final com.sw.ck.system.security.UserDetailsProviderImpl identities;
+        final com.sw.ck.notify.mapper.NotifyMessageMapper notificationMapper;
+        final com.sw.ck.notify.mapper.NotifySendAttemptMapper notificationAttempts;
+        final com.sw.ck.notify.service.impl.NotifyMessageServiceImpl notificationMessages;
         final com.sw.ck.system.controller.UserController userController;
         final com.sw.ck.system.controller.DeptController deptController;
 
@@ -529,12 +662,17 @@ class TenantAdministrationDatabaseTest {
                 for (Class<?> mapper : new Class<?>[]{SysTenantMapper.class, SysDeptMapper.class, SysUserMapper.class, SysRoleMapper.class, SysRoleMenuMapper.class, SysUserRoleMapper.class,
                         com.sw.ck.system.mapper.SysPostMapper.class, com.sw.ck.system.mapper.SysUserPostMapper.class,
                         com.sw.ck.system.mapper.SysMenuMapper.class, com.sw.ck.system.mapper.SysRoleDeptMapper.class,
+                        com.sw.ck.notify.mapper.NotifyMessageMapper.class, com.sw.ck.notify.mapper.NotifySendAttemptMapper.class,
                         com.sw.ck.bpm.process.mapper.BpmCommandMapper.class}) {
                     sessions.getConfiguration().addMapper(mapper);
                 }
                 var template = new SqlSessionTemplate(sessions);
                 var transactions = new DataSourceTransactionManager(dataSource);
                 workAdmission = new com.sw.ck.system.service.TenantWorkAdmissionService(template.getMapper(SysTenantMapper.class), transactions);
+                notificationMapper = template.getMapper(com.sw.ck.notify.mapper.NotifyMessageMapper.class);
+                notificationAttempts = template.getMapper(com.sw.ck.notify.mapper.NotifySendAttemptMapper.class);
+                notificationMessages = new com.sw.ck.notify.service.impl.NotifyMessageServiceImpl(null, null, context, null);
+                org.springframework.test.util.ReflectionTestUtils.setField(notificationMessages, "baseMapper", notificationMapper);
                 var commandService = new com.sw.ck.bpm.process.service.impl.BpmCommandServiceImpl();
                 org.springframework.test.util.ReflectionTestUtils.setField(commandService, "baseMapper",
                         template.getMapper(com.sw.ck.bpm.process.mapper.BpmCommandMapper.class));
@@ -583,6 +721,9 @@ class TenantAdministrationDatabaseTest {
         }
 
         long count(String sql, Object... args) { return jdbc.queryForObject(sql, Long.class, args); }
+        com.sw.ck.notify.impl.NotifyFacadeImpl notifications(com.sw.ck.notify.api.NotifyChannelAdapter adapter) {
+            return new com.sw.ck.notify.impl.NotifyFacadeImpl(notificationMessages, java.util.List.of(adapter), notificationAttempts, workAdmission);
+        }
         public void close() throws Exception { if (postgres != null) postgres.close(); }
     }
 }
