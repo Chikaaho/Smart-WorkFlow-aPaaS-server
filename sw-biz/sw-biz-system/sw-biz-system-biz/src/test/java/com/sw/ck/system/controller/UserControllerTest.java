@@ -30,7 +30,18 @@ class UserControllerTest {
     private final SysUserService sysUserService = mock(SysUserService.class);
     private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
             mock(com.sw.ck.system.api.user.UserQueryFacade.class);
-    private final UserController controller = new UserController(sysUserService, userQueryFacade);
+    private final com.sw.ck.system.service.ManagementTenantContext tenantContext =
+            mock(com.sw.ck.system.service.ManagementTenantContext.class);
+    private final UserController controller = new UserController(sysUserService, userQueryFacade, tenantContext);
+
+    @org.junit.jupiter.api.BeforeEach
+    void defaultOwnedObject() {
+        when(tenantContext.readTarget(nullable(Long.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        com.sw.ck.system.entity.SysUser owner = new com.sw.ck.system.entity.SysUser();
+        owner.setId(1L);
+        owner.setTenantId(1L);
+        when(sysUserService.getById(1L)).thenReturn(owner);
+    }
 
     // ==================== GET /options — 选择器候选（V012-BUG-019） ====================
 

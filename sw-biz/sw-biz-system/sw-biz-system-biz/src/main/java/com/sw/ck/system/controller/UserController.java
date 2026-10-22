@@ -28,10 +28,13 @@ public class UserController {
 
     private final SysUserService sysUserService;
     private final UserQueryFacade userQueryFacade;
+    private final com.sw.ck.system.service.ManagementTenantContext tenantContext;
 
-    public UserController(SysUserService sysUserService, UserQueryFacade userQueryFacade) {
+    public UserController(SysUserService sysUserService, UserQueryFacade userQueryFacade,
+                          com.sw.ck.system.service.ManagementTenantContext tenantContext) {
         this.sysUserService = sysUserService;
         this.userQueryFacade = userQueryFacade;
+        this.tenantContext = tenantContext;
     }
 
     /**
@@ -51,6 +54,7 @@ public class UserController {
     @Data
     public static class UserFormRequest {
         private Long id;
+        private Long tenantId;
         @NotBlank(message = "用户名不能为空")
         private String username;
         private String realName;
@@ -86,7 +90,14 @@ public class UserController {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(query == null ? sysUserService.page(pageParam) : sysUserService.page(pageParam, query));
+        Long tenantId = tenantContext.readTarget(query == null ? null : query.getTenantId());
+        if (tenantId != null) {
+            if (query == null) query = new UserPageQuery();
+            query.setTenantId(tenantId);
+        }
+        PageResult<SysUser> result = query == null ? sysUserService.page(pageParam) : sysUserService.page(pageParam, query);
+        tenantContext.decorateUsers(result.getRecords());
+        return R.ok(result);
     }
 
     /**
@@ -95,7 +106,9 @@ public class UserController {
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:user:list')")
     public R<SysUser> get(@PathVariable Long id) {
-        return R.ok(sysUserService.getById(id));
+        SysUser user = sysUserService.getById(id);
+        if (user != null) tenantContext.decorateUsers(List.of(user));
+        return R.ok(user);
     }
 
     /**
@@ -106,6 +119,7 @@ public class UserController {
     @Transactional(rollbackFor = Exception.class)
     public R<Long> create(@Valid @RequestBody UserFormRequest req) {
         SysUser user = toEntity(req);
+        user.setTenantId(tenantContext.createTarget(req.getTenantId()));
         Long id = sysUserService.createWithAssociations(user, req.getPlainPassword(), req.getRoleIds(), toPostAssociations(req.getPosts()));
         return R.ok(id);
     }
@@ -117,7 +131,9 @@ public class UserController {
     @PreAuthorize("@ss.hasPermi('system:user:update')")
     @Transactional(rollbackFor = Exception.class)
     public R<Void> update(@Valid @RequestBody UserFormRequest req) {
+        SysUser owner = requireManagementUser(req.getId());
         SysUser user = toEntity(req);
+        user.setTenantId(tenantContext.updateTarget(req.getTenantId(), owner.getTenantId()));
         sysUserService.updateWithAssociations(user, req.getPlainPassword(), req.getRoleIds(), toPostAssociations(req.getPosts()));
         return R.ok();
     }
@@ -128,6 +144,7 @@ public class UserController {
     @DeleteMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:user:delete')")
     public R<Void> delete(@PathVariable Long id) {
+        tenantContext.updateTarget(null, requireManagementUser(id).getTenantId());
         sysUserService.delete(id);
         return R.ok();
     }
@@ -141,6 +158,7 @@ public class UserController {
     @PutMapping("/{id}/roles")
     @PreAuthorize("@ss.hasPermi('system:user:update')")
     public R<Void> updateRoles(@PathVariable Long id, @RequestBody List<Long> roleIds) {
+        tenantContext.updateTarget(null, requireManagementUser(id).getTenantId());
         sysUserService.updateRoleIds(id, roleIds);
         return R.ok();
     }
@@ -156,6 +174,7 @@ public class UserController {
     @PutMapping("/{id}/posts")
     @PreAuthorize("@ss.hasPermi('system:user:update')")
     public R<Void> updatePosts(@PathVariable Long id, @RequestBody List<PostAssignment> posts) {
+        tenantContext.updateTarget(null, requireManagementUser(id).getTenantId());
         sysUserService.updatePosts(id, toPostAssociations(posts)); return R.ok();
     }
 
@@ -163,6 +182,7 @@ public class UserController {
     private SysUser toEntity(UserFormRequest req) {
         SysUser user = new SysUser();
         user.setId(req.getId());
+        user.setTenantId(req.getTenantId());
         user.setUsername(req.getUsername());
         user.setRealName(req.getRealName());
         user.setEmail(req.getEmail());
@@ -171,6 +191,13 @@ public class UserController {
         user.setStatus(req.getStatus());
         user.setDeptId(req.getDeptId());
         user.setRoleIds(req.getRoleIds());
+        return user;
+    }
+
+    private SysUser requireManagementUser(Long id) {
+        SysUser user = sysUserService.getById(id);
+        if (user == null) throw new com.sw.ck.common.exception.BaseException(
+                com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "用户不存在或无权访问");
         return user;
     }
 

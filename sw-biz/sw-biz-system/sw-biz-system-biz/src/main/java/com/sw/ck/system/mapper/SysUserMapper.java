@@ -145,6 +145,7 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
     @DataScope(deptAlias = "u", userAlias = "u")
     @Select({"<script>",
             "SELECT DISTINCT u.* FROM sys_user u WHERE u.deleted = 0 ",
+            "<if test='q != null and q.tenantId != null'> AND u.tenant_id = #{q.tenantId} </if>",
             "<if test='q != null and q.keyword != null and q.keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{q.keyword}, '%') OR u.real_name LIKE CONCAT('%', #{q.keyword}, '%')) </if>",
             "<if test='q != null and q.status != null'> AND u.status = #{q.status} </if>",
             "<if test='q != null and q.deptId != null'> AND (u.dept_id = #{q.deptId} OR u.dept_id IN (WITH RECURSIVE children(id) AS (SELECT id FROM sys_dept WHERE id = #{q.deptId} AND deleted = 0 UNION ALL SELECT d.id FROM sys_dept d JOIN children c ON d.parent_id = c.id WHERE d.deleted = 0) SELECT id FROM children)) </if>",

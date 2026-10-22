@@ -7,4 +7,5 @@ public class UserPageQuery {
     private Long deptId;
     private Long postId;
     private Long roleId;
+    private Long tenantId;
 }

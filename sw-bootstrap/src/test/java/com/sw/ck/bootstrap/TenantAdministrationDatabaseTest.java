@@ -184,6 +184,123 @@ class TenantAdministrationDatabaseTest {
         LoginUserHolder.set(login);
     }
 
+    @ParameterizedTest
+    @EnumSource(Database.class)
+    void managementSeparatesActorAndTargetAndRejectsForeignAssociations(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false)) {
+            rootIdentity();
+            assertThat(f.users.getById(1L).isProtectedAccount()).isTrue();
+            var reserved = managementUser(0L, null, "reserved_edit"); reserved.setId(1L);
+            assertThatThrownBy(() -> f.userController.update(reserved)).isInstanceOf(BaseException.class);
+            assertThatThrownBy(() -> f.userController.delete(1L)).isInstanceOf(BaseException.class);
+            assertThatThrownBy(() -> f.users.updateRoleIds(1L, java.util.List.of())).isInstanceOf(BaseException.class);
+            assertThat(f.jdbc.queryForObject("SELECT username FROM sys_user WHERE id = 1", String.class)).isEqualTo("admin");
+            Long first = f.service.create(command());
+            Long second = f.service.create(command());
+            Long firstRoot = f.jdbc.queryForObject("SELECT id FROM sys_dept WHERE tenant_id = ?", Long.class, first);
+            Long secondRoot = f.jdbc.queryForObject("SELECT id FROM sys_dept WHERE tenant_id = ?", Long.class, second);
+            Long firstRole = f.jdbc.queryForObject("SELECT id FROM sys_role WHERE tenant_id = ?", Long.class, first);
+            Long secondRole = f.jdbc.queryForObject("SELECT id FROM sys_role WHERE tenant_id = ?", Long.class, second);
+            f.jdbc.update("INSERT INTO sys_post (id, tenant_id, code, name, status) VALUES (99101, ?, 'target_post', '本租户岗位', 1)", first);
+            f.jdbc.update("INSERT INTO sys_post (id, tenant_id, code, name, status) VALUES (99102, ?, 'target_post', '另一租户岗位', 1)", second);
+
+            var department = new com.sw.ck.system.entity.SysDept();
+            department.setTenantId(first); department.setParentId(firstRoot);
+            department.setName("目标部门"); department.setCode("target_dept");
+            Long departmentId = f.deptController.create(department).getData();
+            assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_dept WHERE id = ?", Long.class, departmentId)).isEqualTo(first);
+            assertThat(f.jdbc.queryForObject("SELECT create_by FROM sys_dept WHERE id = ?", Long.class, departmentId)).isEqualTo(1L);
+            assertThat(LoginUserHolder.get().getTenantId()).isZero();
+
+            var request = managementUser(first, departmentId, "shared_username");
+            request.setRoleIds(java.util.List.of(firstRole));
+            request.setPosts(java.util.List.of(new com.sw.ck.system.controller.UserController.PostAssignment(99101L, departmentId)));
+            Long userId = f.userController.create(request).getData();
+            assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user WHERE id = ?", Long.class, userId)).isEqualTo(first);
+            assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user_role WHERE user_id = ? AND deleted = 0", Long.class, userId)).isEqualTo(first);
+            assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user_post WHERE user_id = ? AND deleted = 0", Long.class, userId)).isEqualTo(first);
+            f.users.updateRoleIds(userId, java.util.List.of());
+            f.users.updateRoleIds(userId, java.util.List.of(firstRole));
+            f.users.updateRoleIds(userId, java.util.List.of(firstRole));
+            assertThat(f.count("SELECT COUNT(*) FROM sys_user_role WHERE user_id = ? AND tenant_id = ? AND deleted = 0", userId, first)).isEqualTo(1);
+            f.userController.create(managementUser(second, secondRoot, "shared_username"));
+            assertThat(f.count("SELECT COUNT(*) FROM sys_user WHERE username = 'shared_username' AND deleted = 0")).isEqualTo(2);
+
+            var missing = managementUser(null, null, "missing_target");
+            assertThatThrownBy(() -> f.userController.create(missing)).isInstanceOf(BaseException.class);
+            assertThat(f.count("SELECT COUNT(*) FROM sys_user WHERE username = 'missing_target'")).isZero();
+            var foreignDept = managementUser(first, secondRoot, "foreign_department");
+            assertThatThrownBy(() -> f.userController.create(foreignDept)).isInstanceOf(BaseException.class);
+            var foreignRole = managementUser(first, departmentId, "foreign_role");
+            foreignRole.setRoleIds(java.util.List.of(secondRole));
+            assertThatThrownBy(() -> f.userController.create(foreignRole)).isInstanceOf(IllegalArgumentException.class);
+            var foreignPost = managementUser(first, departmentId, "foreign_post");
+            foreignPost.setPosts(java.util.List.of(new com.sw.ck.system.controller.UserController.PostAssignment(99102L, departmentId)));
+            assertThatThrownBy(() -> f.userController.create(foreignPost)).isInstanceOf(IllegalArgumentException.class);
+            assertThat(f.count("SELECT COUNT(*) FROM sys_user WHERE username IN ('foreign_department','foreign_role','foreign_post')")).isZero();
+            request.setId(userId); request.setTenantId(second);
+            assertThatThrownBy(() -> f.userController.update(request)).isInstanceOf(BaseException.class);
+            assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user WHERE id = ?", Long.class, userId)).isEqualTo(first);
+            var badParent = new com.sw.ck.system.entity.SysDept();
+            badParent.setTenantId(first); badParent.setParentId(secondRoot); badParent.setName("跨租户部门"); badParent.setCode("foreign_parent");
+            assertThatThrownBy(() -> f.deptController.create(badParent)).isInstanceOf(BaseException.class);
+            var badLeader = new com.sw.ck.system.entity.SysDept();
+            badLeader.setTenantId(first); badLeader.setParentId(firstRoot); badLeader.setName("错误负责人"); badLeader.setCode("foreign_leader");
+            badLeader.setLeaderId(f.service.detail(second).adminUserId());
+            assertThatThrownBy(() -> f.deptController.create(badLeader)).isInstanceOf(BaseException.class);
+            department.setTenantId(second);
+            assertThatThrownBy(() -> f.deptController.update(department)).isInstanceOf(BaseException.class);
+            assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_dept WHERE id = ?", Long.class, departmentId)).isEqualTo(first);
+
+            var query = new com.sw.ck.system.service.UserPageQuery(); query.setTenantId(first);
+            var page = f.userController.page(1, 200, query).getData();
+            assertThat(page.getRecords()).allMatch(row -> first.equals(row.getTenantId()));
+            assertThat(page.getRecords()).allMatch(row -> row.getTenantName() != null);
+            assertThat(f.deptController.tree(null, null, first).getData()).allMatch(row -> first.equals(row.getTenantId()));
+            assertThat(LoginUserHolder.get().getTenantId()).isZero();
+
+            LoginUser actor = new LoginUser(); actor.setTenantId(first); actor.setUserId(userId); LoginUserHolder.set(actor);
+            Long ordinaryId = f.userController.create(managementUser(null, departmentId, "ordinary_own")).getData();
+            assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user WHERE id = ?", Long.class, ordinaryId)).isEqualTo(first);
+            assertThatThrownBy(() -> f.userController.create(managementUser(second, secondRoot, "ordinary_foreign"))).isInstanceOf(BaseException.class);
+            assertThatThrownBy(() -> f.deptController.tree(null, null, second)).isInstanceOf(BaseException.class);
+            query.setTenantId(second);
+            assertThatThrownBy(() -> f.userController.page(1, 200, query)).isInstanceOf(BaseException.class);
+            assertThatThrownBy(() -> f.management.options(null, false)).isInstanceOf(BaseException.class);
+            assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(first);
+            System.out.println("[T020-" + database + "] management actor unchanged, explicit target, same-tenant associations, rollback and ordinary isolation");
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
+    void managementCreationOptionsExcludeDisabledExpiredAndMissingTargets(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false)) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+            assertThat(f.management.options(null, true)).noneMatch(row -> row.id().equals(tenantId));
+            assertThat(f.management.options(null, false)).anyMatch(row -> row.id().equals(tenantId) && !row.writable());
+            assertThatThrownBy(() -> f.management.createTarget(tenantId)).isInstanceOf(BaseException.class);
+            f.jdbc.update("UPDATE sys_tenant SET status = 0, expire_time = ? WHERE id = ?", java.time.LocalDateTime.now().minusSeconds(5), tenantId);
+            assertThat(f.management.options(null, true)).noneMatch(row -> row.id().equals(tenantId));
+            assertThatThrownBy(() -> f.management.createTarget(tenantId)).isInstanceOf(BaseException.class);
+            assertThatThrownBy(() -> f.management.createTarget(999999L)).isInstanceOf(BaseException.class);
+            assertThatThrownBy(() -> f.management.createTarget(null)).isInstanceOf(BaseException.class);
+            f.jdbc.update("UPDATE sys_tenant SET expire_time = null WHERE id = ?", tenantId);
+            assertThat(f.management.createTarget(tenantId)).isEqualTo(tenantId);
+            assertThat(f.management.options(null, true)).anyMatch(row -> row.id().equals(tenantId) && row.writable());
+            System.out.println("[T020-" + database + "] management target validity: disabled, expired, missing rejected; restored tenant selectable");
+        }
+    }
+
+    private static com.sw.ck.system.controller.UserController.UserFormRequest managementUser(Long tenantId, Long deptId, String username) {
+        var request = new com.sw.ck.system.controller.UserController.UserFormRequest();
+        request.setTenantId(tenantId); request.setDeptId(deptId); request.setUsername(username);
+        request.setPlainPassword("test-only-password"); request.setStatus(0);
+        return request;
+    }
+
     private static void addTenant(Fixture f, long id) {
         f.jdbc.update("INSERT INTO sys_tenant (id, name, code, status) VALUES (?, ?, ?, 0)", id, "Legacy " + id, "legacy-" + id);
     }
@@ -205,6 +322,11 @@ class TenantAdministrationDatabaseTest {
         final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(4);
         final TenantAdminService service;
         final String vendor;
+        final com.sw.ck.system.service.SysUserService users;
+        final com.sw.ck.system.service.SysDeptService departments;
+        final com.sw.ck.system.service.ManagementTenantContext management;
+        final com.sw.ck.system.controller.UserController userController;
+        final com.sw.ck.system.controller.DeptController deptController;
 
         Fixture(Database database, boolean oldVersion) throws Exception {
             vendor = database == Database.H2 ? "h2" : "postgresql";
@@ -231,10 +353,13 @@ class TenantAdministrationDatabaseTest {
                 var interceptor = new MybatisPlusInterceptor();
                 interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(new CommonTenantLineHandler(new TenantProperties(), context)));
                 interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
+                interceptor.addInnerInterceptor(new com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor(
+                        database == Database.H2 ? com.baomidou.mybatisplus.annotation.DbType.H2 : com.baomidou.mybatisplus.annotation.DbType.POSTGRE_SQL));
                 var factory = new MybatisSqlSessionFactoryBean();
                 factory.setDataSource(dataSource); factory.setConfiguration(config); factory.setGlobalConfig(global); factory.setPlugins(interceptor);
                 var sessions = factory.getObject();
-                for (Class<?> mapper : new Class<?>[]{SysTenantMapper.class, SysDeptMapper.class, SysUserMapper.class, SysRoleMapper.class, SysRoleMenuMapper.class, SysUserRoleMapper.class}) {
+                for (Class<?> mapper : new Class<?>[]{SysTenantMapper.class, SysDeptMapper.class, SysUserMapper.class, SysRoleMapper.class, SysRoleMenuMapper.class, SysUserRoleMapper.class,
+                        com.sw.ck.system.mapper.SysPostMapper.class, com.sw.ck.system.mapper.SysUserPostMapper.class}) {
                     sessions.getConfiguration().addMapper(mapper);
                 }
                 var template = new SqlSessionTemplate(sessions);
@@ -245,6 +370,23 @@ class TenantAdministrationDatabaseTest {
                 var proxy = new ProxyFactory(target);
                 proxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
                 service = (TenantAdminService) proxy.getProxy();
+                var userTarget = new com.sw.ck.system.service.impl.SysUserServiceImpl(encoder,
+                        template.getMapper(SysUserRoleMapper.class), template.getMapper(com.sw.ck.system.mapper.SysUserPostMapper.class),
+                        template.getMapper(SysRoleMapper.class), template.getMapper(com.sw.ck.system.mapper.SysPostMapper.class),
+                        template.getMapper(SysDeptMapper.class), null);
+                org.springframework.test.util.ReflectionTestUtils.setField(userTarget, "baseMapper", template.getMapper(SysUserMapper.class));
+                var userProxy = new ProxyFactory(userTarget);
+                userProxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
+                users = (com.sw.ck.system.service.SysUserService) userProxy.getProxy();
+                var deptTarget = new com.sw.ck.system.service.impl.SysDeptServiceImpl(users);
+                org.springframework.test.util.ReflectionTestUtils.setField(deptTarget, "baseMapper", template.getMapper(SysDeptMapper.class));
+                var deptProxy = new ProxyFactory(deptTarget);
+                deptProxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
+                departments = (com.sw.ck.system.service.SysDeptService) deptProxy.getProxy();
+                management = new com.sw.ck.system.service.ManagementTenantContext(template.getMapper(SysTenantMapper.class),
+                        new com.sw.ck.system.service.TenantValidityService(template.getMapper(SysTenantMapper.class)));
+                userController = new com.sw.ck.system.controller.UserController(users, null, management);
+                deptController = new com.sw.ck.system.controller.DeptController(departments, management);
             } catch (Exception failure) {
                 if (postgres != null) postgres.close();
                 throw failure;

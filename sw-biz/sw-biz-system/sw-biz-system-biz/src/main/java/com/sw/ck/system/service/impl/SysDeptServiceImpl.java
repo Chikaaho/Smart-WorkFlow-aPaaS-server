@@ -44,8 +44,9 @@ public class SysDeptServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long create(SysDept dept) {
-        validateParent(dept.getParentId(), null);
-        validateLeader(dept.getLeaderId());
+        dept.setTenantId(resolveCreationTenant(dept.getTenantId()));
+        validateParent(dept.getParentId(), null, dept.getTenantId());
+        validateLeader(dept.getLeaderId(), dept.getTenantId());
         if (dept.getStatus() == null) {
             dept.setStatus(STATUS_NORMAL);
         } else {
@@ -62,8 +63,12 @@ public class SysDeptServiceImpl
         if (existing == null) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "部门不存在或已删除");
         }
-        validateParent(dept.getParentId(), dept.getId());
-        validateLeader(dept.getLeaderId());
+        assertOwner(existing.getTenantId());
+        if (dept.getTenantId() != null && !dept.getTenantId().equals(existing.getTenantId()))
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "不能修改部门所属租户");
+        dept.setTenantId(existing.getTenantId());
+        validateParent(dept.getParentId(), dept.getId(), existing.getTenantId());
+        validateLeader(dept.getLeaderId(), existing.getTenantId());
         if (dept.getStatus() != null) {
             validateStatus(dept.getStatus());
         }
@@ -73,6 +78,9 @@ public class SysDeptServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        SysDept owner = getById(id);
+        if (owner == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "部门不存在或已删除");
+        assertOwner(owner.getTenantId());
         // 校验：是否有子部门
         Long childCount = lambdaQuery().eq(SysDept::getParentId, id).count();
         if (childCount != null && childCount > 0) {
@@ -102,7 +110,10 @@ public class SysDeptServiceImpl
         Integer status = query != null ? query.getStatus() : null;
         boolean hasName = name != null && !name.trim().isEmpty();
         boolean hasStatus = status != null;
-        if (!hasName && !hasStatus) {
+        Long tenantId = query == null ? null : query.getTenantId();
+        boolean hasTenant = tenantId != null;
+        if (hasTenant) assertOwner(tenantId);
+        if (!hasName && !hasStatus && !hasTenant) {
             // 无条件：与现状完全一致（同一查询路径、同一 SQL、同一排序），
             // 部门选择器等既有调用方零感知。
             return listTree();
@@ -117,6 +128,7 @@ public class SysDeptServiceImpl
         // 1) 直接命中集合：名称（包含匹配）+ 状态组合 AND。
         //    走标准 lambdaQuery 通道，租户 / 逻辑删除 / 数据范围拦截器自然生效。
         List<SysDept> hits = lambdaQuery()
+                .eq(hasTenant, SysDept::getTenantId, tenantId)
                 .like(hasName, SysDept::getName, trimmedName)
                 .eq(hasStatus, SysDept::getStatus, status)
                 .orderByAsc(SysDept::getSort)
@@ -145,7 +157,8 @@ public class SysDeptServiceImpl
             if (batch.isEmpty()) {
                 continue;
             }
-            List<SysDept> ancestors = lambdaQuery().in(SysDept::getId, batch).list();
+            List<SysDept> ancestors = lambdaQuery().eq(hasTenant, SysDept::getTenantId, tenantId)
+                    .in(SysDept::getId, batch).list();
             for (SysDept ancestor : ancestors) {
                 if (byId.containsKey(ancestor.getId())) {
                     continue;
@@ -176,7 +189,7 @@ public class SysDeptServiceImpl
      * 父部门合法性：0/null = 根；否则必须为本租户内未删除部门；
      * 移动时禁止指向自身或自身子树（成环）。
      */
-    private void validateParent(Long parentId, Long selfId) {
+    private void validateParent(Long parentId, Long selfId, Long tenantId) {
         if (parentId == null || parentId == 0L) {
             return;
         }
@@ -184,16 +197,16 @@ public class SysDeptServiceImpl
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "上级部门不能是自身");
         }
         SysDept parent = getById(parentId);
-        if (parent == null) {
+        if (parent == null || !tenantId.equals(parent.getTenantId())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "上级部门不存在或已删除");
         }
-        if (selfId != null && isDescendant(selfId, parentId)) {
+        if (selfId != null && isDescendant(selfId, parentId, tenantId)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "上级部门不能是自身的子部门");
         }
     }
 
     /** 沿 parent 链向上走：从 candidateParent 出发若能回到 selfId，则它是 self 的子孙。 */
-    private boolean isDescendant(Long selfId, Long candidateParent) {
+    private boolean isDescendant(Long selfId, Long candidateParent, Long tenantId) {
         Set<Long> visited = new HashSet<>();
         Long cursor = candidateParent;
         while (cursor != null && cursor != 0L && visited.add(cursor)) {
@@ -201,6 +214,8 @@ public class SysDeptServiceImpl
                 return true;
             }
             SysDept node = getById(cursor);
+            if (node != null && !tenantId.equals(node.getTenantId()))
+                throw new BaseException(CommonErrorCode.PARAM_ERROR, "部门层级存在跨租户关联");
             cursor = node == null ? null : node.getParentId();
         }
         return false;
@@ -210,14 +225,36 @@ public class SysDeptServiceImpl
      * 负责人合法性：必须为本租户内未删除且正常状态（status=0）的用户
      *（跨租户 ID 经租户拦截器查询不到，自然拒绝）。
      */
-    private void validateLeader(Long leaderId) {
+    private void validateLeader(Long leaderId, Long tenantId) {
         if (leaderId == null) {
             return;
         }
         SysUser leader = sysUserService.getById(leaderId);
-        if (leader == null || leader.getStatus() == null || leader.getStatus() != STATUS_NORMAL) {
+        if (leader == null || !tenantId.equals(leader.getTenantId()) || leader.getStatus() == null || leader.getStatus() != STATUS_NORMAL) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "部门负责人不存在、已停用或无效");
         }
+    }
+
+    private Long resolveCreationTenant(Long requested) {
+        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        if (actor == null || actor.getTenantId() == null)
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少登录租户上下文");
+        if (actor.isSuperAdmin() && Long.valueOf(0).equals(actor.getTenantId())) {
+            if (requested == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "请先选择目标租户");
+            return requested;
+        }
+        if (requested != null && !requested.equals(actor.getTenantId()))
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "不能创建其他租户的部门");
+        return actor.getTenantId();
+    }
+
+    private void assertOwner(Long tenantId) {
+        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        if (tenantId == null || actor == null || actor.getTenantId() == null)
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少对象租户或登录上下文");
+        if (!(actor.isSuperAdmin() && Long.valueOf(0).equals(actor.getTenantId()))
+                && !tenantId.equals(actor.getTenantId()))
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "不能维护其他租户的部门");
     }
 
     private void validateStatus(Integer status) {

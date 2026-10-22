@@ -191,8 +191,8 @@ class PostGovernanceIntegrationTest {
         @Bean
         public SysUserService sysUserService(PasswordEncoder passwordEncoder, com.sw.ck.system.mapper.SysUserRoleMapper userRoleMapper,
                                              com.sw.ck.system.mapper.SysUserPostMapper userPostMapper, com.sw.ck.system.mapper.SysRoleMapper roleMapper,
-                                             com.sw.ck.system.mapper.SysPostMapper postMapper) {
-            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper);
+                                             com.sw.ck.system.mapper.SysPostMapper postMapper, SysDeptMapper deptMapper) {
+            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper, deptMapper, null);
         }
 
         @Bean
