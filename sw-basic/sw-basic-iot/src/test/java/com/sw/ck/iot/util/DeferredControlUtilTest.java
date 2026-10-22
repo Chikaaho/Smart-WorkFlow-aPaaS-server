@@ -208,9 +208,42 @@ class DeferredControlUtilTest {
      * 原生 MQTT 通道反向断言：Broker 未确认时记可重试失败，绝不落「已发送」。
      */
     @Test
+    void deniedPersistentClaimDoesNotPublishOrWriteFailure() {
+        var command = new IotDeviceCommand();
+        command.setId(14L);
+        command.setTenantId(9001L);
+        command.setDeviceKey("test-device-key");
+        when(iotDeviceService.getByDeviceKeyForTenant(9001L, "test-device-key")).thenReturn(testDevice);
+        when(mqttDownlinkPublisher.isMqttBacked(testDevice)).thenReturn(true);
+        when(commandQueueService.markSending(14L)).thenReturn(null);
+        deferredControlUtilWithoutProvider.sendCommand(command);
+        verify(mqttDownlinkPublisher, never()).publishDownlink(any(), any(), any());
+        verify(commandQueueService, never()).markFailed(anyLong(), anyString());
+        verify(commandQueueService, never()).markSent(anyLong(), anyString());
+    }
+
+    @Test
+    void alreadyClaimedCompensationUsesSameSendWithoutSecondClaim() {
+        var command = new IotDeviceCommand();
+        command.setId(15L);
+        command.setStatus("SENDING");
+        command.setTenantId(9001L);
+        command.setDeviceKey("test-device-key");
+        command.setPayload("{}");
+        when(iotDeviceService.getByDeviceKeyForTenant(9001L, "test-device-key")).thenReturn(testDevice);
+        when(mqttDownlinkPublisher.isMqttBacked(testDevice)).thenReturn(true);
+        when(mqttDownlinkPublisher.publishDownlink(testDevice, "{}", null)).thenReturn(Optional.of(
+                new MqttDownlinkPublisher.PublishOutcome(88L, "owned/topic", 1, true, 88)));
+        deferredControlUtilWithoutProvider.sendClaimedCommand(command);
+        verify(commandQueueService, never()).markSending(anyLong());
+        verify(commandQueueService).markSent(15L, "MQTT:owned/topic:88");
+    }
+
+    @Test
     void testSendCommand_mqttDevice_withoutBrokerAck_marksFailedNeverSent() {
         IotDeviceCommand command = new IotDeviceCommand();
         command.setId(12L);
+        when(commandQueueService.markSending(12L)).thenReturn(command);
         command.setTenantId(9001L);
         command.setDeviceKey("test-device-key");
         command.setCommandType("PROPERTY");
@@ -235,6 +268,7 @@ class DeferredControlUtilTest {
     void testSendCommand_mqttDevice_publishThrows_marksFailedNeverSent() {
         IotDeviceCommand command = new IotDeviceCommand();
         command.setId(13L);
+        when(commandQueueService.markSending(13L)).thenReturn(command);
         command.setTenantId(9001L);
         command.setDeviceKey("test-device-key");
         command.setCommandType("ACTION");

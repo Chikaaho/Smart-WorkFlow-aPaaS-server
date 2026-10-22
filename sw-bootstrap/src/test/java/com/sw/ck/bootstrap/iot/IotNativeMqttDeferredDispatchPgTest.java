@@ -207,7 +207,45 @@ class IotNativeMqttDeferredDispatchPgTest {
 
     // ==================== helpers ====================
 
+    @Test
+    void tenantPausePreservesPendingAndResumeSendsOnceWithoutExpiredCatchup() throws Exception {
+        long pendingId = 91933L;
+        long expiredId = 91934L;
+        long before = receivedLines();
+        Integer originalStatus = jdbc.queryForObject("SELECT status FROM sys_tenant WHERE id = ?", Integer.class, TENANT);
+        try {
+            jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", TENANT);
+            insertDueReservation(pendingId, "inst-native-tenant-paused");
+            insertReservation(expiredId, "inst-native-tenant-expired",
+                    LocalDateTime.now(ZoneOffset.UTC).minusSeconds(1200));
+            dispatchJob.dispatchDueReservations();
+            assertThat(jdbc.queryForObject("SELECT status FROM sw_iot_command_reservation WHERE id = ?", String.class, pendingId)).isEqualTo("PENDING");
+            assertThat(jdbc.queryForObject("SELECT command_id FROM sw_iot_command_reservation WHERE id = ?", Long.class, pendingId)).isNull();
+            assertThat(jdbc.queryForObject("SELECT status FROM sw_iot_command_reservation WHERE id = ?", String.class, expiredId)).isEqualTo("EXPIRED");
+            assertThat(receivedLines()).isEqualTo(before);
+
+            jdbc.update("UPDATE sys_tenant SET status = 0 WHERE id = ?", TENANT);
+            dispatchJob.dispatchDueReservations();
+            Long commandId = jdbc.queryForObject("SELECT command_id FROM sw_iot_command_reservation WHERE id = ?", Long.class, pendingId);
+            assertThat(commandId).isNotNull();
+            assertThat(jdbc.queryForObject("SELECT status FROM sw_iot_device_command WHERE id = ?", String.class, commandId)).isEqualTo("SENT");
+            assertThat(jdbc.queryForObject("SELECT command_id FROM sw_iot_command_reservation WHERE id = ?", Long.class, expiredId)).isNull();
+            assertThat(receivedLines()).isEqualTo(before + 1);
+            dispatchJob.dispatchDueReservations();
+            assertThat(receivedLines()).isEqualTo(before + 1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sw_iot_device_command WHERE approval_biz_id = 'inst-native-tenant-paused'", Long.class)).isEqualTo(1L);
+            System.out.println("[T020-IOT] stopped tenant pending=" + pendingId + ", resume command=" + commandId
+                    + " SENT once; expired=" + expiredId + " EXPIRED without command; brokerDelta=1");
+        } finally {
+            jdbc.update("UPDATE sys_tenant SET status = ? WHERE id = ?", originalStatus, TENANT);
+        }
+    }
+
     private void insertDueReservation(long reservationId, String processInstanceId) {
+        insertReservation(reservationId, processInstanceId, LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5));
+    }
+
+    private void insertReservation(long reservationId, String processInstanceId, LocalDateTime dueAtUtc) {
         jdbc.update("INSERT INTO sw_iot_command_reservation (id, create_time, update_time, deleted, tenant_id, "
                 + "version, process_instance_id, process_def_key, def_version, form_key, record_id, device_key, "
                 + "product_id, device_name, command_key, command_type, payload, due_at_utc, timezone_id, "
@@ -216,7 +254,7 @@ class IotNativeMqttDeferredDispatchPgTest {
                 + "'PROPERTY', '[\\\"机房断电\\\",\\\"火警告警\\\"]', ?, 'Asia/Shanghai', '2026-10-20 20:00:00', "
                 + "600, 'PENDING')",
                 reservationId, TENANT, processInstanceId, DEVICE_KEY, DEVICE_KEY, COMMAND_KEY,
-                LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5));
+                dueAtUtc);
     }
 
     private long receivedLines() {
