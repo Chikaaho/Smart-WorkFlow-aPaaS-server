@@ -51,6 +51,96 @@ class TenantAdministrationDatabaseTest {
 
     @ParameterizedTest
     @EnumSource(Database.class)
+    void realBpmQueuePausesPendingTenantAndResumesOriginalCommand(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false)) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            Long adminId = f.service.detail(tenantId).adminUserId();
+            long commandId = 882210L;
+            f.jdbc.update("INSERT INTO sw_bpm_command (id, tenant_id, command_key, command_type, channel, status, payload, retry_count, initiator_id, deleted, create_time) VALUES (?, ?, ?, 'TASK_APPROVE', 'NORMAL', 'PENDING', '{}', 0, ?, 0, ?)",
+                    commandId, tenantId, "t020-controlled-claim", adminId, java.time.LocalDateTime.now());
+            f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+            assertThat(f.commandQueue.claimDue(java.util.List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 10)).isEmpty();
+            assertThat(f.jdbc.queryForObject("SELECT status FROM sw_bpm_command WHERE id = ?", String.class, commandId)).isEqualTo("PENDING");
+            assertThat(f.jdbc.queryForObject("SELECT claim_token FROM sw_bpm_command WHERE id = ?", String.class, commandId)).isNull();
+            f.jdbc.update("UPDATE sys_tenant SET status = 0 WHERE id = ?", tenantId);
+            var claimed = f.commandQueue.claimDue(java.util.List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 10);
+            assertThat(claimed).hasSize(1);
+            assertThat(claimed.getFirst().getCommandId()).isEqualTo(commandId);
+            assertThat(claimed.getFirst().getTenantId()).isEqualTo(tenantId);
+            assertThat(claimed.getFirst().getClaimToken()).isNotBlank();
+            f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+            // 已持久认领可沿原租约记录真实结果；其他待执行工作仍不能进入新认领。
+            f.commandQueue.complete(commandId, claimed.getFirst().getClaimToken(), "{\"controlled\":true}");
+            assertThat(f.jdbc.queryForObject("SELECT status FROM sw_bpm_command WHERE id = ?", String.class, commandId)).isEqualTo("COMPLETED");
+            f.jdbc.update("UPDATE sys_tenant SET status = 0 WHERE id = ?", tenantId);
+            assertThat(f.commandQueue.claimDue(java.util.List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 10)).isEmpty();
+            assertThat(f.count("SELECT COUNT(*) FROM sw_bpm_command WHERE command_key = ?", "t020-controlled-claim")).isEqualTo(1);
+            assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(0L);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
+    void tenantDisableAndPersistentClaimHaveAnOrderedBoundary(Database database) throws Exception {
+        try (Fixture f = new Fixture(database, false); var executor = Executors.newFixedThreadPool(2)) {
+            rootIdentity();
+            Long tenantId = f.service.create(command());
+            f.jdbc.execute("CREATE TABLE t020_admission_work (id INT PRIMARY KEY, state VARCHAR(32))");
+            f.jdbc.update("INSERT INTO t020_admission_work VALUES (1, 'PENDING'), (2, 'PENDING')");
+            var entered = new java.util.concurrent.CountDownLatch(1);
+            var finishClaim = new java.util.concurrent.CountDownLatch(1);
+            var disableStarted = new java.util.concurrent.CountDownLatch(1);
+            var claimed = executor.submit(() -> f.workAdmission.claim(tenantId, () -> {
+                entered.countDown();
+                try {
+                    if (!finishClaim.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("claim release missing");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                return f.jdbc.update("UPDATE t020_admission_work SET state = 'PROCESSING' WHERE id = 1 AND state = 'PENDING'");
+            }));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            var disabled = executor.submit(() -> {
+                disableStarted.countDown();
+                return f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
+            });
+            try {
+                assertThat(disableStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> disabled.get(200, TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            } finally { finishClaim.countDown(); }
+            assertThat(claimed.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+            assertThat(disabled.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+            var attempts = new java.util.concurrent.atomic.AtomicInteger();
+            assertThat(f.workAdmission.claim(tenantId, () -> {
+                attempts.incrementAndGet();
+                return f.jdbc.update("UPDATE t020_admission_work SET state = 'PROCESSING' WHERE id = 2");
+            })).isZero();
+            assertThat(attempts).hasValue(0);
+            assertThat(f.jdbc.queryForObject("SELECT state FROM t020_admission_work WHERE id = 2", String.class)).isEqualTo("PENDING");
+            // 已认领动作可真实结束；停用不伪造其他对象状态。
+            assertThat(f.jdbc.update("UPDATE t020_admission_work SET state = 'DONE' WHERE id = 1 AND state = 'PROCESSING'")).isEqualTo(1);
+            f.jdbc.update("UPDATE sys_tenant SET status = 0, expire_time = ? WHERE id = ?",
+                    java.time.LocalDateTime.now().minusMinutes(1), tenantId);
+            assertThat(f.workAdmission.claim(tenantId, () -> { attempts.incrementAndGet(); return 1; })).isZero();
+            f.jdbc.update("UPDATE sys_tenant SET expire_time = NULL WHERE id = ?", tenantId);
+            assertThatThrownBy(() -> f.workAdmission.claim(tenantId, () -> {
+                f.jdbc.update("UPDATE t020_admission_work SET state = 'PROCESSING' WHERE id = 2");
+                throw new IllegalStateException("controlled failure after write");
+            })).isInstanceOf(IllegalStateException.class);
+            assertThat(f.jdbc.queryForObject("SELECT state FROM t020_admission_work WHERE id = 2", String.class)).isEqualTo("PENDING");
+            assertThat(f.workAdmission.claim(tenantId, () -> f.jdbc.update(
+                    "UPDATE t020_admission_work SET state = 'PROCESSING' WHERE id = 2 AND state = 'PENDING'"))).isEqualTo(1);
+            assertThat(f.workAdmission.claim(null, () -> { attempts.incrementAndGet(); return 1; })).isZero();
+            assertThat(attempts).hasValue(0);
+            assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(0L);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Database.class)
     void cachedSessionAdmissionReadsCurrentTenantStatusAndExpiry(Database database) throws Exception {
         try (Fixture f = new Fixture(database, false)) {
             rootIdentity();
@@ -357,6 +447,8 @@ class TenantAdministrationDatabaseTest {
         final com.sw.ck.system.service.SysDeptService departments;
         final com.sw.ck.system.service.ManagementTenantContext management;
         final com.sw.ck.system.service.TenantValidityService validity;
+        final com.sw.ck.system.service.TenantWorkAdmissionService workAdmission;
+        final com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue commandQueue;
         final com.sw.ck.system.controller.UserController userController;
         final com.sw.ck.system.controller.DeptController deptController;
 
@@ -391,11 +483,19 @@ class TenantAdministrationDatabaseTest {
                 factory.setDataSource(dataSource); factory.setConfiguration(config); factory.setGlobalConfig(global); factory.setPlugins(interceptor);
                 var sessions = factory.getObject();
                 for (Class<?> mapper : new Class<?>[]{SysTenantMapper.class, SysDeptMapper.class, SysUserMapper.class, SysRoleMapper.class, SysRoleMenuMapper.class, SysUserRoleMapper.class,
-                        com.sw.ck.system.mapper.SysPostMapper.class, com.sw.ck.system.mapper.SysUserPostMapper.class}) {
+                        com.sw.ck.system.mapper.SysPostMapper.class, com.sw.ck.system.mapper.SysUserPostMapper.class,
+                        com.sw.ck.bpm.process.mapper.BpmCommandMapper.class}) {
                     sessions.getConfiguration().addMapper(mapper);
                 }
                 var template = new SqlSessionTemplate(sessions);
                 var transactions = new DataSourceTransactionManager(dataSource);
+                workAdmission = new com.sw.ck.system.service.TenantWorkAdmissionService(template.getMapper(SysTenantMapper.class), transactions);
+                var commandService = new com.sw.ck.bpm.process.service.impl.BpmCommandServiceImpl();
+                org.springframework.test.util.ReflectionTestUtils.setField(commandService, "baseMapper",
+                        template.getMapper(com.sw.ck.bpm.process.mapper.BpmCommandMapper.class));
+                var resourceAdmission = org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+                commandQueue = new com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue(commandService, null,
+                        org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.ResourceReleaseService.class), resourceAdmission, workAdmission);
                 var target = new TenantAdminService(template.getMapper(SysTenantMapper.class), template.getMapper(SysDeptMapper.class),
                         template.getMapper(SysUserMapper.class), template.getMapper(SysRoleMapper.class), template.getMapper(SysRoleMenuMapper.class),
                         template.getMapper(SysUserRoleMapper.class), encoder, transactions);

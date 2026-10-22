@@ -45,15 +45,18 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     private final BpmCommandEffectMapper effectMapper;
     private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService;
     private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
+    private final com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
 
     public PersistentBpmCommandQueue(BpmCommandService commandService,
                                      BpmCommandEffectMapper effectMapper,
                                      com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+                                     com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission) {
         this.commandService = commandService;
         this.effectMapper = effectMapper;
         this.releaseService = releaseService;
         this.admissionService = admissionService;
+        this.tenantWorkAdmission = java.util.Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Override
@@ -192,7 +195,6 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                     if (batchClaimed >= batchClaimLimit) {
                         continue;
                     }
-                    batchClaimed++;
                 }
                 // 一次性租约令牌：写回（complete/reject/fail）须匹配本令牌，
                 // stale 回收后旧持有者的迟到写回因令牌不匹配被拒。
@@ -201,13 +203,15 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                 // 与 expireDue 的 PENDING→EXPIRED 收敛在两种先后顺序下都只产生一个合法结果。
                 LambdaUpdateWrapper<BpmCommand> claim = new LambdaUpdateWrapper<BpmCommand>()
                         .eq(BpmCommand::getId, candidate.getId())
+                        .eq(BpmCommand::getTenantId, tenantId)
                         .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
                         .and(wrapper -> wrapper.isNull(BpmCommand::getDeadlineAt)
                                 .or().gt(BpmCommand::getDeadlineAt, now))
                         .set(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
                         .set(BpmCommand::getClaimedAt, now)
                         .set(BpmCommand::getClaimToken, claimToken);
-                if (commandService.update(claim)) {
+                if (tenantWorkAdmission.claim(tenantId, () -> commandService.update(claim) ? 1 : 0) == 1) {
+                    if (CommandTypeEnum.BATCH_INVOKE.getCode().equals(candidate.getCommandType())) batchClaimed++;
                     candidate.setStatus(CommandStatusEnum.PROCESSING.getCode());
                     candidate.setClaimedAt(now);
                     candidate.setClaimToken(claimToken);

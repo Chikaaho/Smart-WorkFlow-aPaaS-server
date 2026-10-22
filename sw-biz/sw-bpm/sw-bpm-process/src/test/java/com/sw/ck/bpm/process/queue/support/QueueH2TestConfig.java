@@ -241,7 +241,9 @@ public class QueueH2TestConfig {
                                                      BpmCommandEffectMapper effectMapper,
                                                      com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
                                                      com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        return new PersistentBpmCommandQueue(commandService, effectMapper, releaseService, admissionService);
+        // 隔离队列状态机夹具；租户权威与行锁在 bootstrap H2/PG 入口专项验证。
+        return new PersistentBpmCommandQueue(commandService, effectMapper, releaseService, admissionService,
+                (tenantId, claim) -> claim.getAsInt());
     }
 
     @Bean
