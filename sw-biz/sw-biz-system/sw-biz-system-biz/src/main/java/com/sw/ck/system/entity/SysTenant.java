@@ -54,4 +54,5 @@ public class SysTenant extends BaseEntity {
     /** 绑定域名（休眠字段，I5 不启用解析） */
     @TableField("domain_name")
     private String domainName;
+
 }
