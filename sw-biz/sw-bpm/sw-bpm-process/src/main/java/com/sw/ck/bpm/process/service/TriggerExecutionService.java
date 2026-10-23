@@ -195,6 +195,7 @@ public class TriggerExecutionService {
         long round = nodeFormDataService.currentRound(instance.getProcessInstanceId());
         String nodeKey = task.getTaskDefinitionKey();
         graph.getTriggers().stream()
+                .filter(this::isEnabled)
                 .filter(trigger -> EVENT_TASK_SUBMITTED.equalsIgnoreCase(trigger.getEvent()))
                 .filter(trigger -> nodeKey != null && nodeKey.equals(trigger.getNodeKey()))
                 .forEach(trigger -> evaluate(instance, graph, trigger, EVENT_TASK_SUBMITTED,
@@ -204,6 +205,7 @@ public class TriggerExecutionService {
                 .noneMatch(active -> nodeKey != null && nodeKey.equals(active.getTaskDefinitionKey()));
         if (nodeQuiet) {
             graph.getTriggers().stream()
+                    .filter(this::isEnabled)
                     .filter(trigger -> EVENT_NODE_ROUND_COMPLETED.equalsIgnoreCase(trigger.getEvent()))
                     .filter(trigger -> nodeKey != null && nodeKey.equals(trigger.getNodeKey()))
                     .forEach(trigger -> evaluate(instance, graph, trigger, EVENT_NODE_ROUND_COMPLETED,
@@ -225,6 +227,7 @@ public class TriggerExecutionService {
         }
         long round = nodeFormDataService.currentRound(instance.getProcessInstanceId());
         graph.getTriggers().stream()
+                .filter(this::isEnabled)
                 .filter(trigger -> EVENT_PROCESS_COMPLETED.equalsIgnoreCase(trigger.getEvent()))
                 .forEach(trigger -> evaluate(instance, graph, trigger, EVENT_PROCESS_COMPLETED,
                         null, round, null));
@@ -241,6 +244,7 @@ public class TriggerExecutionService {
         }
         long round = nodeFormDataService.currentRound(instance.getProcessInstanceId());
         List<TriggerConfig> matched = graph.getTriggers().stream()
+                .filter(this::isEnabled)
                 .filter(trigger -> EVENT_PROCESS_START.equalsIgnoreCase(trigger.getEvent()))
                 .toList();
         matched.forEach(trigger -> evaluate(instance, graph, trigger, EVENT_PROCESS_START,
@@ -262,6 +266,7 @@ public class TriggerExecutionService {
         }
         long round = nodeFormDataService.currentRound(instance.getProcessInstanceId());
         List<TriggerConfig> matched = graph.getTriggers().stream()
+                .filter(this::isEnabled)
                 .filter(trigger -> EVENT_NODE_ENTERING.equalsIgnoreCase(trigger.getEvent()))
                 .filter(trigger -> nodeKey.equals(trigger.getNodeKey()))
                 .toList();
@@ -414,6 +419,10 @@ public class TriggerExecutionService {
             }
         }
         return null;
+    }
+
+    private boolean isEnabled(TriggerConfig trigger) {
+        return trigger.getEnabled() == null || Boolean.TRUE.equals(trigger.getEnabled());
     }
 
     private boolean valuesMatch(String typeName, String expected, Object actual) {

@@ -369,6 +369,20 @@ class TriggerExecutionServiceTest {
     }
 
     @Test
+    @DisplayName("禁用监听保留在版本快照但开/终态事件均不执行")
+    void shouldSkipDisabledTrigger() {
+        BpmInstance instance = instance();
+        TriggerConfig disabled = trigger("PROCESS_START", null, "return true;", List.of());
+        disabled.setEnabled(false);
+        stubGraph(instance, disabled);
+        service.onProcessStarted(instance);
+        disabled.setEvent("PROCESS_COMPLETED");
+        stubGraph(instance, disabled);
+        service.onProcessCompleted(instance, "APPROVED");
+        verify(triggerExecMapper, never()).insert(any(BpmTriggerExec.class));
+    }
+
+    @Test
     @DisplayName("PROCESS_COMPLETED 仅 APPROVED 终态触发")
     void shouldTriggerProcessCompletedOnlyOnApproved() {
         BpmInstance instance = instance();
