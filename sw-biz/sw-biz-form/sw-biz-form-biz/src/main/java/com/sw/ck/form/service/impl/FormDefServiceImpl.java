@@ -258,6 +258,7 @@ public class FormDefServiceImpl implements FormDefService {
         // 字段类型权威校验（Z8/G14a）：config 保存层即拒绝未启用类型，与 publish 的
         // validFieldTypes 校验同口径——禁止类型不得依赖 publish 兜底。
         validateFieldTypes(definition);
+        validateFormEvents(definition);
 
         LambdaQueryWrapper<FormConfigEntity> query = Wrappers.lambdaQuery(FormConfigEntity.class)
                 .eq(FormConfigEntity::getFormId, formId)
@@ -312,6 +313,7 @@ public class FormDefServiceImpl implements FormDefService {
         // —— Step 2c（I2）: 公式依赖 + 字段权限配置 + 外部数据源绑定校验 ——
         validateFormulaDependencies(definitionJson, fieldNames);
         fieldPermissionService.parse(definitionJson);
+        validateFormEvents(definitionJson);
         validateDatasourceBindings(definitionJson);
 
         // —— Step 3: 校验字段名白名单（复用 ColumnValidation） ——
@@ -430,6 +432,7 @@ public class FormDefServiceImpl implements FormDefService {
         visibilityRules.parseAndValidate(definition, collectFieldDisplay(definition));
         validateFormulaDependencies(definition, fieldNames);
         fieldPermissionService.parse(definition);
+        validateFormEvents(definition);
         validateDatasourceBindings(definition);
 
         // 先完成全部定义校验，再执行不可回滚的增量 DDL；新版本只允许复用原表。
@@ -881,6 +884,54 @@ public class FormDefServiceImpl implements FormDefService {
     /**
      * I2 发布校验：FORMULA 依赖（未知字段/循环）与 fieldPermissions 结构。
      */
+    /** 保存和发布共用的事件形状闸门；历史定义缺少 events 时保持原义。 */
+    private void validateFormEvents(String definitionJson) {
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson);
+            JsonNode events = root == null ? null : root.get("events");
+            if (events == null || events.isNull()) {
+                return;
+            }
+            if (!events.isObject()) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单 events 必须是对象");
+            }
+            java.util.Iterator<java.util.Map.Entry<String, JsonNode>> fields = events.fields();
+            while (fields.hasNext()) {
+                java.util.Map.Entry<String, JsonNode> event = fields.next();
+                if (!Set.of("onLoad", "beforeSubmitHandler", "afterSubmitHandler").contains(event.getKey())) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "不支持的表单事件: " + event.getKey());
+                }
+                if (!event.getValue().isArray() || event.getValue().size() > 50) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "表单事件动作必须是数组且不超过 50 项: " + event.getKey());
+                }
+                Set<String> ids = new HashSet<>();
+                for (JsonNode action : event.getValue()) {
+                    String id = action.path("id").asText("").trim();
+                    String script = action.path("script").asText("");
+                    if (id.isEmpty() || id.length() > 128 || !ids.add(id)) {
+                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                                "表单事件动作 ID 为空、重复或过长: " + event.getKey());
+                    }
+                    if (!action.path("order").isNumber() || script.length() > 100_000) {
+                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                                "表单事件动作缺少有效顺序或脚本过长: " + id);
+                    }
+                    if (action.has("confirmMessage")
+                            && action.get("confirmMessage").asText("").length() > 500) {
+                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                                "表单事件确认说明过长: " + id);
+                    }
+                }
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
+        }
+    }
+
     private void validateFormulaDependencies(String definitionJson, Set<String> fieldNames) {
         try {
             JsonNode root = objectMapper.readTree(definitionJson);
