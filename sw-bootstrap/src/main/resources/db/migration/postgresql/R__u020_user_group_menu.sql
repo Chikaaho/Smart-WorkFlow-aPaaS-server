@@ -8,10 +8,14 @@ WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE id = 9113)
   AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE parent_id = 1 AND name = 'SystemUserGroup' AND deleted = 0);
 
 INSERT INTO sys_menu (id, create_time, update_time, deleted, version, parent_id, name, title, hidden, menu_type, path, component, permission, icon, sort)
-SELECT 9114, current_timestamp, current_timestamp, 0, 0, 9113, 'SystemUserGroupManage', '管理用户组', true, 2, NULL, NULL, 'system:userGroup:manage', NULL, 1
+SELECT 9114, current_timestamp, current_timestamp, 0, 0, 9113, 'SystemUserGroupManage', '管理用户组', true, 2, '', '', 'system:userGroup:manage', '', 1
 WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE id = 9114)
   AND NOT EXISTS (SELECT 1 FROM sys_menu WHERE parent_id = 9113 AND name = 'SystemUserGroupManage' AND deleted = 0)
   AND EXISTS (SELECT 1 FROM sys_menu WHERE id = 9113 AND deleted = 0);
+
+UPDATE sys_menu
+SET path = '', component = '', icon = '', update_time = current_timestamp
+WHERE id = 9114 AND deleted = 0 AND (path IS NULL OR component IS NULL OR icon IS NULL);
 
 INSERT INTO sys_role_menu (id, create_time, update_time, deleted, tenant_id, version, role_id, menu_id)
 SELECT (SELECT COALESCE(MAX(id), 0) FROM sys_role_menu) + ROW_NUMBER() OVER (ORDER BY r.id),
