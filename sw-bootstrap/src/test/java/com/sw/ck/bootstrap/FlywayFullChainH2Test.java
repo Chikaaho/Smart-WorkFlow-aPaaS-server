@@ -26,8 +26,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * 使用独立内存库 + 独立 Flyway 实例，10 个 locations 与 {@code application.yml}
  * 完全一致（{vendor} 按 H2 连接解析为 h2）。0.1.7 发版收敛后，versioned 迁移为
  * 单一基线 {@code V0.1.7__baseline_seed.sql}（0.1.6 基线种子与 0.1.7 菜单/应用范围
- * 增量按版本序逐字节合并），加 13 个可重复对账 R__，
- * 全新库共执行 15 条（V0.1.7 基线 + 15 个 R__ 可重复对账）。
+ * 增量按版本序逐字节合并），加 16 个可重复对账 R__，
+ * 全新库共执行 20 条（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 + 16 个 R__ 可重复对账）。
  * 历史版本升级演练随 0.1.3「仅支持全新建库」与 0.1.5「单一种子 + 独立升级通道」
  * 的边界一并退役；本测试保留并延续全部终态数据/语义断言。
  * </p>
@@ -81,18 +81,18 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(19, result.migrationsExecuted,
-                "全新库应执行 19 条（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 增量 + 15 个 R__ 可重复对账），实际: "
+        assertEquals(20, result.migrationsExecuted,
+                "全新库应执行 20 条（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 增量 + 16 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
         assertEquals("0.1.10", flyway.info().current().getVersion().getVersion(),
                 "终点当前版本应为最后一个 versioned 迁移（0.1.10）");
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 19 条（V0.1.7 基线 + 3 个 versioned 增量 + 15 个可重复对账）")
+    @DisplayName("种子迁移后：info().applied() 共 20 条（V0.1.7 基线 + 3 个 versioned 增量 + 16 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(19, applied.length, "已应用迁移数应为 19（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 + 15 个 R__）");
+        assertEquals(20, applied.length, "已应用迁移数应为 20（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 + 16 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -103,7 +103,7 @@ class FlywayFullChainH2Test {
             }
         }
         assertTrue(seedSeen, "V0.1.7 种子应已应用");
-        assertEquals(15, repeatableCount, "15 个 R__ 可重复对账应已应用");
+        assertEquals(16, repeatableCount, "16 个 R__ 可重复对账应已应用");
     }
 
     @Test
@@ -278,6 +278,39 @@ class FlywayFullChainH2Test {
                 }
             }
             assertTrue(ukFound, "唯一索引 uk_sys_user_group_code 应存在");
+        }
+    }
+
+    @Test
+    @DisplayName("U020：用户组管理菜单与管理员操作权限可回读且不重复")
+    void userGroupMenu_finalState() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+             Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT path, component, permission, menu_type, parent_id FROM sys_menu "
+                            + "WHERE id = 9113 AND deleted = 0")) {
+                assertTrue(rs.next(), "用户组管理页面菜单应存在");
+                assertEquals("system/user-group", rs.getString("path"));
+                assertEquals("system/views/UserGroupList", rs.getString("component"));
+                assertEquals("system:userGroup:list", rs.getString("permission"));
+                assertEquals(1, rs.getInt("menu_type"));
+                assertEquals(1, rs.getInt("parent_id"));
+            }
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT permission, menu_type, parent_id, hidden FROM sys_menu "
+                            + "WHERE id = 9114 AND deleted = 0")) {
+                assertTrue(rs.next(), "用户组管理按钮权限应存在");
+                assertEquals("system:userGroup:manage", rs.getString("permission"));
+                assertEquals(2, rs.getInt("menu_type"));
+                assertEquals(9113, rs.getInt("parent_id"));
+                assertTrue(rs.getBoolean("hidden"));
+            }
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 2 "
+                            + "AND menu_id IN (9113, 9114) AND deleted = 0")) {
+                assertTrue(rs.next());
+                assertEquals(2, rs.getInt(1), "管理员角色应同时获得页面和操作权限");
+            }
         }
     }
 
