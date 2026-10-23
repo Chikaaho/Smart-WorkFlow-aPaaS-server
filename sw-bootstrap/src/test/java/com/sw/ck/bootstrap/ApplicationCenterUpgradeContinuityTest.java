@@ -196,7 +196,7 @@ class ApplicationCenterUpgradeContinuityTest {
                 .migrate();
         assertTrue(upgrade.success, "主链衔接验证应成功");
         assertEquals(3, upgrade.migrationsExecuted,
-                "升级脚本后只应执行 V0.1.8、V0.1.9 与 V0.1.10 增量，不重放历史 versioned 迁移与 R__");
+                "升级脚本后只应执行 V0.1.8、V0.1.9 与 V0.1.10 增量，不重放历史迁移与 R__");
         Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())

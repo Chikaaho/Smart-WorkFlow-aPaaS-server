@@ -131,7 +131,7 @@ class ApplicationCenterLegacyUpgradeTest {
         MigrateResult result = upgrade.migrate();
         assertTrue(result.success, "主链衔接验证应成功");
         assertEquals(3, result.migrationsExecuted,
-                "升级脚本后只应执行 V0.1.8、V0.1.9 与 V0.1.10 增量，不重放历史 versioned 迁移与 R__");
+                "升级脚本后只应执行 V0.1.8、V0.1.9 与 V0.1.10 增量，不重放历史迁移与 R__");
         upgrade.validate();
     }
 
@@ -285,9 +285,8 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult upgrade = after.migrate();
         assertTrue(upgrade.success, "衔接后主链应迁移成功");
-        // 0.1.10 起 R__application_center_menu 追加菜单对账（checksum 变化重放一次），
-        // 故衔接后执行 2 条：既有 R__ 重放 + 新增 R__；版本化迁移仍不得重放。
-        assertEquals(5, upgrade.migrationsExecuted,
+        // 三个版本化增量 + 两条新增/重放 R__；历史版本化迁移不得重放。
+        assertEquals(6, upgrade.migrationsExecuted,
                 "衔接后执行 V0.1.8 / V0.1.9 / V0.1.10 与 R__ 对账，不得重放历史版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();

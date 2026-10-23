@@ -263,6 +263,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
         String mode = MODE_SERIAL.equalsIgnoreCase(nullSafe(request.getMode(), MODE_PARALLEL))
                 ? MODE_SERIAL : MODE_PARALLEL;
+        String signPosition = nullSafe(request.getSignPosition(), "BEFORE").toUpperCase();
+        if (!"BEFORE".equals(signPosition) && !"AFTER".equals(signPosition)) {
+            throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
+                    "加签位置只能是 BEFORE 或 AFTER");
+        }
         long pendingCount = signRecordMapper.selectCount(
                 Wrappers.<BpmSignRecord>lambdaQuery()
                         .eq(BpmSignRecord::getTaskId, task.getTaskId())
@@ -284,15 +289,22 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             record.setParticipantId(participant);
             record.setSeqNo(seq++);
             record.setSignStatus("PENDING");
-            record.setDetail(toJson(mapOf("policy", nullSafe(request.getPolicy(), "ALL_PASS"),
-                    "comment", nullSafe(request.getComment()))));
+            record.setDetail(toJson(mapOf(
+                    "policy", nullSafe(request.getPolicy(), "ALL_PASS"),
+                    "signPosition", signPosition,
+                    "comment", nullSafe(request.getComment()),
+                    "originalComment", nullSafe(request.getComment()),
+                    "originalOpinionData", request.getOpinionData(),
+                    "opinionFormId", request.getOpinionFormId(),
+                    "opinionFormVersion", request.getOpinionFormVersion())));
             signRecordMapper.insert(record);
             publishNotice(actor, task.getProcessInstanceId(), participant,
                     BpmNotifyTrigger.TASK_SIGN_REQUESTED);
         }
         recordLifecycle(task, actor, ApprovalAction.ADD_SIGN, "SIGN_REQUESTED", request,
-                mapOf("participants", participants, "mode", mode));
-        log.info("加签已发起: taskId={}, mode={}, participants={}", task.getTaskId(), mode, participants);
+                mapOf("participants", participants, "mode", mode, "signPosition", signPosition));
+        log.info("加签已发起: taskId={}, mode={}, position={}, participants={}",
+                task.getTaskId(), mode, signPosition, participants);
     }
 
     // ==================== 实例级动作 ====================
@@ -484,7 +496,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             return;
         }
         BpmTaskDTO task = taskLookup.get();
-        boolean autoFinish = "AUTO_FINISH".equals(policy);
+        String signPosition = extractDetailField(all.get(0).getDetail(), "signPosition");
+        boolean autoFinish = "AUTO_FINISH".equals(policy) || "AFTER".equalsIgnoreCase(signPosition);
         if (!autoFinish) {
             log.info("加签表决完成（原待办保留，由原责任人办理）: taskId={}, negative={}",
                     settled.getTaskId(), negative);
@@ -497,7 +510,21 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         try {
             ApprovalActionRequest settleRequest = new ApprovalActionRequest();
             settleRequest.setAction(negative ? ApprovalAction.DISAPPROVE : ApprovalAction.APPROVE);
-            settleRequest.setOpinionData(mapOf("source", "ADD_SIGN"));
+            settleRequest.setComment(extractDetailField(all.get(0).getDetail(), "originalComment"));
+            settleRequest.setOpinionFormId(extractDetailField(all.get(0).getDetail(), "opinionFormId"));
+            settleRequest.setOpinionFormVersion(extractDetailField(all.get(0).getDetail(), "opinionFormVersion"));
+            Map<String, Object> opinion = new LinkedHashMap<>(mapOf("source", "ADD_SIGN"));
+            String originalOpinion = extractDetailField(all.get(0).getDetail(), "originalOpinionData");
+            if (originalOpinion != null && !originalOpinion.isBlank() && !"null".equals(originalOpinion)) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> parsed = objectMapper.readValue(originalOpinion, Map.class);
+                    opinion.putAll(parsed);
+                } catch (Exception exception) {
+                    log.warn("解析加签原意见失败: taskId={}", settled.getTaskId());
+                }
+            }
+            settleRequest.setOpinionData(opinion);
             taskActionService.getObject().execute(task.getTaskId(), settleRequest);
         } finally {
             LoginUserHolder.clear();

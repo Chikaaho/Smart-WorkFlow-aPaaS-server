@@ -41,6 +41,9 @@ public class ApprovalActionRequest {
     /** 加签顺序：SERIAL / PARALLEL。 */
     private String mode;
 
+    /** 加签位置：BEFORE=原办理人前加签；AFTER=原办理意见后补签。缺省按旧语义 BEFORE。 */
+    private String signPosition;
+
     /** 加签结算策略：ALL_PASS / ANY_PASS / AUTO_FINISH。 */
     private String policy;
 
