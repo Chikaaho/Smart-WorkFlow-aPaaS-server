@@ -1,6 +1,12 @@
 package com.sw.ck.bpm.process.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.common.i18n.LocalizedMessages;
+import org.springframework.context.support.ResourceBundleMessageSource;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper;
 import com.sw.ck.bpm.process.mapper.BpmTaskFormDataMapper;
@@ -93,9 +99,9 @@ class NodeFormDataServiceTest {
 
         List<String> errors = service.validateNodeFormData("qc_form", data);
 
-        assertThat(errors).anyMatch(error -> error.contains("verdict: 必填"));
-        assertThat(errors).anyMatch(error -> error.contains("ng_count: 必填"));
-        assertThat(errors).anyMatch(error -> error.contains("未知字段: ghost"));
+        assertThat(errors).anyMatch(error -> error.contains("「verdict」为必填项"));
+        assertThat(errors).anyMatch(error -> error.contains("「ng_count」为必填项"));
+        assertThat(errors).anyMatch(error -> error.contains("表单内容与当前版本不一致"));
     }
 
     @Test
@@ -117,10 +123,41 @@ class NodeFormDataServiceTest {
 
         List<String> errors = service.validateNodeFormData("qc_form", data);
 
-        assertThat(errors).anyMatch(error -> error.contains("ng_count: 必须是数字"));
-        assertThat(errors).anyMatch(error -> error.contains("verdict: 字典值超出值域"));
-        assertThat(errors).anyMatch(error -> error.contains("handlers: 含不存在或已停用的用户"));
+        assertThat(errors).anyMatch(error -> error.contains("「ng_count」必须填写数字"));
+        assertThat(errors).anyMatch(error -> error.contains("「verdict」的选项已不可用"));
+        assertThat(errors).anyMatch(error -> error.contains("「handlers」含不存在或已停用的用户"));
         assertThat(errors).noneMatch(error -> error.contains("note"));
+    }
+
+    @Test
+    @DisplayName("校验使用字段显示名，保持数据键查找与中英文消息可解析")
+    void shouldUseDisplayLabelsAndLocalizedMessages() {
+        stubForm();
+        String labeled = QC_DEFINITION.replace("\"name\":\"ng_count\"", "\"name\":\"ng_count\",\"label\":\"缺陷数量\"");
+        when(formDefinitionService.getFormDefinition("qc_form")).thenReturn(Optional.of(labeled));
+        assertThat(service.validateNodeFormData("qc_form", Map.of("verdict", "PASS", "ng_count", "wrong")))
+                .contains("「缺陷数量」必须填写数字")
+                .noneMatch(error -> error.contains("ng_count"));
+        assertThat(service.validateNodeFormData("qc_form", Map.of("verdict", "PASS", "ng_count", 2)))
+                .isEmpty();
+
+        ResourceBundleMessageSource messages =
+                new ResourceBundleMessageSource();
+        messages.setBasename("i18n/messages");
+        messages.setDefaultEncoding("UTF-8");
+        MockHttpServletRequest request =
+                new MockHttpServletRequest();
+        request.addHeader("Accept-Language", "en-US");
+        LocalizedMessages.install(messages);
+        RequestContextHolder.setRequestAttributes(
+                new ServletRequestAttributes(request));
+        try {
+            assertThat(service.validateNodeFormData("qc_form", Map.of("verdict", "PASS", "ng_count", "wrong")))
+                    .contains("Enter a number for 缺陷数量.");
+        } finally {
+            LocalizedMessages.install(null);
+            RequestContextHolder.resetRequestAttributes();
+        }
     }
 
     @Test
@@ -134,7 +171,7 @@ class NodeFormDataServiceTest {
 
         List<String> errors = service.validateNodeFormData("qc_form", data);
 
-        assertThat(errors).anyMatch(error -> error.contains("defects.code: 第2行必填"));
+        assertThat(errors).anyMatch(error -> error.contains("「defects」第 2 行的「code」为必填项"));
     }
 
     @Test
@@ -386,7 +423,7 @@ class NodeFormDataServiceTest {
                         "pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
                         Map.of("verdict", "PASS", "ng_reason", "x"), 2L))
                 .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
-                .hasMessageContaining("未知字段: ng_reason");
+                .hasMessageContaining("表单内容与当前版本不一致");
 
         // 合法提交：版本保持绑定的 v3，不漂移到 v5
         Long id = service.submitFinal("pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
@@ -431,8 +468,8 @@ class NodeFormDataServiceTest {
                         "pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
                         Map.of("verdict", "PASS", "ng_count", 1), 2L))
                 .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
-                .hasMessageContaining("绑定版本快照缺失")
-                .hasMessageContaining("qc_form@v3");
+                .hasMessageContaining("该表单版本暂不可用")
+                .hasMessageNotContaining("qc_form@v3");
         // 零持久改写：仍为草稿、数据未变、版本未漂移
         assertThat(store.get("task-1").getStatus()).isEqualTo("DRAFT");
         assertThat(store.get("task-1").getDataText()).isEqualTo(draftJson);

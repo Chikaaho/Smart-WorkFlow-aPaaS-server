@@ -552,7 +552,8 @@ public class TaskActionService {
 
     public List<String> resolveAllowedActions(BpmTaskDTO task) {
         try {
-            return NodeActionPolicy.resolve(task.getNodeConfig());
+            return NodeActionPolicy.resolve(task.getNodeConfig())
+                    .orElseThrow(() -> new IllegalArgumentException("节点允许操作配置无效"));
         } catch (IllegalArgumentException e) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
                     "节点允许操作配置无效");

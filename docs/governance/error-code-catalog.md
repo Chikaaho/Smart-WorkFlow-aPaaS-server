@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（187 常量 / 5 枚举）
+## 2. 全量登记（188 常量 / 183 个唯一数值码 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -45,6 +45,7 @@
 | form | `FORM_DELETE_RESTRICTED` | 1104 | `form.delete_restricted` | 表单存在有效引用，不能删除 |
 | form | `FIELD_EDIT_DENIED` | 1105 | `form.field_edit_denied` | 当前身份无该字段编辑权限 |
 | form | `FIELD_VIEW_DENIED` | 1106 | `form.field_view_denied` | 当前身份无该字段查看权限 |
+| form | `ACTION_PERMISSION_DENIED` | 1107 | `form.action_permission_denied` | 当前身份无权执行该表单操作 |
 | form | `INVALID_COLUMN_NAME` | 1200 | `form.invalid_column_name` | 字段名不合法 |
 | form | `DUPLICATE_COLUMN` | 1201 | `form.duplicate_column` | 字段名重复 |
 | form | `TABLE_ALREADY_EXISTS` | 1202 | `form.table_already_exists` | 动态宽表已存在 |

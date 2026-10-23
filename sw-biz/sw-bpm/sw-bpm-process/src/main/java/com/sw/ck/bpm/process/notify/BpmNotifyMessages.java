@@ -29,7 +29,7 @@ public final class BpmNotifyMessages {
             return Optional.empty();
         }
         return switch (trigger) {
-            case TODO_CREATED -> Optional.of(new Spec(NotifyBizType.WF_TODO, "您有一条待办", "您有一条新的待办任务待处理"));
+            case TODO_CREATED -> Optional.of(new Spec(NotifyBizType.WF_TODO, "您有一条待办", "您有新的待办任务，请及时处理"));
             case PROCESS_APPROVED -> Optional.of(new Spec(NotifyBizType.WF_APPROVED, "您的申请已通过", "您发起的申请已审批通过"));
             case PROCESS_REJECTED -> Optional.of(new Spec(NotifyBizType.WF_REJECTED, "您的申请已驳回", "您发起的申请已审批驳回"));
             case PROCESS_RETURNED -> Optional.of(new Spec(NotifyBizType.WF_RETURNED, "您的申请已退回", "您发起的申请需要重新处理"));
@@ -37,9 +37,9 @@ public final class BpmNotifyMessages {
             case TASK_DELEGATED -> Optional.of(new Spec(NotifyBizType.WF_TODO, "您收到一条委托任务", "有任务被委托给您办理"));
             case TASK_COMMUNICATED -> Optional.of(new Spec(NotifyBizType.WF_TODO, "您收到一条沟通征询", "有人向您征询审批意见，请查看"));
             case PROCESS_WITHDRAWN -> Optional.of(new Spec(NotifyBizType.WF_REJECTED, "您的申请已撤回", "发起人撤回了该申请"));
-            case PROCESS_DISAPPROVED -> Optional.of(new Spec(NotifyBizType.WF_REJECTED, "您的申请未通过", "您的发起申请被不通过意见拦截"));
-            case PROCESS_DISCARDED -> Optional.of(new Spec(NotifyBizType.WF_REJECTED, "您的申请已废弃", "该实例已由授权主体废弃"));
-            case TASK_SIGN_REQUESTED -> Optional.of(new Spec(NotifyBizType.WF_TODO, "您收到一条加签任务", "有任务向您追加签批，请处理"));
+            case PROCESS_DISAPPROVED -> Optional.of(new Spec(NotifyBizType.WF_REJECTED, "您的申请未通过", "您发起的申请未通过审批"));
+            case PROCESS_DISCARDED -> Optional.of(new Spec(NotifyBizType.WF_REJECTED, "您的申请已废弃", "该流程已被废弃"));
+            case TASK_SIGN_REQUESTED -> Optional.of(new Spec(NotifyBizType.WF_TODO, "您收到一条加签任务", "有加签任务需要您处理"));
             case TASK_DEADLINE_ALERT -> Optional.of(new Spec(NotifyBizType.WF_TODO, "办理时限提醒", "您的一条审批任务临近/已超时限"));
         };
     }

@@ -170,7 +170,7 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals("APPROVE", rs.getString(3));
             }
 
-            // 迁移历史：基础种子、两条租户增量与演练时间戳各一条成功记录
+            // 迁移历史：基础种子、三条租户增量与演练时间戳各一条成功记录
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT version, COUNT(*) FROM flyway_schema_history "
                             + "WHERE version IS NOT NULL AND success = TRUE GROUP BY version");
@@ -183,7 +183,7 @@ class P64AppendMigrationUpgradePostgresTest {
                             "versioned 历史应仅含基础种子、租户增量与时间戳，实际: " + version);
                     seen++;
                 }
-                assertEquals(4, seen, "versioned 历史应为基础种子、两条租户增量与时间戳共四条");
+                assertEquals(5, seen, "versioned 历史应为基础种子、三条租户增量与时间戳共五条");
             }
         }
 
