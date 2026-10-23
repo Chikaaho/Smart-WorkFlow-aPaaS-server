@@ -121,8 +121,8 @@ public class BpmResourceOpsService {
                 factView.factBySegment(),
                 factView.factByTenant(),
                 realtimeGuardProfile(),
-                "占用事实=命令/批次项/引擎队列持久行（ResourceFactView）；计数行为准入加速器，"
-                        + "漂移由对账 CAS 修复；上一轮对账结果见日志与 usage/fact 勾稽字段");
+                "占用量按命令、批量项和引擎待处理任务核对；计数不一致时由对账修复，"
+                        + "结果可在运行日志中查阅");
     }
 
     private Map<String, Object> poolProfile() {
@@ -165,8 +165,7 @@ public class BpmResourceOpsService {
         }
         pool.put("configuredMaxActive", environment.getProperty(
                 "spring.datasource.dynamic.druid.max-active", "20"));
-        pool.put("note", "prod 默认池 5 / 异步 OFF 的启用风险只在显式启用检查中定性（RG04），"
-                + "无效启用在开启新受理前被明确拒绝");
+        pool.put("note", "启用前检查数据库连接池和异步执行配置；不满足要求时拒绝开启新受理");
         return pool;
     }
 
@@ -176,7 +175,7 @@ public class BpmResourceOpsService {
         executor.put("corePoolSize", flowableAsyncThreads);
         executor.put("enginePendingJobs", factView.enginePendingJobs());
         executor.put("engineDeadLetterJobs", factView.engineDeadLetterJobs());
-        executor.put("note", "轻流程目标异步消费链受公平/保留合同约束；死信 job 需运维关注");
+        executor.put("note", "轻流程的异步任务遵循资源份额和公平调度规则；死信任务需人工排查");
         return executor;
     }
 
@@ -191,8 +190,8 @@ public class BpmResourceOpsService {
                 : String.valueOf(policy.getBatchPollClaimLimit()));
         dispatcher.put("batchSliceItems", policy == null ? "未启用策略（不限）"
                 : String.valueOf(policy.getBatchSliceItems()));
-        dispatcher.put("note", "租户公平领取按活跃租户切片；批量每轮限量+切片让出，"
-                + "保证共享预算内生产与 OA 各有推进机会");
+        dispatcher.put("note", "按活跃租户轮流处理任务；批量任务分轮、分段处理，"
+                + "使生产与办公任务在共享额度内均可推进");
         return dispatcher;
     }
 
@@ -283,9 +282,9 @@ public class BpmResourceOpsService {
         long counterTotal = usage.getOrDefault("GLOBAL|0|TOTAL", 0L);
         long factTotal = factBySegment.values().stream().mapToLong(Long::longValue).sum();
         return new BpmResourceOpsViews.BacklogSummary(now(),
-                "汇总为当前时点全量口径；正式保障窗口的时效/结果判定以测量报告（10min 窗口）为准",
-                "完成点口径：命令完成 / 流程已启动 / 目标动作完成（TARGET_ACTION_DONE）为不同完成点，"
-                        + "轻流程目标未决不计入已释放",
+                "当前时点汇总，不代表指定时间段内的处理结果",
+                "命令完成、流程启动与目标动作完成分别统计；"
+                        + "目标动作尚未完成的轻流程继续占用资源",
                 open, incompleteUnits, byStatus, byClass, engine,
                 batchPending == null ? 0 : batchPending, usage, factBySegment,
                 counterTotal == factTotal);

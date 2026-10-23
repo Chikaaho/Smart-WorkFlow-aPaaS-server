@@ -282,7 +282,12 @@ class P62ResourceOpsAuthPgTest {
         Long badId = Long.valueOf(extractJsonScalar(bad, "id"));
         String badEnable = exchange(ev, "B1", "POST",
                 "/api/workflow/resource/policy/" + badId + "/enable", admin, "{}");
-        assertThat(badEnable).contains("bpm.resource_policy_invalid").contains("保留份额不自洽");
+        assertThat(extractJsonScalar(badEnable, "code")).isEqualTo("2430");
+        assertThat(badEnable).contains("\"errorKey\":\"bpm.resource_policy_invalid\"");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sw_bpm_resource_reject_log "
+                        + "WHERE reject_scope = 'ENABLEMENT' AND detail LIKE ?", Long.class,
+                "policyId=" + badId + ": %保留份额不自洽%"))
+                .isEqualTo(1L);
         appendPolicyRow(ev, "B1-rejected-policy-row(仍 DRAFT)", badId);
         appendRejectAuditRows(ev, "B1-enablement-audit");
         appendPolicyRow(ev, "B1-active-policy-unchanged", policyId);
