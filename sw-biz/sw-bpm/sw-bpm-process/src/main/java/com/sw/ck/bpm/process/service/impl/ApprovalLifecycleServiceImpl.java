@@ -55,6 +55,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -379,12 +380,13 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     @Override
     @Transactional
     public R<Void> expressSign(Long recordId, ApprovalActionRequest request) {
-        LoginUser actor = LoginUserHolder.get();
+        LoginUser actor = requireAuthenticatedActor();
         BpmSignRecord record = signRecordMapper.selectById(recordId);
         if (record == null) {
             throw new BaseException(BpmErrorCode.SIGN_RECORD_NOT_FOUND);
         }
-        if (!record.getParticipantId().equals(actor.getUserId())) {
+        requireSameTenant(record.getTenantId(), actor, "加签/补签记录不属于当前租户");
+        if (!Objects.equals(record.getParticipantId(), actor.getUserId())) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅追加人本人可表态");
         }
         if ("DONE".equals(record.getSignStatus())) {
@@ -395,12 +397,17 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
         if (MODE_SERIAL.equals(record.getModeType())
                 && SIGN_TYPE_ADD.equals(record.getSignType())) {
+            if (record.getSeqNo() == null) {
+                throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
+                        "串行加签记录缺少顺序号");
+            }
             long before = signRecordMapper.selectCount(
                     Wrappers.<BpmSignRecord>lambdaQuery()
                             .eq(BpmSignRecord::getTaskId, record.getTaskId())
+                            .eq(BpmSignRecord::getTenantId, actor.getTenantId())
                             .eq(BpmSignRecord::getSignType, SIGN_TYPE_ADD)
                             .lt(BpmSignRecord::getSeqNo, record.getSeqNo())
-                            .ne(BpmSignRecord::getSignStatus, "DONE"));
+                            .eq(BpmSignRecord::getSignStatus, "PENDING"));
             if (before > 0) {
                 throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
                         "串行加签存在前置未表态记录");
@@ -416,7 +423,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         patch.setDetail(toJson(mergeDetails(record.getDetail(), mapOf(
                 "result", result, "opinionData", request.getOpinionData(),
                 "actor", actor.getUserId()))));
-        signRecordMapper.updateById(patch);
+        int updated = signRecordMapper.updateById(patch);
+        requireSignRecordTransition(updated, "加签/补签记录状态已变化，请刷新后重试");
 
         // 补签记录的 taskId 是 "SUPPLEMENT#<pid>"，不是 Flowable 任务——用签名记录自身的
         // 实例/节点/记录 ID 构造生命周期任务信息，保证补签表态同样落 ApprovalActionRecord
@@ -462,7 +470,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         patch.setVersion(record.getVersion());
         patch.setSignStatus("CANCELLED");
         patch.setCancelReason(nullSafe(request.getReason(), "操作人取消"));
-        signRecordMapper.updateById(patch);
+        int updated = signRecordMapper.updateById(patch);
+        requireSignRecordTransition(updated, "加签记录状态已变化，请刷新后重试");
         // empty = 该任务不存在（原 null 返回路径）：lifecycleTask 为空时不记录生命周期，语义等同
         bpmTaskFacade.getTask(record.getTaskId()).ifPresent(lifecycleTask -> recordLifecycle(
                 lifecycleTask, actor,
@@ -477,7 +486,12 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         List<BpmSignRecord> all = signRecordMapper.selectList(
                 Wrappers.<BpmSignRecord>lambdaQuery()
                         .eq(BpmSignRecord::getTaskId, settled.getTaskId())
+                        .eq(BpmSignRecord::getTenantId, settled.getTenantId())
                         .ne(BpmSignRecord::getSignStatus, "CANCELLED"));
+        if (all.isEmpty()) {
+            log.warn("加签结算跳过：任务无有效加签记录, taskId={}", settled.getTaskId());
+            return;
+        }
         boolean allDone = all.stream().allMatch(item -> "DONE".equals(item.getSignStatus()));
         if (!allDone) {
             return;
@@ -532,17 +546,24 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         log.info("加签受控完成: taskId={}, negative={}", settled.getTaskId(), negative);
     }
 
+    private void requireSignRecordTransition(int updated, String conflictMessage) {
+        if (updated != 1) {
+            throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(), conflictMessage);
+        }
+    }
+
     // ==================== 沟通回复 ====================
 
     @Override
     @Transactional
     public R<Void> replyCommunication(Long communicationId, ApprovalActionRequest request) {
-        LoginUser actor = LoginUserHolder.get();
+        LoginUser actor = requireAuthenticatedActor();
         BpmCommunication comm = communicationMapper.selectById(communicationId);
         if (comm == null) {
             throw new BaseException(BpmErrorCode.COMMUNICATION_INVALID);
         }
-        if (!comm.getReceiverId().equals(actor.getUserId())) {
+        requireSameTenant(comm.getTenantId(), actor, "沟通记录不属于当前租户");
+        if (!Objects.equals(comm.getReceiverId(), actor.getUserId())) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅沟通接收人可回复");
         }
         if ("REPLIED".equals(comm.getStatus())) {
@@ -556,6 +577,20 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         communicationMapper.updateById(patch);
         log.info("沟通已回复: communicationId={}, receiver={}", communicationId, actor.getUserId());
         return R.ok();
+    }
+
+    private LoginUser requireAuthenticatedActor() {
+        LoginUser actor = LoginUserHolder.get();
+        if (actor == null || actor.getUserId() == null || actor.getTenantId() == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED);
+        }
+        return actor;
+    }
+
+    private void requireSameTenant(Long objectTenantId, LoginUser actor, String message) {
+        if (!Objects.equals(objectTenantId, actor.getTenantId())) {
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), message);
+        }
     }
 
     // ==================== 授权代理规则 ====================

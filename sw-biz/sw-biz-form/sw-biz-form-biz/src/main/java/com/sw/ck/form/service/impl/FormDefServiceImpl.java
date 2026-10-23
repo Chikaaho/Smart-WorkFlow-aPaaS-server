@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.re2j.Pattern;
 import com.google.re2j.PatternSyntaxException;
 import com.sw.ck.common.exception.BaseException;
@@ -315,6 +316,7 @@ public class FormDefServiceImpl implements FormDefService {
         fieldPermissionService.parse(definitionJson);
         validateFormEvents(definitionJson);
         validateDatasourceBindings(definitionJson);
+        String frozenDefinition = freezeSnapshotDefinition(formId, definitionJson);
 
         // —— Step 3: 校验字段名白名单（复用 ColumnValidation） ——
         if (entity.getLogicalTableName() != null && !entity.getLogicalTableName().isBlank()) {
@@ -397,7 +399,7 @@ public class FormDefServiceImpl implements FormDefService {
         snapshot.setId(idGenerator.generate());
         snapshot.setFormId(formId);
         snapshot.setFormVersion(entity.getFormVersion());
-        snapshot.setDefinition(definitionJson);
+        snapshot.setDefinition(frozenDefinition);
         snapshot.setCreateTime(LocalDateTime.now());
         snapshot.setUpdateTime(LocalDateTime.now());
         snapshot.setDeleted(0);
@@ -406,6 +408,21 @@ public class FormDefServiceImpl implements FormDefService {
 
         log.info("Form published: id={}, formKey={}, physicalTable={}, version={}",
                 formId, entity.getFormKey(), physicalTableName, entity.getFormVersion());
+    }
+
+    /** 将发布时的管理员列表配置一起冻结，历史读取不再依赖现行配置。 */
+    private String freezeSnapshotDefinition(String formId, String definition) {
+        if (listConfigMapper == null) return definition;
+        String listConfig = getListConfig(formId);
+        if (listConfig == null || listConfig.isBlank()) return definition;
+        try {
+            ObjectNode frozen = (ObjectNode) objectMapper.readTree(definition);
+            frozen.set("listConfig", objectMapper.readTree(listConfig));
+            return objectMapper.writeValueAsString(frozen);
+        } catch (JsonProcessingException | ClassCastException e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "发布快照配置无效，请检查表单和列表配置后重试");
+        }
     }
 
     @Override
@@ -434,6 +451,7 @@ public class FormDefServiceImpl implements FormDefService {
         fieldPermissionService.parse(definition);
         validateFormEvents(definition);
         validateDatasourceBindings(definition);
+        String frozenDefinition = freezeSnapshotDefinition(formId, definition);
 
         // 先完成全部定义校验，再执行不可回滚的增量 DDL；新版本只允许复用原表。
         for (FieldSpec field : fields) {
@@ -467,7 +485,7 @@ public class FormDefServiceImpl implements FormDefService {
         snapshot.setId(idGenerator.generate());
         snapshot.setFormId(formId);
         snapshot.setFormVersion(newVersion);
-        snapshot.setDefinition(definition);
+        snapshot.setDefinition(frozenDefinition);
         snapshot.setCreateTime(LocalDateTime.now());
         snapshot.setUpdateTime(LocalDateTime.now());
         snapshot.setDeleted(0);

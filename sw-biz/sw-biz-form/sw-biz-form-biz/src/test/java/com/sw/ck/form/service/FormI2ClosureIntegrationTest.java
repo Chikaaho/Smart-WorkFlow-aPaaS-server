@@ -300,6 +300,29 @@ class FormI2ClosureIntegrationTest {
     }
 
     @Test
+    @DisplayName("首次和后续发布分别冻结当时列表配置，现行修改不影响旧快照")
+    void publishedSnapshots_shouldFreezeListConfiguration() throws Exception {
+        FormDefEntity form = createDraft("i2_snapshot_list");
+        String definition = "{\"fields\":[{\"name\":\"a\",\"type\":\"TEXT\"}]}";
+        String initial = "{\"columns\":[{\"name\":\"a\",\"label\":\"首版列\"}],\"actions\":[\"view\"]}";
+        String updated = "{\"columns\":[{\"name\":\"a\",\"label\":\"新版列\"}],\"actions\":[\"view\",\"edit\"]}";
+        formDefService.saveConfig(form.getId(), definition);
+        formDefService.saveListConfig(form.getId(), initial);
+        formDefService.publish(form.getId());
+        FormDefEntity published = formDefMapper.selectById(form.getId());
+        createdTables.add(published.getPhysicalTableName());
+        int firstVersion = published.getFormVersion();
+        formDefService.saveListConfig(form.getId(), updated);
+        formDefService.publishNewVersion(form.getId(), definition);
+        ObjectMapper json = new ObjectMapper();
+        assertThat(json.readTree(formDefService.getSnapshot(form.getId(), firstVersion).getDefinition())
+                .get("listConfig")).isEqualTo(json.readTree(initial));
+        assertThat(json.readTree(formDefService.getSnapshot(form.getId(), firstVersion + 1).getDefinition())
+                .get("listConfig")).isEqualTo(json.readTree(updated));
+        assertThat(json.readTree(formDefService.getDefinitionById(form.getId())).has("listConfig")).isFalse();
+    }
+
+    @Test
     @DisplayName("顶层 flowStart 动作权限按当前角色实时评估")
     void actionPermissions_shouldGateFlowStartByCurrentRole() {
         FormDefEntity form = createPublishedForm("i2_action_permission", """
