@@ -12,6 +12,7 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.storage.api.StorageFacade;
+import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.storage.api.StorageUploadResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +37,7 @@ import java.util.Map;
  * 上传：登录用户可用（上传产物在关联前为孤立文件，关联与查看另受对象权限约束）。
  * 下载：按记录对象权限放行——实例发起人、当前待办人（含候选）、抄送接收人、
  * 超管或持有 {@code form:data:list} 的数据管理者；其余一律拒绝。
- * 附件字段值本身仅存 storageKey，不携带授权语义。
+ * 记录可读后仍需通过表单字段查看权与文件引用核验，storageKey本身不携带授权语义。
  * </p>
  */
 @RestController
@@ -46,15 +47,18 @@ public class WorkflowAttachmentController {
     private static final Logger log = LoggerFactory.getLogger(WorkflowAttachmentController.class);
 
     private final StorageFacade storageFacade;
+    private final FormDefinitionService formDefinitionService;
     private final BpmInstanceService bpmInstanceService;
     private final BpmTaskFacade bpmTaskFacade;
     private final CopyRecordMapper copyRecordMapper;
 
     public WorkflowAttachmentController(StorageFacade storageFacade,
+                                        FormDefinitionService formDefinitionService,
                                         BpmInstanceService bpmInstanceService,
                                         BpmTaskFacade bpmTaskFacade,
                                         CopyRecordMapper copyRecordMapper) {
         this.storageFacade = storageFacade;
+        this.formDefinitionService = formDefinitionService;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmTaskFacade = bpmTaskFacade;
         this.copyRecordMapper = copyRecordMapper;
@@ -80,12 +84,14 @@ public class WorkflowAttachmentController {
      * 按对象权限下载附件/图片。
      *
      * @param recordId   表单记录 id（= 流程 businessKey）
-     * @param storageKey 存储键（来自字段值，服务端只按 key 取流，不信任路径信息）
+     * @param storageKey 存储键（服务端核实该文件由当前可见字段实际引用）
+     * @param formKey    无流程实例记录时的表单标识；有实例时按实例归属解析并拒绝冲突值
      */
     @GetMapping("/{recordId}/download")
     public ResponseEntity<InputStreamResource> download(@PathVariable String recordId,
                                                         @RequestParam("storageKey") String storageKey,
-                                                        @RequestParam(value = "name", required = false) String name)
+                                                        @RequestParam(value = "name", required = false) String name,
+                                                        @RequestParam(value = "formKey", required = false) String formKey)
             throws IOException {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
@@ -94,7 +100,17 @@ public class WorkflowAttachmentController {
         if (storageKey == null || storageKey.isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "storageKey 不能为空");
         }
-        if (!hasRecordAccess(loginUser, recordId)) {
+        BpmInstance instance = bpmInstanceService.lambdaQuery()
+                .eq(BpmInstance::getBusinessKey, recordId)
+                .last("LIMIT 1")
+                .one();
+        String resolvedFormKey = instance == null ? formKey : instance.getFormKey();
+        boolean formMatches = formKey == null || formKey.isBlank()
+                || formKey.equals(resolvedFormKey);
+        if (!hasRecordAccess(loginUser, instance) || !formMatches
+                || resolvedFormKey == null || resolvedFormKey.isBlank()
+                || !formDefinitionService.canCurrentUserAccessAttachment(
+                        resolvedFormKey, recordId, storageKey).orElse(false)) {
             log.warn("附件下载越权拒绝: recordId={}, user={}", recordId, loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该记录附件");
         }
@@ -112,17 +128,13 @@ public class WorkflowAttachmentController {
 
     // ==================== 对象权限 ====================
 
-    private boolean hasRecordAccess(LoginUser user, String recordId) {
+    private boolean hasRecordAccess(LoginUser user, BpmInstance instance) {
         if (user.isSuperAdmin()) {
             return true;
         }
         if (user.getPermissions() != null && user.getPermissions().contains("form:data:list")) {
             return true;
         }
-        BpmInstance instance = bpmInstanceService.lambdaQuery()
-                .eq(BpmInstance::getBusinessKey, recordId)
-                .last("LIMIT 1")
-                .one();
         if (instance == null) {
             return false;
         }

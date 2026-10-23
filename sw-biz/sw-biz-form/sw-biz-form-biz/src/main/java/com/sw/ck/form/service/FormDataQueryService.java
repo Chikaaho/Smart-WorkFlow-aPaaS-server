@@ -439,6 +439,73 @@ public class FormDataQueryService {
         return result;
     }
 
+    /** 附件读取沿用用户详情投影；记录可读不代表能读取未关联或不可见字段中的文件。 */
+    public boolean canCurrentUserAccessAttachment(String formKey, String recordId, String storageKey) {
+        if (storageKey == null || storageKey.isBlank()) {
+            return false;
+        }
+        Map<String, Object> record = getRecordDetail(formKey, recordId);
+        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        if (formDef == null) {
+            return false;
+        }
+        Set<String> denied = viewDeniedFields(LoginUserHolder.get(), formDef.getId());
+        for (Map.Entry<String, FieldType> field : loadFieldTypeMap(formDef.getId()).entrySet()) {
+            if (!denied.contains(field.getKey()) && isAttachmentType(field.getValue())
+                    && referencesStorageKey(record.get(ColumnValidation.physicalColumnName(
+                            field.getKey(), field.getValue())), storageKey)) {
+                return true;
+            }
+        }
+        for (Map.Entry<String, List<SubFieldMeta>> table : loadTableSubFields(formDef.getId()).entrySet()) {
+            if (denied.contains(table.getKey()) || !(record.get(table.getKey()) instanceof List<?> rows)) {
+                continue;
+            }
+            for (Object item : rows) {
+                if (!(item instanceof Map<?, ?> row)) {
+                    continue;
+                }
+                for (SubFieldMeta field : table.getValue()) {
+                    if (!denied.contains(table.getKey() + "." + field.name())
+                            && isAttachmentType(field.type())
+                            && referencesStorageKey(row.get(field.physicalCol()), storageKey)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isAttachmentType(FieldType type) {
+        return type == FieldType.ATTACHMENT || type == FieldType.IMAGE;
+    }
+
+    private boolean referencesStorageKey(Object value, String storageKey) {
+        if (value == null) {
+            return false;
+        }
+        try {
+            JsonNode items = value instanceof String text
+                    ? objectMapper.readTree(text) : objectMapper.valueToTree(value);
+            if (items == null || !items.isArray()) {
+                return false;
+            }
+            for (JsonNode item : items) {
+                if (item.isTextual() && storageKey.equals(item.asText())) {
+                    return true;
+                }
+                if (item.isObject() && item.path("storageKey").isTextual()
+                        && storageKey.equals(item.get("storageKey").asText())) {
+                    return true;
+                }
+            }
+        } catch (JsonProcessingException | IllegalArgumentException e) {
+            log.warn("Attachment reference could not be decoded; access denied");
+        }
+        return false;
+    }
+
     /**
      * 系统上下文读取记录全量数据（P63 跨模块读接缝；流程引擎/调度侧无登录态）。
      * <p>

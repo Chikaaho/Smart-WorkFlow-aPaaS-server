@@ -445,6 +445,7 @@ public class FormFieldEnrichmentService {
                             sub.path("multiple").asBoolean(false));
                     case "DATASOURCE" -> enrichDatasource(sub, rowMap, subName, subDisplay);
                     case "REFERENCE" -> enrichReference(sub, rowMap, subName, subDisplay, liveTargets);
+                    case "ATTACHMENT", "IMAGE" -> enrichFiles(rowMap, subName, subDisplay);
                     default -> { }
                 }
             }
@@ -493,7 +494,9 @@ public class FormFieldEnrichmentService {
         if (storage == null) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED, "文件存储服务未装配");
         }
-        for (Object key : list) {
+        for (Object item : list) {
+            // 当前控件携带文件名；历史记录仍可使用纯存储键数组。
+            Object key = item instanceof Map<?, ?> file ? file.get("storageKey") : item;
             if (!(key instanceof String storageKey) || storageKey.isBlank()
                     || !fileExists(storage, storageKey)) {
                 throw new BaseException(FormErrorCode.ATTACHMENT_FILE_NOT_FOUND,
