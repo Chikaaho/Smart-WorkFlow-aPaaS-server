@@ -311,7 +311,7 @@ public class TaskActionService {
         // I3 动作资格：任务存在待处理加签时，普通办理（APPROVE/DISAPPROVE/REJECT/
         // RETURN）必须先等加签完成或取消（生命周期门）。
         com.sw.ck.bpm.process.service.ApprovalLifecycleService lifecycleService = lifecycle();
-        if (lifecycleService != null && !legacyInvocation) {
+        if (lifecycleService != null) {
             lifecycleService.assertNoPendingSign(taskId);
         }
         ApprovalOpinionValidator.validate(effectiveRequest, resolveOpinionForm(task), processVariables);

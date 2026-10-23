@@ -612,6 +612,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     private BpmTaskDTO toDto(Task task) {
         BpmTaskDTO dto = new BpmTaskDTO();
         dto.setTaskId(task.getId());
+        dto.setTenantId(task.getTenantId());
         dto.setName(task.getName());
         dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());
@@ -674,6 +675,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     private BpmTaskDTO toDtoFromHistory(HistoricTaskInstance task) {
         BpmTaskDTO dto = new BpmTaskDTO();
         dto.setTaskId(task.getId());
+        dto.setTenantId(task.getTenantId());
         dto.setName(task.getName());
         dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());

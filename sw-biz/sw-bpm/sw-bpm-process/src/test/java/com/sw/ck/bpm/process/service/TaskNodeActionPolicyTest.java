@@ -10,6 +10,8 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.HashMap;
 import java.util.List;
@@ -75,5 +77,22 @@ class TaskNodeActionPolicyTest {
         Map<String, Object> explicitNull = new HashMap<>(); explicitNull.put("allowedActions", null);
         assertThatThrownBy(() -> service.resolveAllowedActions(task(explicitNull)))
                 .isInstanceOf(BaseException.class);
+    }
+    @Test void legacyEmptyRequestStillWaitsForPendingSigns() {
+        LoginUser actor = new LoginUser(); actor.setUserId(1L); actor.setTenantId(0L);
+        LoginUserHolder.set(actor);
+        BpmTaskDTO task = task(Map.of());
+        when(tasks.getTask("task-1")).thenReturn(Optional.of(task));
+        when(instances.findByProcessInstanceId("instance-1")).thenReturn(Optional.empty());
+        ApprovalLifecycleService lifecycle = mock(ApprovalLifecycleService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<ApprovalLifecycleService> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(lifecycle);
+        doThrow(new BaseException(2400, "仍有待确认加签"))
+                .when(lifecycle).assertNoPendingSign("task-1");
+        ReflectionTestUtils.setField(service, "lifecycleProvider", provider);
+        assertThatThrownBy(() -> service.execute("task-1", null))
+                .isInstanceOf(BaseException.class).hasMessageContaining("待确认加签");
+        verify(tasks, never()).complete(anyString(), any());
     }
 }

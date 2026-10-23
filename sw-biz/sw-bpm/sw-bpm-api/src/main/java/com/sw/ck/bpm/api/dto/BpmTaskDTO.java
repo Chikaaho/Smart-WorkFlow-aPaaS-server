@@ -22,6 +22,9 @@ public class BpmTaskDTO {
     /** Flowable task ID */
     private String taskId;
 
+    /** 引擎任务的租户标识，供业务对象授权核对。 */
+    private String tenantId;
+
     /** 任务名称 */
     private String name;
 

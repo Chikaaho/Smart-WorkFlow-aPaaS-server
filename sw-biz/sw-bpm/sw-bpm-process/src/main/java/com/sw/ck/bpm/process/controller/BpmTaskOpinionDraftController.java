@@ -37,20 +37,20 @@ public class BpmTaskOpinionDraftController {
     }
 
     @GetMapping
-    @PreAuthorize("@ss.hasPermi('workflow:todo:view')")
+    @PreAuthorize("isAuthenticated()")
     public R<Map<String, Object>> get(@PathVariable String taskId) {
-        LoginUser actor = LoginUserHolder.get();
+        LoginUser actor = requireActor();
         BpmTaskDTO task = requireOwnedRunningTask(taskId, actor);
-        BpmTaskOpinionDraft draft = find(taskId, actor.getUserId());
+        BpmTaskOpinionDraft draft = find(taskId, actor);
         return R.ok(draft == null ? null : view(task, draft));
     }
 
     @Transactional
     @PutMapping
-    @PreAuthorize("@ss.hasPermi('workflow:task:approve')")
+    @PreAuthorize("isAuthenticated()")
     public R<Map<String, Object>> save(@PathVariable String taskId,
                                        @RequestBody OpinionDraftRequest request) {
-        LoginUser actor = LoginUserHolder.get();
+        LoginUser actor = requireActor();
         BpmTaskDTO task = requireOwnedRunningTask(taskId, actor);
         if (request == null || request.comment() != null && request.comment().length() > 20_000) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "审批意见暂存内容过长");
@@ -59,7 +59,7 @@ public class BpmTaskOpinionDraftController {
         if (opinionJson.length() > 200_000) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "审批意见数据过大");
         }
-        BpmTaskOpinionDraft draft = find(taskId, actor.getUserId());
+        BpmTaskOpinionDraft draft = find(taskId, actor);
         if (draft == null) {
             draft = new BpmTaskOpinionDraft();
             draft.setTaskId(taskId);
@@ -87,18 +87,22 @@ public class BpmTaskOpinionDraftController {
 
     @Transactional
     @DeleteMapping
-    @PreAuthorize("@ss.hasPermi('workflow:task:approve')")
+    @PreAuthorize("isAuthenticated()")
     public R<Void> delete(@PathVariable String taskId) {
-        LoginUser actor = LoginUserHolder.get();
-        BpmTaskDTO task = taskFacade.getTask(taskId).orElseThrow(
-                () -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
-        BpmTaskOpinionDraft draft = find(taskId, actor.getUserId());
+        LoginUser actor = requireActor();
+        requireOwnedRunningTask(taskId, actor);
+        BpmTaskOpinionDraft draft = find(taskId, actor);
         if (draft == null) return R.ok();
-        if (task.getEndTime() != null) {
-            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "任务已结束，意见暂存不可改写");
-        }
         mapper.deleteById(draft.getId());
         return R.ok();
+    }
+
+    private LoginUser requireActor() {
+        LoginUser actor = LoginUserHolder.get();
+        if (actor == null || actor.getUserId() == null || actor.getTenantId() == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED);
+        }
+        return actor;
     }
 
     private BpmTaskDTO requireOwnedRunningTask(String taskId, LoginUser actor) {
@@ -107,6 +111,10 @@ public class BpmTaskOpinionDraftController {
         if (task.getEndTime() != null) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "任务已结束，意见暂存不可改写");
         }
+        if (task.getTenantId() != null && !task.getTenantId().isBlank()
+                && !task.getTenantId().equals(String.valueOf(actor.getTenantId()))) {
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "意见暂存任务不属于当前租户");
+        }
         if (task.getAssignee() == null
                 || !task.getAssignee().equals(String.valueOf(actor.getUserId()))) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅当前办理人可访问意见暂存");
@@ -114,10 +122,11 @@ public class BpmTaskOpinionDraftController {
         return task;
     }
 
-    private BpmTaskOpinionDraft find(String taskId, Long assigneeId) {
+    private BpmTaskOpinionDraft find(String taskId, LoginUser actor) {
         return mapper.selectOne(Wrappers.<BpmTaskOpinionDraft>lambdaQuery()
                 .eq(BpmTaskOpinionDraft::getTaskId, taskId)
-                .eq(BpmTaskOpinionDraft::getAssigneeId, assigneeId)
+                .eq(BpmTaskOpinionDraft::getAssigneeId, actor.getUserId())
+                .eq(BpmTaskOpinionDraft::getTenantId, actor.getTenantId())
                 .last("LIMIT 1"));
     }
 

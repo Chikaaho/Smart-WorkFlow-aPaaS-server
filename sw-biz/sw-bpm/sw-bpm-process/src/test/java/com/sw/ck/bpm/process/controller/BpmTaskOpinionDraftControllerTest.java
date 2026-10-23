@@ -19,8 +19,11 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 class BpmTaskOpinionDraftControllerTest {
     private final BpmTaskFacade taskFacade = mock(BpmTaskFacade.class);
@@ -72,6 +75,33 @@ class BpmTaskOpinionDraftControllerTest {
                 new BpmTaskOpinionDraftController.OpinionDraftRequest(null, null, "意见", Map.of())))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("任务已结束");
+    }
+
+    @Test
+    void deleteRejectsAnotherHandlerEvenWhenNoDraftExists() {
+        login(8L);
+        when(taskFacade.getTask("task-1")).thenReturn(Optional.of(task("7", null)));
+        assertThatThrownBy(() -> controller.delete("task-1"))
+                .isInstanceOf(BaseException.class).hasMessageContaining("当前办理人");
+        verify(mapper, never()).deleteById(anyLong());
+    }
+
+    @Test
+    void actorAndTaskTenantMustMatch() {
+        login(7L);
+        BpmTaskDTO foreign = task("7", null); foreign.setTenantId("200");
+        when(taskFacade.getTask("task-1")).thenReturn(Optional.of(foreign));
+        assertThatThrownBy(() -> controller.get("task-1"))
+                .isInstanceOf(BaseException.class).hasMessageContaining("当前租户");
+        assertThatThrownBy(() -> controller.save("task-1",
+                new BpmTaskOpinionDraftController.OpinionDraftRequest(null, null, "意见", Map.of())))
+                .isInstanceOf(BaseException.class).hasMessageContaining("当前租户");
+    }
+
+    @Test
+    void missingIdentityIsUnauthorized() {
+        assertThatThrownBy(() -> controller.get("task-1")).isInstanceOf(BaseException.class)
+                .extracting("code").isEqualTo(401);
     }
 
     private BpmTaskDTO task(String assignee, Date endTime) {
