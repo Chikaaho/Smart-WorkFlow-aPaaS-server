@@ -5,6 +5,8 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.mapper.SysWorkspaceCardTypeMapper;
 import com.sw.ck.system.service.impl.WorkspaceCardTypeServiceImpl;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -13,6 +15,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
 
 class WorkspaceCardTypeServiceImplTest {
 
@@ -45,6 +50,19 @@ class WorkspaceCardTypeServiceImplTest {
         assertThatThrownBy(() -> service.create(type))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("JSON 对象");
+    }
+
+    @Test
+    void listAvailable_shouldFallbackToPlatformDefaultsForNewTenant() {
+        LoginUser user = new LoginUser();
+        user.setTenantId(9001L);
+        LoginUserHolder.set(user);
+        SysWorkspaceCardType global = validType();
+        global.setTenantId(0L);
+        when(mapper.selectList(any())).thenReturn(List.of(), List.of(global));
+
+        assertThat(service.listAvailable()).containsExactly(global);
+        LoginUserHolder.clear();
     }
 
     private SysWorkspaceCardType validType() {
