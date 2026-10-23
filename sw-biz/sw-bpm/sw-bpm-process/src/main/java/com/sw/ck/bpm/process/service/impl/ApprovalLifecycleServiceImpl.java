@@ -165,6 +165,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
 
         ApprovalAction action = request.getAction();
+        TaskActionService nodePolicy = taskActionService.getIfAvailable();
+        if (nodePolicy != null) nodePolicy.assertNodeActionAllowed(task, action);
         switch (action) {
             case TRANSFER -> doTransfer(task, actor, request);
             case DELEGATE -> doDelegate(task, actor, request);
@@ -268,6 +270,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         if (!"BEFORE".equals(signPosition) && !"AFTER".equals(signPosition)) {
             throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                     "加签位置只能是 BEFORE 或 AFTER");
+        }
+        if ("AFTER".equals(signPosition)) {
+            TaskActionService policy = taskActionService.getIfAvailable();
+            if (policy != null) policy.assertNodeActionAllowed(task, ApprovalAction.APPROVE);
         }
         long pendingCount = signRecordMapper.selectCount(
                 Wrappers.<BpmSignRecord>lambdaQuery()

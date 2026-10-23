@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
@@ -35,6 +36,7 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,6 +47,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** 加签表态与沟通回复的对象权限、租户隔离和串行顺序负向回归。 */
@@ -61,6 +64,7 @@ class ApprovalLifecycleSecurityTest {
     private final BpmCommunicationMapper communicationMapper = mock(BpmCommunicationMapper.class);
     private final BpmTaskFacade taskFacade = mock(BpmTaskFacade.class);
     private final ApprovalActionService approvalActionService = mock(ApprovalActionService.class);
+    private final ObjectProvider<TaskActionService> taskActions = provider(TaskActionService.class);
     private final ApprovalLifecycleServiceImpl service = new ApprovalLifecycleServiceImpl(
             taskFacade,
             mock(BpmInstanceService.class),
@@ -73,7 +77,7 @@ class ApprovalLifecycleSecurityTest {
             mock(BpmConsensusVoteMapper.class),
             mock(ParticipantSnapshotMapper.class),
             provider(UserQueryFacade.class),
-            provider(TaskActionService.class),
+            taskActions,
             provider(DynamicBranchPort.class),
             mock(DomainEventPublisher.class),
             new ObjectMapper());
@@ -235,6 +239,24 @@ class ApprovalLifecycleSecurityTest {
                 .isInstanceOf(BaseException.class)
                 .extracting("code")
                 .isEqualTo(401);
+    }
+
+    @Test
+    void lifecycleActionsCannotBypassFrozenNodePolicy() {
+        TaskActionService policy = new TaskActionService(
+                null, null, null, null, null, null, new ObjectMapper(), null);
+        when(taskActions.getIfAvailable()).thenReturn(policy);
+        BpmTaskDTO task = new BpmTaskDTO();
+        task.setTaskId("task-1"); task.setAssignee("8");
+        task.setNodeConfig(Map.of("allowedActions", List.of("APPROVE")));
+        when(taskFacade.getTask("task-1")).thenReturn(Optional.of(task));
+        for (ApprovalAction action : List.of(ApprovalAction.TRANSFER, ApprovalAction.DELEGATE,
+                ApprovalAction.COMMUNICATE, ApprovalAction.ADD_SIGN)) {
+            ApprovalActionRequest request = new ApprovalActionRequest(); request.setAction(action);
+            assertThatThrownBy(() -> service.executeTaskAction("task-1", request))
+                    .isInstanceOf(BaseException.class).hasMessageContaining("不允许");
+        }
+        verifyNoInteractions(signRecordMapper, communicationMapper, approvalActionService);
     }
 
     private BpmSignRecord pendingSign(Long participantId, Long tenantId) {

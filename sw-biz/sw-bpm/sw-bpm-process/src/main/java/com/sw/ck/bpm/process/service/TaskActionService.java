@@ -1,5 +1,8 @@
 package com.sw.ck.bpm.process.service;
 
+import com.sw.ck.bpm.api.node.NodeActionPolicy;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
@@ -301,6 +304,7 @@ public class TaskActionService {
         ApprovalAction action = effectiveRequest.getAction() == null ? ApprovalAction.APPROVE
                 : effectiveRequest.getAction();
         effectiveRequest.setAction(action);
+        assertNodeActionAllowed(task, action);
         // empty = 实例标识缺失或该实例不存在：按原有“无流程变量”结论继续（不阻断动作）
         Map<String, Object> processVariables = bpmTaskFacade.getVariables(processInstanceId)
                 .orElse(Map.of());
@@ -546,8 +550,32 @@ public class TaskActionService {
         }
     }
 
+    public List<String> resolveAllowedActions(BpmTaskDTO task) {
+        try {
+            return NodeActionPolicy.resolve(task.getNodeConfig());
+        } catch (IllegalArgumentException e) {
+            throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
+                    "节点允许操作配置无效");
+        }
+    }
+
+    public void assertNodeActionAllowed(BpmTaskDTO task, ApprovalAction action) {
+        if (action == null || !resolveAllowedActions(task).contains(action.name())) {
+            throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
+                    "当前节点不允许此操作");
+        }
+    }
+
     /** 解析任务节点的意见表单配置（详情与动作校验共用）。 */
     public Map<String, Object> resolveOpinionForm(BpmTaskDTO task) {
+        if (task.getNodeConfig() != null) {
+            Object frozen = task.getNodeConfig().get("opinionForm");
+            if (frozen == null) return Map.of();
+            if (!(frozen instanceof Map<?, ?>)) {
+                throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+            }
+            return (Map<String, Object>) frozen;
+        }
         if (bpmProcessDefService == null || objectMapper == null
                 || task.getProcessDefinitionKey() == null || task.getTaskDefinitionKey() == null) {
             return Map.of();

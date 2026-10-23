@@ -292,8 +292,10 @@ public class BpmTodoController {
         // 已办详情只读：无意见表单、canHandle 恒 false；待办按服务端办理权限判定
         if (finished) {
             dto.setCanHandle(false);
+            dto.setAllowedActions(List.of());
         } else {
             dto.setOpinionForm(taskActionService.resolveOpinionForm(task));
+            dto.setAllowedActions(taskActionService.resolveAllowedActions(task));
             dto.setCanHandle(bpmTaskFacade
                     .canHandle(taskId, String.valueOf(loginUser.getUserId()))
                     .orElse(false));

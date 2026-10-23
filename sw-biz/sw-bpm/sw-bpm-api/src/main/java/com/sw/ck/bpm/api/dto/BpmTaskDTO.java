@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 
 /**
  * BPM 任务 DTO —— Facade 层出参，仅包含引擎层可知字段。
@@ -56,4 +57,7 @@ public class BpmTaskDTO {
 
     /** 任务归属的发起人 ID（任务详情展示）。 */
     private String initiatorId;
+
+    /** 任务实际部署版本的冻结节点配置；旧部署无 nodeConfig 属性时为空 Map。 */
+    private Map<String, Object> nodeConfig;
 }

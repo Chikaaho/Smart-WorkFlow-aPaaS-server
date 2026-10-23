@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.translator;
 
+import com.sw.ck.bpm.api.node.NodeActionPolicy;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
@@ -103,6 +105,8 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
                         new BpmNodeConfigField("opinionForm", "审批意见表单", "object", false, Map.of()),
                         new BpmNodeConfigField("nodeForm", "节点业务表单（P64）", "object", false,
                                 Map.of("shape", "{formKey}")),
+                        new BpmNodeConfigField("allowedActions", "允许操作", "array", false,
+                                Map.of("options", NodeActionPolicy.ALL)),
                         new BpmNodeConfigField("returnTargets", "可退回节点", "array", false, Map.of())),
                 "2",
                 EnumSet.of(BpmNodeCapability.DESIGN, BpmNodeCapability.TRANSLATE,
@@ -119,6 +123,12 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
         if (config == null || (!config.containsKey("participant") && !config.containsKey("approver"))) {
             return Optional.of(List.of(configError(node, BpmErrorCode.APPROVER_CONFIG_MISSING,
                     "审批节点缺少 approver 配置")));
+        }
+        try {
+            NodeActionPolicy.resolve(config);
+        } catch (IllegalArgumentException e) {
+            return Optional.of(List.of(configError(node, BpmErrorCode.NODE_CONFIG_INVALID,
+                    e.getMessage())));
         }
         Object approverObj = config.containsKey("participant")
                 ? config.get("participant") : config.get("approver");

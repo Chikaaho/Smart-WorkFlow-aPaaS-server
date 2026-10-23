@@ -50,6 +50,9 @@ public class TaskDetailRespDTO {
     /** 当前登录用户是否可办理该任务（服务端办理权限判定；已办历史任务恒 false） */
     private Boolean canHandle;
 
+    /** 任务实际部署节点允许的动作；页面与接口使用同一发布配置。 */
+    private List<String> allowedActions;
+
     /** 发起人 ID */
     private Long initiatorId;
     /** 发起人展示名（可读身份回显） */

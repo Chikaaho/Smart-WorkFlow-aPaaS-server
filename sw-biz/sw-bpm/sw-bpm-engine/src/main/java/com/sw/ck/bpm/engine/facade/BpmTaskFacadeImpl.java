@@ -616,6 +616,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(getProcessDefinitionKey(task));
+        dto.setNodeConfig(getFrozenNodeConfig(task.getProcessDefinitionId(), task.getTaskDefinitionKey()));
         dto.setAssignee(task.getAssignee());
         dto.setCandidateUserIds(candidateUserIdsOf(task.getId()));
         dto.setCreateTime(task.getCreateTime());
@@ -677,9 +678,39 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(getProcessDefinitionKeyFromId(task.getProcessDefinitionId()));
+        dto.setNodeConfig(getFrozenNodeConfig(task.getProcessDefinitionId(), task.getTaskDefinitionKey()));
         dto.setAssignee(task.getAssignee());
         dto.setCreateTime(task.getCreateTime());
         dto.setEndTime(task.getEndTime());
         return dto;
+    }
+
+    /**
+     * 读取任务所属部署版本的节点配置。旧部署无 nodeConfig 时返回非 null 空 Map；
+     * 属性存在但无法解析时 fail-closed，禁止回退到当前设计图。
+     */
+    private Map<String, Object> getFrozenNodeConfig(String processDefinitionId, String taskDefinitionKey) {
+        if (processDefinitionId == null || taskDefinitionKey == null) {
+            return Map.of();
+        }
+        BpmnModel model = repositoryService.getBpmnModel(processDefinitionId);
+        FlowElement element = model == null ? null : model.getFlowElement(taskDefinitionKey);
+        String json = element == null ? null : element.getAttributeValue(FLOWABLE_NS, "nodeConfig");
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> config = objectMapper.readValue(
+                    json, new TypeReference<Map<String, Object>>() { });
+            if (config == null) {
+                throw new IllegalArgumentException("nodeConfig must be a JSON object");
+            }
+            return config;
+        } catch (Exception exception) {
+            log.warn("冻结节点配置解析失败: processDefinitionId={}, taskDefinitionKey={}",
+                    processDefinitionId, taskDefinitionKey);
+            throw new BaseException(BpmErrorCode.NODE_CONFIG_INVALID.getCode(),
+                    "任务所属部署版本的节点配置无法解析");
+        }
     }
 }
