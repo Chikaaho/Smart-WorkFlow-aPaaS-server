@@ -36,11 +36,15 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * P64 Trigger 受控判断与配置化动作执行（ADR-P64-001 §3/§4，A03+A04）。
+ * P64 Trigger 受控判断与配置化动作执行（ADR-P64-001 §3/§4，A03+A04；DR07 阶段区分）。
  * <p>
- * 在完成任务的同事务内评估（快照同事务一致读点）；脚本只判断，异常/超时/超限/未匹配
+ * 任务/节点事件在办理事务内评估（快照同事务一致读点）；脚本只判断，异常/超时/超限/未匹配
  * 落可诊断 exec 行、不产生动作、不回滚业务办理；命中分支的动作为每项同事务登记
  * ORCH_ACTION_START 可靠意图（sw_bpm_command + sw_bpm_action_ref），消费侧建目标实例。
+ * </p>
+ * <p>
+ * DR07：PROCESS_COMPLETED 对旧配置（缺 enabled 字段）保持同事务评估；新配置（显式
+ * enabled）在终态提交后于独立短事务中评估，失败不回滚已成立终态，回滚的办理不产生副作用。
  * </p>
  */
 @Slf4j
@@ -84,6 +88,11 @@ public class TriggerExecutionService {
     /** BF20261013-021 脚本函数上下文工厂（可选注入；既有单测保持旧构造）。 */
     private final org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
             scriptFunctionContextProvider;
+    /**
+     * DR07 新配置终态后评估用的独立短事务模板（REQUIRES_NEW；可选注入，
+     * 缺省时终态后评估退化为逐语句提交，行为语义不变）。
+     */
+    private final org.springframework.transaction.support.TransactionTemplate afterCommitTemplate;
 
     public TriggerExecutionService(NodeFormDataService nodeFormDataService,
                                    BpmVariableSnapshotService variableSnapshotService,
@@ -94,7 +103,7 @@ public class TriggerExecutionService {
                                    BpmTaskFacade bpmTaskFacade,
                                    ObjectMapper objectMapper) {
         this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
-                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null, null);
+                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null, null, null);
     }
 
     /** 兼容既有子流程派发单测构造（无脚本函数上下文工厂）。 */
@@ -110,7 +119,7 @@ public class TriggerExecutionService {
                                            childOrchestrationProvider) {
         this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
                 triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper,
-                childOrchestrationProvider, null);
+                childOrchestrationProvider, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -125,7 +134,8 @@ public class TriggerExecutionService {
                                    org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
                                            childOrchestrationProvider,
                                    org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
-                                           scriptFunctionContextProvider) {
+                                           scriptFunctionContextProvider,
+                                   org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.nodeFormDataService = nodeFormDataService;
         this.variableSnapshotService = variableSnapshotService;
         this.scriptRunner = scriptRunner;
@@ -136,6 +146,15 @@ public class TriggerExecutionService {
         this.objectMapper = objectMapper;
         this.childOrchestrationProvider = childOrchestrationProvider;
         this.scriptFunctionContextProvider = scriptFunctionContextProvider;
+        if (transactionManager != null) {
+            org.springframework.transaction.support.TransactionTemplate template =
+                    new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+            template.setPropagationBehavior(
+                    org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            this.afterCommitTemplate = template;
+        } else {
+            this.afterCommitTemplate = null;
+        }
     }
 
     private ChildOrchestrationService childOrchestration() {
@@ -215,6 +234,10 @@ public class TriggerExecutionService {
 
     /**
      * 流程合法完成（APPROVED 终态）后触发 PROCESS_COMPLETED；驳回/废弃/撤回不触发。
+     * <p>
+     * DR07 阶段区分：旧配置（缺 enabled 字段）保持原同事务评估；新配置（显式 enabled）
+     * 的终态监听在终态提交后执行——失败不回滚已成立终态，回滚的办理不产生副作用。
+     * </p>
      */
     @Transactional(propagation = Propagation.REQUIRED)
     public void onProcessCompleted(BpmInstance instance, String terminalStatus) {
@@ -226,11 +249,60 @@ public class TriggerExecutionService {
             return;
         }
         long round = nodeFormDataService.currentRound(instance.getProcessInstanceId());
+        List<TriggerConfig> legacy = new ArrayList<>();
+        List<TriggerConfig> fresh = new ArrayList<>();
         graph.getTriggers().stream()
                 .filter(this::isEnabled)
                 .filter(trigger -> EVENT_PROCESS_COMPLETED.equalsIgnoreCase(trigger.getEvent()))
-                .forEach(trigger -> evaluate(instance, graph, trigger, EVENT_PROCESS_COMPLETED,
-                        null, round, null));
+                .forEach(trigger -> (trigger.getEnabled() == null ? legacy : fresh).add(trigger));
+        // 旧配置保持已定义事务阶段（同事务评估，随办理事务一起提交/回滚）
+        legacy.forEach(trigger -> evaluate(instance, graph, trigger, EVENT_PROCESS_COMPLETED,
+                null, round, null));
+        if (!fresh.isEmpty()) {
+            registerAfterTerminalCommit(instance, graph, fresh, round);
+        }
+    }
+
+    /**
+     * 新配置终态监听的提交后执行注册：有事务同步时挂 afterCommit，否则按提交后语义立即评估。
+     */
+    private void registerAfterTerminalCommit(BpmInstance instance, ProcessGraph graph,
+                                             List<TriggerConfig> triggers, long round) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager
+                .isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                    .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                evaluateAfterTerminalCommit(instance, graph, triggers, round);
+                            } catch (Exception e) {
+                                // 提交后异常不得反向传播影响已提交的办理事务
+                                log.error("终态提交后监听评估异常: instance={}",
+                                        instance.getProcessInstanceId(), e);
+                            }
+                        }
+                    });
+            log.info("PROCESS_COMPLETED 新配置监听挂起至终态提交后: pi={}, count={}",
+                    instance.getProcessInstanceId(), triggers.size());
+        } else {
+            evaluateAfterTerminalCommit(instance, graph, triggers, round);
+        }
+    }
+
+    /**
+     * 终态提交后的监听评估：独立短事务承载 exec 行与意图登记（模板可用时），
+     * 失败仅落可诊断记录，不触碰已成立的终态。
+     */
+    public void evaluateAfterTerminalCommit(BpmInstance instance, ProcessGraph graph,
+                                            List<TriggerConfig> triggers, long round) {
+        if (afterCommitTemplate != null) {
+            afterCommitTemplate.executeWithoutResult(status -> triggers.forEach(trigger ->
+                    evaluate(instance, graph, trigger, EVENT_PROCESS_COMPLETED, null, round, null)));
+        } else {
+            triggers.forEach(trigger -> evaluate(instance, graph, trigger, EVENT_PROCESS_COMPLETED,
+                    null, round, null));
+        }
     }
 
     /**

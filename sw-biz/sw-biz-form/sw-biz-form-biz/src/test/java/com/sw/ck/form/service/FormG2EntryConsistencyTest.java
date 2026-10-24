@@ -338,8 +338,12 @@ class FormG2EntryConsistencyTest {
         public FormExtDataService formExtDataService(FormExtQueryMapper extQueryMapper,
                                                      ObjectProvider<ExtDatasourceQueryPort> queryPort,
                                                      ObjectProvider<com.sw.ck.form.api.port.ExtDatasourceGrantPort> grantPort,
+                                                     FormDefMapper formDefMapper,
+                                                     FormConfigMapper formConfigMapper,
+                                                     FieldPermissionService fieldPermissionService,
                                                      ObjectMapper objectMapper) {
-            return new FormExtDataService(extQueryMapper, queryPort, grantPort, objectMapper);
+            return new FormExtDataService(extQueryMapper, queryPort, grantPort, formDefMapper,
+                    formConfigMapper, fieldPermissionService, objectMapper);
         }
 
         @SuppressWarnings("unchecked")

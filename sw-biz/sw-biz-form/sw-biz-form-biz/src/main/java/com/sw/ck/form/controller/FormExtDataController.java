@@ -50,14 +50,29 @@ public class FormExtDataController {
     }
 
     /**
-     * 设计预览/运行读取（同一入口）：按 queryKey + version 执行受控查询。
+     * 设计预览/运行读取（BE020-G1 准入语义，按请求形态区分）：
+     * <ul>
+     *   <li>不带 formKey = 设计预览：检查当前设计授权，撤权后直接构造同 queryKey 预览拒绝；</li>
+     *   <li>带 formKey+fieldKey = 已发布表单运行读取：校验发布绑定与字段查看资格，
+     *       不追溯原设计者授权；知道 queryKey 但无绑定/字段资格者拒绝。</li>
+     * </ul>
      * 表单 dsBinding 引用的契约必须已启用；停用/未知契约返回可判定失败。
      */
     @PreAuthorize("@ss.hasPermi('form:design') or @ss.hasPermi('form:data:query')")
     @GetMapping("/query/{queryKey}")
     public R<ExtQueryResult> query(@PathVariable("queryKey") String queryKey,
-                                   @RequestParam(required = false) Integer version) {
+                                   @RequestParam(required = false) Integer version,
+                                   @RequestParam(required = false) String formKey,
+                                   @RequestParam(required = false) String fieldKey) {
         try {
+            if (formKey != null && !formKey.isBlank()) {
+                if (fieldKey == null || fieldKey.isBlank()) {
+                    throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID.getCode(),
+                            "运行读取必须同时提供 formKey 与 fieldKey");
+                }
+                return R.ok(extDataService.previewForPublishedBinding(queryKey, version,
+                        formKey.trim(), fieldKey.trim()));
+            }
             return R.ok(extDataService.preview(queryKey, version));
         } catch (BaseException e) {
             log.warn("Ext query rejected: key={}, code={}", queryKey, e.getCode());
