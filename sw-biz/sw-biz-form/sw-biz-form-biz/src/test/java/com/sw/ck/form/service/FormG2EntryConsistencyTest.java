@@ -93,6 +93,7 @@ class FormG2EntryConsistencyTest {
     private static final Long USER_OTHER_TENANT = 21L;
 
     static final AtomicBoolean PARTICIPANT_STUB = new AtomicBoolean(false);
+    static final AtomicBoolean GRANT_ALL_STUB = new AtomicBoolean(false);
     /** 数据范围桩：导出路径经 LoginContextProvider 解析范围，测试按需切换 SELF/ALL。 */
     static final AtomicReference<com.sw.ck.common.datascope.DataScopeType> PROVIDER_SCOPE =
             new AtomicReference<>(com.sw.ck.common.datascope.DataScopeType.ALL);
@@ -317,11 +318,28 @@ class FormG2EntryConsistencyTest {
             return new FormDataSubmitFacadeImpl(formSubmitService);
         }
 
+        /** 授权桩：本测试数据源 9 已授权，主体判定不依赖真实登录上下文。 */
+        @Bean
+        public com.sw.ck.form.api.port.ExtDatasourceGrantPort extDatasourceGrantPort() {
+            return new com.sw.ck.form.api.port.ExtDatasourceGrantPort() {
+                @Override
+                public boolean isReferenceAllowed(Long datasourceId) {
+                    return GRANT_ALL_STUB.get() || (datasourceId != null && datasourceId == 9L);
+                }
+
+                @Override
+                public java.util.Set<Long> referenceAllowedDatasourceIds() {
+                    return GRANT_ALL_STUB.get() ? java.util.Set.of(8L, 9L) : java.util.Set.of(9L);
+                }
+            };
+        }
+
         @Bean
         public FormExtDataService formExtDataService(FormExtQueryMapper extQueryMapper,
                                                      ObjectProvider<ExtDatasourceQueryPort> queryPort,
+                                                     ObjectProvider<com.sw.ck.form.api.port.ExtDatasourceGrantPort> grantPort,
                                                      ObjectMapper objectMapper) {
-            return new FormExtDataService(extQueryMapper, queryPort, objectMapper);
+            return new FormExtDataService(extQueryMapper, queryPort, grantPort, objectMapper);
         }
 
         @SuppressWarnings("unchecked")
@@ -354,6 +372,7 @@ class FormG2EntryConsistencyTest {
     @BeforeEach
     void setUp() {
         PARTICIPANT_STUB.set(false);
+        GRANT_ALL_STUB.set(false);
         PROVIDER_SCOPE.set(com.sw.ck.common.datascope.DataScopeType.ALL);
         LoginUserHolder.clear();
         createMetadataTables();
@@ -364,6 +383,7 @@ class FormG2EntryConsistencyTest {
     void tearDown() {
         LoginUserHolder.clear();
         PARTICIPANT_STUB.set(false);
+        GRANT_ALL_STUB.set(false);
         for (String table : createdTables) {
             try {
                 jdbcTemplate.execute("DROP TABLE IF EXISTS \"" + table + "\" CASCADE");
@@ -724,6 +744,92 @@ class FormG2EntryConsistencyTest {
         assertThatThrownBy(() -> extDataService.preview("g2e_contract", null))
                 .isInstanceOfSatisfying(BaseException.class,
                         e -> assertThat(e.getCode()).isEqualTo(FormErrorCode.EXT_QUERY_NOT_FOUND.getCode()));
+    }
+
+    @Test
+    @DisplayName("ext 引用授权：未授权数据源的契约登记拒绝且零落库；授权数据源可登记")
+    void registerQueryRequiresAuthorizedDatasource() {
+        loginAs(TENANT_1, USER_IN_SCOPE, DataScope.ALL);
+        assertThatThrownBy(() -> extDataService.registerQuery(8L, "g2e_unauthorized",
+                "SELECT id AS value, name AS display FROM ext_obj",
+                List.of(Map.of("name", "value"), Map.of("name", "display"))))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getCode())
+                                .isEqualTo(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode()));
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sw_form_ext_query WHERE query_key = 'g2e_unauthorized'", Integer.class);
+        assertThat(count).isZero();
+
+        FormExtQueryEntity entity = extDataService.registerQuery(9L, "g2e_authorized",
+                "SELECT id AS value, name AS display FROM ext_obj",
+                List.of(Map.of("name", "value"), Map.of("name", "display")));
+        assertThat(entity.getQueryVersion()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("契约清单：非管理员仅见授权数据源契约且不含 SQL 文本；管理员旁路可见全部")
+    void contractListFiltersAuthorizationAndHidesSql() {
+        loginAs(TENANT_1, USER_IN_SCOPE, DataScope.ALL);
+        extDataService.registerQuery(9L, "g2e_list_auth",
+                "SELECT secret_sql", List.of(Map.of("name", "value")));
+        jdbcTemplate.update("""
+                INSERT INTO sw_form_ext_query (id, datasource_id, query_key, query_version, sql_text,
+                    output_fields, enabled, tenant_id, deleted, version)
+                VALUES ('g2e-list-2', 8, 'g2e_list_unauth', 1, 'SELECT 1',
+                    '[{"name":"value"}]', 1, ?, 0, 0)
+                """, TENANT_1);
+
+        List<com.sw.ck.form.dto.ExtQueryContractView> views = extDataService.listContracts(null, null);
+        assertThat(views).extracting(com.sw.ck.form.dto.ExtQueryContractView::queryKey)
+                .containsExactly("g2e_list_auth");
+        com.sw.ck.form.dto.ExtQueryContractView view = views.get(0);
+        assertThat(view.queryVersion()).isEqualTo(1);
+        assertThat(view.datasourceId()).isEqualTo(9L);
+        assertThat(view.enabled()).isEqualTo(1);
+        assertThat(view.outputFields()).extracting("name").containsExactly("value");
+
+        GRANT_ALL_STUB.set(true);
+        assertThat(extDataService.listContracts(null, null))
+                .extracting(com.sw.ck.form.dto.ExtQueryContractView::queryKey)
+                .containsExactlyInAnyOrder("g2e_list_auth", "g2e_list_unauth");
+    }
+
+    @Test
+    @DisplayName("契约启停：服务端启停即改预览/运行准入；未知 key 拒绝")
+    void setContractEnabledGatesPreview() {
+        loginAs(TENANT_1, USER_IN_SCOPE, DataScope.ALL);
+        extDataService.registerQuery(9L, "g2e_toggle",
+                "SELECT id AS value, name AS display FROM ext_obj",
+                List.of(Map.of("name", "value"), Map.of("name", "display")));
+
+        extDataService.setContractEnabled("g2e_toggle", false);
+        assertThatThrownBy(() -> extDataService.preview("g2e_toggle", null))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(FormErrorCode.EXT_QUERY_DISABLED.getCode()));
+
+        extDataService.setContractEnabled("g2e_toggle", true);
+        assertThat(extDataService.preview("g2e_toggle", null).getRowCount()).isEqualTo(1);
+
+        assertThatThrownBy(() -> extDataService.setContractEnabled("g2e_missing", true))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(FormErrorCode.EXT_QUERY_NOT_FOUND.getCode()));
+    }
+
+    @Test
+    @DisplayName("发布绑定校验：引用未授权数据源的契约拒绝（引用语义覆盖既有契约）")
+    void validateBindingRequiresAuthorizedDatasource() {
+        loginAs(TENANT_1, USER_IN_SCOPE, DataScope.ALL);
+        jdbcTemplate.update("""
+                INSERT INTO sw_form_ext_query (id, datasource_id, query_key, query_version, sql_text,
+                    output_fields, enabled, tenant_id, deleted, version)
+                VALUES ('g2e-bind-1', 8, 'g2e_bind_unauth', 1, 'SELECT 1',
+                    '[{"name":"value"},{"name":"display"}]', 1, ?, 0, 0)
+                """, TENANT_1);
+
+        assertThatThrownBy(() -> extDataService.validateBinding("g2e_bind_unauth", 1, "value", "display"))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getCode())
+                                .isEqualTo(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode()));
     }
 
     // ==================== 7. recordOwnerUserId 归属通道边界 ====================

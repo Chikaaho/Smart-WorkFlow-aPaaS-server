@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -42,6 +43,7 @@ public class ExternalDatasourceController {
 
     private final ExternalDatasourceService datasourceService;
     private final SqlExecutor sqlExecutor;
+    private final com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService grantService;
 
     private static final Map<String, String> DRIVER_TYPES = Map.of(
             "postgresql", "org.postgresql.Driver",
@@ -50,9 +52,11 @@ public class ExternalDatasourceController {
             "oracle", "oracle.jdbc.OracleDriver");
 
     public ExternalDatasourceController(ExternalDatasourceService datasourceService,
-                                        SqlExecutor sqlExecutor) {
+                                        SqlExecutor sqlExecutor,
+                                        com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService grantService) {
         this.datasourceService = datasourceService;
         this.sqlExecutor = sqlExecutor;
+        this.grantService = grantService;
     }
 
     /** 执行只读 SQL（需 workflow:datasource:execute 权限） */
@@ -137,6 +141,48 @@ public class ExternalDatasourceController {
         result.setPageNum(page.getCurrent());
         result.setPageSize(page.getSize());
         return R.ok(result);
+    }
+
+    /** 指定数据源的授权主体清单（F020：设计人员仅能引用已授权数据源）。 */
+    @GetMapping("/{id}/grants")
+    @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
+    public R<List<GrantView>> grants(@PathVariable Long id) {
+        requireExisting(id);
+        return R.ok(grantService.listGrants(id).stream()
+                .map(row -> new GrantView(row.getSubjectType(), row.getSubjectKey()))
+                .toList());
+    }
+
+    /** 整集合替换数据源授权主体（空集合 = 全部撤销）。 */
+    @PutMapping("/{id}/grants")
+    @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
+    public R<Void> replaceGrants(@PathVariable Long id, @RequestBody GrantsRequest request) {
+        requireExisting(id);
+        grantService.replaceGrants(id, request.grants() == null ? List.of() : request.grants().stream()
+                .map(item -> new com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService.GrantItem(
+                        item.subjectType(), item.subjectKey()))
+                .toList());
+        log.info("Datasource grants replaced: id={}, count={}", id,
+                request.grants() == null ? 0 : request.grants().size());
+        return R.ok();
+    }
+
+    /** 授权主体响应视图（不含租户/审计字段）。 */
+    public record GrantView(String subjectType, String subjectKey) {
+    }
+
+    /** 授权主体替换请求：整集合语义，空集合撤销全部授权。 */
+    public record GrantsRequest(List<GrantItem> grants) {
+    }
+
+    /** 授权主体请求项。 */
+    public record GrantItem(String subjectType, String subjectKey) {
+    }
+
+    private void requireExisting(Long id) {
+        if (datasourceService.getById(id) == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "外部数据源不存在: id=" + id);
+        }
     }
 
     private ExternalDatasource toEntity(ExternalDatasourceRequest request) {

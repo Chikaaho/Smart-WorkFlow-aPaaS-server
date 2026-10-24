@@ -47,6 +47,7 @@ public enum FormErrorCode implements ErrorCode {
     REFERENCE_OBJECT_NOT_FOUND(1217, "form.reference_object_not_found", "引用记录不存在或不可见"),
     ATTACHMENT_FILE_NOT_FOUND(1218, "form.attachment_file_not_found", "附件/图片文件不存在或不可见"),
     EXT_RESULT_LIMIT_EXCEEDED(1219, "form.ext_result_limit_exceeded", "外部数据源结果超过行数上限"),
+    EXT_DATASOURCE_UNAUTHORIZED(1220, "form.ext_datasource_unauthorized", "未授权引用该外部数据源"),
 
     // ==================== 渲染（1300-1399） ====================
     CONFIG_NOT_FOUND(1300, "form.config_not_found", "表单配置未找到"),
