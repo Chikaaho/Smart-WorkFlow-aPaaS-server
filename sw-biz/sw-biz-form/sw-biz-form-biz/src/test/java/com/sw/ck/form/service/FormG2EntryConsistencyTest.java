@@ -323,13 +323,15 @@ class FormG2EntryConsistencyTest {
         public com.sw.ck.form.api.port.ExtDatasourceGrantPort extDatasourceGrantPort() {
             return new com.sw.ck.form.api.port.ExtDatasourceGrantPort() {
                 @Override
-                public boolean isReferenceAllowed(Long datasourceId) {
-                    return GRANT_ALL_STUB.get() || (datasourceId != null && datasourceId == 9L);
+                public java.util.Optional<Boolean> isReferenceAllowed(Long datasourceId) {
+                    return java.util.Optional.of(
+                            GRANT_ALL_STUB.get() || (datasourceId != null && datasourceId == 9L));
                 }
 
                 @Override
-                public java.util.Set<Long> referenceAllowedDatasourceIds() {
-                    return GRANT_ALL_STUB.get() ? java.util.Set.of(8L, 9L) : java.util.Set.of(9L);
+                public java.util.Optional<java.util.Set<Long>> referenceAllowedDatasourceIds() {
+                    return java.util.Optional.of(
+                            GRANT_ALL_STUB.get() ? java.util.Set.of(8L, 9L) : java.util.Set.of(9L));
                 }
             };
         }

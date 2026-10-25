@@ -3,6 +3,7 @@ package com.sw.ck.bpm.engine.adapter;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService;
 import com.sw.ck.form.api.port.ExtDatasourceGrantPort;
 
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -22,12 +23,12 @@ public class FormExtDatasourceGrantAdapter implements ExtDatasourceGrantPort {
     }
 
     @Override
-    public boolean isReferenceAllowed(Long datasourceId) {
-        return grantService.isReferenceAllowed(datasourceId);
+    public Optional<Boolean> isReferenceAllowed(Long datasourceId) {
+        return Optional.of(grantService.isReferenceAllowed(datasourceId));
     }
 
     @Override
-    public Set<Long> referenceAllowedDatasourceIds() {
-        return grantService.referenceAllowedDatasourceIds();
+    public Optional<Set<Long>> referenceAllowedDatasourceIds() {
+        return Optional.of(grantService.referenceAllowedDatasourceIds());
     }
 }

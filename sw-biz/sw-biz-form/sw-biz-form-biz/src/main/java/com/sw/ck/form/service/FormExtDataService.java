@@ -157,7 +157,8 @@ public class FormExtDataService {
                                 queryKey == null ? null : queryKey.trim())
                         .orderByAsc(FormExtQueryEntity::getQueryKey)
                         .orderByDesc(FormExtQueryEntity::getQueryVersion));
-        Set<Long> allowed = grantPort.getIfAvailable().referenceAllowedDatasourceIds();
+        Set<Long> allowed = grantPort.getIfAvailable().referenceAllowedDatasourceIds()
+                .orElseGet(java.util.Set::of);
         Map<String, FormExtQueryEntity> latestByKey = new LinkedHashMap<>();
         for (FormExtQueryEntity row : rows) {
             latestByKey.putIfAbsent(row.getQueryKey(), row);
@@ -401,7 +402,7 @@ public class FormExtDataService {
 
     /** 设计期引用授权校验：契约登记与发布绑定共用；运行期查询不回查授权。 */
     private void requireReferenceAllowed(Long datasourceId) {
-        if (!requireGrantPort().isReferenceAllowed(datasourceId)) {
+        if (!requireGrantPort().isReferenceAllowed(datasourceId).orElse(false)) {
             LoginUser user = LoginUserHolder.get();
             log.warn("Ext datasource reference denied: datasourceId={}, operator={}",
                     datasourceId, user == null ? "anonymous" : user.getUsername());

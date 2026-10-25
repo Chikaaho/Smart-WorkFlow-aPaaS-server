@@ -81,18 +81,20 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(20, result.migrationsExecuted,
-                "全新库应执行 20 条（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 增量 + 16 个 R__ 可重复对账），实际: "
+        assertEquals(21, result.migrationsExecuted,
+                "全新库应执行 21 条（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 增量 + 17 个 R__ 可重复对账，"
+                        + "含 0.2.0 用户组菜单 R__u020_user_group_menu），实际: "
                         + result.migrationsExecuted);
         assertEquals("0.1.10", flyway.info().current().getVersion().getVersion(),
                 "终点当前版本应为最后一个 versioned 迁移（0.1.10）");
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 20 条（V0.1.7 基线 + 3 个 versioned 增量 + 16 个可重复对账）")
+    @DisplayName("种子迁移后：info().applied() 共 21 条（V0.1.7 基线 + 3 个 versioned 增量 + 17 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(20, applied.length, "已应用迁移数应为 20（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 + 16 个 R__）");
+        assertEquals(21, applied.length,
+                "已应用迁移数应为 21（V0.1.7 基线 + V0.1.8/V0.1.9/V0.1.10 + 17 个 R__，含 0.2.0 用户组菜单）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -103,7 +105,7 @@ class FlywayFullChainH2Test {
             }
         }
         assertTrue(seedSeen, "V0.1.7 种子应已应用");
-        assertEquals(16, repeatableCount, "16 个 R__ 可重复对账应已应用");
+        assertEquals(17, repeatableCount, "17 个 R__ 可重复对账应已应用（含 0.2.0 用户组菜单）");
     }
 
     @Test

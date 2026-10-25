@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（188 常量 / 183 个唯一数值码 / 5 枚举）
+## 2. 全量登记（189 常量 / 184 个唯一数值码 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -66,6 +66,7 @@
 | form | `REFERENCE_OBJECT_NOT_FOUND` | 1217 | `form.reference_object_not_found` | 引用记录不存在或不可见 |
 | form | `ATTACHMENT_FILE_NOT_FOUND` | 1218 | `form.attachment_file_not_found` | 附件/图片文件不存在或不可见 |
 | form | `EXT_RESULT_LIMIT_EXCEEDED` | 1219 | `form.ext_result_limit_exceeded` | 外部数据源结果超过行数上限 |
+| form | `EXT_DATASOURCE_UNAUTHORIZED` | 1220 | `form.ext_datasource_unauthorized` | 未授权引用该外部数据源 |
 | form | `CONFIG_NOT_FOUND` | 1300 | `form.config_not_found` | 表单配置未找到 |
 | form | `SNAPSHOT_NOT_FOUND` | 1301 | `form.snapshot_not_found` | 表单版本快照不存在 |
 | form | `SUBMIT_FIELD_UNKNOWN` | 1400 | `form.submit_field_unknown` | 提交了未定义的字段 |

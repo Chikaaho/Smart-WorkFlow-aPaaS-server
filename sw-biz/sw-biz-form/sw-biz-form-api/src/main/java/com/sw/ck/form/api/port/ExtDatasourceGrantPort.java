@@ -1,5 +1,6 @@
 package com.sw.ck.form.api.port;
 
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -23,7 +24,7 @@ public interface ExtDatasourceGrantPort {
      * @param datasourceId 数据源 ID（登记表主键）
      * @return true = 允许引用；false = 未授权、数据源不存在或已删除（不区分两种拒绝原因）
      */
-    boolean isReferenceAllowed(Long datasourceId);
+    Optional<Boolean> isReferenceAllowed(Long datasourceId);
 
     /**
      * 当前登录主体可引用的数据源 ID 集合，供可引用契约清单过滤。
@@ -31,5 +32,5 @@ public interface ExtDatasourceGrantPort {
      *
      * @return 允许引用的数据源 ID 集合（非 null）
      */
-    Set<Long> referenceAllowedDatasourceIds();
+    Optional<Set<Long>> referenceAllowedDatasourceIds();
 }

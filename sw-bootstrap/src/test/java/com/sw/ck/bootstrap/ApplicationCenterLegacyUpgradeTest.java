@@ -285,8 +285,8 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult upgrade = after.migrate();
         assertTrue(upgrade.success, "衔接后主链应迁移成功");
-        // 三个版本化增量 + 两条新增/重放 R__；历史版本化迁移不得重放。
-        assertEquals(7, upgrade.migrationsExecuted,
+        // 三个版本化增量 + 三条新增/重放 R__（含 0.2.0 用户组菜单）；历史版本化迁移不得重放。
+        assertEquals(8, upgrade.migrationsExecuted,
                 "衔接后执行 V0.1.8 / V0.1.9 / V0.1.10 与 R__ 对账，不得重放历史版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();

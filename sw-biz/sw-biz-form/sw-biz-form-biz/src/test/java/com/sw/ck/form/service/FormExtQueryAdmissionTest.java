@@ -190,7 +190,11 @@ class FormExtQueryAdmissionTest {
                 }
 
                 @Override
-                public boolean isReferenceAllowed(Long datasourceId) {
+                public java.util.Optional<Boolean> isReferenceAllowed(Long datasourceId) {
+                    return java.util.Optional.of(isReferenceAllowedInternal(datasourceId));
+                }
+
+                private boolean isReferenceAllowedInternal(Long datasourceId) {
                     LoginUser user = LoginUserHolder.get();
                     if (user == null || datasourceId == null) {
                         return false;
@@ -225,7 +229,11 @@ class FormExtQueryAdmissionTest {
                 }
 
                 @Override
-                public Set<Long> referenceAllowedDatasourceIds() {
+                public java.util.Optional<Set<Long>> referenceAllowedDatasourceIds() {
+                    return java.util.Optional.of(referenceAllowedDatasourceIdsInternal());
+                }
+
+                private Set<Long> referenceAllowedDatasourceIdsInternal() {
                     LoginUser user = LoginUserHolder.get();
                     if (user == null) {
                         return Set.of();
