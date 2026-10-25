@@ -70,6 +70,11 @@
             <groupId>com.google.re2j</groupId>
             <artifactId>re2j</artifactId>
         </dependency>
+        <!-- RICH_TEXT 服务端权威清洗（版本由 sw-dependencies 统一管理） -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+        </dependency>
 
         <!-- ===== 测试依赖 ===== -->
         <dependency>

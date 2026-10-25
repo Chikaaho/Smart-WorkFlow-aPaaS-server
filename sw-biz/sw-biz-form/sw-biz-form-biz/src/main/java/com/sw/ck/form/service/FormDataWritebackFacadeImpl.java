@@ -277,6 +277,10 @@ public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
         if (value == null) {
             return null;
         }
+        if ("RICH_TEXT".equals(def.type())) {
+            // 脚本/受控集成回写与表单提交共用同一服务端清洗。
+            return RichTextSanitizer.sanitize(String.valueOf(value));
+        }
         if ("BOOL".equals(def.type())) {
             return FormFieldValidator.convertBoolValue(value);
         }

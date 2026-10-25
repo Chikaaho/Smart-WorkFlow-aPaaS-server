@@ -178,6 +178,9 @@ public class FormFieldValidator {
             return; // 无定义时不校验
         }
 
+        // 先按服务端权威规则规范化 RICH_TEXT，后续校验与持久化使用同一份清洗结果。
+        normalizeRichTextValues(fieldDefs.values(), submittedData);
+
         for (FieldDef def : fieldDefs.values()) {
             Object value = submittedData.get(def.name);
 
@@ -188,12 +191,17 @@ public class FormFieldValidator {
 
             // —— 必填校验 ——
             if (def.required) {
-                boolean isEmpty = value == null
-                        || (value instanceof String s && s.isBlank());
+                boolean isEmpty;
                 if ("TABLE".equals(def.type)) {
                     // TABLE 类型检查是否为空列表
                     isEmpty = value == null
                             || (value instanceof List<?> list && list.isEmpty());
+                } else if ("RICH_TEXT".equals(def.type) && value instanceof String richText) {
+                    // 仅格式无正文不满足必填（按可见文本，不按标签）
+                    isEmpty = RichTextSanitizer.visibleText(richText).trim().isEmpty();
+                } else {
+                    isEmpty = value == null
+                            || (value instanceof String s && s.isBlank());
                 }
                 if (isEmpty) {
                     throw new BaseException(FormErrorCode.SUBMIT_FIELD_REQUIRED,
@@ -209,11 +217,19 @@ public class FormFieldValidator {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                                 "字段「" + def.displayName() + "」第 " + (rowIdx + 1) + " 行格式不正确");
                     }
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> rowData = (Map<String, Object>) rowMap;
+                    normalizeRichTextValues(def.subFields, rowData);
                     for (FieldDef subDef : def.subFields) {
                         if (subDef == null) continue;
-                        Object subValue = rowMap.get(subDef.name);
-                        boolean subEmpty = subValue == null
-                                || (subValue instanceof String sv && sv.isBlank());
+                        Object subValue = rowData.get(subDef.name);
+                        boolean subEmpty;
+                        if ("RICH_TEXT".equals(subDef.type) && subValue instanceof String sv) {
+                            subEmpty = RichTextSanitizer.visibleText(sv).trim().isEmpty();
+                        } else {
+                            subEmpty = subValue == null
+                                    || (subValue instanceof String sv && sv.isBlank());
+                        }
                         if (subDef.required() && subEmpty) {
                             throw new BaseException(FormErrorCode.SUBMIT_FIELD_REQUIRED,
                                     "字段「" + def.displayName() + "」第 " + (rowIdx + 1)
@@ -238,6 +254,20 @@ public class FormFieldValidator {
             }
 
             validateSingleValue(def, value, dictFacade);
+        }
+    }
+
+    /** RICH_TEXT 先经服务端权威清洗，写回同一数据 map，保证存储值已规范化。 */
+    private void normalizeRichTextValues(Iterable<FieldDef> fieldDefs,
+                                         Map<String, Object> data) {
+        for (FieldDef def : fieldDefs) {
+            if (def == null || !"RICH_TEXT".equals(def.type)) {
+                continue;
+            }
+            Object value = data.get(def.name);
+            if (value instanceof String richText) {
+                data.put(def.name, RichTextSanitizer.sanitize(richText));
+            }
         }
     }
 
@@ -368,7 +398,10 @@ public class FormFieldValidator {
     }
 
     private void validateTextConstraints(FieldDef def, String text) {
-        int codePoints = text.codePointCount(0, text.length());
+        // RICH_TEXT 的长度/正则按用户可见文本计数，不把格式标记算进长度。
+        String visible = "RICH_TEXT".equals(def.type)
+                ? RichTextSanitizer.visibleText(text) : text;
+        int codePoints = visible.codePointCount(0, visible.length());
         if (def.minLength() != null && def.minLength() > 0 && codePoints < def.minLength()) {
             throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                     "字段「" + def.displayName() + "」至少需要 " + def.minLength() + " 个字符");
@@ -378,7 +411,7 @@ public class FormFieldValidator {
                     "字段「" + def.displayName() + "」不能超过 " + def.length() + " 个字符");
         }
         if (def.pattern() != null && !def.pattern().isBlank()
-                && !Pattern.matches(def.pattern(), text)) {
+                && !Pattern.matches(def.pattern(), visible)) {
             String message = def.patternMessage() == null || def.patternMessage().isBlank()
                     ? "字段「" + def.displayName() + "」格式不符合要求"
                     : def.patternMessage();

@@ -7,6 +7,7 @@ import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.system.api.dict.DictFacade;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -59,10 +60,49 @@ class FormFieldValidatorConstraintsTest {
                 .hasMessageContaining("明细格式不正确");
     }
 
+    @Test
+    void richTextRequiredAndLengthUseVisibleTextNotMarkup() {
+        var required = richText("body", true, null, null);
+        Map<String, Object> formattingOnly = new HashMap<>();
+        formattingOnly.put("body", RichTextSanitizer.PREFIX + "<p><br></p>");
+        assertThatThrownBy(() -> validator.validateFields(Map.of("body", required),
+                formattingOnly, dictFacade))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("必填");
+
+        var bounded = richText("body", false, 2, 3);
+        Map<String, Object> longMarkup = new HashMap<>();
+        longMarkup.put("body", RichTextSanitizer.PREFIX
+                + "<p><span data-rt-font=\"song\" data-rt-size=\"16\">你好</span></p>");
+        assertThatCode(() -> validator.validateFields(Map.of("body", bounded),
+                longMarkup, dictFacade)).doesNotThrowAnyException();
+        // 校验时已按服务端权威规则规范化并写回：脚本/事件/样式不进入持久化值。
+        String normalized = String.valueOf(longMarkup.get("body"));
+        org.assertj.core.api.Assertions.assertThat(normalized)
+                .contains("你好")
+                .contains("data-rt-font=\"song\"")
+                .doesNotContain("script")
+                .doesNotContain("onerror");
+
+        Map<String, Object> over = new HashMap<>();
+        over.put("body", RichTextSanitizer.PREFIX + "<p>你好世界</p>");
+        assertThatThrownBy(() -> validator.validateFields(Map.of("body", bounded),
+                over, dictFacade))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("不能超过 3");
+    }
+
     private static FormFieldValidator.FieldDef text(String name, Integer min, Integer max,
                                                      String pattern, String message) {
         return new FormFieldValidator.FieldDef(
                 name, "TEXT", false, null, null, null, name, false,
                 null, null, List.of(), max, min, pattern, message);
+    }
+
+    private static FormFieldValidator.FieldDef richText(String name, boolean required,
+                                                        Integer min, Integer max) {
+        return new FormFieldValidator.FieldDef(
+                name, "RICH_TEXT", required, null, null, null, name, false,
+                null, null, List.of(), max, min, null, null);
     }
 }
