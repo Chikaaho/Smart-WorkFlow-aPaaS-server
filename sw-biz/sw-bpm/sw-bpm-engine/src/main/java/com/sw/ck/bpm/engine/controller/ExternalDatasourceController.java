@@ -36,7 +36,7 @@ import java.util.Map;
  * 外部数据源管理 + SQL 执行控制器。
  */
 @RestController
-@RequestMapping("/api/workflow/external-datasource")
+@RequestMapping("/workflow/external-datasource")
 public class ExternalDatasourceController {
 
     private static final Logger log = LoggerFactory.getLogger(ExternalDatasourceController.class);

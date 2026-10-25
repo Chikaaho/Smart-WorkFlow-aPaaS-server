@@ -61,7 +61,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  * BE020-G1 余项：授权替换写请求的真实拒绝（真实 HTTP + 真实安全过滤链 +
  * 真实方法级鉴权代理 + 真实租户过滤 + 真实授权持久化）。
  * <p>
- * PUT /api/workflow/external-datasource/{id}/grants 的两个负向：
+ * PUT /workflow/external-datasource/{id}/grants 的两个负向：
  * 本租户无 workflow:datasource:manage 的主体被 @PreAuthorize 实际拒绝（403）；
  * 持有本租户管理权限的另一租户主体按对象租户过滤被拒（目标不可见）。
  * 两次拒绝后两租户授权集合持久回读零变化。管理员正向替换基线沿既有
@@ -313,7 +313,7 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
         TestAuthenticationFilter.roles = List.of();
         TestAuthenticationFilter.permissions = List.of("form:design:save");
 
-        var result = mockMvc.perform(put("/api/workflow/external-datasource/9/grants")
+        var result = mockMvc.perform(put("/workflow/external-datasource/9/grants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"grants\":[{\"subjectType\":\"USER\",\"subjectKey\":\"78\"}]}"))
                 .andReturn();
@@ -335,7 +335,7 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
         TestAuthenticationFilter.permissions = List.of("workflow:datasource:manage");
 
         try {
-            var result = mockMvc.perform(put("/api/workflow/external-datasource/9/grants")
+            var result = mockMvc.perform(put("/workflow/external-datasource/9/grants")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"grants\":[{\"subjectType\":\"USER\",\"subjectKey\":\"88\"}]}"))
                     .andReturn();
