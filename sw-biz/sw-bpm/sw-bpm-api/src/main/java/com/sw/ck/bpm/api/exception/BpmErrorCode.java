@@ -148,6 +148,8 @@ public enum BpmErrorCode implements ErrorCode {
             "节点表单人员聚合配置无效：来源节点、字段或轮次不满足要求，无法解析下一轮参与人"),
     REWORK_LOOP_OVER_LIMIT(2454, "bpm.rework_loop_over_limit",
             "异常处理→复检自动循环超过上限，已阻止自动派发并挂起等待有权用户处置"),
+    NOTIFICATION_CONFIG_INVALID(2455, "bpm.notification_config_invalid",
+            "结束通知配置无效：接收人、渠道或租户范围不满足发布要求"),
     ;
 
     // ==================== 保留既有通用数值码的语义键 ====================

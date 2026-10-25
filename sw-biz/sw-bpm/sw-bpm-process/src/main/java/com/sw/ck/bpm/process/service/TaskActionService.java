@@ -74,6 +74,10 @@ public class TaskActionService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
 
+    /** 50:88 结束通知配置解析（可选装配；未装配/旧定义保持原行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ProcessEndNotificationResolver endNotificationResolver;
+
     private com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService() {
         return nodeFormDataProvider == null ? null : nodeFormDataProvider.getIfAvailable();
     }
@@ -842,6 +846,19 @@ public class TaskActionService {
         if (instance == null) {
             log.warn("流程实例记录不存在: processInstanceId={}，跳过 {} 通知",
                     processInstanceId, trigger);
+            return;
+        }
+
+        if (trigger == BpmNotifyTrigger.PROCESS_APPROVED && endNotificationResolver != null) {
+            List<BpmNotifyEvent> configured = endNotificationResolver.resolveApproved(
+                    instance, loginUser.getUserId());
+            if (configured.isEmpty()) {
+                log.info("结束通知配置无可解析接收人，不发送: processInstanceId={}", processInstanceId);
+                return;
+            }
+            configured.forEach(domainEventPublisher::publish);
+            log.info("结束通知事件已发布: processInstanceId={}, recipients={}",
+                    processInstanceId, configured.size());
             return;
         }
 

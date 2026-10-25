@@ -44,6 +44,22 @@ public final class BpmNotifyMessages {
         };
     }
 
+    /**
+     * 按接收人角色选择文案：仅流程发起人使用“您的申请”；审批人与其他接收人使用中性
+     * “流程已通过”，避免把他人发起的流程说成“您的申请”。
+     */
+    public static Optional<Spec> specFor(BpmNotifyEvent event) {
+        if (event == null) {
+            return Optional.empty();
+        }
+        if (event.getTrigger() == BpmNotifyTrigger.PROCESS_APPROVED
+                && !event.isInitiatorRecipient()) {
+            return Optional.of(new Spec(NotifyBizType.WF_APPROVED,
+                    "流程已通过", "您关注的流程已审批通过"));
+        }
+        return specOf(event.getTrigger());
+    }
+
     /** 深链对象类型：流程终态类事件指向流程实例，其余指向任务。 */
     public static String linkType(BpmNotifyTrigger trigger) {
         return trigger != null && trigger.name().startsWith("PROCESS") ? "WF_PROCESS" : "WF_TASK";

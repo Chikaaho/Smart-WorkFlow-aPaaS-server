@@ -304,6 +304,13 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
                 GraphValidationError first = p64Errors.get(0);
                 throw new BaseException(first.getErrorCode(), first.getMessage());
             }
+            // 50:88 结束通知：接收对象/渠道/其他接收人租户与启用状态
+            List<GraphValidationError> notifyErrors =
+                    processVariableValidator.validateNotification(graph, def.getTenantId());
+            if (notifyErrors != null && !notifyErrors.isEmpty()) {
+                GraphValidationError first = notifyErrors.get(0);
+                throw new BaseException(first.getErrorCode(), first.getMessage());
+            }
         }
 
         // 2b. formKey 对应表单已发布（2100）
