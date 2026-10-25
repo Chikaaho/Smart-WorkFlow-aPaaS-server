@@ -148,4 +148,64 @@ class BpmUrgeServiceTest {
         assertThat(record.getTargetUserId()).isEqualTo(9L);
         assertThat(record.getCooldownKey()).isNotBlank();
     }
+
+    @Test
+    @DisplayName("带留言催办 → 通知内容与留痕明细均包含留言")
+    void urgeWithMessageIncludesMessage() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(1L, 7L, "RUNNING", "pi-1"));
+        when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
+        when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
+        BpmTaskDTO task = new BpmTaskDTO();
+        task.setTaskId("t-1");
+        task.setAssignee("9");
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(java.util.Optional.of(List.of(task)));
+        when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
+                java.util.Optional.of(NotifySendResult.builder()
+                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                        .status("SUCCESS")
+                        .build()));
+
+        UrgeRespDTO resp = urgeService.urge(1L, "请尽快处理报销单");
+        assertThat(resp.getResult()).isEqualTo("ACCEPTED");
+        ArgumentCaptor<NotifySendRequest> notifyCaptor = ArgumentCaptor.forClass(NotifySendRequest.class);
+        verify(notifyFacade).send(notifyCaptor.capture());
+        assertThat(notifyCaptor.getValue().getContent()).contains("请尽快处理报销单");
+        ArgumentCaptor<UrgeRecord> captor = ArgumentCaptor.forClass(UrgeRecord.class);
+        verify(urgeRecordMapper).insert(captor.capture());
+        assertThat(captor.getValue().getDetail()).contains("请尽快处理报销单");
+    }
+
+    @Test
+    @DisplayName("留言超过 200 字 → 参数错误，不发送通知不留痕")
+    void urgeWithOverlongMessageRejected() {
+        // 留言校验先于实例读取，不产生任何副作用
+        assertThatThrownBy(() -> urgeService.urge(1L, "留".repeat(201)))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("200");
+        verify(notifyFacade, never()).send(any(NotifySendRequest.class));
+        verify(urgeRecordMapper, never()).insert(any(UrgeRecord.class));
+    }
+
+    @Test
+    @DisplayName("空白留言 → 与无留言同语义，通知内容不含留言段")
+    void urgeWithBlankMessageSameAsLegacy() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(1L, 7L, "RUNNING", "pi-1"));
+        when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
+        when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
+        BpmTaskDTO task = new BpmTaskDTO();
+        task.setTaskId("t-1");
+        task.setAssignee("9");
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(java.util.Optional.of(List.of(task)));
+        when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
+                java.util.Optional.of(NotifySendResult.builder()
+                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                        .status("SUCCESS")
+                        .build()));
+
+        UrgeRespDTO resp = urgeService.urge(1L, "   ");
+        assertThat(resp.getResult()).isEqualTo("ACCEPTED");
+        ArgumentCaptor<NotifySendRequest> notifyCaptor = ArgumentCaptor.forClass(NotifySendRequest.class);
+        verify(notifyFacade).send(notifyCaptor.capture());
+        assertThat(notifyCaptor.getValue().getContent()).doesNotContain("留言");
+    }
 }

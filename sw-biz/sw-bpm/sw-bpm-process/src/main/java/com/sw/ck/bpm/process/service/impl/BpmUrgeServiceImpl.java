@@ -80,6 +80,13 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
     @Override
     @Transactional
     public UrgeRespDTO urge(Long instanceRecordId) {
+        return urge(instanceRecordId, null);
+    }
+
+    @Override
+    @Transactional
+    public UrgeRespDTO urge(Long instanceRecordId, String message) {
+        String normalizedMessage = normalizeMessage(message);
         LoginUser loginUser = LoginUserHolder.get();
         BpmInstance instance = bpmInstanceService.getById(instanceRecordId);
         if (instance == null) {
@@ -103,13 +110,14 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "该实例正在催办中，请勿重复提交");
         }
         try {
-            return doUrge(instance, loginUser, instanceRecordId);
+            return doUrge(instance, loginUser, instanceRecordId, normalizedMessage);
         } finally {
             lock.unlock();
         }
     }
 
-    private UrgeRespDTO doUrge(BpmInstance instance, LoginUser loginUser, Long instanceRecordId) {
+    private UrgeRespDTO doUrge(BpmInstance instance, LoginUser loginUser, Long instanceRecordId,
+                               String normalizedMessage) {
 
         // 实例行加锁串行化同实例并发催办（H2/PG 语义一致），核对在锁内完成。
         // 并发失败方等待锁期间可能触发 H2 锁等待超时（PG 侧为 lock_timeout/锁冲突异常），
@@ -185,7 +193,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                         .channel(channel)
                         .recipientId(target)
                         .title("催办提醒")
-                        .content("您有待办任务被催办：实例 " + instance.getProcessInstanceId())
+                        .content(urgeContent(instance.getProcessInstanceId(), normalizedMessage))
                         .bizType(NotifyBizType.WF_TODO)
                         .bizId(instance.getProcessInstanceId())
                         .tenantId(loginUser.getTenantId())
@@ -204,14 +212,39 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         record.setInitiatorId(loginUser.getUserId());
         record.setTargetUserId(firstTarget);
         record.setResult(RESULT_ACCEPTED);
-        record.setDetail("已通知待办人: " + targets);
+        record.setDetail(urgeDetail(targets, normalizedMessage));
         record.setCooldownKey("t:" + loginUser.getTenantId() + ":i:" + instance.getProcessInstanceId()
                 + ":b:" + (System.currentTimeMillis() / 600000L));
         urgeRecordMapper.insert(record);
         log.info("催办已受理: instance={}, operator={}, targets={}",
                 instance.getProcessInstanceId(), loginUser.getUserId(), targets);
         return UrgeRespDTO.builder().result(RESULT_ACCEPTED)
-                .detail("已通知待办人: " + targets).recordId(record.getId()).build();
+                .detail(urgeDetail(targets, normalizedMessage)).recordId(record.getId()).build();
+    }
+
+    /** 留言规范化：去空白；超长（>200）拒绝，避免通知与留痕被超长内容撑爆。 */
+    private String normalizeMessage(String message) {
+        if (message == null) {
+            return null;
+        }
+        String trimmed = message.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.length() > 200) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "催办留言最长 200 字");
+        }
+        return trimmed;
+    }
+
+    private String urgeContent(String processInstanceId, String message) {
+        String base = "您有待办任务被催办：实例 " + processInstanceId;
+        return message == null ? base : base + "；留言：" + message;
+    }
+
+    private String urgeDetail(Set<Long> targets, String message) {
+        String base = "已通知待办人: " + targets;
+        return message == null ? base : base + "；留言：" + message;
     }
 
     /** 同一冷却窗口内并发催办共享同一发生次序（10 分钟窗，与既有冷却唯一键同粒度）。 */
