@@ -25,8 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 流程发起唯一入口。
@@ -260,6 +262,12 @@ public class ProcessStartService {
                 log.warn("流程发起触发器评估异常（不阻断发起）: processInstanceId={}, err={}",
                         processInstanceId, e.getMessage());
             }
+            // 首个审批任务在引擎 startProcess 内创建，此时实例尚未落库，ApprovalTaskListener
+            // 的 NODE_ENTERING 端口会查不到实例而跳过；实例保存后按当前任务节点补评估一次。
+            // 后续节点由任务监听器评估，execKey 幂等保证不会重复执行。
+            if (processActive) {
+                evaluateFirstNodeEntering(processInstanceId);
+            }
         }
 
         // 5. 发布 TODO_CREATED 通知事件（查询刚创建的 task）
@@ -268,6 +276,38 @@ public class ProcessStartService {
         } else {
             log.info("流程启动后已到达终态，跳过 TODO_CREATED 通知: processInstanceId={}",
                     processInstanceId);
+        }
+    }
+
+    /**
+     * 首个审批任务的节点开始触发器补评估。
+     *
+     * <p>引擎在 {@code startProcess} 返回前创建任务并回调任务监听器，此时 BPM 实例行
+     * 尚未保存，端口按 processInstanceId 查不到实例只能跳过；实例保存后按当前活跃
+     * 任务的节点 key 补一次。并行网关下多个当前节点逐一去重评估；后续节点仍由
+     * 任务监听器负责，execKey 唯一约束保证同轮同节点不会重复执行。</p>
+     */
+    private void evaluateFirstNodeEntering(String processInstanceId) {
+        try {
+            List<BpmTaskDTO> activeTasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+                    .orElse(Collections.emptyList());
+            Set<String> nodeKeys = new LinkedHashSet<>();
+            for (BpmTaskDTO task : activeTasks) {
+                if (task.getTaskDefinitionKey() != null && !task.getTaskDefinitionKey().isBlank()) {
+                    nodeKeys.add(task.getTaskDefinitionKey());
+                }
+            }
+            for (String nodeKey : nodeKeys) {
+                try {
+                    nodeTriggerEventPort.onNodeEntering(processInstanceId, nodeKey);
+                } catch (Exception e) {
+                    log.warn("首节点触发器评估异常（不阻断发起）: processInstanceId={}, nodeKey={}, err={}",
+                            processInstanceId, nodeKey, e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("首节点触发器查询异常（不阻断发起）: processInstanceId={}, err={}",
+                    processInstanceId, e.getMessage());
         }
     }
 

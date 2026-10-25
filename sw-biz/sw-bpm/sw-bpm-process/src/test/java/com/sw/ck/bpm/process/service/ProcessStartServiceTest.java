@@ -1,12 +1,15 @@
 package com.sw.ck.bpm.process.service;
 
+import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.participant.NodeTriggerEventPort;
 import com.sw.ck.bpm.api.spi.ApproverResolver;
 import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.common.event.DomainEventPublisher;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,9 +44,19 @@ class ProcessStartServiceTest {
     private BpmInstanceService bpmInstanceService;
     @Mock
     private DomainEventPublisher domainEventPublisher;
+    @Mock
+    private NodeTriggerEventPort nodeTriggerEventPort;
 
     @InjectMocks
     private ProcessStartService service;
+
+    /** 可选端口是字段注入；显式回填，确保单测覆盖首节点补评估路径。 */
+    @BeforeEach
+    void injectOptionalTriggerPort() throws Exception {
+        java.lang.reflect.Field field = ProcessStartService.class.getDeclaredField("nodeTriggerEventPort");
+        field.setAccessible(true);
+        field.set(service, nodeTriggerEventPort);
+    }
 
     @Test
     @DisplayName("启动后引擎已结束时写入 APPROVED 且不创建待办通知")
@@ -79,7 +93,27 @@ class ProcessStartServiceTest {
         ArgumentCaptor<BpmInstance> captor = ArgumentCaptor.forClass(BpmInstance.class);
         verify(bpmInstanceService).save(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo("RUNNING");
-        verify(bpmTaskFacade).queryByProcessInstance("instance-1");
+        // 一次用于首节点 NODE_ENTERING 补评估，一次用于发布 TODO_CREATED。
+        verify(bpmTaskFacade, times(2)).queryByProcessInstance("instance-1");
+    }
+
+    @Test
+    @DisplayName("首节点在实例落库后补评估 NODE_ENTERING，避免监听器因实例未落库跳过")
+    void start_whenFirstTaskCreatedBeforeInstancePersist_shouldEvaluateNodeEntering() {
+        BpmFormBinding binding = binding();
+        when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
+        BpmTaskDTO task = new BpmTaskDTO();
+        task.setTaskDefinitionKey("node_1");
+        when(bpmTaskFacade.queryByProcessInstance("instance-1"))
+                .thenReturn(java.util.Optional.of(List.of(task)));
+
+        service.start(command());
+
+        verify(nodeTriggerEventPort).onNodeEntering("instance-1", "node_1");
     }
 
     @Test
