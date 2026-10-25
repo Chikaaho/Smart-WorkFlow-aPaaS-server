@@ -188,7 +188,8 @@ class ApiOptionalContractBoundaryTest {
         repositoryService = processEngine.getRepositoryService();
         RuntimeService runtimeService = processEngine.getRuntimeService();
         HistoryService historyService = processEngine.getHistoryService();
-        runtimeFacade = new BpmRuntimeFacadeImpl(runtimeService, historyService);
+        runtimeFacade = new BpmRuntimeFacadeImpl(runtimeService, historyService,
+                processEngine.getRepositoryService());
 
         String bpmn = """
                 <?xml version="1.0" encoding="UTF-8"?>
