@@ -455,7 +455,9 @@ public class TenantAdminService {
     private void assertSuperAdmin() {
         LoginUser login = LoginUserHolder.get();
         if (login == null || !login.isSuperAdmin() || !Long.valueOf(ROOT_TENANT_ID).equals(login.getTenantId())) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR, "仅系统超级管理员可以维护租户");
+            // 权限语义独立于参数错误：HTTP 200 + body.code=403，保留可定位文案；
+            // 不把“仅系统超级管理员”覆盖成通用“请求参数有误”。
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅系统超级管理员可以维护租户");
         }
     }
 

@@ -80,7 +80,8 @@ class TenantAdminServiceTest {
 
         assertThatThrownBy(() -> service.page(1, 10, null, null))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("超级管理员");
+                .hasMessageContaining("超级管理员")
+                .satisfies(error -> assertThat(((BaseException) error).getCode()).isEqualTo(403));
     }
 
     @Test
