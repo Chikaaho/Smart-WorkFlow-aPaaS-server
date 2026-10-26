@@ -3,7 +3,9 @@ package com.sw.ck.bpm.process.controller;
 import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
+import com.sw.ck.bpm.process.mapper.ApprovalActionRecordMapper;
 import com.sw.ck.bpm.process.mapper.CopyRecordMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.common.exception.BaseException;
@@ -29,8 +31,9 @@ class WorkflowAttachmentControllerTest {
     private final BpmInstanceService instances = mock(BpmInstanceService.class);
     private final BpmTaskFacade tasks = mock(BpmTaskFacade.class);
     private final CopyRecordMapper copies = mock(CopyRecordMapper.class);
+    private final ApprovalActionRecordMapper actionRecords = mock(ApprovalActionRecordMapper.class);
     private final WorkflowAttachmentController controller = new WorkflowAttachmentController(
-            storage, forms, instances, tasks, copies);
+            storage, actionRecords, forms, instances, tasks, copies);
     @SuppressWarnings("unchecked")
     private final LambdaQueryChainWrapper<BpmInstance> query = mock(LambdaQueryChainWrapper.class, RETURNS_SELF);
     private final BpmInstance instance = new BpmInstance();
@@ -143,5 +146,52 @@ class WorkflowAttachmentControllerTest {
         when(storage.download("file")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> controller.download("record", "file", "plan.pdf", null))
                 .isInstanceOfSatisfying(BaseException.class, e -> assertThat(e.getCode()).isEqualTo(404));
+    }
+
+    // ==================== 意见附件受控下载 ====================
+
+    private ApprovalActionRecord opinionRecord(String opinionData) {
+        ApprovalActionRecord record = new ApprovalActionRecord();
+        record.setId(77L);
+        record.setProcessInstanceId("pi-1");
+        record.setOpinionData(opinionData);
+        return record;
+    }
+
+    @Test
+    void opinionAttachmentDownloadsOnlyWhenReferencedByFrozenOpinionData() throws Exception {
+        when(actionRecords.selectById(77L))
+                .thenReturn(opinionRecord("{\"attachments\":[{\"storageKey\":\"file\",\"name\":\"a.pdf\"}],\"comment\":\"ok\"}"));
+        when(storage.download("file"))
+                .thenReturn(Optional.of(new ByteArrayInputStream(new byte[]{1, 2, 3})));
+
+        var response = controller.downloadOpinionAttachment("77", "file", "a.pdf");
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        verify(storage).download("file");
+    }
+
+    @Test
+    void opinionAttachmentRejectsUnreferencedStorageKey() {
+        when(actionRecords.selectById(77L))
+                .thenReturn(opinionRecord("{\"attachments\":[{\"storageKey\":\"file\"}],\"comment\":\"ok\"}"));
+        forbidden(() -> controller.downloadOpinionAttachment("77", "other", "a.pdf"));
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void opinionAttachmentRejectsNonAttachmentFieldEvenIfValueMatches() {
+        when(actionRecords.selectById(77L))
+                .thenReturn(opinionRecord("{\"comment\":\"file\"}"));
+        forbidden(() -> controller.downloadOpinionAttachment("77", "file", "a.pdf"));
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void opinionAttachmentMissingRecordIsNotFound() {
+        when(actionRecords.selectById(88L)).thenReturn(null);
+        assertThatThrownBy(() -> controller.downloadOpinionAttachment("88", "file", "a.pdf"))
+                .isInstanceOfSatisfying(BaseException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(404));
+        verifyNoInteractions(storage);
     }
 }

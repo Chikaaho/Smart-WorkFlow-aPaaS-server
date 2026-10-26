@@ -27,6 +27,8 @@ public class BpmUrgeController {
      */
     @PostMapping("/{id}/urge")
     public R<UrgeRespDTO> urge(@PathVariable Long id, @RequestBody(required = false) UrgeReqDTO req) {
-        return R.ok(urgeService.urge(id, req == null ? null : req.getMessage()));
+        return R.ok(urgeService.urge(id,
+                req == null ? null : req.getMessage(),
+                req == null ? null : req.getRecipientIds()));
     }
 }

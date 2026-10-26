@@ -265,6 +265,7 @@ public class BpmTodoController {
         // 发起人与流程实例状态
         bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .ifPresent(instance -> {
+                    dto.setInstanceId(instance.getId());
                     dto.setInitiatorId(instance.getInitiatorId());
                     dto.setInstanceStatus(instance.getStatus());
                     dto.setInitiatorName(taskActionService.resolveUserNames(
@@ -340,6 +341,7 @@ public class BpmTodoController {
                 ApprovalActionRecord action = actions.get(item.getTaskId());
                 if (action == null) continue;
                 item.setAction(action.getAction());
+                item.setActionRecordId(action.getId());
                 item.setApprovalResult("APPROVE".equals(action.getAction()) ? "APPROVED"
                         : "REJECT".equals(action.getAction()) ? "REJECTED" : null);
                 item.setOpinionFormId(action.getOpinionFormId());

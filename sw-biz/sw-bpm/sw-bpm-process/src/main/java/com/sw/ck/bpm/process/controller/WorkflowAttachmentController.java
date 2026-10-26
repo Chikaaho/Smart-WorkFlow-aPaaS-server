@@ -1,8 +1,12 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.CopyRecord;
+import com.sw.ck.bpm.process.mapper.ApprovalActionRecordMapper;
 import com.sw.ck.bpm.process.mapper.CopyRecordMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
@@ -28,8 +32,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 表单附件/图片端点（v0.0.2 OA，P2 表单子集）。
@@ -46,18 +52,26 @@ public class WorkflowAttachmentController {
 
     private static final Logger log = LoggerFactory.getLogger(WorkflowAttachmentController.class);
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    /** 意见数据里附件字段的键名口径（与前端展示口径一致）。 */
+    private static final Pattern OPINION_ATTACHMENT_KEY =
+            Pattern.compile("^(attachments?|files?|附件|附录)", Pattern.CASE_INSENSITIVE);
+
     private final StorageFacade storageFacade;
+    private final ApprovalActionRecordMapper approvalActionRecordMapper;
     private final FormDefinitionService formDefinitionService;
     private final BpmInstanceService bpmInstanceService;
     private final BpmTaskFacade bpmTaskFacade;
     private final CopyRecordMapper copyRecordMapper;
 
     public WorkflowAttachmentController(StorageFacade storageFacade,
+                                        ApprovalActionRecordMapper approvalActionRecordMapper,
                                         FormDefinitionService formDefinitionService,
                                         BpmInstanceService bpmInstanceService,
                                         BpmTaskFacade bpmTaskFacade,
                                         CopyRecordMapper copyRecordMapper) {
         this.storageFacade = storageFacade;
+        this.approvalActionRecordMapper = approvalActionRecordMapper;
         this.formDefinitionService = formDefinitionService;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmTaskFacade = bpmTaskFacade;
@@ -124,6 +138,89 @@ public class WorkflowAttachmentController {
                         + java.net.URLEncoder.encode(fileName, java.nio.charset.StandardCharsets.UTF_8))
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .body(new InputStreamResource(stream));
+    }
+
+    /**
+     * 意见附件受控下载（direction-ui-completion-020）。
+     *
+     * <p>授权语义：调用人必须可访问该审批记录所属流程实例（发起人/当前参与人/抄送/超管/数据管理者），
+     * 且 storageKey 必须由该记录冻结意见数据中附件字段实际引用；不接受文件名/显示值拼地址，
+     * 也不放行任意 storageKey。旧记录没有可解析引用时返回 403/404，不伪造恢复。</p>
+     */
+    @GetMapping("/opinion/{actionRecordId}/download")
+    public ResponseEntity<InputStreamResource> downloadOpinionAttachment(
+            @PathVariable String actionRecordId,
+            @RequestParam("storageKey") String storageKey,
+            @RequestParam(value = "name", required = false) String name) throws IOException {
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED.getCode(), "未登录");
+        }
+        if (storageKey == null || storageKey.isBlank()) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "storageKey 不能为空");
+        }
+        long recordId;
+        try {
+            recordId = Long.parseLong(actionRecordId);
+        } catch (NumberFormatException e) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "审批记录标识不合法");
+        }
+        ApprovalActionRecord record = approvalActionRecordMapper.selectById(recordId);
+        if (record == null) {
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "审批记录不存在");
+        }
+        BpmInstance instance = record.getProcessInstanceId() == null ? null
+                : bpmInstanceService.lambdaQuery()
+                        .eq(BpmInstance::getProcessInstanceId, record.getProcessInstanceId())
+                        .last("LIMIT 1")
+                        .one();
+        if (!hasRecordAccess(loginUser, instance)
+                || !opinionReferencesStorageKey(record.getOpinionData(), storageKey)) {
+            log.warn("意见附件下载越权拒绝: recordId={}, user={}", actionRecordId, loginUser.getUserId());
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权访问该意见附件");
+        }
+        var stream = storageFacade.download(storageKey)
+                .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "附件不存在"));
+        String fileName = (name == null || name.isBlank()) ? storageKey : name;
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename*=UTF-8''"
+                        + java.net.URLEncoder.encode(fileName, java.nio.charset.StandardCharsets.UTF_8))
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(new InputStreamResource(stream));
+    }
+
+    /** 冻结意见数据中的附件字段是否真实引用该 storageKey（字符串或 {storageKey,name} 结构）。 */
+    private boolean opinionReferencesStorageKey(String opinionData, String storageKey) {
+        if (opinionData == null || opinionData.isBlank()) return false;
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(opinionData);
+            if (root == null || !root.isObject()) return false;
+            Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                if (!OPINION_ATTACHMENT_KEY.matcher(entry.getKey()).find()) continue;
+                if (nodeReferencesStorageKey(entry.getValue(), storageKey)) return true;
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean nodeReferencesStorageKey(JsonNode node, String storageKey) {
+        if (node == null) return false;
+        if (node.isTextual()) return storageKey.equals(node.textValue());
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                if (nodeReferencesStorageKey(item, storageKey)) return true;
+            }
+            return false;
+        }
+        if (node.isObject()) {
+            JsonNode key = node.get("storageKey");
+            return key != null && key.isTextual() && storageKey.equals(key.textValue());
+        }
+        return false;
     }
 
     // ==================== 对象权限 ====================

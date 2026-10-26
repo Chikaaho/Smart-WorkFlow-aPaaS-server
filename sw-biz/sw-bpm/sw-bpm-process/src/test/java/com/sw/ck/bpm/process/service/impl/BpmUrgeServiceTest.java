@@ -208,4 +208,87 @@ class BpmUrgeServiceTest {
         verify(notifyFacade).send(notifyCaptor.capture());
         assertThat(notifyCaptor.getValue().getContent()).doesNotContain("留言");
     }
+
+    // ==================== 催办接收人扩展（direction-ui-completion-020） ====================
+
+    private BpmTaskDTO task(String id, String assignee, List<String> candidates) {
+        BpmTaskDTO task = new BpmTaskDTO();
+        task.setTaskId(id);
+        task.setAssignee(assignee);
+        task.setCandidateUserIds(candidates);
+        return task;
+    }
+
+    private void acceptedNotification() {
+        when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
+                java.util.Optional.of(NotifySendResult.builder()
+                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                        .status("SUCCESS")
+                        .build()));
+    }
+
+    @Test
+    @DisplayName("当前待办参与人也可催办（非仅发起人）")
+    void activeParticipantCanUrge() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(1L, 8L, "RUNNING", "pi-1"));
+        when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
+        when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
+                java.util.Optional.of(List.of(task("t-1", "7", null))));
+        acceptedNotification();
+
+        UrgeRespDTO resp = urgeService.urge(1L, null, null);
+        assertThat(resp.getResult()).isEqualTo("ACCEPTED");
+        verify(notifyFacade).send(any(NotifySendRequest.class));
+    }
+
+    @Test
+    @DisplayName("非发起人且非待办参与人 → FORBIDDEN，不发送")
+    void outsiderCannotUrge() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(1L, 8L, "RUNNING", "pi-1"));
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
+                java.util.Optional.of(List.of(task("t-1", "9", List.of("10")))));
+
+        assertThatThrownBy(() -> urgeService.urge(1L))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("待办参与人");
+        verify(notifyFacade, never()).send(any(NotifySendRequest.class));
+        verify(urgeRecordMapper, never()).insert(any(UrgeRecord.class));
+    }
+
+    @Test
+    @DisplayName("接收人限定为合法子集：只通知所选待办人")
+    void urgeToSelectedRecipientsOnly() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(1L, 7L, "RUNNING", "pi-1"));
+        when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
+        when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
+                java.util.Optional.of(List.of(task("t-1", "9", null), task("t-2", "10", null))));
+        acceptedNotification();
+
+        UrgeRespDTO resp = urgeService.urge(1L, "请优先处理", List.of(10L));
+        assertThat(resp.getResult()).isEqualTo("ACCEPTED");
+
+        ArgumentCaptor<NotifySendRequest> captor = ArgumentCaptor.forClass(NotifySendRequest.class);
+        verify(notifyFacade, times(1)).send(captor.capture());
+        assertThat(captor.getValue().getRecipientId()).isEqualTo(10L);
+    }
+
+    @Test
+    @DisplayName("接收人越界（非当前实例待办人）→ REJECTED 留痕，不发送")
+    void urgeRejectsRecipientOutsideLegalScope() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(1L, 7L, "RUNNING", "pi-1"));
+        when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
+        when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
+                java.util.Optional.of(List.of(task("t-1", "9", null))));
+
+        UrgeRespDTO resp = urgeService.urge(1L, null, List.of(9999L));
+        assertThat(resp.getResult()).isEqualTo("REJECTED");
+        assertThat(resp.getDetail()).contains("合法待办范围");
+        verify(notifyFacade, never()).send(any(NotifySendRequest.class));
+        ArgumentCaptor<UrgeRecord> captor = ArgumentCaptor.forClass(UrgeRecord.class);
+        verify(urgeRecordMapper).insert(captor.capture());
+        assertThat(captor.getValue().getResult()).isEqualTo("REJECTED");
+    }
 }

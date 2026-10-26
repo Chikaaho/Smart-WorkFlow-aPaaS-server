@@ -30,6 +30,9 @@ public class TaskDetailRespDTO {
     /** Flowable 流程实例 ID */
     private String processInstanceId;
 
+    /** 流程实例记录标识（催办等实例级操作的定位键；无实例记录时缺省）。 */
+    private Long instanceId;
+
     /** 流程定义 key */
     private String processDefinitionKey;
 

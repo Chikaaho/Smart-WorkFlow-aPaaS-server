@@ -277,6 +277,7 @@ public class BpmMyInstanceController {
             com.sw.ck.bpm.process.entity.ApprovalActionRecord action = actionByTask.get(h.getTaskId());
             if (action != null) {
                 item.setAction(action.getAction());
+                item.setActionRecordId(action.getId());
                 item.setApprovalResult(action.getSettlementStatus());
                 item.setOpinionData(parseOpinionData(action.getOpinionData()));
                 item.setOpinionFormId(action.getOpinionFormId());
