@@ -45,9 +45,12 @@ public class UserController {
      */
     @GetMapping("/options")
     public R<List<UserOptionDTO>> options(@RequestParam(value = "keyword", required = false) String keyword,
-                                          @RequestParam(value = "limit", defaultValue = "50") int limit) {
+                                          @RequestParam(value = "limit", defaultValue = "50") int limit,
+                                          @RequestParam(value = "includeDept", defaultValue = "false")
+                                          boolean includeDept) {
         int capped = Math.min(Math.max(limit, 1), 200);
-        return R.ok(userQueryFacade.searchActiveUsers(keyword, capped).orElse(List.of()));
+        return R.ok(userQueryFacade.searchActiveUsers(keyword, capped, includeDept)
+                .orElse(List.of()));
     }
 
     /** 内嵌 DTO：用户表单（含明文密码） */
