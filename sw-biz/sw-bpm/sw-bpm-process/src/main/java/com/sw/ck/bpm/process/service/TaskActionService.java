@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -319,6 +320,7 @@ public class TaskActionService {
             lifecycleService.assertNoPendingSign(taskId);
         }
         ApprovalOpinionValidator.validate(effectiveRequest, resolveOpinionForm(task), processVariables);
+        verifyOpinionUsers(effectiveRequest, resolveOpinionForm(task), loginUser);
         if (action == ApprovalAction.RETURN) {
             if (effectiveRequest.getReturnTargetNodeId() == null
                     || effectiveRequest.getReturnTargetNodeId().isBlank()) {
@@ -572,6 +574,49 @@ public class TaskActionService {
     }
 
     /** 解析任务节点的意见表单配置（详情与动作校验共用）。 */
+    /**
+     * 意见表单人员字段的租户边界（direction-ui-completion-020）：
+     * 提交的稳定用户 ID 必须全部是当前租户的启用用户；显示名不参与校验、不替代 ID。
+     * 无人员字段或旧意见字段（TEXT 等）不受影响。
+     */
+    private void verifyOpinionUsers(ApprovalActionRequest request,
+                                    Map<String, Object> opinionForm,
+                                    com.sw.ck.security.holder.LoginUser loginUser) {
+        Object rawFields = opinionForm == null ? null : opinionForm.get("fields");
+        if (!(rawFields instanceof Collection<?> fields) || request.getOpinionData() == null) {
+            return;
+        }
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        for (Object rawField : fields) {
+            if (!(rawField instanceof Map<?, ?> field)) continue;
+            Object type = field.get("type");
+            if (type == null || !"USER".equalsIgnoreCase(String.valueOf(type).trim())) continue;
+            Object key = field.get("key");
+            if (key == null || String.valueOf(key).isBlank()) continue;
+            Object value = request.getOpinionData().get(String.valueOf(key).trim());
+            if (value == null) continue;
+            Collection<?> values = value instanceof Collection<?> collection
+                    ? collection : java.util.List.of(value);
+            for (Object item : values) {
+                if (item == null) continue;
+                String text = String.valueOf(item).trim();
+                if (text.isEmpty()) continue;
+                try {
+                    ids.add(Long.parseLong(text));
+                } catch (NumberFormatException e) {
+                    throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+                }
+            }
+        }
+        if (ids.isEmpty() || userQueryFacade == null) return;
+        java.util.List<Long> active = userQueryFacade
+                .findActiveUserIds(ids, loginUser.getTenantId())
+                .orElse(java.util.List.of());
+        if (!new java.util.HashSet<>(active).containsAll(ids)) {
+            throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+        }
+    }
+
     public Map<String, Object> resolveOpinionForm(BpmTaskDTO task) {
         if (task.getNodeConfig() != null) {
             Object frozen = task.getNodeConfig().get("opinionForm");

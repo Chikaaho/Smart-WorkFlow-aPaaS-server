@@ -55,7 +55,7 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
 
     /** 审批意见表单可用组件集合（组件适用矩阵，I3 §4.10；与 ApprovalOpinionValidator 口径一致）。 */
     private static final java.util.Set<String> OPINION_SUPPORTED_TYPES = java.util.Set.of(
-            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE");
+            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE", "USER");
 
     /** Flowable 扩展命名空间（BPMN 2.0 XSD 允许 {@code flowable:*} 属性） */
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
