@@ -194,6 +194,7 @@ class AgentToolConfigServiceImplTest {
                     input_schema    CLOB,
                     url             VARCHAR(500) NOT NULL,
                     http_method     VARCHAR(10) NOT NULL DEFAULT 'POST',
+                    effect_scope    VARCHAR(16),
                     timeout_seconds INT NOT NULL DEFAULT 30,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),
@@ -405,6 +406,7 @@ class AgentToolConfigServiceImplTest {
         assertThat(dto.getName()).isEqualTo("weather_tool");
         assertThat(dto.getUrl()).isEqualTo("http://127.0.0.1:1/weather");
         assertThat(dto.getHttpMethod()).isEqualTo("POST");
+        assertThat(dto.getEffectScope()).isEqualTo("QUERY");
         assertThat(dto.getTimeoutSeconds()).isEqualTo(30);
         assertThat(dto.getEnabled()).isTrue();
     }
@@ -564,6 +566,7 @@ class AgentToolConfigServiceImplTest {
         dto.setInputSchema(inputSchema);
         dto.setUrl(url);
         dto.setHttpMethod(httpMethod);
+        dto.setEffectScope("QUERY");
         dto.setTimeoutSeconds(timeoutSeconds);
         dto.setEnabled(enabled);
         dto.setRemark(remark);

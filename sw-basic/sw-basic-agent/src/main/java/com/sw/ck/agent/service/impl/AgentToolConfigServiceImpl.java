@@ -43,6 +43,9 @@ public class AgentToolConfigServiceImpl
     /** 外部工具 HTTP 方法白名单 */
     private static final Set<String> SUPPORTED_HTTP_METHODS = Set.of("GET", "POST", "PUT");
 
+    /** 外部工具副作用分类白名单；空值表示未分类，保留既有行可读取。 */
+    private static final Set<String> SUPPORTED_EFFECT_SCOPES = Set.of("QUERY", "WRITE");
+
     /** 外部工具默认超时（秒），与 V20 表结构 DEFAULT 30 一致 */
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
 
@@ -217,6 +220,13 @@ public class AgentToolConfigServiceImpl
                         "HTTP 方法不支持（仅 GET/POST/PUT）: " + dto.getHttpMethod());
             }
         }
+        if (dto.getEffectScope() != null && !dto.getEffectScope().isBlank()) {
+            String upper = dto.getEffectScope().trim().toUpperCase(Locale.ROOT);
+            if (!SUPPORTED_EFFECT_SCOPES.contains(upper)) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "副作用分类不支持（仅 QUERY/WRITE）: " + dto.getEffectScope());
+            }
+        }
     }
 
     private AgentToolInternalConfig requireInternalEntity(Long id) {
@@ -275,6 +285,9 @@ public class AgentToolConfigServiceImpl
         entity.setInputSchema(dto.getInputSchema());
         entity.setUrl(dto.getUrl());
         entity.setHttpMethod(dto.getHttpMethod() == null ? "POST" : dto.getHttpMethod().toUpperCase(Locale.ROOT));
+        entity.setEffectScope(dto.getEffectScope() == null || dto.getEffectScope().isBlank()
+                ? null
+                : dto.getEffectScope().trim().toUpperCase(Locale.ROOT));
         entity.setTimeoutSeconds(dto.getTimeoutSeconds() == null
                 ? DEFAULT_TIMEOUT_SECONDS
                 : Math.max(1, dto.getTimeoutSeconds()));
@@ -291,6 +304,7 @@ public class AgentToolConfigServiceImpl
         dto.setInputSchema(entity.getInputSchema());
         dto.setUrl(entity.getUrl());
         dto.setHttpMethod(entity.getHttpMethod());
+        dto.setEffectScope(entity.getEffectScope());
         dto.setTimeoutSeconds(entity.getTimeoutSeconds());
         dto.setEnabled(entity.getEnabled());
         dto.setRemark(entity.getRemark());

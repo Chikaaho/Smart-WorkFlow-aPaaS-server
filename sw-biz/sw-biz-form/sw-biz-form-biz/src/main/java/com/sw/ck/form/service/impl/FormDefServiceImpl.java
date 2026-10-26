@@ -66,6 +66,9 @@ public class FormDefServiceImpl implements FormDefService {
     private final UserQueryFacade userQueryFacade;
     // ==== 应用中心：表单归属目标校验（兼容构造可为 null，带归属路径 fail-closed） ====
     private final com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator;
+    // ==== 表单受控集成：保存/发布时按当前租户启用能力复核允许清单（测试构造可缺省） ====
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sw.ck.common.integration.ExternalCapabilityFacade externalCapabilityFacade;
 
     @org.springframework.beans.factory.annotation.Autowired
     public FormDefServiceImpl(FormDefMapper formDefMapper,
@@ -260,6 +263,7 @@ public class FormDefServiceImpl implements FormDefService {
         // validFieldTypes 校验同口径——禁止类型不得依赖 publish 兜底。
         validateFieldTypes(definition);
         validateFormEvents(definition);
+        validateFormIntegrations(definition);
 
         LambdaQueryWrapper<FormConfigEntity> query = Wrappers.lambdaQuery(FormConfigEntity.class)
                 .eq(FormConfigEntity::getFormId, formId)
@@ -315,6 +319,7 @@ public class FormDefServiceImpl implements FormDefService {
         validateFormulaDependencies(definitionJson, fieldNames);
         fieldPermissionService.parse(definitionJson);
         validateFormEvents(definitionJson);
+        validateFormIntegrations(definitionJson);
         validateDatasourceBindings(definitionJson);
         String frozenDefinition = freezeSnapshotDefinition(formId, definitionJson);
 
@@ -450,6 +455,7 @@ public class FormDefServiceImpl implements FormDefService {
         validateFormulaDependencies(definition, fieldNames);
         fieldPermissionService.parse(definition);
         validateFormEvents(definition);
+        validateFormIntegrations(definition);
         validateDatasourceBindings(definition);
         String frozenDefinition = freezeSnapshotDefinition(formId, definition);
 
@@ -950,6 +956,55 @@ public class FormDefServiceImpl implements FormDefService {
                         throw new BaseException(FormErrorCode.DEFINITION_INVALID,
                                 "表单事件确认说明过长: " + id);
                     }
+                }
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
+        }
+    }
+
+    /**
+     * 表单允许集成清单闸门：结构合法、无重复，且（可取得当前租户时）每个标识都对应
+     * 本租户启用且已分类的能力。运行时仍按版本快照与当前能力状态复核，历史快照不恢复已撤销权力。
+     */
+    private void validateFormIntegrations(String definitionJson) {
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson);
+            JsonNode allowed = root == null ? null : root.get("allowedIntegrations");
+            if (allowed == null || allowed.isNull()) {
+                return;
+            }
+            if (!allowed.isArray() || allowed.size() > 50) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "表单允许集成清单必须是数组且不超过 50 项");
+            }
+            Set<String> seen = new HashSet<>();
+            LoginUser loginUser = LoginUserHolder.get();
+            Long tenantId = loginUser == null ? null : loginUser.getTenantId();
+            List<com.sw.ck.common.integration.ExternalCapability> enabled =
+                    (externalCapabilityFacade != null && tenantId != null)
+                            ? externalCapabilityFacade.listEnabled(tenantId)
+                            : null;
+            for (JsonNode node : allowed) {
+                if (node == null || !node.isTextual()) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "表单允许集成清单包含非文本项");
+                }
+                String capabilityId = node.asText("").trim();
+                if (!capabilityId.matches("^[A-Za-z_][A-Za-z0-9_]{0,63}$")) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "集成能力标识不合法: " + capabilityId);
+                }
+                if (!seen.add(capabilityId)) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "集成能力标识重复: " + capabilityId);
+                }
+                if (enabled != null && enabled.stream()
+                        .noneMatch(capability -> capabilityId.equals(capability.name()))) {
+                    throw new BaseException(FormErrorCode.INTEGRATION_UNAVAILABLE,
+                            "集成能力未登记、跨租户、已停用或未分类: " + capabilityId);
                 }
             }
         } catch (BaseException e) {
