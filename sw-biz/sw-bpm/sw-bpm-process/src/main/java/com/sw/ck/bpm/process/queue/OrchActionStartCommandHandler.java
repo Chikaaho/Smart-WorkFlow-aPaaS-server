@@ -14,12 +14,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Map;
 
 /**
  * P64 配置化动作命令处理器：消费 ORCH_ACTION_START 受理（ADR-P64-001 §4，A04）。
  * <p>
- * 单事务：目标表单记录经 {@link FormDataSubmitFacade#submit}（幂等键=commandKey）创建，
+ * 单事务：目标表单记录经 {@link FormDataSubmitFacade#submit}（幂等键=commandKey 的稳定摘要）创建，
  * 目标流程实例沿既有 FLOW_START 可靠链在同事务内受理发起；重放回查原结果；
  * 恢复后只处理未完成意图，不重复启动。
  * </p>
@@ -82,12 +86,18 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
                 ? (Map<String, Object>) map : Map.of();
         String targetFormKey = ref.getTargetFormKey() == null
                 ? String.valueOf(payload.get("targetFormKey")) : ref.getTargetFormKey();
-        // 同事务：建目标记录（幂等键=commandKey）→ FlowStartPort 同事务受理 FLOW_START
+        // 同事务：建目标记录（幂等键=commandKey 的稳定摘要）→ FlowStartPort 同事务受理 FLOW_START
+        // commandKey 含 execKey/动作/项，实测可超过表单 trace 的 128 字符列；摘要保持唯一且定长。
+        String idempotencyKey = formIdempotencyKey(envelope.getCommandKey());
         Long recordOwnerUserId = resolveRecordOwnerUserId(ref.getTargetDefKey(), data);
-        String recordId = (recordOwnerUserId != null
+        // 系统派发无登录用户上下文：目标记录归属/目标流程发起人回落到源实例发起人，
+        // 避免调度线程的系统用户被当作目标流程发起人（跨租户/停用校验会拒绝）。
+        Long targetOwnerUserId = recordOwnerUserId != null
+                ? recordOwnerUserId : envelope.getInitiatorId();
+        String recordId = (targetOwnerUserId != null
                 ? formDataSubmitFacade.submitOnBehalfOf(targetFormKey, data,
-                        envelope.getCommandKey(), recordOwnerUserId)
-                : formDataSubmitFacade.submit(targetFormKey, data, envelope.getCommandKey()))
+                        idempotencyKey, targetOwnerUserId)
+                : formDataSubmitFacade.submit(targetFormKey, data, idempotencyKey))
                 .orElseThrow(() -> new IllegalStateException("目标表单记录创建未返回标识: "
                         + targetFormKey));
         ref.setTargetRecordId(recordId);
@@ -97,8 +107,22 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
         ref.setStatus("STARTING");
         actionRefMapper.updateById(ref);
         log.info("关联实例动作已启动: commandKey={}, targetFormKey={}, recordId={}, recordOwner={}",
-                envelope.getCommandKey(), targetFormKey, recordId, recordOwnerUserId);
+                envelope.getCommandKey(), targetFormKey, recordId, targetOwnerUserId);
         return "{\"status\":\"STARTED\",\"recordId\":\"" + recordId + "\"}";
+    }
+
+    /**
+     * 表单提交幂等键：commandKey 的 SHA-256 摘要（68 字符），稳定、唯一且不超
+     * {@code sw_form_trace.submit_idempotency_key} 的 128 字符上限。
+     */
+    static String formIdempotencyKey(String commandKey) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(String.valueOf(commandKey).getBytes(StandardCharsets.UTF_8));
+            return "P64:" + HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     /**

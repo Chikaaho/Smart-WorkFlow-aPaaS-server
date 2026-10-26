@@ -36,6 +36,9 @@ import static org.mockito.Mockito.when;
 @DisplayName("P64 关联动作命令处理器测试")
 class OrchActionStartCommandHandlerTest {
 
+    private static final String COMMAND_KEY = "P64ACT:x:act-1:11";
+    private static final String IDEM_KEY = OrchActionStartCommandHandler.formIdempotencyKey(COMMAND_KEY);
+
     private final BpmActionRefMapper actionRefMapper = mock(BpmActionRefMapper.class);
     private final FormDataSubmitFacade formDataSubmitFacade = mock(FormDataSubmitFacade.class);
     private final BpmProcessDefService processDefService = mock(BpmProcessDefService.class);
@@ -47,7 +50,7 @@ class OrchActionStartCommandHandlerTest {
         CommandEnvelope envelope = new CommandEnvelope();
         envelope.setCommandId(9L);
         envelope.setCommandType(CommandTypeEnum.ORCH_ACTION_START);
-        envelope.setCommandKey("P64ACT:x:act-1:11");
+        envelope.setCommandKey(COMMAND_KEY);
         envelope.setTenantId(9L);
         envelope.setInitiatorId(7L);
         envelope.setPayload(payload);
@@ -57,7 +60,7 @@ class OrchActionStartCommandHandlerTest {
     private BpmActionRef ref(long id, String status, String recordId) {
         BpmActionRef ref = new BpmActionRef();
         ref.setId(id);
-        ref.setCommandKey("P64ACT:x:act-1:11");
+        ref.setCommandKey(COMMAND_KEY);
         ref.setTargetFormKey("target_form");
         ref.setTargetDefKey("def_target");
         ref.setStatus(status);
@@ -79,9 +82,9 @@ class OrchActionStartCommandHandlerTest {
     void shouldCreateRecordAndMarkStarted() throws Exception {
         when(actionRefMapper.selectById(1L)).thenReturn(ref(1L, "INTENT_SUBMITTED", null));
         String payload = "{\"refId\":1,\"targetFormKey\":\"target_form\",\"data\":{\"owner\":\"11\"}}";
-        when(formDataSubmitFacade.submit(eq("target_form"),
+        when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
-                eq("P64ACT:x:act-1:11")))
+                eq(IDEM_KEY), eq(7L)))
                 .thenAnswer(invocation -> {
                     Map<String, Object> submitted = invocation.getArgument(1);
                     assertThat(submitted).containsEntry("owner", "11");
@@ -92,6 +95,18 @@ class OrchActionStartCommandHandlerTest {
 
         assertThat(result).contains("STARTED").contains("rec-target-1");
         verify(actionRefMapper).updateById(ref(1L, "STARTING", "rec-target-1"));
+    }
+
+    @Test
+    @DisplayName("表单幂等键：commandKey 摘要定长 ≤128，且不同项可区分")
+    void formIdempotencyKeyIsBoundedAndDistinct() {
+        String longSingle = "P64ACT:" + "x".repeat(300) + ":SINGLE";
+        String longRow = "P64ACT:" + "x".repeat(300) + ":ROW#1";
+        assertThat(OrchActionStartCommandHandler.formIdempotencyKey(longSingle))
+                .hasSizeLessThanOrEqualTo(128);
+        assertThat(OrchActionStartCommandHandler.formIdempotencyKey(longSingle))
+                .isNotEqualTo(OrchActionStartCommandHandler.formIdempotencyKey(longRow));
+        assertThat(OrchActionStartCommandHandler.formIdempotencyKey(COMMAND_KEY)).isEqualTo(IDEM_KEY);
     }
 
     @Test
@@ -124,9 +139,9 @@ class OrchActionStartCommandHandlerTest {
         when(actionRefMapper.selectById(1L)).thenReturn(ref(1L, "INTENT_SUBMITTED", null));
         String payload = "{\"refId\":1,\"targetFormKey\":\"target_form\",\"data\":{\"owner\":\"11\"}}";
         // 首次消费：目标记录创建失败（抛出 → 命令层按既有 failAndScheduleRetry 重试）
-        when(formDataSubmitFacade.submit(eq("target_form"),
+        when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
-                eq("P64ACT:x:act-1:11")))
+                eq(IDEM_KEY), eq(7L)))
                 .thenThrow(new IllegalStateException("目标表单暂不可用"))
                 .thenAnswer(invocation -> Optional.of("rec-target-1"));
 
@@ -139,9 +154,10 @@ class OrchActionStartCommandHandlerTest {
         assertThat(result).contains("STARTED").contains("rec-target-1");
         verify(actionRefMapper).updateById(ref(1L, "STARTING", "rec-target-1"));
         // 同一幂等键共受理两次（1 失败 + 1 成功），成功路径只回填一条目标记录
-        verify(formDataSubmitFacade, org.mockito.Mockito.times(2)).submit(eq("target_form"),
+        verify(formDataSubmitFacade, org.mockito.Mockito.times(2)).submitOnBehalfOf(
+                eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
-                eq("P64ACT:x:act-1:11"));
+                eq(IDEM_KEY), eq(7L));
     }
 
     // ==================== 复审05 P2-04a：系统派发记录归属接缝 ====================
@@ -180,7 +196,7 @@ class OrchActionStartCommandHandlerTest {
                 .thenReturn(graphWithFirstNodeParticipant(binding));
         when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
-                eq("P64ACT:x:act-1:11"), eq(ownerId)))
+                eq(IDEM_KEY), eq(ownerId)))
                 .thenReturn(Optional.of("rec-target-1"));
 
         String result = handler.handle(envelope(payload));
@@ -192,11 +208,11 @@ class OrchActionStartCommandHandlerTest {
     }
 
     @Test
-    @DisplayName("非 FORM_FIELD/USER/MAIN 参与人（或解析不可得）保持原语义：submit（create_by=命令发起人）")
+    @DisplayName("非 FORM_FIELD/USER/MAIN 参与人：归属回落到源实例发起人（不落到调度系统用户）")
     void shouldFallbackToPlainSubmitWhenParticipantNotFormFieldUserMain() throws Exception {
         when(actionRefMapper.selectById(2L)).thenReturn(ref(2L, "INTENT_SUBMITTED", null));
         String payload = "{\"refId\":2,\"targetFormKey\":\"target_form\",\"data\":{\"owner_id\":\"x\"}}";
-        // TABLE 范围参与人：首节点在记录创建时刻无单一归属人 → 保持原语义
+        // TABLE 范围参与人：首节点在记录创建时刻无单一归属人 → 回落源实例发起人
         BpmProcessDef def = publishedDef("def_target");
         when(processDefService.findByProcessKey("def_target")).thenReturn(def);
         Map<String, Object> tableBinding = Map.of("strategy", "FORM_FIELD",
@@ -204,35 +220,33 @@ class OrchActionStartCommandHandlerTest {
                         "tableField", "t", "column", "handler"));
         when(nodeFormDataService.loadGraph("def_target", 3))
                 .thenReturn(graphWithFirstNodeParticipant(tableBinding));
-        when(formDataSubmitFacade.submit(eq("target_form"),
+        when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
-                eq("P64ACT:x:act-1:11")))
+                eq(IDEM_KEY), eq(7L)))
                 .thenReturn(Optional.of("rec-target-2"));
 
         String result = handler.handle(envelope(payload));
 
         assertThat(result).contains("STARTED").contains("rec-target-2");
-        verify(formDataSubmitFacade, org.mockito.Mockito.never()).submitOnBehalfOf(
-                anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString(),
-                org.mockito.ArgumentMatchers.anyLong());
+        verify(formDataSubmitFacade, org.mockito.Mockito.never())
+                .submit(anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString());
     }
 
     @Test
-    @DisplayName("定义未发布/图缺失：归属解析跳过，普通 submit 不阻断派发")
+    @DisplayName("定义未发布/图缺失：归属回落到源实例发起人，不阻断派发")
     void shouldFallbackWhenTargetDefUnresolvable() throws Exception {
         when(actionRefMapper.selectById(3L)).thenReturn(ref(3L, "INTENT_SUBMITTED", null));
         String payload = "{\"refId\":3,\"targetFormKey\":\"target_form\",\"data\":{\"owner_id\":\"1\"}}";
         when(processDefService.findByProcessKey("def_target")).thenReturn(null);
-        when(formDataSubmitFacade.submit(eq("target_form"),
+        when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
                 org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
-                eq("P64ACT:x:act-1:11")))
+                eq(IDEM_KEY), eq(7L)))
                 .thenReturn(Optional.of("rec-target-3"));
 
         String result = handler.handle(envelope(payload));
 
         assertThat(result).contains("STARTED").contains("rec-target-3");
-        verify(formDataSubmitFacade, org.mockito.Mockito.never()).submitOnBehalfOf(
-                anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString(),
-                org.mockito.ArgumentMatchers.anyLong());
+        verify(formDataSubmitFacade, org.mockito.Mockito.never())
+                .submit(anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString());
     }
 }

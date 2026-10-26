@@ -140,6 +140,12 @@ public interface FormDefService {
     String getDefinitionById(String formId);
 
     /**
+     * 按 formKey + 发布版本读取冻结快照 definition（运行期旧版本回放）。
+     * <p>仅返回已发布快照；表单不存在返回 null，快照缺失抛 SNAPSHOT_NOT_FOUND。</p>
+     */
+    String getSnapshotDefinitionByKey(String formKey, Integer formVersion);
+
+    /**
      * 分页查询表单定义列表。
      * <p>
      * 只返元数据（id/formKey/name/status/时间等），不返 definition JSON，

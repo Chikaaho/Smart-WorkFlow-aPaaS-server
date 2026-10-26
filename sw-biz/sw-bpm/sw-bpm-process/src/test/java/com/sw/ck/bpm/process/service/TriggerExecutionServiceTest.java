@@ -189,13 +189,17 @@ class TriggerExecutionServiceTest {
             assertThat(envelope.getCommandType()).isEqualTo(CommandTypeEnum.ORCH_ACTION_START);
             assertThat(envelope.getChannel()).isEqualTo(CommandChannelEnum.NORMAL);
             assertThat(envelope.getTenantId()).isEqualTo(9L);
-            assertThat(envelope.getCommandKey()).startsWith("P64ACT:TRG:pi-1:trg-1:TASK_SUBMITTED:1:task-1:act-1:");
+            assertThat(envelope.getCommandKey()).startsWith("P64ACT:")
+                    .hasSizeLessThanOrEqualTo(128);
         });
         assertThat(envelopes).extracting(CommandEnvelope::getCommandKey)
                 .containsExactlyInAnyOrder(
-                        "P64ACT:TRG:pi-1:trg-1:TASK_SUBMITTED:1:task-1:act-1:11",
-                        "P64ACT:TRG:pi-1:trg-1:TASK_SUBMITTED:1:task-1:act-1:12",
-                        "P64ACT:TRG:pi-1:trg-1:TASK_SUBMITTED:1:task-1:act-1:13");
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:TASK_SUBMITTED:1:task-1", "act-1", "11"),
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:TASK_SUBMITTED:1:task-1", "act-1", "12"),
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:TASK_SUBMITTED:1:task-1", "act-1", "13"));
         ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
         verify(actionRefMapper, times(3)).insert(refCaptor.capture());
         assertThat(refCaptor.getAllValues()).allSatisfy(ref ->
@@ -461,10 +465,14 @@ class TriggerExecutionServiceTest {
 
         ArgumentCaptor<CommandEnvelope> envelopeCaptor = ArgumentCaptor.forClass(CommandEnvelope.class);
         verify(commandQueue, times(3)).enqueue(envelopeCaptor.capture());
-        assertThat(envelopeCaptor.getAllValues()).allSatisfy(envelope ->
-                assertThat(envelope.getCommandKey())
-                        .startsWith("P64ACT:TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1:act-1:")
-                        .doesNotContain("task-1"));
+        assertThat(envelopeCaptor.getAllValues()).extracting(CommandEnvelope::getCommandKey)
+                .containsExactlyInAnyOrder(
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1", "act-1", "11"),
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1", "act-1", "12"),
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1", "act-1", "13"));
     }
 
     @Test
@@ -587,8 +595,10 @@ class TriggerExecutionServiceTest {
         verify(commandQueue, times(2)).enqueue(envelopeCaptor.capture());
         assertThat(envelopeCaptor.getAllValues()).extracting(CommandEnvelope::getCommandKey)
                 .containsExactlyInAnyOrder(
-                        "P64ACT:TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1:act-group:L1",
-                        "P64ACT:TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1:act-group:L2");
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1", "act-group", "L1"),
+                        TriggerExecutionService.actionCommandKey(
+                                "TRG:pi-1:trg-1:NODE_ROUND_COMPLETED:1", "act-group", "L2"));
         ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
         verify(actionRefMapper, times(2)).insert(refCaptor.capture());
         assertThat(refCaptor.getAllValues()).anySatisfy(ref ->
@@ -729,5 +739,17 @@ class TriggerExecutionServiceTest {
         // 仍只 1 次：新版本实例不触发（关闭边界对新增实例生效）
         verify(commandQueue, times(1)).enqueue(any());
         verify(triggerExecMapper, times(1)).insert(any(BpmTriggerExec.class));
+    }
+
+    @Test
+    @DisplayName("P64 动作命令键定长 ≤128，且同一 execKey 下不同项可区分")
+    void actionCommandKeyIsBoundedAndDistinct() {
+        String longExecKey = "TRG:" + "x".repeat(220) + ":task";
+        String single = TriggerExecutionService.actionCommandKey(longExecKey, "act-1", "SINGLE");
+        String row = TriggerExecutionService.actionCommandKey(longExecKey, "act-1", "ROW#1");
+        assertThat(single).startsWith("P64ACT:").hasSizeLessThanOrEqualTo(128);
+        assertThat(single).isNotEqualTo(row);
+        assertThat(TriggerExecutionService.actionCommandKey("e", "a", "i"))
+                .isEqualTo(TriggerExecutionService.actionCommandKey("e", "a", "i"));
     }
 }

@@ -295,6 +295,23 @@ public class FormDefinitionController {
         return R.ok(definition);
     }
 
+    /**
+     * 渲染接口：按 formKey + 发布版本读取冻结快照 definition。
+     * <p>运行期旧草稿/旧版本回放使用；不要求设计权限，但仍按当前用户可见范围校验。</p>
+     */
+    @GetMapping("/by-key/{formKey}/versions/{formVersion}/definition")
+    public R<String> getDefinitionByKeyVersion(@PathVariable("formKey") String formKey,
+                                               @PathVariable("formVersion") Integer formVersion) {
+        if (!formDefService.isCurrentUserVisible(formKey)) {
+            return R.fail(FormErrorCode.FORM_NOT_FOUND.getCode(), FormErrorCode.FORM_NOT_FOUND.getMessage());
+        }
+        String definition = formDefService.getSnapshotDefinitionByKey(formKey, formVersion);
+        if (definition == null) {
+            return R.fail(FormErrorCode.CONFIG_NOT_FOUND.getCode(), FormErrorCode.CONFIG_NOT_FOUND.getMessage());
+        }
+        return R.ok(definition);
+    }
+
     // ==================== 历史版本快照（只读） ====================
 
     /**

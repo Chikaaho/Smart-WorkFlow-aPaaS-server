@@ -28,8 +28,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -575,7 +579,7 @@ public class TriggerExecutionService {
                               BpmTriggerExec exec, ActionItem item, Map<String, Object> snapshot,
                               List<String> notes, ChildOrchestrationService.FrozenBatch frozen,
                               List<Object> mappingScriptValues) {
-        String commandKey = "P64ACT:" + exec.getExecKey() + ":" + action.getActionId() + ":" + item.itemKey();
+        String commandKey = actionCommandKey(exec.getExecKey(), action.getActionId(), item.itemKey());
         Long tenantId = instance.getTenantId();
         Optional<BpmActionRef> existingRef = Optional.ofNullable(actionRefMapper.selectOne(
                 Wrappers.<BpmActionRef>lambdaQuery()
@@ -845,6 +849,21 @@ public class TriggerExecutionService {
         String base = "TRG:" + instance.getProcessInstanceId() + ":" + trigger.getTriggerId()
                 + ":" + event + ":" + round;
         return scopeTaskId == null ? base : base + ":" + scopeTaskId;
+    }
+
+    /**
+     * P64 动作命令键：execKey/动作/项的 SHA-256 摘要（71 字符）。
+     * <p>原拼接键含实例+触发器+任务+项，实测可超过 {@code sw_bpm_command.command_key}
+     * 的 128 字符上限，PG 下使整个办理事务中止；摘要保持稳定、唯一且定长。</p>
+     */
+    static String actionCommandKey(String execKey, String actionId, String itemKey) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+                    (execKey + ":" + actionId + ":" + itemKey).getBytes(StandardCharsets.UTF_8));
+            return "P64ACT:" + HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     private String dispositionOf(String configured) {

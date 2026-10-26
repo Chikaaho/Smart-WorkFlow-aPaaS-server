@@ -9,6 +9,7 @@ import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.system.api.user.UserQueryFacade;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,8 @@ class ProcessStartServiceTest {
     private DomainEventPublisher domainEventPublisher;
     @Mock
     private NodeTriggerEventPort nodeTriggerEventPort;
+    @Mock
+    private UserQueryFacade userQueryFacade;
 
     @InjectMocks
     private ProcessStartService service;
@@ -56,6 +59,15 @@ class ProcessStartServiceTest {
         java.lang.reflect.Field field = ProcessStartService.class.getDeclaredField("nodeTriggerEventPort");
         field.setAccessible(true);
         field.set(service, nodeTriggerEventPort);
+        // userQueryFacade 经 ObjectProvider 装配；@InjectMocks 不匹配该类型，显式回填
+        java.lang.reflect.Field userField =
+                ProcessStartService.class.getDeclaredField("userQueryFacade");
+        userField.setAccessible(true);
+        userField.set(service, userQueryFacade);
+        // 默认：系统操作人 1 在测试租户内有效（各用例可按需覆盖）
+        org.mockito.Mockito.lenient()
+                .when(userQueryFacade.findActiveUserIds(any(), any()))
+                .thenReturn(java.util.Optional.of(List.of(1L)));
     }
 
     @Test
@@ -196,6 +208,44 @@ class ProcessStartServiceTest {
                 .containsEntry("sourceInstanceId", "main-instance-1")
                 .containsEntry("sourceBusinessKey", "record-9")
                 .containsEntry("submitter", "1");
+    }
+
+    @Test
+    @DisplayName("自动发起系统操作人在目标租户不可用：回退来源发起人，子实例归属真实用户")
+    void start_whenAutoStartOperatorNotActiveInTenant_shouldKeepSourceSubmitter() {
+        BpmFormBinding binding = binding();
+        when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
+        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
+                .thenReturn(java.util.Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+        // 系统用户 1 不在业务租户 57001；来源发起人 7 在租户内有效
+        when(userQueryFacade.findActiveUserIds(eq(List.of(1L)), eq(57001L)))
+                .thenReturn(java.util.Optional.of(List.of()));
+        when(userQueryFacade.findActiveUserIds(eq(List.of(7L)), eq(57001L)))
+                .thenReturn(java.util.Optional.of(List.of(7L)));
+
+        StartCommand command = command();
+        command.setSubmitter(7L);
+        command.setSubmittedData(new java.util.HashMap<>(java.util.Map.of(
+                "sourceInstanceId", "main-instance-1",
+                "sourceBusinessKey", "record-9")));
+        service.start(command);
+
+        assertThat(command.getSubmitter()).isEqualTo(7L);
+        ArgumentCaptor<BpmInstance> instanceCaptor = ArgumentCaptor.forClass(BpmInstance.class);
+        verify(bpmInstanceService).save(instanceCaptor.capture());
+        assertThat(instanceCaptor.getValue().getInitiatorId()).isEqualTo(7L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(java.util.Map.class);
+        verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
+                varsCaptor.capture(), eq("57001"));
+        assertThat(varsCaptor.getValue())
+                .containsEntry("sourceInstanceId", "main-instance-1")
+                .containsEntry("submitter", "7");
     }
 
     private BpmFormBinding binding() {

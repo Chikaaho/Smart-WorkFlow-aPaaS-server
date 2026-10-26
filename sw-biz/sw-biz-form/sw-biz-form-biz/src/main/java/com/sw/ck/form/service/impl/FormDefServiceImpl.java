@@ -535,6 +535,15 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
+    public String getSnapshotDefinitionByKey(String formKey, Integer formVersion) {
+        FormDefDTO dto = getFormDefByKey(formKey);
+        if (dto == null) {
+            return null;
+        }
+        return getSnapshot(dto.getId(), formVersion).getDefinition();
+    }
+
+    @Override
     public PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword) {
         return pageFormDefs(pageParam, keyword, null);
     }

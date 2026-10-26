@@ -126,10 +126,25 @@ public class ProcessStartService {
     @Transactional
     public void start(StartCommand cmd) {
         // BF20261013-022⑧：自动发起（携带主流程来源标记 sourceInstanceId）的操作人=系统管理员——
-        // 自动处理的动作人不落在具体人身上；主流程来源另行嵌入子实例变量（见下方 putFirstNotBlank）
+        // 自动处理的动作人不落在具体人身上；主流程来源另行嵌入子实例变量（见下方 putFirstNotBlank）。
+        // 系统管理员必须是目标租户内的有效用户：跨租户（典型为主流程在业务租户、系统用户属租户0）
+        // 时回退来源发起人，避免子实例落成无效/跨租户发起人后被 fail closed。
         if (cmd.getSubmittedData() != null
                 && cmd.getSubmittedData().get("sourceInstanceId") != null) {
+            Long sourceSubmitter = cmd.getSubmitter();
             cmd.setSubmitter(AUTO_START_OPERATOR_USER_ID);
+            if (userQueryFacade != null && cmd.getTenantId() != null) {
+                boolean autoActive = userQueryFacade
+                        .findActiveUserIds(List.of(AUTO_START_OPERATOR_USER_ID), cmd.getTenantId())
+                        // empty = 目录/租户上下文缺失：按无效处理，回退来源发起人
+                        .map(ids -> !ids.isEmpty())
+                        .orElse(false);
+                if (!autoActive && sourceSubmitter != null) {
+                    cmd.setSubmitter(sourceSubmitter);
+                    log.warn("自动发起系统操作人在目标租户不可用，回退来源发起人: tenantId={}, sourceSubmitter={}",
+                            cmd.getTenantId(), sourceSubmitter);
+                }
+            }
         }
         // 1. 查启用绑定
         List<BpmFormBinding> bindings = bindingService.findActiveByFormKey(cmd.getFormKey());
