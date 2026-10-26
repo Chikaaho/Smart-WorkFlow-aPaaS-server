@@ -68,4 +68,46 @@ class RichTextSanitizerTest {
         assertEquals("", RichTextSanitizer.visibleText(null));
         assertEquals("", RichTextSanitizer.sanitize(""));
     }
+
+    @Test
+    void strikethroughUsesControlledSTag() {
+        String clean = RichTextSanitizer.sanitize(RichTextSanitizer.PREFIX
+                + "<p>价格<s>99</s>1</p>");
+        assertEquals(RichTextSanitizer.PREFIX + "<p>价格<s>99</s>1</p>", clean);
+    }
+
+    @Test
+    void legacyStrikeTagsAreNormalizedToS() {
+        String clean = RichTextSanitizer.sanitize(RichTextSanitizer.PREFIX
+                + "<p><del>删除</del>与<strike>划掉</strike></p>");
+        assertEquals(RichTextSanitizer.PREFIX + "<p><s>删除</s>与<s>划掉</s></p>", clean);
+    }
+
+    @Test
+    void alignAndIndentTokensAreKeptOnBlocksWithDefaultDropped() {
+        String clean = RichTextSanitizer.sanitize(RichTextSanitizer.PREFIX
+                + "<p data-rt-align=\"center\" data-rt-indent=\"1\">居中缩进</p>"
+                + "<div data-rt-align=\"right\">右对齐</div>"
+                + "<p data-rt-align=\"left\" data-rt-indent=\"0\">默认</p>");
+        assertEquals(RichTextSanitizer.PREFIX
+                + "<p data-rt-align=\"center\" data-rt-indent=\"1\">居中缩进</p>"
+                + "<div data-rt-align=\"right\">右对齐</div>"
+                + "<p>默认</p>", clean);
+    }
+
+    @Test
+    void invalidAlignIndentTokensAndBlockStyleAreDropped() {
+        String clean = RichTextSanitizer.sanitize(RichTextSanitizer.PREFIX
+                + "<p data-rt-align=\"justify\" style=\"text-align:center\" data-rt-indent=\"9\">X</p>"
+                + "<li data-rt-align=\"center\">Y</li>");
+        assertEquals(RichTextSanitizer.PREFIX + "<p>X</p><li>Y</li>", clean);
+    }
+
+    @Test
+    void listsSurviveSanitizeWithVisibleTextPerLine() {
+        String value = RichTextSanitizer.PREFIX
+                + "<ol><li>第一项</li><li>第二项</li></ol><ul><li>要点</li></ul>";
+        assertEquals(value, RichTextSanitizer.sanitize(value));
+        assertEquals("第一项\n第二项\n要点", RichTextSanitizer.visibleText(value));
+    }
 }

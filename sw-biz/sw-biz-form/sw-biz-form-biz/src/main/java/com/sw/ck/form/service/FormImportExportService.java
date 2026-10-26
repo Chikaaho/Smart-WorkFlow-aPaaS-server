@@ -1003,6 +1003,9 @@ public class FormImportExportService {
                     writeTextCell(cell, value.toString());
                 }
             }
+            case RICH_TEXT ->
+                // 富文本导出可见文本：不把版本前缀/受控标签写进 xlsx
+                writeTextCell(cell, RichTextSanitizer.visibleText(value.toString()));
             default -> writeTextCell(cell, value.toString());
         }
     }
