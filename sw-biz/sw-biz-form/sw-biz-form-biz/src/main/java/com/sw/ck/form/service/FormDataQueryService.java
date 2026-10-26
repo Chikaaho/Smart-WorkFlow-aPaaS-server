@@ -595,6 +595,27 @@ public class FormDataQueryService {
     }
 
     /**
+     * 工作台表单选择器的可见记录数：与列表查询同一可见性、租户与数据范围口径的 COUNT(*)。
+     *
+     * <p>仅供 sources 汇总展示；单个表单计数失败不阻断整个候选列表，按 0 记录并留日志。</p>
+     */
+    public long workspaceRecordCount(String formKey) {
+        WorkspaceFormContext ctx = prepareWorkspaceForm(formKey);
+        List<Object> params = new ArrayList<>();
+        StringBuilder where = workspaceWhere(ctx, params, null);
+        String countSql = "SELECT COUNT(*) FROM " + DynamicTableSql.quote(ctx.tableName())
+                + " WHERE " + where;
+        try {
+            Long total = DynamicTableSql.queryForLong(jdbcTemplate, ctx.tableName(),
+                    countSql, params.toArray());
+            return total == null ? 0L : total;
+        } catch (Exception e) {
+            log.error("Workspace sources count failed: formKey={}", formKey, e);
+            return 0L;
+        }
+    }
+
+    /**
      * 工作台数据查询共用的表单准入：登录、可见、动作、应用范围、发布状态、物理表。
      */
     private WorkspaceFormContext prepareWorkspaceForm(String formKey) {

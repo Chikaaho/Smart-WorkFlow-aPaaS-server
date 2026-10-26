@@ -2,8 +2,11 @@ package com.sw.ck.form.controller;
 
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.form.api.dto.FormAppDTO;
+import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
 import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
+import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormDefService;
 import org.slf4j.Logger;
@@ -18,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 工作台数据组件受控查询入口。
@@ -33,25 +38,46 @@ public class FormWorkspaceAnalyticsController {
 
     private final FormDataQueryService formDataQueryService;
     private final FormDefService formDefService;
+    private final FormAppService formAppService;
 
     public FormWorkspaceAnalyticsController(FormDataQueryService formDataQueryService,
-                                            FormDefService formDefService) {
+                                            FormDefService formDefService,
+                                            FormAppService formAppService) {
         this.formDataQueryService = formDataQueryService;
         this.formDefService = formDefService;
+        this.formAppService = formAppService;
     }
 
-    /** 当前账号可关联的已发布表单（最小集：formKey/name/formVersion）。 */
+    /**
+     * 当前账号可关联的已发布表单。
+     *
+     * <p>供工作台「选择表单」弹窗分组展示：appName 取当前账号可见应用的名称
+     * （不可见应用不下发名称，避免越权泄漏应用目录）；recordCount 为同一可见
+     * 口径的记录数，单个表单计数失败按 0 记录，不阻断候选列表。</p>
+     */
     @GetMapping("/sources")
     public R<List<Map<String, Object>>> sources() {
+        Map<String, String> appNameById = formAppService.listVisibleAppsForCurrentUser().stream()
+                .collect(Collectors.toMap(FormAppDTO::getId, FormAppDTO::getName, (a, b) -> a,
+                        LinkedHashMap::new));
+        Function<String, String> appNameOf = appId -> appId == null ? null : appNameById.get(appId);
         List<Map<String, Object>> list = formDefService.listPublishedForCurrentUser().stream()
                 .map(def -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("formKey", def.getFormKey());
                     item.put("name", def.getName());
                     item.put("formVersion", def.getFormVersion());
+                    String appId = def.getAppId();
+                    String appName = appId != null ? appNameOf.apply(appId) : null;
+                    if (appName != null) {
+                        item.put("appId", appId);
+                        item.put("appName", appName);
+                    }
+                    item.put("recordCount", formDataQueryService.workspaceRecordCount(def.getFormKey()));
                     return item;
                 })
                 .toList();
+        log.info("Workspace sources: forms={}, visibleApps={}", list.size(), appNameById.size());
         return R.ok(list);
     }
 

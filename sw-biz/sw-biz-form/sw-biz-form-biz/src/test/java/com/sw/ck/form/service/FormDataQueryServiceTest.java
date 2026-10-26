@@ -1000,6 +1000,35 @@ class FormDataQueryServiceTest {
     }
 
     @Test
+    @DisplayName("工作台选择器计数 → 与列表同一可见口径：软删排除、数据范围生效、未知表单拒绝")
+    void workspaceRecordCount_shouldApplySameVisibilityScope() {
+        var setup = setupQueryForm("ws_count");
+        insertWorkspaceRow(setup.tableName, "本人A", 10, 1, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "本人B", 20, 0, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "他人", 30, 0, 42L);
+        jdbcTemplate.update("UPDATE \"" + setup.tableName + "\" SET \"deleted\" = 1 WHERE \"title\" = '本人B'");
+
+        LoginUser self = new LoginUser();
+        self.setUserId(TEST_USER_ID);
+        self.setTenantId(TEST_TENANT_ID);
+        self.setUsername("test_user");
+        self.setDataScope(com.sw.ck.security.holder.DataScope.SELF);
+        LoginUserHolder.set(self);
+        assertThat(formDataQueryService.workspaceRecordCount(setup.formKey)).isEqualTo(1L);
+
+        LoginUser all = new LoginUser();
+        all.setUserId(TEST_USER_ID);
+        all.setTenantId(TEST_TENANT_ID);
+        all.setUsername("test_user");
+        all.setDataScope(com.sw.ck.security.holder.DataScope.ALL);
+        LoginUserHolder.set(all);
+        assertThat(formDataQueryService.workspaceRecordCount(setup.formKey)).isEqualTo(2L);
+
+        assertThatThrownBy(() -> formDataQueryService.workspaceRecordCount("no_such_form_key"))
+                .isInstanceOf(BaseException.class);
+    }
+
+    @Test
     @DisplayName("工作台列表 → 显式列/排序/分页生效，越权或非标量列整请求拒绝")
     void workspaceRows_shouldRespectColumnsSortAndPaging() {
         var setup = setupQueryForm("ws_rows");
