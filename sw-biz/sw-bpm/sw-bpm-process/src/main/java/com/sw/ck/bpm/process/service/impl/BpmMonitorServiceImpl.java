@@ -374,6 +374,21 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         summary.put("p50DurationMs", percentile(durations, 50));
         summary.put("p90DurationMs", percentile(durations, 90));
         summary.put("durationSample", durations.size());
+        // 门户业务运行概览的近 30 天趋势（7:2）：按天聚合实例创建数，复用 monitorCount 的
+        // 定义/时间/数据范围口径，避免另写跨方言（PG/H2）日期分组 SQL。
+        java.time.LocalDate trendEnd = timeTo != null ? timeTo.toLocalDate() : java.time.LocalDate.now();
+        java.time.LocalDate trendStart = timeFrom != null ? timeFrom.toLocalDate() : trendEnd.minusDays(29);
+        if (trendStart.isAfter(trendEnd)) {
+            trendStart = trendEnd;
+        }
+        List<Map<String, Object>> dailyTrend = new ArrayList<>();
+        for (java.time.LocalDate day = trendStart; !day.isAfter(trendEnd); day = day.plusDays(1)) {
+            long count = monitorMapper.monitorCount(processDefKey, null, null, null,
+                    day.atStartOfDay(), day.plusDays(1).atStartOfDay().minusNanos(1), null, scope);
+            dailyTrend.add(Map.of("date", String.format("%02d-%02d", day.getMonthValue(), day.getDayOfMonth()),
+                    "count", count));
+        }
+        summary.put("dailyTrend", dailyTrend);
         return summary;
     }
 
