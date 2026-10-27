@@ -141,9 +141,11 @@ public class BpmMyInstanceController {
     /**
      * 实例条目富化（V012-BUG-022）：流程名称（按定义键去重解析）与发起人展示名
      * （批量解析）；解析失败降级 null，不阻断列表。
+     * 0.2.0（4:2）：补充 currentNode —— RUNNING 取活动任务名，APPROVED 取定义 END 节点名。
      */
     java.util.List<MyInstanceItemDTO> enrichInstanceItems(java.util.List<BpmInstance> records) {
         java.util.Map<String, String> defNames = new java.util.HashMap<>();
+        java.util.Map<String, String> endNodeNames = new java.util.HashMap<>();
         java.util.Set<Long> initiatorIds = new java.util.HashSet<>();
         for (BpmInstance record : records) {
             if (record.getProcessDefKey() != null) {
@@ -151,6 +153,7 @@ public class BpmMyInstanceController {
                     BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(key);
                     return processDef == null ? null : processDef.getName();
                 });
+                endNodeNames.computeIfAbsent(record.getProcessDefKey(), this::resolveEndNodeName);
             }
             if (record.getInitiatorId() != null) {
                 initiatorIds.add(record.getInitiatorId());
@@ -173,9 +176,67 @@ public class BpmMyInstanceController {
             item.setInitiatorName(record.getInitiatorId() == null ? null
                     : initiatorNames.get(record.getInitiatorId()));
             item.setStatus(record.getStatus());
+            item.setCurrentNode(resolveCurrentNode(record, endNodeNames));
             item.setCreateTime(record.getCreateTime());
             return item;
         }).collect(Collectors.toList());
+    }
+
+    /** 当前节点展示：RUNNING=活动任务名；APPROVED=定义 END 节点名；其余终态 null。 */
+    private String resolveCurrentNode(BpmInstance record,
+                                      java.util.Map<String, String> endNodeNames) {
+        String status = record.getStatus();
+        if ("RUNNING".equalsIgnoreCase(status)) {
+            if (bpmTaskFacade == null || record.getProcessInstanceId() == null) {
+                return null;
+            }
+            java.util.Optional<List<BpmTaskDTO>> tasks =
+                    bpmTaskFacade.queryByProcessInstance(record.getProcessInstanceId());
+            if (tasks == null || tasks.isEmpty()) {
+                return null;
+            }
+            return tasks.get().stream()
+                    .map(BpmTaskDTO::getName)
+                    .filter(name -> name != null && !name.isBlank())
+                    .findFirst().orElse(null);
+        }
+        if ("APPROVED".equalsIgnoreCase(status) && record.getProcessDefKey() != null) {
+            return endNodeNames.get(record.getProcessDefKey());
+        }
+        return null;
+    }
+
+    /** 解析流程定义 END 节点名（config.name/label）；未命名或解析失败返回 null。 */
+    private String resolveEndNodeName(String processDefKey) {
+        if (objectMapper == null || processDefKey == null) {
+            return null;
+        }
+        BpmProcessDef def = bpmProcessDefService.findByProcessKey(processDefKey);
+        if (def == null || def.getGraphJson() == null || def.getGraphJson().isBlank()) {
+            return null;
+        }
+        try {
+            com.sw.ck.bpm.api.dto.ProcessGraph graph =
+                    objectMapper.readValue(def.getGraphJson(), com.sw.ck.bpm.api.dto.ProcessGraph.class);
+            if (graph == null || graph.getElements() == null) {
+                return null;
+            }
+            for (com.sw.ck.bpm.api.dto.GraphElement element : graph.getElements()) {
+                if (!"END".equalsIgnoreCase(element.getType()) || element.getConfig() == null) {
+                    continue;
+                }
+                Object name = element.getConfig().get("name");
+                if (name == null) {
+                    name = element.getConfig().get("label");
+                }
+                if (name != null && !name.toString().isBlank()) {
+                    return name.toString();
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("解析流程定义END节点名失败: processDefKey={}, reason={}", processDefKey, ex.getMessage());
+        }
+        return null;
     }
 
     /**

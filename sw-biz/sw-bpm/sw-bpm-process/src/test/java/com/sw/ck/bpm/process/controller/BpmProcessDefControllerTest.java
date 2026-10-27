@@ -81,6 +81,77 @@ class BpmProcessDefControllerTest {
         }
     }
 
+    // ==================== GET /workflow/defs 展示字段回填 ====================
+
+    @Nested
+    @DisplayName("GET /workflow/defs 展示字段回填（分类/更新人/实例数）")
+    class ListDisplayFieldsTests {
+
+        private final com.sw.ck.bpm.process.mapper.BpmCategoryMapper categoryMapper =
+                mock(com.sw.ck.bpm.process.mapper.BpmCategoryMapper.class);
+        private final com.sw.ck.bpm.process.mapper.BpmInstanceMapper instanceMapper =
+                mock(com.sw.ck.bpm.process.mapper.BpmInstanceMapper.class);
+
+        private final BpmProcessDefController enrichedController = new BpmProcessDefController(
+                bpmProcessDefService, objectMapper, userQueryFacade, null,
+                mock(com.sw.ck.bpm.process.service.ProcessThemeService.class),
+                categoryMapper, instanceMapper);
+
+        @Test
+        @DisplayName("分类名/更新人/实例数按批量结果回填（数据侧已有字段，不逐行查库）")
+        void listDefs_shouldFillCategoryUpdaterAndInstanceCount() {
+            BpmProcessDef def = new BpmProcessDef();
+            def.setId(3L);
+            def.setProcessKey("pk-1");
+            def.setCategoryId(11L);
+            def.setCreateBy(7L);
+            def.setUpdateBy(9L);
+            PageResult<BpmProcessDef> page = new PageResult<>();
+            page.setRecords(List.of(def));
+            page.setTotal(1);
+            when(bpmProcessDefService.listDefs(any(PageParam.class), isNull())).thenReturn(page);
+            when(userQueryFacade.getUserDisplayNames(anyCollection()))
+                    .thenReturn(Optional.of(Map.of(9L, "流程管理员")));
+            com.sw.ck.bpm.process.entity.BpmCategory category =
+                    new com.sw.ck.bpm.process.entity.BpmCategory();
+            category.setId(11L);
+            category.setName("运维");
+            when(categoryMapper.selectBatchIds(anyCollection())).thenReturn(List.of(category));
+            when(instanceMapper.selectMaps(any()))
+                    .thenReturn(List.of(Map.of("processKey", "pk-1", "cnt", 5L)));
+
+            R<PageResult<BpmProcessDef>> result = enrichedController.listDefs(new PageParam(), null);
+
+            BpmProcessDef record = result.getData().getRecords().get(0);
+            assertThat(record.getCategoryName()).isEqualTo("运维");
+            assertThat(record.getUpdatedBy()).isEqualTo("流程管理员");
+            assertThat(record.getInstanceCount()).isEqualTo(5L);
+        }
+
+        @Test
+        @DisplayName("无实例的流程实例数为 0，未分类保持空值")
+        void listDefs_shouldDefaultZeroInstanceCountAndNullCategory() {
+            BpmProcessDef def = new BpmProcessDef();
+            def.setId(4L);
+            def.setProcessKey("pk-2");
+            def.setCreateBy(7L);
+            PageResult<BpmProcessDef> page = new PageResult<>();
+            page.setRecords(List.of(def));
+            page.setTotal(1);
+            when(bpmProcessDefService.listDefs(any(PageParam.class), isNull())).thenReturn(page);
+            when(userQueryFacade.getUserDisplayNames(anyCollection()))
+                    .thenReturn(Optional.of(Map.of(7L, "系统管理员")));
+            when(instanceMapper.selectMaps(any())).thenReturn(List.of());
+
+            R<PageResult<BpmProcessDef>> result = enrichedController.listDefs(new PageParam(), null);
+
+            BpmProcessDef record = result.getData().getRecords().get(0);
+            assertThat(record.getCategoryName()).isNull();
+            assertThat(record.getUpdatedBy()).isEqualTo("系统管理员");
+            assertThat(record.getInstanceCount()).isZero();
+        }
+    }
+
     // ==================== GET /workflow/defs/{id}/bpmn-xml ====================
 
     @Nested
