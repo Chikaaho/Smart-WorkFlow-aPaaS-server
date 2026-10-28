@@ -24,15 +24,17 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
 
-    /** 用户组分页查询（数据范围纳管：组内成员用户部门命中当前数据范围）。 */
+    /** 用户组分页查询（数据范围纳管：超管全量；普通用户看自建组或成员命中数据范围的组）。 */
     @Select({"<script>",
             "SELECT DISTINCT g.* FROM sys_user_group g WHERE g.deleted = 0 ",
-            "AND EXISTS (SELECT 1 FROM sys_user um WHERE um.deleted = 0 ",
-            "  AND um.id IN (SELECT gm.user_id FROM sys_user_group_member gm WHERE gm.group_id = g.id AND gm.deleted = 0)",
-            "  AND um.tenant_id = g.tenant_id ",
-            "  <choose>",
-            "    <when test='__superAdmin__'>AND 1 = 1</when>",
-            "    <otherwise>",
+            // 超管看全部（含空成员组）；普通用户看自己创建的组，或成员命中数据范围的组。
+            // 空成员组若不可见，创建后无法在列表中找到并补充成员，属显示与数据不一致。
+            "<choose>",
+            "  <when test='__superAdmin__'>AND 1 = 1</when>",
+            "  <otherwise>",
+            "    AND (g.create_by = #{__userId__} OR EXISTS (SELECT 1 FROM sys_user um WHERE um.deleted = 0 ",
+            "      AND um.id IN (SELECT gm.user_id FROM sys_user_group_member gm WHERE gm.group_id = g.id AND gm.deleted = 0)",
+            "      AND um.tenant_id = g.tenant_id ",
             "      <choose>",
             "        <when test='__scopeType__ == \"SELF\"'>AND um.create_by = #{__userId__}</when>",
             "        <when test='__scopeType__ == \"DEPT\"'>AND um.dept_id = #{__deptId__}</when>",
@@ -51,9 +53,9 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
             "          </choose>",
             "        </when>",
             "      </choose>",
-            "    </otherwise>",
-            "  </choose>",
-            "  ) ",
+            "    ))",
+            "  </otherwise>",
+            "</choose>",
             "<if test='q != null and q.groupCode != null and q.groupCode != \"\"'> AND g.group_code LIKE CONCAT('%', #{q.groupCode}, '%') </if>",
             "<if test='q != null and q.groupName != null and q.groupName != \"\"'> AND g.group_name LIKE CONCAT('%', #{q.groupName}, '%') </if>",
             "<if test='q != null and q.status != null'> AND g.status = #{q.status} </if>",
