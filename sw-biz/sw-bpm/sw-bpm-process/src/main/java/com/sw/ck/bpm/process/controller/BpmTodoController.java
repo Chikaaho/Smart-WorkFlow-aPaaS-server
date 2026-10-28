@@ -116,7 +116,9 @@ public class BpmTodoController {
         long total = bpmTaskFacade.countTodo(tenantId, assignee)
                 .orElse(0L);
 
-        // 3:2 截止标签：批量取本页任务的既有期限（只读展示；无期限不伪造）
+        // 3:2 截止标签：批量取本页任务的既有期限（只读展示；无期限不伪造）。
+        // 提醒触发后 run_state 会变为 DONE，但任务仍待办时期限仍然有效（过期如实展示），
+        // 因此只排除 CANCELLED（转办/撤销后失效的旧期限）。
         java.util.Map<String, LocalDateTime> dueByTask = new java.util.HashMap<>();
         if (deadlineMapper != null && !tasks.isEmpty()) {
             java.util.List<String> taskIds = tasks.stream()
@@ -125,8 +127,10 @@ public class BpmTodoController {
                 for (com.sw.ck.bpm.process.entity.BpmTaskDeadline d : deadlineMapper.selectList(
                         com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.bpm.process.entity.BpmTaskDeadline>lambdaQuery()
                                 .in(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getTaskId, taskIds)
-                                .in(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getRunState, java.util.List.of("PENDING", "CLAIMED")))) {
-                    dueByTask.putIfAbsent(d.getTaskId(), d.getDueAt());
+                                .ne(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getRunState, "CANCELLED"))) {
+                    if (d.getDueAt() == null) continue;
+                    dueByTask.merge(d.getTaskId(), d.getDueAt(),
+                            (a, b) -> a.isBefore(b) ? a : b);
                 }
             }
         }
