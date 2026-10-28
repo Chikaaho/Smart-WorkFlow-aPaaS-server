@@ -65,6 +65,7 @@ public class BpmTodoController {
     private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
+    private final com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper;
 
     public BpmTodoController(BpmTaskFacade bpmTaskFacade,
                              BpmInstanceService bpmInstanceService,
@@ -73,7 +74,7 @@ public class BpmTodoController {
                              com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
-                approvalActionService, objectMapper, null);
+                approvalActionService, objectMapper, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -83,7 +84,9 @@ public class BpmTodoController {
                              TaskActionService taskActionService,
                              com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService) {
+                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
+                             @org.springframework.beans.factory.annotation.Autowired(required = false)
+                             com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
@@ -91,6 +94,7 @@ public class BpmTodoController {
         this.approvalActionService = approvalActionService;
         this.objectMapper = objectMapper;
         this.participantNameService = participantNameService;
+        this.deadlineMapper = deadlineMapper;
     }
 
     /**
@@ -112,8 +116,22 @@ public class BpmTodoController {
         long total = bpmTaskFacade.countTodo(tenantId, assignee)
                 .orElse(0L);
 
+        // 3:2 截止标签：批量取本页任务的既有期限（只读展示；无期限不伪造）
+        java.util.Map<String, LocalDateTime> dueByTask = new java.util.HashMap<>();
+        if (deadlineMapper != null && !tasks.isEmpty()) {
+            java.util.List<String> taskIds = tasks.stream()
+                    .map(BpmTaskDTO::getTaskId).filter(java.util.Objects::nonNull).toList();
+            if (!taskIds.isEmpty()) {
+                for (com.sw.ck.bpm.process.entity.BpmTaskDeadline d : deadlineMapper.selectList(
+                        com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.bpm.process.entity.BpmTaskDeadline>lambdaQuery()
+                                .in(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getTaskId, taskIds)
+                                .in(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getRunState, java.util.List.of("PENDING", "CLAIMED")))) {
+                    dueByTask.putIfAbsent(d.getTaskId(), d.getDueAt());
+                }
+            }
+        }
         List<TodoTaskRespDTO> dtos = tasks.stream()
-                .map(this::toTodoTaskDTO)
+                .map(task -> toTodoTaskDTO(task, dueByTask.get(task.getTaskId())))
                 .collect(Collectors.toList());
 
         log.debug("待办查询: tenantId={}, assignee={}, total={}, pageNum={}, pageSize={}",
@@ -412,9 +430,10 @@ public class BpmTodoController {
         return R.ok(pageResult);
     }
 
-    private TodoTaskRespDTO toTodoTaskDTO(BpmTaskDTO task) {
+    private TodoTaskRespDTO toTodoTaskDTO(BpmTaskDTO task, LocalDateTime dueAt) {
         TodoTaskRespDTO dto = new TodoTaskRespDTO();
         dto.setTaskId(task.getTaskId());
+        dto.setDueAt(dueAt);
         dto.setProcessInstanceId(task.getProcessInstanceId());
         // P64 阶段Ⅱ：待办查询含候选组任务（candidateOrAssigned），assignee 为空即候选任务，
         // 前端展示「领取」入口而非直接办理按钮
