@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -27,7 +29,8 @@ public class CatalogItemDTO {
     /** 关联表单 formKey（服务端从绑定解析） */
     private String formKey;
 
-    /** 归属分类（null=未分类） */
+    /** 归属分类（null=未分类）；字符串序列化保持雪花 ID 精度，前端按原值回传筛选 */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long categoryId;
 
     /** 流程定义状态：PUBLISHED / DRAFT（仅管理视角可见 DRAFT） */

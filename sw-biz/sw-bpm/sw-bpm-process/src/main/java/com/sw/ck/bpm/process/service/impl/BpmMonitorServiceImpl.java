@@ -35,7 +35,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * 流程运营监控/干预/基础分析实现（I4 §3.3）。
@@ -302,8 +301,6 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         // 终态刷新，不能作为终态时间口径——改用与节点停留同源的 Flowable 历史，可复算且非零）。
         // 时长统计依赖下方 nodeStats 的同一遍历史循环，指标落账在循环之后（R3）。
         List<Long> durations = new ArrayList<>();
-        Set<String> endedStatuses = Set.of(InstanceStatusEnum.APPROVED.getCode(),
-                InstanceStatusEnum.REJECTED.getCode());
 
         // 办理人工作量（时间范围内的审批动作）
         Map<Long, Long> workload = new LinkedHashMap<>();
@@ -333,34 +330,7 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         List<BpmInstance> sampled = monitorMapper.monitorList(processDefKey, null, null, null,
                 timeFrom, timeTo, null, scope, HISTORY_SAMPLE_CAP, 0);
         for (BpmInstance instance : sampled) {
-            try {
-                java.time.LocalDateTime maxActivityEnd = null;
-                // empty = 实例标识缺失或该实例无历史记录：无活动可统计
-                List<BpmActivityDTO> historicActivities = bpmRuntimeFacade
-                        .queryHistoricActivities(instance.getProcessInstanceId())
-                        .orElse(List.of());
-                for (BpmActivityDTO activity : historicActivities) {
-                    if (activity.getEndTime() != null) {
-                        maxActivityEnd = maxActivityEnd == null
-                                ? activity.getEndTime()
-                                : (activity.getEndTime().isAfter(maxActivityEnd)
-                                        ? activity.getEndTime() : maxActivityEnd);
-                        if ("userTask".equals(activity.getActivityType())
-                                && activity.getStartTime() != null) {
-                            nodeDurations.computeIfAbsent(activity.getActivityId(),
-                                    key -> new ArrayList<>()).add(Duration.between(
-                                    activity.getStartTime(), activity.getEndTime()).toMillis());
-                        }
-                    }
-                }
-                if (endedStatuses.contains(instance.getStatus()) && instance.getCreateTime() != null
-                        && maxActivityEnd != null) {
-                    durations.add(Duration.between(instance.getCreateTime(), maxActivityEnd)
-                            .toMillis());
-                }
-            } catch (RuntimeException ignored) {
-                // 单实例历史读取失败不阻断整体汇总
-            }
+            endedDuration(instance, nodeDurations).ifPresent(durations::add);
         }
         Map<String, Object> nodeStats = new LinkedHashMap<>();
         nodeDurations.forEach((nodeKey, values) -> nodeStats.put(nodeKey, Map.of(
@@ -374,7 +344,90 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         summary.put("p50DurationMs", percentile(durations, 50));
         summary.put("p90DurationMs", percentile(durations, 90));
         summary.put("durationSample", durations.size());
+        // 门户业务运行概览的近 30 天趋势（7:2）：按天聚合实例创建数，复用 monitorCount 的
+        // 定义/时间/数据范围口径，避免另写跨方言（PG/H2）日期分组 SQL。
+        java.time.LocalDate trendEnd = timeTo != null ? timeTo.toLocalDate() : java.time.LocalDate.now();
+        java.time.LocalDate trendStart = timeFrom != null ? timeFrom.toLocalDate() : trendEnd.minusDays(29);
+        if (trendStart.isAfter(trendEnd)) {
+            trendStart = trendEnd;
+        }
+        List<Map<String, Object>> dailyTrend = new ArrayList<>();
+        for (java.time.LocalDate day = trendStart; !day.isAfter(trendEnd); day = day.plusDays(1)) {
+            long count = monitorMapper.monitorCount(processDefKey, null, null, null,
+                    day.atStartOfDay(), day.plusDays(1).atStartOfDay().minusNanos(1), null, scope);
+            dailyTrend.add(Map.of("date", String.format("%02d-%02d", day.getMonthValue(), day.getDayOfMonth()),
+                    "count", count));
+        }
+        summary.put("dailyTrend", dailyTrend);
+        // 7:2 环比副注：相邻等长上期（数量/均时为百分比，超时为数量差）。
+        // 无可比基期（上期零样本/零分母）时为 null，前端以「—」明确表示，不造数。
+        summary.put("overdue", countOverdue());
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        long periodDays = java.time.temporal.ChronoUnit.DAYS.between(trendStart, trendEnd) + 1;
+        java.time.LocalDateTime priorEnd = trendStart.atStartOfDay();
+        java.time.LocalDateTime priorStart = priorEnd.minusDays(periodDays);
+        long priorLaunched = monitorMapper.monitorCount(processDefKey, null, null, null,
+                priorStart, priorEnd.minusNanos(1), null, scope);
+        summary.put("launchTrendPercent", percentChange(launched, priorLaunched));
+        double priorAvg = avgDurationMs(processDefKey, priorStart, priorEnd.minusNanos(1), scope);
+        summary.put("durationTrendPercent", percentChange(
+                durations.stream().mapToLong(Long::longValue).average().orElse(0), priorAvg));
+        summary.put("overdueTrendDelta", countOverdue(now) - countOverdue(priorEnd));
         return summary;
+    }
+
+    /** 单实例历史活动：返回终态时长样本（create→最大活动结束），可选收集节点停留。 */
+    private java.util.Optional<Long> endedDuration(BpmInstance instance,
+                                                   Map<String, List<Long>> nodeDurations) {
+        try {
+            java.time.LocalDateTime maxActivityEnd = null;
+            // empty = 实例标识缺失或该实例无历史记录：无活动可统计
+            List<BpmActivityDTO> historicActivities = bpmRuntimeFacade
+                    .queryHistoricActivities(instance.getProcessInstanceId())
+                    .orElse(List.of());
+            for (BpmActivityDTO activity : historicActivities) {
+                if (activity.getEndTime() != null) {
+                    maxActivityEnd = maxActivityEnd == null
+                            ? activity.getEndTime()
+                            : (activity.getEndTime().isAfter(maxActivityEnd)
+                                    ? activity.getEndTime() : maxActivityEnd);
+                    if (nodeDurations != null && "userTask".equals(activity.getActivityType())
+                            && activity.getStartTime() != null) {
+                        nodeDurations.computeIfAbsent(activity.getActivityId(),
+                                key -> new ArrayList<>()).add(Duration.between(
+                                activity.getStartTime(), activity.getEndTime()).toMillis());
+                    }
+                }
+            }
+            if ((InstanceStatusEnum.APPROVED.getCode().equals(instance.getStatus())
+                    || InstanceStatusEnum.REJECTED.getCode().equals(instance.getStatus()))
+                    && instance.getCreateTime() != null && maxActivityEnd != null) {
+                return java.util.Optional.of(
+                        Duration.between(instance.getCreateTime(), maxActivityEnd).toMillis());
+            }
+        } catch (RuntimeException ignored) {
+            // 单实例历史读取失败不阻断整体汇总
+        }
+        return java.util.Optional.empty();
+    }
+
+    /** 时间窗内终态实例平均时长（上期环比口径；同采样上限，租户边界由 scope 注入）。 */
+    private double avgDurationMs(String processDefKey, LocalDateTime from, LocalDateTime to,
+                                 DataScopeFilter scope) {
+        List<Long> durations = new ArrayList<>();
+        for (BpmInstance instance : monitorMapper.monitorList(processDefKey, null, null, null,
+                from, to, null, scope, HISTORY_SAMPLE_CAP, 0)) {
+            endedDuration(instance, null).ifPresent(durations::add);
+        }
+        return durations.stream().mapToLong(Long::longValue).average().orElse(0);
+    }
+
+    /** 环比百分比（一位小数）；基期为零=无可比基期，返回 null 明确表示。 */
+    private static Double percentChange(double current, double prior) {
+        if (prior == 0) {
+            return null;
+        }
+        return Math.round((current - prior) / prior * 1000.0) / 10.0;
     }
 
     /** 实例办理时限原始行（超时可查，I4 §3.3 方向口径）。 */
@@ -405,16 +458,26 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
 
     /** 超期未办时限行数（复算口径：due_at < now 且无办理动作记录，租户边界由拦截器注入）。 */
     private long countOverdue() {
-        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        return countOverdue(java.time.LocalDateTime.now());
+    }
+
+    /** 超期未办行数（asOf 时点口径：due_at < asOf 且该时点前无办理动作记录）。 */
+    private long countOverdue(java.time.LocalDateTime asOf) {
         long count = 0;
         for (com.sw.ck.bpm.process.entity.BpmTaskDeadline d : deadlineMapper.selectList(
                 Wrappers.<com.sw.ck.bpm.process.entity.BpmTaskDeadline>lambdaQuery()
-                        .lt(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getDueAt, java.time.LocalDateTime.now()))) {
-            if (!hasActionRecord(d.getTaskId())) {
+                        .lt(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getDueAt, asOf))) {
+            if (!hasActionRecordBefore(d.getTaskId(), asOf)) {
                 count++;
             }
         }
         return count;
+    }
+
+    private boolean hasActionRecordBefore(String taskId, java.time.LocalDateTime asOf) {
+        return actionRecordMapper.selectCount(Wrappers.<ApprovalActionRecord>lambdaQuery()
+                .eq(ApprovalActionRecord::getTaskId, taskId)
+                .lt(ApprovalActionRecord::getCreateTime, asOf)) > 0;
     }
 
     /** 线性插值分位（可复算口径）。 */

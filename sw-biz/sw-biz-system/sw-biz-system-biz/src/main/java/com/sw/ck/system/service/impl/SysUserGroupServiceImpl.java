@@ -67,7 +67,8 @@ public class SysUserGroupServiceImpl
                 currentScopeTypeName(),
                 currentUserId(),
                 currentDeptId(),
-                currentCustomDeptIds()));
+                currentCustomDeptIds(),
+                currentTenantId()));
     }
 
     @Override
@@ -207,7 +208,8 @@ public class SysUserGroupServiceImpl
                 currentScopeTypeName(),
                 currentUserId(),
                 currentDeptId(),
-                currentCustomDeptIds()));
+                currentCustomDeptIds(),
+                currentTenantId()));
     }
 
     // ─── 内部工具 ──────────────────────────────────────────────
@@ -268,6 +270,10 @@ public class SysUserGroupServiceImpl
 
     private Long currentDeptId() {
         return loginContextProvider != null ? loginContextProvider.getDeptId() : null;
+    }
+
+    private Long currentTenantId() {
+        return loginContextProvider != null ? loginContextProvider.getTenantId() : null;
     }
 
     private java.util.List<Long> currentCustomDeptIds() {

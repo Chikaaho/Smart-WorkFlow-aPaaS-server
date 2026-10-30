@@ -24,6 +24,7 @@ public enum FormErrorCode implements ErrorCode {
     FORM_DELETE_RESTRICTED(1104, "form.delete_restricted", "表单存在有效引用，不能删除"),
     FIELD_EDIT_DENIED(1105, "form.field_edit_denied", "当前身份无该字段编辑权限"),
     FIELD_VIEW_DENIED(1106, "form.field_view_denied", "当前身份无该字段查看权限"),
+    ACTION_PERMISSION_DENIED(1107, "form.action_permission_denied", "当前身份无权执行该表单操作"),
 
     // ==================== 发布校验（1200-1299） ====================
     INVALID_COLUMN_NAME(1200, "form.invalid_column_name", "字段名不合法"),
@@ -46,6 +47,7 @@ public enum FormErrorCode implements ErrorCode {
     REFERENCE_OBJECT_NOT_FOUND(1217, "form.reference_object_not_found", "引用记录不存在或不可见"),
     ATTACHMENT_FILE_NOT_FOUND(1218, "form.attachment_file_not_found", "附件/图片文件不存在或不可见"),
     EXT_RESULT_LIMIT_EXCEEDED(1219, "form.ext_result_limit_exceeded", "外部数据源结果超过行数上限"),
+    EXT_DATASOURCE_UNAUTHORIZED(1220, "form.ext_datasource_unauthorized", "未授权引用该外部数据源"),
 
     // ==================== 渲染（1300-1399） ====================
     CONFIG_NOT_FOUND(1300, "form.config_not_found", "表单配置未找到"),
@@ -107,7 +109,19 @@ public enum FormErrorCode implements ErrorCode {
     APP_DELETE_RESTRICTED(1703, "form.app_delete_restricted", "应用下仍有目录或表单，须先处理归属再删除"),
     APP_DIR_NOT_FOUND(1704, "form.app_dir_not_found", "应用目录不存在或不属于该应用"),
     APP_DIR_NAME_DUPLICATE(1705, "form.app_dir_name_duplicate", "目录名称已存在"),
-    APP_DIR_DELETE_RESTRICTED(1706, "form.app_dir_delete_restricted", "目录下仍有表单，须先处理归属再删除");
+    APP_DIR_DELETE_RESTRICTED(1706, "form.app_dir_delete_restricted", "目录下仍有表单，须先处理归属再删除"),
+
+    // ==================== 表单受控集成（1800-1899） ====================
+    INTEGRATION_NOT_ALLOWED(1800, "form.integration_not_allowed", "该表单版本未授权调用此集成能力"),
+    INTEGRATION_UNAVAILABLE(1801, "form.integration_unavailable", "集成能力未登记、跨租户、已停用或未分类"),
+    INTEGRATION_PHASE_DENIED(1802, "form.integration_phase_denied", "当前阶段不允许调用该集成能力"),
+    INTEGRATION_REQUEST_INVALID(1803, "form.integration_request_invalid", "集成调用请求不合法"),
+    INTEGRATION_RESULT_TOO_LARGE(1804, "form.integration_result_too_large", "集成能力返回结果超过上限"),
+    INTEGRATION_CALL_FAILED(1805, "form.integration_call_failed", "集成能力调用失败"),
+    INTEGRATION_IN_PROGRESS(1806, "form.integration_in_progress", "相同提交标识的集成调用正在处理中，请稍后重试"),
+    INTEGRATION_RECORD_DENIED(1807, "form.integration_record_denied", "当前身份无权对该记录执行此集成调用"),
+    INTEGRATION_NOT_CONFIGURED(1808, "form.integration_not_configured", "表单未配置可调用的集成能力"),
+    INTEGRATION_IDEMPOTENCY_CONFLICT(1809, "form.integration_idempotency_conflict", "相同提交标识的集成请求内容不一致，已拒绝");
 
     private final int code;
     private final String errorKey;

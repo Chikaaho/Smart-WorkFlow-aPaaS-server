@@ -19,8 +19,8 @@ public interface BpmCatalogService {
 
     /** 普通视角分类聚合数量（仅统计本人可见事项，不泄漏不可见集合）。 */
     Map<Long, Long> portalCategoryCounts();
-    /** 普通视角分类列表（仅名称/排序，登录即可用）。 */
-    java.util.List<com.sw.ck.bpm.process.entity.BpmCategory> portalCategories();
+    /** 普通视角分类列表（仅名称/排序，登录即可用；ID 以字符串下发避免 JS 精度丢失）。 */
+    java.util.List<com.sw.ck.bpm.process.dto.CategoryDTO> portalCategories();
 
 
     /** 管理视角：全部定义（含未发布），附表单发布状态与绑定状态。 */

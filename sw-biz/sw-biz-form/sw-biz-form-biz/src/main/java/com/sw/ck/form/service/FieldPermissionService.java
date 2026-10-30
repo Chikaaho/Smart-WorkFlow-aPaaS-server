@@ -117,16 +117,38 @@ public class FieldPermissionService {
      */
     public void assertEditablePayload(LoginUser user, Map<String, Map<Action, Set<String>>> perms,
                                       Map<String, Object> payload, Map<String, String> fieldLabels) {
-        for (String fieldName : payload.keySet()) {
+        for (Map.Entry<String, Object> entry : payload.entrySet()) {
+            String fieldName = entry.getKey();
             Map<Action, Set<String>> byAction = perms.get(fieldName);
             if (byAction != null && byAction.containsKey(Action.EDIT)
                     && !check(user, fieldName, Action.EDIT, perms)) {
-                String display = fieldLabels == null ? fieldName
-                        : fieldLabels.getOrDefault(fieldName, fieldName);
-                throw new BaseException(FormErrorCode.FIELD_EDIT_DENIED,
-                        "您没有编辑字段「" + display + "」的权限");
+                throw editDenied(fieldName, fieldLabels);
+            }
+            if (entry.getValue() instanceof List<?> rows) {
+                String prefix = fieldName + ".";
+                for (Map.Entry<String, Map<Action, Set<String>>> permission : perms.entrySet()) {
+                    String subKey = permission.getKey();
+                    if (!subKey.startsWith(prefix)
+                            || !permission.getValue().containsKey(Action.EDIT)
+                            || check(user, subKey, Action.EDIT, perms)) {
+                        continue;
+                    }
+                    String subField = subKey.substring(prefix.length());
+                    for (Object row : rows) {
+                        if (row instanceof Map<?, ?> rowMap && rowMap.containsKey(subField)) {
+                            throw editDenied(subKey, fieldLabels);
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private BaseException editDenied(String fieldName, Map<String, String> fieldLabels) {
+        String display = fieldLabels == null ? fieldName
+                : fieldLabels.getOrDefault(fieldName, fieldName);
+        return new BaseException(FormErrorCode.FIELD_EDIT_DENIED,
+                "您没有编辑字段「" + display + "」的权限");
     }
 
     /**

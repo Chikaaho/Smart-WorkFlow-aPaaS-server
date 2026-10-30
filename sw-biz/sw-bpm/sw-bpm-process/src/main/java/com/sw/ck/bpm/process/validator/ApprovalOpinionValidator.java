@@ -20,7 +20,10 @@ import java.util.Set;
 public final class ApprovalOpinionValidator {
 
     private static final Set<String> SUPPORTED_TYPES = Set.of(
-            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE");
+            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE", "USER");
+
+    /** 单条意见最多选择的人员数：防止借意见字段塞入任意长人员清单。 */
+    private static final int MAX_OPINION_USERS = 50;
 
     private ApprovalOpinionValidator() {
     }
@@ -115,6 +118,7 @@ public final class ApprovalOpinionValidator {
             validateLength(field, value);
             validateNumber(field, value);
             validateOptions(field, value);
+            validateUser(field, value);
         }
         if (!declaredKeys.containsAll(data.keySet())) {
             throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
@@ -166,6 +170,28 @@ public final class ApprovalOpinionValidator {
             }
         } catch (NumberFormatException e) {
             throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+        }
+    }
+
+    /** USER 意见字段：只接受稳定用户 ID（正整数，单个或数组），不接受显示名替代。 */
+    private static void validateUser(Map<?, ?> field, Object value) {
+        String type = text(field.get("type"));
+        if (type == null || !"USER".equalsIgnoreCase(type)) return;
+        Collection<?> values = value instanceof Collection<?> collection
+                ? collection : List.of(value);
+        if (values.isEmpty() || values.size() > MAX_OPINION_USERS) {
+            throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+        }
+        for (Object item : values) {
+            String raw = text(item);
+            if (raw == null) throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+            try {
+                if (Long.parseLong(raw) <= 0) {
+                    throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+                }
+            } catch (NumberFormatException e) {
+                throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+            }
         }
     }
 

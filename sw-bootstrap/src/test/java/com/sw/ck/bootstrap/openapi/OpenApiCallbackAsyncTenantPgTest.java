@@ -249,7 +249,8 @@ class OpenApiCallbackAsyncTenantPgTest {
     void missingOrInvalidTenantIdentityIsRefused() {
         // 同步直调未代理实例：拒绝路径确定性可断言（生产链路由 @Async 代理调用同一方法体）
         OpenApiCallbackListener raw = new OpenApiCallbackListener(
-                app.getBean(OpenApiAppMapper.class), app.getBean(OpenApiCallbackDeliveryService.class));
+                app.getBean(OpenApiAppMapper.class), app.getBean(OpenApiCallbackDeliveryService.class),
+                app.getBean(com.sw.ck.common.tenant.TenantWorkAdmission.class));
         long logsBefore = count("select count(*) from sw_openapi_callback_log");
         int a0 = hitsA.get();
         int b0 = hitsB.get();

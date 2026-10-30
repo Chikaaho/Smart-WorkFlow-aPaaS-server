@@ -165,6 +165,41 @@ class NotifyFacadeIdempotencyIntegrationTest {
         assertThat(rows).isEqualTo(1);
     }
 
+    private NotifySendRequest identityRequest(long occurrence) {
+        return NotifySendRequest.builder()
+                .recipientId(42L)
+                .title("流程结束通知")
+                .content("您的申请已通过")
+                .bizType(NotifyBizType.WF_TODO)
+                .bizId("flow-end-1")
+                .tenantId(0L)
+                .channel(NotifyChannel.IN_APP)
+                .eventType("PROCESS_APPROVED")
+                .occurrenceNo(occurrence)
+                .build();
+    }
+
+    @Test
+    @DisplayName("结束事件同身份重复投递 → 仅一条站内消息；新 occurrence 才新增")
+    void duplicateEndEventIdentityIsSuppressed() {
+        notifyFacade.send(identityRequest(1L)).orElseThrow();
+        NotifySendResult replay = notifyFacade.send(identityRequest(1L)).orElseThrow();
+
+        assertThat(replay.getStatus()).isEqualTo("SUCCESS");
+        Integer firstOccurrence = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sw_notify_message WHERE biz_id = 'flow-end-1' "
+                        + "AND event_type = 'PROCESS_APPROVED' AND occurrence_no = 1",
+                Integer.class);
+        assertThat(firstOccurrence).isEqualTo(1);
+
+        // 同一结束事件的第二次 occurrence（如结束事件重放产生的第二轮）允许独立落一条
+        notifyFacade.send(identityRequest(2L)).orElseThrow();
+        Integer all = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sw_notify_message WHERE biz_id = 'flow-end-1'",
+                Integer.class);
+        assertThat(all).isEqualTo(2);
+    }
+
     @Test
     @DisplayName("不同幂等键（不同事件/接收人）→ 各自落一条")
     void differentKeysPersistSeparately() {
@@ -308,7 +343,7 @@ class NotifyFacadeIdempotencyIntegrationTest {
 
         @Bean
         public NotifyFacade notifyFacade(NotifyMessageService notifyMessageService) {
-            return new NotifyFacadeImpl(notifyMessageService);
+            return new NotifyFacadeImpl(notifyMessageService, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
     }
 }

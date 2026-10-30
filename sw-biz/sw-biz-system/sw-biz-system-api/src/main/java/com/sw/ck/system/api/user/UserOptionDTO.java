@@ -25,4 +25,12 @@ public class UserOptionDTO implements Serializable {
 
     /** 姓名（realName，可为空） */
     private String realName;
+
+    /** 主部门 ID（仅 includeDept 查询时填充；其余场景缺省 null，不扩大默认脱敏面）。 */
+    private Long deptId;
+
+    /** 兼容旧构造：默认不携带部门。 */
+    public UserOptionDTO(Long id, String username, String realName) {
+        this(id, username, realName, null);
+    }
 }

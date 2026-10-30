@@ -95,6 +95,26 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     }
 
     @Override
+    public LoginUser loadClaimedWorkIdentity(Long userId, Long tenantId) {
+        if (userId == null || tenantId == null) return null;
+        try (var ignored = com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            SysUser user = sysUserService.getById(userId);
+            if (!isActive(user) || !tenantId.equals(user.getTenantId())) return null;
+            return toLoginUser(user, false);
+        }
+    }
+
+    @Override
+    public boolean isCachedIdentityValid(LoginUser cached) {
+        if (tenantValidityService == null) {
+            // 兼容只提供用户服务的独立装配；完整生产装配始终注入权威租户校验。
+            return UserDetailsProvider.super.isCachedIdentityValid(cached);
+        }
+        return cached != null && cached.getUserId() != null
+                && tenantValidityService.isValid(cached.getTenantId());
+    }
+
+    @Override
     public LoginUser loadByUsername(String username) {
         // 登录前无租户上下文：身份装载必须跨租户全局进行（用户名全局唯一），租户隔离由
         // 装载完成的 LoginUser.tenantId 在后续业务请求中生效
@@ -127,6 +147,10 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     }
 
     private LoginUser toLoginUser(SysUser user) {
+        return toLoginUser(user, true);
+    }
+
+    private LoginUser toLoginUser(SysUser user, boolean requireTenantAdmission) {
         // 1. 查询用户关联的角色
         List<SysUserRole> userRoles = sysUserRoleMapper.selectList(
                 Wrappers.lambdaQuery(SysUserRole.class)
@@ -182,7 +206,7 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
 
         // 5. 租户有效性（I5 §3.2）：租户不存在/停用/过期时身份装载失败，
         //    登录与既有会话在下一次权威装载时统一收敛拒绝
-        if (tenantValidityService != null && !tenantValidityService.isValid(user.getTenantId())) {
+        if (requireTenantAdmission && tenantValidityService != null && !tenantValidityService.isValid(user.getTenantId())) {
             return null;
         }
 

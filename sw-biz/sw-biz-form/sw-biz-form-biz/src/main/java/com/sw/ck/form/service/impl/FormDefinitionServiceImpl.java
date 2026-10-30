@@ -99,4 +99,14 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
         }
         return Optional.of(formDataQueryService.canCurrentUserAccessRecord(formKey, recordId));
     }
+
+    @Override
+    public Optional<Boolean> canCurrentUserAccessAttachment(String formKey, String recordId,
+                                                            String storageKey) {
+        if (formKey == null || formKey.isBlank() || recordId == null || recordId.isBlank()
+                || storageKey == null || storageKey.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(formDataQueryService.canCurrentUserAccessAttachment(formKey, recordId, storageKey));
+    }
 }

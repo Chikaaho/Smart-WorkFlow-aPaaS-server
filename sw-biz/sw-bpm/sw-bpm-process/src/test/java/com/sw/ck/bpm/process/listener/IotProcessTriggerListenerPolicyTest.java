@@ -5,6 +5,7 @@ import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.iot.api.IotDeviceQueryFacade;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
@@ -27,6 +28,28 @@ class IotProcessTriggerListenerPolicyTest {
         assertPolicy("BLOCK", "A6 设备命令失败: 设计时固定设备不存在: deviceId=99999", null);
         assertPolicy("CONTINUE", null, "process-CONTINUE");
         assertPolicy("MANUAL", null, null);
+    }
+
+    @Test
+    void inactiveTenantLeavesTriggerPendingWithoutRunningProcess() {
+        BpmRuntimeFacade runtime = mock(BpmRuntimeFacade.class);
+        BpmProcessDefService processDefs = mock(BpmProcessDefService.class);
+        IotProcessTriggerFacade triggers = mock(IotProcessTriggerFacade.class);
+        ObjectProvider<BpmRuntimeFacade> runtimeProvider = provider(runtime);
+        ObjectProvider<BpmProcessDefService> processProvider = provider(processDefs);
+        ObjectProvider<IotProcessTriggerFacade> triggerProvider = provider(triggers);
+        IotProcessTriggerEvent event = new IotProcessTriggerEvent();
+        event.setTenantId(88L);
+        event.setIdempotentKey("paused-trigger");
+
+        new IotProcessTriggerListener(runtimeProvider, processProvider, triggerProvider,
+                provider(null), provider(null), provider(null), provider(null), provider(null), provider(null),
+                (tenantId, claim) -> 0)
+                .onIotTrigger(event);
+
+        verify(processDefs, never()).findByProcessKey(any());
+        verify(runtime, never()).startProcess(any(), any(), anyMap(), any());
+        verify(triggers, never()).markTriggerResult(any(), any(), any());
     }
 
     private void assertPolicy(String policy, String expectedError, String expectedProcessId) {
@@ -73,8 +96,10 @@ class IotProcessTriggerListenerPolicyTest {
         ObjectProvider<org.springframework.transaction.PlatformTransactionManager> txProvider = provider(txManager);
         ObjectProvider<com.sw.ck.bpm.process.service.ProcessThemeService> themeProvider =
                 provider(null);
+        TenantWorkAdmission admission = (tenantId, claim) -> claim.getAsInt();
         new IotProcessTriggerListener(runtimeProvider, processProvider, triggerProvider,
-                instanceProvider, themeProvider, taskProvider, deviceProvider, deviceQueryProvider, txProvider)
+                instanceProvider, themeProvider, taskProvider, deviceProvider, deviceQueryProvider, txProvider,
+                admission)
                 .onIotTrigger(event);
 
         if (expectedProcessId != null || expectedError != null) {

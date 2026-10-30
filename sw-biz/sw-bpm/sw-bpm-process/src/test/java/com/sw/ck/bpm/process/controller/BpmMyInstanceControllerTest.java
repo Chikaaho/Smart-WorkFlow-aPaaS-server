@@ -134,6 +134,30 @@ class BpmMyInstanceControllerTest {
     }
 
     @Test
+    @DisplayName("0.2.0（4:2）：当前节点 —— RUNNING 取活动任务名，APPROVED 取定义 END 节点名")
+    void enrichInstanceItems_shouldFillCurrentNode() {
+        BpmMyInstanceController enriched = new BpmMyInstanceController(
+                bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
+                null, new com.fasterxml.jackson.databind.ObjectMapper(), null, null);
+        BpmProcessDef def = new BpmProcessDef();
+        def.setName("请假流程");
+        def.setGraphJson("{\"elements\":[{\"kind\":\"node\",\"type\":\"START\",\"config\":{}},"
+                + "{\"kind\":\"node\",\"type\":\"END\",\"config\":{\"name\":\"归档\"}}]}");
+        when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(def);
+        when(bpmTaskFacade.queryByProcessInstance("pi-001"))
+                .thenReturn(Optional.of(List.of(task("t1", false))));
+
+        BpmInstance running = instance(2L);
+        BpmInstance approved = instance(2L);
+        approved.setStatus("APPROVED");
+
+        var items = enriched.enrichInstanceItems(List.of(running, approved));
+
+        assertThat(items.get(0).getCurrentNode()).isEqualTo("审批");
+        assertThat(items.get(1).getCurrentNode()).isEqualTo("归档");
+    }
+
+    @Test
     @DisplayName("本人访问 → 返回 instance/progress/history（含 assigneeName 富化）")
     void myInstanceDetail_shouldReturnProgressAndHistoryForOwner() {
         when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));

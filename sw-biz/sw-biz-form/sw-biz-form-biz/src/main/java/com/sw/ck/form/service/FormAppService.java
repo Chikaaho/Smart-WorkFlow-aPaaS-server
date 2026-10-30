@@ -20,8 +20,12 @@ public interface FormAppService {
 
     // ==================== 管理端（form:app:manage） ====================
 
-    /** 管理列表（含停用应用与承接应用），按 sortNo、createTime 升序；keyword 对名称模糊过滤。 */
-    List<FormAppDTO> listApps(String keyword);
+    /**
+     * 管理列表（含停用应用与承接应用），按 sortNo、createTime 升序；keyword 对名称模糊过滤。
+     * <p>owner-20261030-u020-q40-list-contract：tenantIdFilter 仅在调用方确认为超管时非空，
+     * 按归属租户过滤；普通调用方必须传 null，租户隔离仍由既有拦截器保证。</p>
+     */
+    List<FormAppDTO> listApps(String keyword, Long tenantIdFilter);
 
     /** 应用详情（含计数与指定用户集合）。 */
     FormAppDTO getApp(String id);

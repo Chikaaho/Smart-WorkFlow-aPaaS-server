@@ -31,6 +31,12 @@ public class AgentToolExternalConfigDTO {
     /** HTTP 方法：GET/POST/PUT（默认 POST） */
     private String httpMethod;
 
+    /**
+     * 副作用分类：QUERY=查询且无外部写副作用，WRITE=有外部写副作用；
+     * 空=未分类（表单运行期不可调用）。
+     */
+    private String effectScope;
+
     /** 请求超时（秒），默认 30 */
     private Integer timeoutSeconds;
 

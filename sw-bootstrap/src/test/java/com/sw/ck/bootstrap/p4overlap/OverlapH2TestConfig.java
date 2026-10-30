@@ -206,7 +206,8 @@ public class OverlapH2TestConfig {
                                     com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper,
                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-            super(commandService, effectMapper, releaseService, admissionService);
+            super(commandService, effectMapper, releaseService, admissionService,
+                    (tenantId, claim) -> claim.getAsInt());
         }
 
         @Override

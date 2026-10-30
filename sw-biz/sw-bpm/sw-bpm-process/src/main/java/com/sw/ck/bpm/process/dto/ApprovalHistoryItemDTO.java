@@ -43,6 +43,9 @@ public class ApprovalHistoryItemDTO {
     /** 不可变审批意见快照。 */
     private Map<String, Object> opinionData;
 
+    /** 审批动作记录标识：意见附件受控下载的定位键（旧响应缺省）。 */
+    private Long actionRecordId;
+
     private String opinionFormId;
     private String opinionFormVersion;
 }

@@ -1,6 +1,8 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
@@ -9,6 +11,7 @@ import com.sw.ck.bpm.process.entity.BpmSignRecord;
 import com.sw.ck.bpm.process.mapper.BpmSignRecordMapper;
 import com.sw.ck.bpm.process.service.ApprovalLifecycleService;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -19,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * I3 人工审批生命周期端点：转办/委托/代理/撤回/沟通/废弃/加签/补签。
@@ -36,13 +41,16 @@ public class BpmLifecycleController {
     private final ApprovalLifecycleService lifecycleService;
     private final BpmSignRecordMapper signRecordMapper;
     private final com.sw.ck.bpm.process.service.BpmInstanceService bpmInstanceService;
+    private final BpmTaskFacade bpmTaskFacade;
 
     public BpmLifecycleController(ApprovalLifecycleService lifecycleService,
                                   BpmSignRecordMapper signRecordMapper,
-                                  com.sw.ck.bpm.process.service.BpmInstanceService bpmInstanceService) {
+                                  com.sw.ck.bpm.process.service.BpmInstanceService bpmInstanceService,
+                                  BpmTaskFacade bpmTaskFacade) {
         this.lifecycleService = lifecycleService;
         this.signRecordMapper = signRecordMapper;
         this.bpmInstanceService = bpmInstanceService;
+        this.bpmTaskFacade = bpmTaskFacade;
     }
 
     @Transactional
@@ -160,8 +168,64 @@ public class BpmLifecycleController {
         return map;
     }
 
+    private String extractDetail(String json, String key, String fallback) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(json == null ? "{}" : json);
+            return node.path(key).asText(fallback);
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
     @Transactional
-    @PreAuthorize("@ss.hasPermi('workflow:todo:view')")
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/sign/pending")
+    public R<List<Map<String, Object>>> pendingSigns() {
+        LoginUser actor = requireAuthenticatedActor();
+        List<BpmSignRecord> records = signRecordMapper.selectList(
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmSignRecord>lambdaQuery()
+                        .eq(BpmSignRecord::getParticipantId, actor.getUserId())
+                        .eq(BpmSignRecord::getTenantId, actor.getTenantId())
+                        .eq(BpmSignRecord::getSignStatus, "PENDING")
+                        .orderByAsc(BpmSignRecord::getCreateTime)
+                        .orderByAsc(BpmSignRecord::getSeqNo));
+        List<String> taskIds = records.stream().map(BpmSignRecord::getTaskId).distinct().toList();
+        List<BpmSignRecord> allPendingForTasks = taskIds.isEmpty() ? List.of() : signRecordMapper.selectList(
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmSignRecord>lambdaQuery()
+                        .in(BpmSignRecord::getTaskId, taskIds)
+                        .eq(BpmSignRecord::getTenantId, actor.getTenantId())
+                        .eq(BpmSignRecord::getSignStatus, "PENDING"));
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (BpmSignRecord record : records) {
+            boolean serialBlocked = "SERIAL".equalsIgnoreCase(record.getModeType())
+                    && allPendingForTasks.stream().anyMatch(other -> Objects.equals(record.getTaskId(), other.getTaskId())
+                    && other.getSeqNo() != null && record.getSeqNo() != null
+                    && other.getSeqNo() < record.getSeqNo());
+            Map<String, Object> item = mapOf(
+                    "recordId", record.getId(),
+                    "taskId", record.getTaskId(),
+                    "processInstanceId", record.getProcessInstanceId(),
+                    "nodeKey", record.getNodeKey(),
+                    "signType", record.getSignType(),
+                    "modeType", record.getModeType(),
+                    "seqNo", record.getSeqNo(),
+                    "signPosition", extractDetail(record.getDetail(), "signPosition", "BEFORE"),
+                    "comment", extractDetail(record.getDetail(), "comment", ""),
+                    "serialBlocked", serialBlocked);
+            if (record.getTaskId() != null && !record.getTaskId().startsWith("SUPPLEMENT#")) {
+                bpmTaskFacade.getTask(record.getTaskId()).ifPresent(task -> {
+                    item.put("taskName", task.getName());
+                    item.put("processDefinitionKey", task.getProcessDefinitionKey());
+                });
+            }
+            out.add(item);
+        }
+        return R.ok(out);
+    }
+
+    @Transactional
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/sign/{recordId}/express")
     public R<Void> expressSign(@PathVariable Long recordId,
                                @RequestBody ApprovalActionRequest request) {
@@ -181,7 +245,7 @@ public class BpmLifecycleController {
     }
 
     @Transactional
-    @PreAuthorize("@ss.hasPermi('workflow:todo:view')")
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/communications/{communicationId}/reply")
     public R<Void> replyCommunication(@PathVariable Long communicationId,
                                       @RequestBody ApprovalActionRequest request) {
@@ -226,5 +290,13 @@ public class BpmLifecycleController {
     @GetMapping("/authorize-rules")
     public R<List<BpmAuthorizeRule>> listAuthorizeRules() {
         return R.ok(lifecycleService.listAuthorizeRules());
+    }
+
+    private LoginUser requireAuthenticatedActor() {
+        LoginUser actor = LoginUserHolder.get();
+        if (actor == null || actor.getUserId() == null || actor.getTenantId() == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED);
+        }
+        return actor;
     }
 }

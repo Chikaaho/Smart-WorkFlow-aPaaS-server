@@ -5,6 +5,7 @@ import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.api.dto.ProcessNotificationConfig;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
@@ -20,6 +21,8 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -40,8 +43,12 @@ class ProcessVariableValidatorTest {
     { org.mockito.Mockito.when(scriptPort.validate(org.mockito.ArgumentMatchers.anyString()))
             .thenReturn(java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome("OK", null, null, null, 0L))); }
 
+    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
+            mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+
     private final ProcessVariableValidator validator = new ProcessVariableValidator(
-            formDefinitionService, formBindingService, scriptPort, new ObjectMapper());
+            formDefinitionService, formBindingService, scriptPort, new ObjectMapper(),
+            userQueryFacade);
 
     private static final String MAIN_DEFINITION = "{\"fields\":["
             + "{\"name\":\"handlers\",\"type\":\"USER\",\"multiple\":true},"
@@ -50,6 +57,47 @@ class ProcessVariableValidatorTest {
     private static final String TARGET_DEFINITION = "{\"fields\":["
             + "{\"name\":\"owner\",\"type\":\"USER\"},"
             + "{\"name\":\"reason\",\"type\":\"TEXT\"}]}";
+
+    @Test
+    @DisplayName("结束通知配置：目标/渠道必填，其他接收人需当前租户启用")
+    void notificationConfigValidation() {
+        ProcessGraph valid = ProcessGraph.builder()
+                .notification(ProcessNotificationConfig.builder()
+                        .initiator(true)
+                        .channels(List.of("IN_APP"))
+                        .otherRecipientIds(List.of(9001L))
+                        .build())
+                .build();
+        when(userQueryFacade.findActiveUserIds(any(), eq(100L)))
+                .thenReturn(Optional.of(List.of(9001L)));
+        assertThat(validator.validateNotification(valid, 100L)).isEmpty();
+
+        ProcessGraph noTarget = ProcessGraph.builder()
+                .notification(ProcessNotificationConfig.builder()
+                        .channels(List.of("IN_APP")).build())
+                .build();
+        assertThat(validator.validateNotification(noTarget, 100L)).isNotEmpty();
+
+        ProcessGraph noChannel = ProcessGraph.builder()
+                .notification(ProcessNotificationConfig.builder()
+                        .initiator(true).build())
+                .build();
+        assertThat(validator.validateNotification(noChannel, 100L)).isNotEmpty();
+
+        ProcessGraph badChannel = ProcessGraph.builder()
+                .notification(ProcessNotificationConfig.builder()
+                        .initiator(true).channels(List.of("SMS")).build())
+                .build();
+        assertThat(validator.validateNotification(badChannel, 100L)).isNotEmpty();
+
+        ProcessGraph inactiveOther = ProcessGraph.builder()
+                .notification(ProcessNotificationConfig.builder()
+                        .otherRecipientIds(List.of(9001L)).channels(List.of("IN_APP")).build())
+                .build();
+        when(userQueryFacade.findActiveUserIds(any(), eq(100L)))
+                .thenReturn(Optional.of(List.of()));
+        assertThat(validator.validateNotification(inactiveOther, 100L)).isNotEmpty();
+    }
 
     private void stubForms() {
         stubForm("main_form", MAIN_DEFINITION);

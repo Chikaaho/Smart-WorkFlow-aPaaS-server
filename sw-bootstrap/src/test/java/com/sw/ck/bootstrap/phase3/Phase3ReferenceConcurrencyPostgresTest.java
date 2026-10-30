@@ -306,17 +306,20 @@ class Phase3ReferenceConcurrencyPostgresTest {
             insertThread.join(60_000);
             System.out.println("[P3-PG-OVERLAP] delete=" + deleteResult.get() + " insert=" + insertResult.get());
 
-            long orphans = liveReferences(tableB, refColumn, recordId);
+            long references = liveReferences(tableB, refColumn, recordId);
             boolean parentLive = isLive(tableA, recordId);
-            System.out.println("[P3-PG-OVERLAP] orphans=" + orphans + " parentLive=" + parentLive
+            System.out.println("[P3-PG-OVERLAP] liveReferences=" + references + " parentLive=" + parentLive
                     + " tableA=" + tableA + " tableB=" + tableB);
 
-            assertThat(orphans).as("存活引用不得指向已删除父记录（孤儿引用）").isZero();
             boolean deleteOk = "success".equals(deleteResult.get());
             boolean insertOk = "success".equals(insertResult.get());
             assertThat(deleteOk ^ insertOk).as("两侧必须恰好一方成功（串行化）").isTrue();
             if (insertOk) {
                 assertThat(parentLive).as("引用写入成功时父记录必须存活").isTrue();
+                assertThat(references).as("引用写入成功时应保留唯一有效引用").isEqualTo(1L);
+            } else {
+                assertThat(parentLive).as("删除成功时父记录应已删除").isFalse();
+                assertThat(references).as("删除成功不得留下存活引用").isZero();
             }
             assertThat(queryService).isNotNull();
         } finally {

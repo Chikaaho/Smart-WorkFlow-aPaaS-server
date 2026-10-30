@@ -89,4 +89,18 @@ public interface FormDefinitionService {
     default Optional<Boolean> canCurrentUserAccessRecord(String formKey, String recordId) {
         return Optional.of(false);
     }
+
+    /**
+     * 判断附件是否由当前用户可查看的记录字段实际引用。
+     * 仅接受 ATTACHMENT/IMAGE 及合法子表对应字段，沿用记录、租户、数据范围与字段查看权限。
+     * present = 关联判定结果；empty = 缺少表单、记录或存储键；记录读取拒绝与基础设施异常保持原义。
+     */
+    default Optional<Boolean> canCurrentUserAccessAttachment(String formKey, String recordId,
+                                                            String storageKey) {
+        if (formKey == null || formKey.isBlank() || recordId == null || recordId.isBlank()
+                || storageKey == null || storageKey.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(false);
+    }
 }

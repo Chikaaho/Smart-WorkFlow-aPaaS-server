@@ -160,7 +160,9 @@ public class AuthController {
             return authFail(AuthErrorCode.PASSWORD_ERROR);
         }
         log.info("用户登录: {}", request.getUsername());
-        SysUser user = sysUserService.getByUsername(request.getUsername());
+        SysUser user = request.getTenantCode() != null && !request.getTenantCode().isBlank()
+                ? sysUserService.findByTenantCodeAndUsername(request.getTenantCode(), request.getUsername())
+                : sysUserService.getByUsername(request.getUsername());
         if (user == null) {
             return authFail(AuthErrorCode.PASSWORD_ERROR);
         }
@@ -353,6 +355,8 @@ public class AuthController {
     public static class LoginRequest {
 
         private String username;
+        /** 租户编码（可选）：用户名跨租户重复时用于精确定位账号 */
+        private String tenantCode;
         /** RSA-OAEP(SHA-256) 加密后的 Base64 密文密码 */
         private String password;
         private String captcha;

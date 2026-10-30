@@ -1,6 +1,8 @@
 package com.sw.ck.agent.entity.tool;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.sw.ck.agent.typehandler.BooleanSmallintTypeHandler;
 import com.sw.ck.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -15,7 +17,7 @@ import lombok.EqualsAndHashCode;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@TableName("sw_agent_tool_external")
+@TableName(value = "sw_agent_tool_external", autoResultMap = true)
 public class AgentToolExternalConfig extends BaseEntity {
 
     /** 工具名（英文下划线），传给 LLM */
@@ -33,10 +35,17 @@ public class AgentToolExternalConfig extends BaseEntity {
     /** HTTP 方法：GET/POST/PUT（默认 POST） */
     private String httpMethod;
 
+    /**
+     * 副作用分类：QUERY=查询且无外部写副作用，WRITE=有外部写副作用；
+     * 空=未分类（表单运行期不可调用，须由配置者显式登记）。
+     */
+    private String effectScope;
+
     /** 请求超时（秒），默认 30（参照 ChatModelFactory 模式从 DB 读） */
     private Integer timeoutSeconds;
 
-    /** 1=启用 0=禁用 */
+    /** 1=启用 0=禁用（PG smallint 列，按 0/1 写入） */
+    @TableField(value = "enabled", typeHandler = BooleanSmallintTypeHandler.class)
     private Boolean enabled;
 
     private String remark;

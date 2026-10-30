@@ -24,7 +24,17 @@ import static org.mockito.Mockito.*;
 class DeptControllerTest {
 
     private final SysDeptService sysDeptService = mock(SysDeptService.class);
-    private final DeptController controller = new DeptController(sysDeptService);
+    private final com.sw.ck.system.service.ManagementTenantContext tenantContext =
+            mock(com.sw.ck.system.service.ManagementTenantContext.class);
+    private final DeptController controller = new DeptController(sysDeptService, tenantContext);
+
+    @org.junit.jupiter.api.BeforeEach
+    void defaultOwnedObject() {
+        com.sw.ck.system.entity.SysDept owner = new com.sw.ck.system.entity.SysDept();
+        owner.setId(1L);
+        owner.setTenantId(1L);
+        when(sysDeptService.getById(1L)).thenReturn(owner);
+    }
 
     @Test
     @DisplayName("GET /tree 无参数 → 返回部门列表（兼容历史调用）")
@@ -42,7 +52,7 @@ class DeptControllerTest {
 
         when(sysDeptService.listTree(any(DeptQuery.class))).thenReturn(List.of(dept1, dept2));
 
-        R<List<SysDept>> result = controller.tree(null, null);
+        R<List<SysDept>> result = controller.tree(null, null, null);
 
         assertThat(result.getCode()).as("成功码应为 0").isZero();
         assertThat(result.getData()).hasSize(2);
@@ -56,7 +66,7 @@ class DeptControllerTest {
     void tree_empty_shouldReturnEmptyList() {
         when(sysDeptService.listTree(any(DeptQuery.class))).thenReturn(Collections.emptyList());
 
-        R<List<SysDept>> result = controller.tree(null, null);
+        R<List<SysDept>> result = controller.tree(null, null, null);
 
         assertThat(result.getCode()).isZero();
         assertThat(result.getData()).isEmpty();
@@ -71,7 +81,7 @@ class DeptControllerTest {
 
         when(sysDeptService.listTree(any(DeptQuery.class))).thenReturn(List.of(dept));
 
-        R<List<SysDept>> result = controller.tree("研发", 0);
+        R<List<SysDept>> result = controller.tree("研发", 0, null);
 
         assertThat(result.getCode()).isZero();
         assertThat(result.getData()).extracting(SysDept::getName).containsExactly("研发部");
@@ -86,7 +96,7 @@ class DeptControllerTest {
     void tree_withStatusOnly_shouldPassStatus() {
         when(sysDeptService.listTree(any(DeptQuery.class))).thenReturn(Collections.emptyList());
 
-        R<List<SysDept>> result = controller.tree(null, 1);
+        R<List<SysDept>> result = controller.tree(null, 1, null);
 
         assertThat(result.getCode()).isZero();
         ArgumentCaptor<DeptQuery> captor = ArgumentCaptor.forClass(DeptQuery.class);

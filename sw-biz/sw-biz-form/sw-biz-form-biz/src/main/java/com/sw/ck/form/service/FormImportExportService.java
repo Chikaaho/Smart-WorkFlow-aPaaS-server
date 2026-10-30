@@ -84,6 +84,7 @@ public class FormImportExportService {
     private final ObjectMapper objectMapper;
     private final FormSubmitService formSubmitService;
     private final FormFieldValidator formFieldValidator;
+    private FormFieldEnrichmentService enrichment;
     private final FormDataQueryService formDataQueryService;
     private final TransactionTemplate transactionTemplate;
     private final JdbcTemplate jdbcTemplate;
@@ -112,6 +113,11 @@ public class FormImportExportService {
         this.jdbcTemplate = jdbcTemplate;
         this.loginContextProvider = loginContextProvider;
         this.deptScopeProvider = deptScopeProvider;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setEnrichment(FormFieldEnrichmentService enrichment) {
+        this.enrichment = enrichment;
     }
 
     // ==================== 字段元数据 ====================
@@ -274,6 +280,9 @@ public class FormImportExportService {
     public byte[] generateTemplate(String formKey) {
         LoginUser loginUser = requireLogin();
         FormContext ctx = loadFormContext(formKey, "生成模板");
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(ctx.formDef().getId(), "import");
+        }
 
         List<FieldMeta> fields = ctx.mainFields();
         if (fields.isEmpty() && ctx.tableFields().isEmpty()) {
@@ -345,6 +354,9 @@ public class FormImportExportService {
     public ImportResult importData(String formKey, InputStream inputStream) {
         requireLogin();
         FormContext ctx = loadFormContext(formKey, "导入数据");
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(ctx.formDef().getId(), "import");
+        }
         List<FieldMeta> fields = ctx.mainFields();
         Map<String, List<FieldMeta>> tableFields = ctx.tableFields();
         if (fields.isEmpty() && tableFields.isEmpty()) {
@@ -614,6 +626,9 @@ public class FormImportExportService {
     public byte[] exportData(String formKey, FormDataQueryRequest queryRequest) {
         requireLogin();
         FormContext ctx = loadFormContext(formKey, "导出数据");
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(ctx.formDef().getId(), "export");
+        }
         List<FieldMeta> fields = ctx.mainFields();
         Map<String, List<FieldMeta>> tableFields = ctx.tableFields();
         if (fields.isEmpty() && tableFields.isEmpty()) {
@@ -988,6 +1003,9 @@ public class FormImportExportService {
                     writeTextCell(cell, value.toString());
                 }
             }
+            case RICH_TEXT ->
+                // 富文本导出可见文本：不把版本前缀/受控标签写进 xlsx
+                writeTextCell(cell, RichTextSanitizer.visibleText(value.toString()));
             default -> writeTextCell(cell, value.toString());
         }
     }

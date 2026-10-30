@@ -2,6 +2,7 @@ package com.sw.ck.openapi.biz.listener;
 
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
@@ -21,6 +22,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -41,11 +44,16 @@ class OpenApiCallbackListenerTest {
     @Mock
     private OpenApiCallbackDeliveryService deliveryService;
 
+    @Mock
+    private TenantWorkAdmission tenantWorkAdmission;
+
     private OpenApiCallbackListener listener;
 
     @BeforeEach
     void setUp() {
-        listener = new OpenApiCallbackListener(appMapper, deliveryService);
+        lenient().when(tenantWorkAdmission.claim(any(), any())).thenAnswer(invocation ->
+                invocation.getArgument(1, java.util.function.IntSupplier.class).getAsInt());
+        listener = new OpenApiCallbackListener(appMapper, deliveryService, tenantWorkAdmission);
         LoginUserHolder.clear();
     }
 
@@ -74,6 +82,18 @@ class OpenApiCallbackListenerTest {
         assertThat(seen.get().getTenantId()).as("身份租户=事件权威租户").isEqualTo(9001L);
         assertThat(seen.get().getUserId()).as("身份用户=事件操作人（供审计列注入）").isEqualTo(55L);
         assertThat(LoginUserHolder.get()).as("用毕清理不残留").isNull();
+    }
+
+    @Test
+    @DisplayName("租户停用或过期：不查询应用、不投递且不残留身份")
+    void inactiveTenantStopsBeforeCallbackLookup() {
+        doReturn(0).when(tenantWorkAdmission).claim(any(), any());
+
+        listener.onEvent(new BpmNotifyEvent(
+                BpmNotifyTrigger.PROCESS_APPROVED, 77L, 9001L, 55L, "oc-paused-1"));
+
+        verifyNoInteractions(appMapper, deliveryService);
+        assertThat(LoginUserHolder.get()).isNull();
     }
 
     @Test

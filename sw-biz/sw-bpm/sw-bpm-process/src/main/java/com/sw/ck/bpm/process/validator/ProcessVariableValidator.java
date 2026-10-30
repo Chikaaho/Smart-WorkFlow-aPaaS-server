@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.validator;
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.api.dto.ProcessNotificationConfig;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -11,6 +12,7 @@ import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
+import com.sw.ck.system.api.user.UserQueryFacade;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -57,15 +60,18 @@ public class ProcessVariableValidator {
     private final BpmFormBindingService formBindingService;
     private final BpmScriptEvaluatePort scriptRunner;
     private final ObjectMapper objectMapper;
+    private final UserQueryFacade userQueryFacade;
 
     public ProcessVariableValidator(FormDefinitionService formDefinitionService,
                                     BpmFormBindingService formBindingService,
                                     BpmScriptEvaluatePort scriptRunner,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    UserQueryFacade userQueryFacade) {
         this.formDefinitionService = formDefinitionService;
         this.formBindingService = formBindingService;
         this.scriptRunner = scriptRunner;
         this.objectMapper = objectMapper;
+        this.userQueryFacade = userQueryFacade;
     }
 
     /**
@@ -712,6 +718,72 @@ public class ProcessVariableValidator {
 
     private boolean fieldFlag(Map<String, Object> field, String flag) {
         return Boolean.TRUE.equals(field.get(flag));
+    }
+
+    /**
+     * 50:88 结束通知发布校验：接收对象、渠道令牌、其他接收人的租户/启用状态。
+     * 旧定义 notification == null 时零校验、零行为。
+     */
+    public List<GraphValidationError> validateNotification(ProcessGraph graph, Long tenantId) {
+        List<GraphValidationError> errors = new ArrayList<>();
+        if (graph == null || graph.getNotification() == null) {
+            return errors;
+        }
+        ProcessNotificationConfig config = graph.getNotification();
+        boolean anyTarget = Boolean.TRUE.equals(config.getInitiator())
+                || Boolean.TRUE.equals(config.getApprovers())
+                || (config.getOtherRecipientIds() != null && !config.getOtherRecipientIds().isEmpty());
+        if (!anyTarget) {
+            errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                    "结束通知至少选择一个接收对象（发起人/审批人/其他接收人）"));
+        }
+        if (config.getChannels() == null || config.getChannels().isEmpty()) {
+            errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                    "结束通知至少选择一个通知渠道"));
+        } else {
+            Set<String> allowed = Set.of("IN_APP", "EMAIL");
+            for (String token : config.getChannels()) {
+                String normalized = token == null ? "" : token.trim().toUpperCase(Locale.ROOT);
+                if (!allowed.contains(normalized)) {
+                    errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                            "结束通知包含不支持的渠道: " + token));
+                }
+            }
+        }
+        List<Long> otherIds = config.getOtherRecipientIds();
+        if (otherIds != null) {
+            Set<Long> distinct = new LinkedHashSet<>();
+            for (Long id : otherIds) {
+                if (id == null || id <= 0) {
+                    errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                            "其他接收人包含非法用户标识"));
+                    continue;
+                }
+                if (!distinct.add(id)) {
+                    errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                            "其他接收人重复: " + id));
+                }
+            }
+            if (tenantId == null) {
+                errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                        "缺少租户上下文，无法核验其他接收人"));
+            } else if (!distinct.isEmpty()) {
+                Optional<List<Long>> active = userQueryFacade.findActiveUserIds(distinct, tenantId);
+                if (active.isEmpty()) {
+                    errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                            "无法核验其他接收人的租户/启用状态"));
+                } else {
+                    List<Long> missing = distinct.stream()
+                            .filter(id -> !active.get().contains(id))
+                            .toList();
+                    if (!missing.isEmpty()) {
+                        errors.add(error(null, BpmErrorCode.NOTIFICATION_CONFIG_INVALID,
+                                "其他接收人不属于当前租户或已停用: " + missing));
+                    }
+                }
+            }
+        }
+        return errors;
     }
 
     private GraphValidationError error(String elementId, BpmErrorCode code, String message) {

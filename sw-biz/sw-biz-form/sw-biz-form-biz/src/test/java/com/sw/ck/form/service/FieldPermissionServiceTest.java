@@ -93,6 +93,22 @@ class FieldPermissionServiceTest {
     }
 
     @Test
+    @DisplayName("子表字段编辑权限：命中 items.qty 时整行更新被拒绝")
+    void assertEditablePayload_shouldRejectControlledSubfield() {
+        var perms = service.parse("""
+                {"fieldPermissions":{"items.qty":{"edit":["role:finance"]}}}
+                """);
+        LoginUser employee = user(42L, "employee", 9L, false);
+        assertThatThrownBy(() -> service.assertEditablePayload(employee, perms,
+                Map.of("items", List.of(Map.of("name", "办公用品", "qty", 2))),
+                Map.of("items.qty", "数量")))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("数量");
+        service.assertEditablePayload(employee, perms,
+                Map.of("items", List.of(Map.of("name", "办公用品"))));
+    }
+
+    @Test
     @DisplayName("viewDeniedFields 汇总无查看权字段；子字段键可独立配置")
     void viewDeniedFields_shouldCollect() {
         var perms = service.parse(DEFINITION);

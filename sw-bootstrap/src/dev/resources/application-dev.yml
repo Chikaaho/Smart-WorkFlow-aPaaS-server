@@ -32,10 +32,12 @@ spring:
         max-active: 5
       datasource:
         master:
-          driver-class-name: org.h2.Driver
-          url: jdbc:h2:mem:smart_workflow;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
-          username: sa
-          password:
+          # 缺省 H2 内存库；注入 SW_DEV_DB_* 可切到本地 PostgreSQL（生产同构：真实迁移链、
+          # 动态宽表 DDL 与行锁语义），配套身份夹具见 db/migration/devseed/{vendor}。
+          driver-class-name: ${SW_DEV_DB_DRIVER:org.h2.Driver}
+          url: ${SW_DEV_DB_URL:jdbc:h2:mem:smart_workflow;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+          username: ${SW_DEV_DB_USERNAME:sa}
+          password: ${SW_DEV_DB_PASSWORD:}
         # 扩展库示例：IoT 独立 H2 内存库
         # iot:
         #   driver-class-name: org.h2.Driver

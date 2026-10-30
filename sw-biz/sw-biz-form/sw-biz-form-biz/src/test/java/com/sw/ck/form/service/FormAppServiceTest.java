@@ -395,7 +395,7 @@ class FormAppServiceTest {
                 .isInstanceOf(BaseException.class)
                 .hasFieldOrPropertyWithValue("code", FormErrorCode.APP_DISABLED.getCode());
         // 管理端列表仍含停用应用
-        assertThat(formAppService.listApps(null)).extracting(FormAppDTO::getId).contains(app.getId());
+        assertThat(formAppService.listApps(null, null)).extracting(FormAppDTO::getId).contains(app.getId());
         // 用户端不可见
         assertThat(formAppService.listVisibleAppsForCurrentUser()).extracting(FormAppDTO::getId)
                 .doesNotContain(app.getId());

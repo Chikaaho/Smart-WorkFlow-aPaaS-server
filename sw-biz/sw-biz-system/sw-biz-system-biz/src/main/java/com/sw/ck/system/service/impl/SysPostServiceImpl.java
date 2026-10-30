@@ -79,6 +79,7 @@ public class SysPostServiceImpl
     public PageResult<SysPost> page(PageParam pageParam, SysPost query) {
         LambdaQueryWrapper<SysPost> wrapper = new LambdaQueryWrapper<>();
         if (query != null) {
+            wrapper.eq(query.getTenantId() != null, SysPost::getTenantId, query.getTenantId());
             if (StringUtils.isNotBlank(query.getCode())) {
                 wrapper.like(SysPost::getCode, query.getCode());
             }

@@ -1,12 +1,16 @@
 package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.service.BaseServiceImpl;
 import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.mapper.SysWorkspaceCardTypeMapper;
 import com.sw.ck.system.service.WorkspaceCardTypeService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -35,11 +39,24 @@ public class WorkspaceCardTypeServiceImpl extends BaseServiceImpl<SysWorkspaceCa
 
     @Override
     public List<SysWorkspaceCardType> listAvailable() {
-        return lambdaQuery()
-                .eq(SysWorkspaceCardType::getStatus, 0)
-                .orderByAsc(SysWorkspaceCardType::getDefaultOrder)
-                .orderByAsc(SysWorkspaceCardType::getId)
-                .list();
+        List<SysWorkspaceCardType> currentTenant = baseMapper.selectList(
+                Wrappers.<SysWorkspaceCardType>lambdaQuery()
+                        .eq(SysWorkspaceCardType::getStatus, 0)
+                        .orderByAsc(SysWorkspaceCardType::getDefaultOrder)
+                        .orderByAsc(SysWorkspaceCardType::getId));
+        if (!currentTenant.isEmpty()) return currentTenant;
+        LoginUser user = LoginUserHolder.get();
+        if (user == null || user.getTenantId() == null || user.getTenantId() == 0L) {
+            return currentTenant;
+        }
+        // 新租户继承平台租户 0 的只读默认卡片目录；本租户自定义后不再回退。
+        try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
+            return baseMapper.selectList(Wrappers.<SysWorkspaceCardType>lambdaQuery()
+                    .eq(SysWorkspaceCardType::getTenantId, 0L)
+                    .eq(SysWorkspaceCardType::getStatus, 0)
+                    .orderByAsc(SysWorkspaceCardType::getDefaultOrder)
+                    .orderByAsc(SysWorkspaceCardType::getId));
+        }
     }
 
     @Override

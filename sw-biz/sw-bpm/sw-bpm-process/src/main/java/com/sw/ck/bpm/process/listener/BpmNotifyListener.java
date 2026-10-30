@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.listener;
 
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
+import com.sw.ck.bpm.process.notify.BpmNotifyChannels;
 import com.sw.ck.bpm.process.notify.BpmNotifyMessages;
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
@@ -58,16 +59,23 @@ public class BpmNotifyListener {
         loginUser.setTenantId(event.getTenantId());
         LoginUserHolder.set(loginUser);
         try {
-            Optional<BpmNotifyMessages.Spec> spec = BpmNotifyMessages.specOf(event.getTrigger());
+            Optional<BpmNotifyMessages.Spec> spec = BpmNotifyMessages.specFor(event);
             if (spec.isEmpty()) {
                 log.warn("未知 BpmNotifyTrigger: {}，跳过通知", event.getTrigger());
                 return;
             }
             String eventType = BpmNotifyMessages.eventType(event);
             // empty = 事件类型缺失等上下文不足：此处事件类型由枚举名给出，契约不产生 empty
-            List<NotifyChannel> channels = notifyRoutingService.channelsFor(eventType, event.getRecipientId())
-                    .orElseThrow(() -> new IllegalStateException(
-                            "通知路由未返回渠道序列: eventType=" + eventType));
+            List<NotifyChannel> channels = BpmNotifyChannels.filter(
+                    notifyRoutingService.channelsFor(eventType, event.getRecipientId())
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "通知路由未返回渠道序列: eventType=" + eventType)),
+                    event.getChannels());
+            if (channels.isEmpty()) {
+                log.info("配置渠道与当前可用路由无交集，跳过本次结束通知: eventType={}, bizId={}, recipientId={}",
+                        eventType, event.getBizId(), event.getRecipientId());
+                return;
+            }
             for (NotifyChannel channel : channels) {
                 // 事务内已由 BpmNotifyIntentRecorder 登记 PENDING 意图；本次调用认领并投递该意图，
                 // 命中已投递身份则直接镜像结果，不产生第二条业务通知。

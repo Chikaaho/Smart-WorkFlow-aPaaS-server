@@ -46,7 +46,8 @@ class CommandQueueTest {
             mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
 
     private final PersistentBpmCommandQueue queue =
-            new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService);
+            new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService,
+                    (tenantId, claim) -> claim.getAsInt());
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -118,6 +119,18 @@ class CommandQueueTest {
     }
 
     // ==================== claimDue ====================
+
+    @Test
+    void inactiveTenantDoesNotAcquirePersistentLease() {
+        var deniedQueue = new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService,
+                (tenantId, claim) -> 0);
+        BpmCommand candidate = command(1L);
+        when(commandService.listMaps(any(Wrapper.class))).thenReturn(List.of(java.util.Map.of("tenant_id", 1L)));
+        when(queryChain.list()).thenReturn(List.of(candidate));
+        assertThat(deniedQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 10)).isEmpty();
+        verify(commandService, org.mockito.Mockito.never()).update(any(Wrapper.class));
+        assertThat(candidate.getStatus()).isEqualTo("PENDING");
+    }
 
     @Test
     @DisplayName("claimDue：候选领取成功 → status=PROCESSING 出现在结果中")

@@ -145,4 +145,20 @@ class BpmCommandControllerP0Test {
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("未知通道");
     }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("单任务不通过意见：disapprove 段映射 DISAPPROVE（非 REJECT 流程终态）")
+    void disapproveSegmentMapsToDisapproveAction() {
+        login(true);
+        CommandAcceptRespDTO acc = accepted();
+        when(commandAcceptService.acceptTaskAction(eq("task-1"), eq(ApprovalAction.DISAPPROVE),
+                any(), eq(CommandChannelEnum.NORMAL))).thenReturn(acc);
+
+        R<CommandAcceptRespDTO> resp =
+                controller.acceptTaskAction("task-1", "disapprove", null, "NORMAL");
+
+        assertThat(resp.getData().getCommandId()).isEqualTo(acc.getCommandId());
+        verify(commandAcceptService).acceptTaskAction(eq("task-1"), eq(ApprovalAction.DISAPPROVE),
+                any(), eq(CommandChannelEnum.NORMAL));
+    }
 }

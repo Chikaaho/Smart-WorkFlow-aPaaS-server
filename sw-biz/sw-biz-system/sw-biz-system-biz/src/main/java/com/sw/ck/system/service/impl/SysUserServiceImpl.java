@@ -81,8 +81,13 @@ public class SysUserServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public Long create(SysUser user, String plainPassword) {
         Objects.requireNonNull(plainPassword, "密码不能为空");
+        user.setTenantId(resolveCreationTenant(user.getTenantId()));
+        validateDepartment(user.getDeptId(), user.getTenantId());
         // 用户名唯一性前置校验：唯一索引兜底会以 DuplicateKeyException 形式漏出为 500
-        if (user.getUsername() != null && getByUsername(user.getUsername()) != null) {
+        // 用户名按租户唯一（0.2.0）：查重在当前租户上下文内进行，跨租户同名由唯一索引放行。
+        if (user.getUsername() != null
+                && lambdaQuery().eq(SysUser::getTenantId, user.getTenantId())
+                        .eq(SysUser::getUsername, user.getUsername()).count() > 0) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "用户名已存在");
         }
         user.setPassword(passwordEncoder.encode(plainPassword));
@@ -102,14 +107,18 @@ public class SysUserServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(SysUser user, String plainPassword) {
+        SysUser owner = requireOwnedUser(user.getId());
+        assertMutableUser(owner);
+        if (user.getTenantId() != null && !user.getTenantId().equals(owner.getTenantId())) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "不能修改用户所属租户");
+        }
+        user.setTenantId(owner.getTenantId());
+        validateDepartment(user.getDeptId(), owner.getTenantId());
         if (plainPassword != null && !plainPassword.isEmpty()) {
             user.setPassword(passwordEncoder.encode(plainPassword));
         } else {
             // 不修改密码：从 DB 加载旧密码保留
-            SysUser existing = getById(user.getId());
-            if (existing != null) {
-                user.setPassword(existing.getPassword());
-            }
+            user.setPassword(owner.getPassword());
         }
         updateById(user);
         // 启停/部门调整/资料变更后立即收敛该用户会话与权限
@@ -133,12 +142,15 @@ public class SysUserServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        SysUser owner = requireOwnedUser(id);
+        assertMutableUser(owner);
+        Long tenantId = owner.getTenantId();
         // 解除角色/岗位关联（逻辑删保留轨迹），再删用户并立即收敛会话
         if (sysUserRoleMapper != null) {
-            sysUserRoleMapper.delete(Wrappers.lambdaQuery(SysUserRole.class).eq(SysUserRole::getUserId, id));
+            sysUserRoleMapper.delete(Wrappers.lambdaQuery(SysUserRole.class).eq(SysUserRole::getUserId, id).eq(SysUserRole::getTenantId, tenantId));
         }
         if (sysUserPostMapper != null) {
-            sysUserPostMapper.delete(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, id));
+            sysUserPostMapper.delete(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, id).eq(SysUserPost::getTenantId, tenantId));
         }
         removeById(id);
         kickOut(id);
@@ -147,30 +159,43 @@ public class SysUserServiceImpl
     @Override
     public PageResult<SysUser> page(PageParam pageParam) {
         // 数据范围条件由 @DataScope 标注的 selectUserPage 经 DataScopeHandler 自动拼接
-        return PageResult.of(baseMapper.selectUserPage(
+        PageResult<SysUser> result = PageResult.of(baseMapper.selectUserPage(
                 new Page<>(pageParam.getPageNum(), pageParam.getPageSize())));
+        result.getRecords().forEach(row -> row.setProtectedAccount(isProtectedUser(row)));
+        return result;
     }
 
     @Override
     public PageResult<SysUser> page(PageParam pageParam, UserPageQuery query) {
-        return PageResult.of(baseMapper.selectUserPageByQuery(new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), query));
+        PageResult<SysUser> result = PageResult.of(baseMapper.selectUserPageByQuery(new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), query));
+        result.getRecords().forEach(row -> row.setProtectedAccount(isProtectedUser(row)));
+        return result;
     }
 
     @Override
     public SysUser getByUsername(String username) {
-        // 登录前无租户上下文：用户名全局唯一（uk 不含 tenant_id），必须跨租户解析，否则非 0 租户账号无法认证
-        return baseMapper.selectGlobalByUsername(username);
+        // 用户名按租户唯一（0.2.0）：跨租户不唯一时 fail closed，重名账号须用租户编码定位
+        java.util.List<SysUser> rows = baseMapper.selectGlobalByUsernameAll(username);
+        return rows.size() == 1 ? rows.get(0) : null;
+    }
+
+    @Override
+    public SysUser findByTenantCodeAndUsername(String tenantCode, String username) {
+        return baseMapper.selectByTenantCodeAndUsername(tenantCode.trim(), username);
     }
 
     @Override
     public SysUser getById(Long id) {
-        return baseMapper.selectById(id);
+        SysUser user = baseMapper.selectById(id);
+        if (user != null) user.setProtectedAccount(isProtectedUser(user));
+        return user;
     }
 
     @Override
     public List<Long> listRoleIds(Long userId) {
+        Long tenantId = requireOwnedUser(userId).getTenantId();
         return sysUserRoleMapper.selectList(Wrappers.lambdaQuery(SysUserRole.class)
-                        .eq(SysUserRole::getUserId, userId))
+                        .eq(SysUserRole::getUserId, userId).eq(SysUserRole::getTenantId, tenantId))
                 .stream().map(SysUserRole::getRoleId).filter(Objects::nonNull).distinct().toList();
     }
 
@@ -178,17 +203,23 @@ public class SysUserServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public void updateRoleIds(Long userId, List<Long> roleIds) {
         if (sysUserRoleMapper == null) return;
+        SysUser owner = requireOwnedUser(userId);
+        assertMutableUser(owner);
+        Long tenantId = owner.getTenantId();
         List<Long> valid = roleIds == null ? List.of() : roleIds.stream().filter(Objects::nonNull).distinct()
                 .map(id -> sysRoleMapper.selectById(id)).filter(Objects::nonNull)
+                .filter(r -> tenantId.equals(r.getTenantId()))
                 .filter(r -> r.getStatus() != null && r.getStatus() == 1)
                 .filter(r -> !"superadmin".equals(r.getCode())).map(SysRole::getId).toList();
         if (roleIds != null && valid.size() != roleIds.stream().filter(Objects::nonNull).distinct().count())
             throw new IllegalArgumentException("只能绑定启用的普通角色");
-        sysUserRoleMapper.delete(Wrappers.lambdaQuery(SysUserRole.class).eq(SysUserRole::getUserId, userId));
+        sysUserRoleMapper.delete(Wrappers.lambdaQuery(SysUserRole.class)
+                .eq(SysUserRole::getUserId, userId).eq(SysUserRole::getTenantId, tenantId));
         // 唯一键含 deleted 列：先物理清除历史软删残留，重复更新（如停用→恢复）才能再次插入
         purgeSoftDeletedRoleLinks(userId);
         valid.forEach(roleId -> {
             SysUserRole relation = new SysUserRole();
+            relation.setTenantId(tenantId);
             relation.setUserId(userId);
             relation.setRoleId(roleId);
             sysUserRoleMapper.insert(relation);
@@ -200,7 +231,8 @@ public class SysUserServiceImpl
     @Override
     public List<UserPostAssociation> listPosts(Long userId) {
         if (sysUserPostMapper == null) return List.of();
-        return sysUserPostMapper.selectList(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, userId))
+        Long tenantId = requireOwnedUser(userId).getTenantId();
+        return sysUserPostMapper.selectList(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, userId).eq(SysUserPost::getTenantId, tenantId))
                 .stream()
                 .filter(row -> row.getPostId() != null)
                 .map(row -> new UserPostAssociation(row.getPostId(), row.getDeptId()))
@@ -211,8 +243,12 @@ public class SysUserServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public void updatePosts(Long userId, List<UserPostAssociation> posts) {
         if (sysUserPostMapper == null) return;
+        SysUser owner = requireOwnedUser(userId);
+        assertMutableUser(owner);
+        Long tenantId = owner.getTenantId();
         List<SysUserPost> rows = buildPostRows(userId, posts);
-        sysUserPostMapper.delete(Wrappers.lambdaQuery(SysUserPost.class).eq(SysUserPost::getUserId, userId));
+        sysUserPostMapper.delete(Wrappers.lambdaQuery(SysUserPost.class)
+                .eq(SysUserPost::getUserId, userId).eq(SysUserPost::getTenantId, tenantId));
         purgeSoftDeletedPostLinks(userId);
         rows.forEach(sysUserPostMapper::insert);
         // 岗位任职变化立即收敛（岗位供流程选人消费，属组织权威数据）
@@ -227,7 +263,9 @@ public class SysUserServiceImpl
         if (posts == null || posts.isEmpty()) {
             return List.of();
         }
-        Long fallbackDeptId = null;
+        SysUser owner = requireOwnedUser(userId);
+        Long tenantId = owner.getTenantId();
+        Long fallbackDeptId = owner.getDeptId();
         List<SysUserPost> rows = new ArrayList<>();
         List<String> seen = new ArrayList<>();
         for (UserPostAssociation association : posts) {
@@ -235,22 +273,12 @@ public class SysUserServiceImpl
                 continue;
             }
             SysPost post = sysPostMapper.selectById(association.getPostId());
-            if (post == null || post.getStatus() == null || post.getStatus() != 1) {
+            if (post == null || !tenantId.equals(post.getTenantId())
+                    || post.getStatus() == null || post.getStatus() != 1) {
                 throw new IllegalArgumentException("只能绑定启用的岗位");
             }
-            Long deptId = association.getDeptId();
-            if (deptId == null) {
-                if (fallbackDeptId == null) {
-                    SysUser user = getById(userId);
-                    fallbackDeptId = user == null ? null : user.getDeptId();
-                }
-                deptId = fallbackDeptId;
-            } else if (sysDeptMapper != null) {
-                SysDept dept = sysDeptMapper.selectById(deptId);
-                if (dept == null) {
-                    throw new BaseException(CommonErrorCode.PARAM_ERROR, "任职部门不存在或已删除");
-                }
-            }
+            Long deptId = association.getDeptId() == null ? fallbackDeptId : association.getDeptId();
+            validateDepartment(deptId, tenantId);
             Long effectiveDeptId = deptId == null ? 0L : deptId;
             String dedupeKey = association.getPostId() + ":" + effectiveDeptId;
             if (seen.contains(dedupeKey)) {
@@ -258,6 +286,7 @@ public class SysUserServiceImpl
             }
             seen.add(dedupeKey);
             SysUserPost row = new SysUserPost();
+            row.setTenantId(tenantId);
             row.setUserId(userId);
             row.setPostId(association.getPostId());
             row.setDeptId(effectiveDeptId);
@@ -300,20 +329,60 @@ public class SysUserServiceImpl
 
     private void purgeSoftDeletedRoleLinks(Long userId) {
         if (sysUserRoleMapper == null) return;
-        sysUserRoleMapper.hardDeleteSoftDeletedByUser(userId, currentTenantId());
+        sysUserRoleMapper.hardDeleteSoftDeletedByUser(userId, requireOwnedUser(userId).getTenantId());
     }
 
     private void purgeSoftDeletedPostLinks(Long userId) {
         if (sysUserPostMapper == null) return;
-        sysUserPostMapper.hardDeleteSoftDeletedByUser(userId, currentTenantId());
+        sysUserPostMapper.hardDeleteSoftDeletedByUser(userId, requireOwnedUser(userId).getTenantId());
     }
 
-    private Long currentTenantId() {
-        com.sw.ck.security.holder.LoginUser loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
-        if (loginUser == null || loginUser.getTenantId() == null) {
-            // 软删链接清理按租户隔离；租户上下文缺失属异常路径，fail closed 不落租户 0
-            throw new IllegalStateException("用户关联清理缺少租户上下文");
+    private boolean isProtectedUser(SysUser user) {
+        if (!Long.valueOf(0).equals(user.getTenantId()) || sysUserRoleMapper == null || sysRoleMapper == null) return false;
+        return sysUserRoleMapper.selectList(Wrappers.lambdaQuery(SysUserRole.class)
+                        .eq(SysUserRole::getUserId, user.getId()).eq(SysUserRole::getTenantId, 0L)).stream()
+                .map(link -> sysRoleMapper.selectById(link.getRoleId())).filter(Objects::nonNull)
+                .anyMatch(role -> Long.valueOf(0).equals(role.getTenantId()) && "superadmin".equals(role.getCode()));
+    }
+
+    private void assertMutableUser(SysUser user) {
+        if (isProtectedUser(user)) throw new BaseException(CommonErrorCode.PARAM_ERROR, "系统超级管理员为保留对象，只能查看");
+    }
+
+    private SysUser requireOwnedUser(Long userId) {
+        SysUser owner = getById(userId);
+        if (owner == null || owner.getTenantId() == null)
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "用户不存在或所属租户无效");
+        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        if (actor == null || actor.getTenantId() == null)
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少登录租户上下文");
+        boolean root = actor.isSuperAdmin() && Long.valueOf(0).equals(actor.getTenantId());
+        if (!root && !owner.getTenantId().equals(actor.getTenantId()))
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "不能维护其他租户的用户");
+        return owner;
+    }
+
+    private Long resolveCreationTenant(Long requested) {
+        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        // 受信任的内部准入链显式提供已校验租户；管理 HTTP 入口另须校验操作者与有效性。
+        if (actor == null) {
+            if (requested == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少目标租户");
+            return requested;
         }
-        return loginUser.getTenantId();
+        if (actor.getTenantId() == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少登录租户上下文");
+        if (actor.isSuperAdmin() && Long.valueOf(0).equals(actor.getTenantId())) {
+            if (requested == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "请先选择目标租户");
+            return requested;
+        }
+        if (requested != null && !requested.equals(actor.getTenantId()))
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "不能创建其他租户的用户");
+        return actor.getTenantId();
+    }
+
+    private void validateDepartment(Long deptId, Long tenantId) {
+        if (deptId == null || deptId == 0L) return;
+        SysDept dept = sysDeptMapper == null ? null : sysDeptMapper.selectById(deptId);
+        if (dept == null || !tenantId.equals(dept.getTenantId()))
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "部门必须属于用户所在租户");
     }
 }

@@ -27,6 +27,14 @@ public class SysTenant extends BaseEntity {
     @TableField("code")
     private String code;
 
+    /** 首任管理员的稳定关联；不按角色持有人或账号文本推断。 */
+    @TableField("admin_user_id")
+    private Long adminUserId;
+
+    /** 创建请求的稳定标识，用于同一创建操作重试去重。 */
+    @TableField("creation_request_id")
+    private String creationRequestId;
+
     /** 状态：0=启用 1=停用 */
     @TableField("status")
     private Integer status;
@@ -54,4 +62,5 @@ public class SysTenant extends BaseEntity {
     /** 绑定域名（休眠字段，I5 不启用解析） */
     @TableField("domain_name")
     private String domainName;
+
 }

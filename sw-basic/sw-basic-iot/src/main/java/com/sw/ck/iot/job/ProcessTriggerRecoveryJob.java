@@ -2,6 +2,7 @@ package com.sw.ck.iot.job;
 
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.entity.IotProcessTrigger;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
@@ -16,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * IoT 流程触发恢复调度（Phase 4 可靠业务事件 —— IoT 触发 MUST_DELIVER）。
@@ -53,13 +55,16 @@ public class ProcessTriggerRecoveryJob {
     private final IotProcessTriggerMapper triggerMapper;
     private final DomainEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
+    private final TenantWorkAdmission tenantWorkAdmission;
 
     public ProcessTriggerRecoveryJob(IotProcessTriggerMapper triggerMapper,
                                      DomainEventPublisher eventPublisher,
-                                     PlatformTransactionManager transactionManager) {
+                                     PlatformTransactionManager transactionManager,
+                                     TenantWorkAdmission tenantWorkAdmission) {
         this.triggerMapper = triggerMapper;
         this.eventPublisher = eventPublisher;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Scheduled(fixedDelayString = "${sw.iot.trigger.recovery.fixed-delay-ms:60000}")
@@ -83,16 +88,26 @@ public class ProcessTriggerRecoveryJob {
     }
 
     private void reclaimStale() {
+        List<IotProcessTrigger> stale;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
-            int reclaimed = triggerMapper.update(null,
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
-                            .set(IotProcessTrigger::getStatus, PENDING)
+            stale = triggerMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaQuery()
                             .eq(IotProcessTrigger::getStatus, PROCESSING)
                             .le(IotProcessTrigger::getUpdateTime,
-                                    LocalDateTime.now().minusMinutes(STALE_MINUTES)));
-            if (reclaimed > 0) {
-                log.warn("回收滞留 PROCESSING 触发（消费者可能已崩溃）: count={}", reclaimed);
-            }
+                                    LocalDateTime.now().minusMinutes(STALE_MINUTES))
+                            .last("LIMIT " + MAX_BATCH));
+        }
+        int reclaimed = 0;
+        for (IotProcessTrigger trigger : stale) {
+            reclaimed += tenantWorkAdmission.claim(trigger.getTenantId(), () -> triggerMapper.update(null,
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
+                            .set(IotProcessTrigger::getStatus, PENDING)
+                            .eq(IotProcessTrigger::getId, trigger.getId())
+                            .eq(IotProcessTrigger::getTenantId, trigger.getTenantId())
+                            .eq(IotProcessTrigger::getStatus, PROCESSING)));
+        }
+        if (reclaimed > 0) {
+            log.warn("回收滞留 PROCESSING 触发（消费者可能已崩溃）: count={}", reclaimed);
         }
     }
 
@@ -125,14 +140,15 @@ public class ProcessTriggerRecoveryJob {
 
     private boolean claimSuspended(IotProcessTrigger trigger) {
         int nextRetry = (trigger.getRetryCount() == null ? 0 : trigger.getRetryCount()) + 1;
-        int affected = triggerMapper.update(null,
+        int affected = tenantWorkAdmission.claim(trigger.getTenantId(), () -> triggerMapper.update(null,
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .set(IotProcessTrigger::getStatus, PROCESSING)
                         .set(IotProcessTrigger::getRetryCount, nextRetry)
                         .set(IotProcessTrigger::getNextRetryTime,
                                 LocalDateTime.now().plusMinutes(backoffMinutes(nextRetry)))
                         .eq(IotProcessTrigger::getId, trigger.getId())
-                        .in(IotProcessTrigger::getStatus, PENDING, FAILED));
+                        .eq(IotProcessTrigger::getTenantId, trigger.getTenantId())
+                        .in(IotProcessTrigger::getStatus, PENDING, FAILED)));
         return affected == 1;
     }
 

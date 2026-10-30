@@ -95,6 +95,16 @@ public class BpmEngineAutoConfiguration {
     }
 
     /**
+     * form 模块受控外部数据源引用授权端口适配（F020）：授权策略收敛在授权服务。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public com.sw.ck.form.api.port.ExtDatasourceGrantPort extDatasourceGrantPort(
+            com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService grantService) {
+        return new com.sw.ck.bpm.engine.adapter.FormExtDatasourceGrantAdapter(grantService);
+    }
+
+    /**
      * 当前应用的唯一 BPM 节点注册结果。节点实现由 Spring 自动发现，注册构造阶段完成
      * 类型、元数据、配置和能力完整性校验；失败直接阻止 BPM 引擎装配。
      */

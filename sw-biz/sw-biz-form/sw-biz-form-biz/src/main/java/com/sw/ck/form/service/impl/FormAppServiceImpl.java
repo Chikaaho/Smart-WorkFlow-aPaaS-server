@@ -86,13 +86,16 @@ public class FormAppServiceImpl implements FormAppService {
     // ==================== 管理端 ====================
 
     @Override
-    public List<FormAppDTO> listApps(String keyword) {
+    public List<FormAppDTO> listApps(String keyword, Long tenantIdFilter) {
         LambdaQueryWrapper<FormAppEntity> query = Wrappers.<FormAppEntity>lambdaQuery()
                 .orderByAsc(FormAppEntity::getSortNo)
                 .orderByAsc(FormAppEntity::getCreateTime);
         String kw = trimToNull(keyword);
         if (kw != null) {
             query.like(FormAppEntity::getName, kw);
+        }
+        if (tenantIdFilter != null) {
+            query.eq(FormAppEntity::getTenantId, tenantIdFilter);
         }
         List<FormAppEntity> apps = appMapper.selectList(query);
         if (apps.isEmpty()) {
@@ -620,6 +623,7 @@ public class FormAppServiceImpl implements FormAppService {
                 .status(app.getStatus())
                 .source(app.getSource())
                 .legacyCategoryId(app.getLegacyCategoryId())
+                .tenantId(app.getTenantId())
                 .formCount(formCount)
                 .dirCount(dirCount)
                 .createTime(app.getCreateTime())

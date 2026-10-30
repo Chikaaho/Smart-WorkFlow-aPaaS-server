@@ -22,6 +22,9 @@ class CommandQueueServiceTest {
     @Mock
     private IotDeviceCommandMapper commandMapper;
 
+    @Mock
+    private com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
+
     @InjectMocks
     private CommandQueueServiceImpl commandQueueService;
 
@@ -31,6 +34,7 @@ class CommandQueueServiceTest {
     void setUp() {
         testCommand = new IotDeviceCommand();
         testCommand.setId(1L);
+        testCommand.setTenantId(41L);
         testCommand.setProductId("test-product");
         testCommand.setDeviceName("test-device");
         testCommand.setCommandType("PROPERTY");
@@ -58,13 +62,28 @@ class CommandQueueServiceTest {
     @Test
     void testMarkSending_Success() {
         when(commandMapper.selectById(1L)).thenReturn(testCommand);
-        when(commandMapper.updateById(any(IotDeviceCommand.class))).thenReturn(1);
+        when(tenantWorkAdmission.claim(eq(41L), any())).thenAnswer(call ->
+                call.<java.util.function.IntSupplier>getArgument(1).getAsInt());
+        when(commandMapper.update(isNull(), any())).thenReturn(1);
 
         IotDeviceCommand result = commandQueueService.markSending(1L);
 
         assertNotNull(result);
         assertEquals("SENDING", result.getStatus());
-        verify(commandMapper).updateById(any(IotDeviceCommand.class));
+        verify(commandMapper).update(isNull(), any());
+    }
+
+    @Test
+    void inactiveTenantCannotSendOrConsumeRetryBudget() {
+        when(commandMapper.selectById(1L)).thenReturn(testCommand);
+        when(tenantWorkAdmission.claim(eq(41L), any())).thenReturn(0);
+        assertNull(commandQueueService.markSending(1L));
+        assertFalse(commandQueueService.claimQueuedForSend(1L, LocalDateTime.now()));
+        assertFalse(commandQueueService.claimFailedForRetry(1L, 5));
+        assertEquals("QUEUED", commandQueueService.markFailed(1L, "channel unavailable").getStatus());
+        assertEquals(0, testCommand.getRetryCount());
+        verify(commandMapper, never()).update(isNull(), any());
+        verify(commandMapper, never()).updateById(any(IotDeviceCommand.class));
     }
 
     @Test
@@ -83,7 +102,9 @@ class CommandQueueServiceTest {
     @Test
     void testMarkFailed_Success() {
         when(commandMapper.selectById(1L)).thenReturn(testCommand);
-        when(commandMapper.updateById(any(IotDeviceCommand.class))).thenReturn(1);
+        when(tenantWorkAdmission.claim(eq(41L), any())).thenAnswer(call ->
+                call.<java.util.function.IntSupplier>getArgument(1).getAsInt());
+        when(commandMapper.update(isNull(), any())).thenReturn(1);
 
         IotDeviceCommand result = commandQueueService.markFailed(1L, "设备离线");
 
@@ -91,7 +112,7 @@ class CommandQueueServiceTest {
         assertEquals("FAILED", result.getStatus());
         assertEquals("设备离线", result.getLastError());
         assertEquals(1, result.getRetryCount());
-        verify(commandMapper).updateById(any(IotDeviceCommand.class));
+        verify(commandMapper).update(isNull(), any());
     }
 
     @Test

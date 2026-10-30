@@ -220,6 +220,8 @@ public class BpmCommandController {
         return switch (action.toUpperCase()) {
             case "COMPLETE", "APPROVE", "APPROVAL" -> ApprovalAction.APPROVE;
             case "REJECT" -> ApprovalAction.REJECT;
+            // 单任务不通过意见（会签负向票等）：区别于 REJECT 流程级终态（I3 §4.4）
+            case "DISAPPROVE" -> ApprovalAction.DISAPPROVE;
             case "RETURN" -> ApprovalAction.RETURN;
             default -> throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "未知审批动作: " + action);
         };

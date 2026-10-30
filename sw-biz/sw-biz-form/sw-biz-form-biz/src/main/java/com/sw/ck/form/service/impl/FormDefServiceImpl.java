@@ -5,6 +5,9 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.re2j.Pattern;
+import com.google.re2j.PatternSyntaxException;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -63,6 +66,9 @@ public class FormDefServiceImpl implements FormDefService {
     private final UserQueryFacade userQueryFacade;
     // ==== 应用中心：表单归属目标校验（兼容构造可为 null，带归属路径 fail-closed） ====
     private final com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator;
+    // ==== 表单受控集成：保存/发布时按当前租户启用能力复核允许清单（测试构造可缺省） ====
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sw.ck.common.integration.ExternalCapabilityFacade externalCapabilityFacade;
 
     @org.springframework.beans.factory.annotation.Autowired
     public FormDefServiceImpl(FormDefMapper formDefMapper,
@@ -256,6 +262,8 @@ public class FormDefServiceImpl implements FormDefService {
         // 字段类型权威校验（Z8/G14a）：config 保存层即拒绝未启用类型，与 publish 的
         // validFieldTypes 校验同口径——禁止类型不得依赖 publish 兜底。
         validateFieldTypes(definition);
+        validateFormEvents(definition);
+        validateFormIntegrations(definition);
 
         LambdaQueryWrapper<FormConfigEntity> query = Wrappers.lambdaQuery(FormConfigEntity.class)
                 .eq(FormConfigEntity::getFormId, formId)
@@ -310,7 +318,10 @@ public class FormDefServiceImpl implements FormDefService {
         // —— Step 2c（I2）: 公式依赖 + 字段权限配置 + 外部数据源绑定校验 ——
         validateFormulaDependencies(definitionJson, fieldNames);
         fieldPermissionService.parse(definitionJson);
+        validateFormEvents(definitionJson);
+        validateFormIntegrations(definitionJson);
         validateDatasourceBindings(definitionJson);
+        String frozenDefinition = freezeSnapshotDefinition(formId, definitionJson);
 
         // —— Step 3: 校验字段名白名单（复用 ColumnValidation） ——
         if (entity.getLogicalTableName() != null && !entity.getLogicalTableName().isBlank()) {
@@ -393,7 +404,7 @@ public class FormDefServiceImpl implements FormDefService {
         snapshot.setId(idGenerator.generate());
         snapshot.setFormId(formId);
         snapshot.setFormVersion(entity.getFormVersion());
-        snapshot.setDefinition(definitionJson);
+        snapshot.setDefinition(frozenDefinition);
         snapshot.setCreateTime(LocalDateTime.now());
         snapshot.setUpdateTime(LocalDateTime.now());
         snapshot.setDeleted(0);
@@ -402,6 +413,21 @@ public class FormDefServiceImpl implements FormDefService {
 
         log.info("Form published: id={}, formKey={}, physicalTable={}, version={}",
                 formId, entity.getFormKey(), physicalTableName, entity.getFormVersion());
+    }
+
+    /** 将发布时的管理员列表配置一起冻结，历史读取不再依赖现行配置。 */
+    private String freezeSnapshotDefinition(String formId, String definition) {
+        if (listConfigMapper == null) return definition;
+        String listConfig = getListConfig(formId);
+        if (listConfig == null || listConfig.isBlank()) return definition;
+        try {
+            ObjectNode frozen = (ObjectNode) objectMapper.readTree(definition);
+            frozen.set("listConfig", objectMapper.readTree(listConfig));
+            return objectMapper.writeValueAsString(frozen);
+        } catch (JsonProcessingException | ClassCastException e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "发布快照配置无效，请检查表单和列表配置后重试");
+        }
     }
 
     @Override
@@ -428,7 +454,10 @@ public class FormDefServiceImpl implements FormDefService {
         visibilityRules.parseAndValidate(definition, collectFieldDisplay(definition));
         validateFormulaDependencies(definition, fieldNames);
         fieldPermissionService.parse(definition);
+        validateFormEvents(definition);
+        validateFormIntegrations(definition);
         validateDatasourceBindings(definition);
+        String frozenDefinition = freezeSnapshotDefinition(formId, definition);
 
         // 先完成全部定义校验，再执行不可回滚的增量 DDL；新版本只允许复用原表。
         for (FieldSpec field : fields) {
@@ -462,7 +491,7 @@ public class FormDefServiceImpl implements FormDefService {
         snapshot.setId(idGenerator.generate());
         snapshot.setFormId(formId);
         snapshot.setFormVersion(newVersion);
-        snapshot.setDefinition(definition);
+        snapshot.setDefinition(frozenDefinition);
         snapshot.setCreateTime(LocalDateTime.now());
         snapshot.setUpdateTime(LocalDateTime.now());
         snapshot.setDeleted(0);
@@ -509,6 +538,15 @@ public class FormDefServiceImpl implements FormDefService {
                 .isNull(FormConfigEntity::getParentTable);
         FormConfigEntity config = formConfigMapper.selectOne(configQuery);
         return config != null ? config.getDefinition() : null;
+    }
+
+    @Override
+    public String getSnapshotDefinitionByKey(String formKey, Integer formVersion) {
+        FormDefDTO dto = getFormDefByKey(formKey);
+        if (dto == null) {
+            return null;
+        }
+        return getSnapshot(dto.getId(), formVersion).getDefinition();
     }
 
     @Override
@@ -879,6 +917,103 @@ public class FormDefServiceImpl implements FormDefService {
     /**
      * I2 发布校验：FORMULA 依赖（未知字段/循环）与 fieldPermissions 结构。
      */
+    /** 保存和发布共用的事件形状闸门；历史定义缺少 events 时保持原义。 */
+    private void validateFormEvents(String definitionJson) {
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson);
+            JsonNode events = root == null ? null : root.get("events");
+            if (events == null || events.isNull()) {
+                return;
+            }
+            if (!events.isObject()) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单 events 必须是对象");
+            }
+            java.util.Iterator<java.util.Map.Entry<String, JsonNode>> fields = events.fields();
+            while (fields.hasNext()) {
+                java.util.Map.Entry<String, JsonNode> event = fields.next();
+                if (!Set.of("onLoad", "beforeSubmitHandler", "afterSubmitHandler").contains(event.getKey())) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "不支持的表单事件: " + event.getKey());
+                }
+                if (!event.getValue().isArray() || event.getValue().size() > 50) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "表单事件动作必须是数组且不超过 50 项: " + event.getKey());
+                }
+                Set<String> ids = new HashSet<>();
+                for (JsonNode action : event.getValue()) {
+                    String id = action.path("id").asText("").trim();
+                    String script = action.path("script").asText("");
+                    if (id.isEmpty() || id.length() > 128 || !ids.add(id)) {
+                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                                "表单事件动作 ID 为空、重复或过长: " + event.getKey());
+                    }
+                    if (!action.path("order").isNumber() || script.length() > 100_000) {
+                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                                "表单事件动作缺少有效顺序或脚本过长: " + id);
+                    }
+                    if (action.has("confirmMessage")
+                            && action.get("confirmMessage").asText("").length() > 500) {
+                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                                "表单事件确认说明过长: " + id);
+                    }
+                }
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
+        }
+    }
+
+    /**
+     * 表单允许集成清单闸门：结构合法、无重复，且（可取得当前租户时）每个标识都对应
+     * 本租户启用且已分类的能力。运行时仍按版本快照与当前能力状态复核，历史快照不恢复已撤销权力。
+     */
+    private void validateFormIntegrations(String definitionJson) {
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson);
+            JsonNode allowed = root == null ? null : root.get("allowedIntegrations");
+            if (allowed == null || allowed.isNull()) {
+                return;
+            }
+            if (!allowed.isArray() || allowed.size() > 50) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "表单允许集成清单必须是数组且不超过 50 项");
+            }
+            Set<String> seen = new HashSet<>();
+            LoginUser loginUser = LoginUserHolder.get();
+            Long tenantId = loginUser == null ? null : loginUser.getTenantId();
+            List<com.sw.ck.common.integration.ExternalCapability> enabled =
+                    (externalCapabilityFacade != null && tenantId != null)
+                            ? externalCapabilityFacade.listEnabled(tenantId)
+                            : null;
+            for (JsonNode node : allowed) {
+                if (node == null || !node.isTextual()) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "表单允许集成清单包含非文本项");
+                }
+                String capabilityId = node.asText("").trim();
+                if (!capabilityId.matches("^[A-Za-z_][A-Za-z0-9_]{0,63}$")) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "集成能力标识不合法: " + capabilityId);
+                }
+                if (!seen.add(capabilityId)) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "集成能力标识重复: " + capabilityId);
+                }
+                if (enabled != null && enabled.stream()
+                        .noneMatch(capability -> capabilityId.equals(capability.name()))) {
+                    throw new BaseException(FormErrorCode.INTEGRATION_UNAVAILABLE,
+                            "集成能力未登记、跨租户、已停用或未分类: " + capabilityId);
+                }
+            }
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
+        }
+    }
+
     private void validateFormulaDependencies(String definitionJson, Set<String> fieldNames) {
         try {
             JsonNode root = objectMapper.readTree(definitionJson);
@@ -1302,11 +1437,66 @@ public class FormDefServiceImpl implements FormDefService {
                     "字段 '" + name + "' 的 colSpan 必须是 1—24 的整数");
         }
 
+        validateTextConstraints(node);
+
         JsonNode subFields = node.get("subFields");
         if (subFields != null && subFields.isArray()) {
             for (JsonNode subField : subFields) {
                 validateLayoutFieldNode(subField);
             }
+        }
+    }
+
+    private void validateTextConstraints(JsonNode node) {
+        String name = node.path("name").asText("<unknown>");
+        String type = node.path("type").asText("");
+        JsonNode min = node.get("minLength");
+        JsonNode max = node.get("length");
+        JsonNode pattern = node.get("pattern");
+        JsonNode message = node.get("patternMessage");
+        boolean configured = min != null || pattern != null || message != null;
+        if (configured && !("TEXT".equals(type) || "RICH_TEXT".equals(type))) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "字段「" + name + "」的长度或正则约束仅适用于文本字段");
+        }
+        int minValue = 0;
+        if (min != null && !min.isNull()) {
+            if (!min.isIntegralNumber() || !min.canConvertToInt()
+                    || min.asInt() < 0 || min.asInt() > 1_000_000) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的最小长度必须为 0—1000000 的整数");
+            }
+            minValue = min.asInt();
+        }
+        if (max != null && !max.isNull()) {
+            if (!max.isIntegralNumber() || !max.canConvertToInt()
+                    || max.asInt() < 0 || max.asInt() > 1_000_000) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的最大长度必须为 0—1000000 的整数");
+            }
+            if (max.asInt() > 0 && minValue > max.asInt()) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的最小长度不能大于最大长度");
+            }
+        }
+        if (message != null && !message.isNull()) {
+            if (!message.isTextual() || message.asText().length() > 200) {
+                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                        "字段「" + name + "」的校验提示必须是不超过 200 个字符的文本");
+            }
+        }
+        if (pattern == null || pattern.isNull() || pattern.asText().isBlank()) {
+            return;
+        }
+        if (!pattern.isTextual() || pattern.asText().length() > 512) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "字段「" + name + "」的正则必须是不超过 512 个字符的文本");
+        }
+        try {
+            Pattern.compile(pattern.asText());
+        } catch (PatternSyntaxException invalid) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                    "字段「" + name + "」的正则语法无效，请检查后重试");
         }
     }
 

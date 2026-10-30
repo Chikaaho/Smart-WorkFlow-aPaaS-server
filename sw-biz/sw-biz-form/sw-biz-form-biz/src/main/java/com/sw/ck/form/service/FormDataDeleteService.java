@@ -75,6 +75,13 @@ public class FormDataDeleteService {
     /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
     private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
 
+    private FormFieldEnrichmentService enrichment;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setEnrichment(FormFieldEnrichmentService enrichment) {
+        this.enrichment = enrichment;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setC1PolicyService(com.sw.ck.form.txn.service.C1PolicyService c1PolicyService) {
         this.c1PolicyService = c1PolicyService;
@@ -104,6 +111,9 @@ public class FormDataDeleteService {
         }
         if (!"PUBLISHED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能操作");
+        }
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "delete");
         }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {

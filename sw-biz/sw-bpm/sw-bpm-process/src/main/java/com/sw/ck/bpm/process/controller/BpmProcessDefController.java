@@ -2,10 +2,15 @@ package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.api.dto.*;
 import com.sw.ck.bpm.api.node.BpmNodeCapabilityDTO;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
+import com.sw.ck.bpm.process.entity.BpmCategory;
+import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.mapper.BpmCategoryMapper;
+import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
@@ -23,6 +28,7 @@ import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -48,11 +54,24 @@ public class BpmProcessDefController {
     private final UserQueryFacade userQueryFacade;
     private final BpmNodeRegistry nodeRegistry;
     private final com.sw.ck.bpm.process.service.ProcessThemeService processThemeService;
+    /** 分类/实例数聚合数据源（列表展示字段回填；单元测试经 5 参构造保持 null，回填自动跳过）。 */
+    private final BpmCategoryMapper categoryMapper;
+    private final BpmInstanceMapper instanceMapper;
+    /** Q69（459:14712）租户名回填数据源；单测 5 参构造保持 null，回填自动跳过。 */
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
                                    ObjectMapper objectMapper,
                                    UserQueryFacade userQueryFacade) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, null, null);
+        this(bpmProcessDefService, objectMapper, userQueryFacade, null, null, null, null, null);
+    }
+
+    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
+                                   ObjectMapper objectMapper,
+                                   UserQueryFacade userQueryFacade,
+                                   BpmNodeRegistry nodeRegistry,
+                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService) {
+        this(bpmProcessDefService, objectMapper, userQueryFacade, nodeRegistry, processThemeService, null, null, null);
     }
 
     @Autowired
@@ -60,12 +79,18 @@ public class BpmProcessDefController {
                                    ObjectMapper objectMapper,
                                    UserQueryFacade userQueryFacade,
                                    BpmNodeRegistry nodeRegistry,
-                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService) {
+                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService,
+                                   BpmCategoryMapper categoryMapper,
+                                   BpmInstanceMapper instanceMapper,
+                                   org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
         this.bpmProcessDefService = bpmProcessDefService;
         this.objectMapper = objectMapper;
         this.userQueryFacade = userQueryFacade;
         this.nodeRegistry = nodeRegistry;
         this.processThemeService = processThemeService;
+        this.categoryMapper = categoryMapper;
+        this.instanceMapper = instanceMapper;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
@@ -220,14 +245,133 @@ public class BpmProcessDefController {
      *
      * @param pageParam 分页参数
      * @param formKey   可选，按绑定表单 formKey 精确过滤（表单工作台"关联流程"用）
+     * @param tenantId  可选租户过滤；仅超管生效（owner-20261030-u020-q69-def-tenant），
+     *                  普通调用方传参被忽略（隔离仍由既有租户拦截器保证）；响应回填真实 tenantName
      */
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping
     public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
-                                                 @RequestParam(required = false) String formKey) {
-        PageResult<BpmProcessDef> result = bpmProcessDefService.listDefs(pageParam, formKey);
+                                                 @RequestParam(required = false) String formKey,
+                                                 @RequestParam(required = false) Long tenantId) {
+        com.sw.ck.security.holder.LoginUser user = com.sw.ck.security.holder.LoginUserHolder.get();
+        boolean superAdmin = user != null && user.isSuperAdmin();
+        PageResult<BpmProcessDef> result =
+                bpmProcessDefService.listDefs(pageParam, formKey, superAdmin ? tenantId : null);
         fillCreatorNames(result.getRecords());
+        fillListDisplayFields(result.getRecords());
+        fillTenantNames(result.getRecords());
         return R.ok(result);
+    }
+
+    /** 租户 id→名称映射（复用启用租户选项口径；jdbcTemplate 缺失或读失败为空映射，名称留空）。 */
+    private void fillTenantNames(List<BpmProcessDef> records) {
+        if (records == null || records.isEmpty() || jdbcTemplate == null) {
+            return;
+        }
+        Set<Long> tenantIds = records.stream()
+                .map(BpmProcessDef::getTenantId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (tenantIds.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names;
+        try {
+            names = new java.util.HashMap<>();
+            for (Map<String, Object> row : jdbcTemplate.queryForList(
+                    "SELECT id AS \"id\", name AS \"name\" FROM sys_tenant WHERE deleted = 0")) {
+                Object id = row.get("id");
+                Object name = row.get("name");
+                if (id instanceof Number number && name != null) {
+                    names.put(number.longValue(), String.valueOf(name));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("租户名回填失败（名称留空）: {}", e.getMessage());
+            return;
+        }
+        records.forEach(def -> {
+            if (def.getTenantId() != null) {
+                def.setTenantName(names.get(def.getTenantId()));
+            }
+        });
+    }
+
+    /**
+     * 列表展示字段回填（0.2.0 6:2 分类/更新人/实例数）：数据侧均已存在，逐项批量解析，不逐行查库。
+     * 分类走 category_id → 分类名；更新人 update_by 优先、缺省回退 create_by；
+     * 实例数按 process_key 聚合（与常用流程 TopN 同一聚合口径）。
+     */
+    private void fillListDisplayFields(List<BpmProcessDef> records) {
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+        fillCategoryNames(records);
+        fillUpdatedByNames(records);
+        fillInstanceCounts(records);
+    }
+
+    private void fillCategoryNames(List<BpmProcessDef> records) {
+        if (categoryMapper == null) {
+            return;
+        }
+        Set<Long> categoryIds = records.stream()
+                .map(BpmProcessDef::getCategoryId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (categoryIds.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names = categoryMapper.selectBatchIds(categoryIds).stream()
+                .collect(Collectors.toMap(BpmCategory::getId, BpmCategory::getName, (a, b) -> a));
+        records.forEach(def -> def.setCategoryName(names.get(def.getCategoryId())));
+    }
+
+    private void fillUpdatedByNames(List<BpmProcessDef> records) {
+        Set<Long> updaterIds = records.stream()
+                .map(this::updaterIdOf)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (updaterIds.isEmpty()) {
+            return;
+        }
+        userQueryFacade.getUserDisplayNames(updaterIds)
+                .ifPresent(names -> records.forEach(def -> {
+                    Long updaterId = updaterIdOf(def);
+                    if (updaterId != null) {
+                        def.setUpdatedBy(names.get(updaterId));
+                    }
+                }));
+    }
+
+    private Long updaterIdOf(BpmProcessDef def) {
+        return def.getUpdateBy() != null ? def.getUpdateBy() : def.getCreateBy();
+    }
+
+    private void fillInstanceCounts(List<BpmProcessDef> records) {
+        if (instanceMapper == null) {
+            return;
+        }
+        Set<String> processKeys = records.stream()
+                .map(BpmProcessDef::getProcessKey)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (processKeys.isEmpty()) {
+            return;
+        }
+        List<Map<String, Object>> rows = instanceMapper.selectMaps(
+                Wrappers.<BpmInstance>query()
+                        .select("process_def_key as \"processKey\"", "count(*) as cnt")
+                        .in("process_def_key", processKeys)
+                        .groupBy("process_def_key"));
+        Map<String, Long> counts = rows.stream()
+                .filter(row -> row.get("processKey") != null && row.get("cnt") instanceof Number)
+                .collect(Collectors.toMap(
+                        row -> String.valueOf(row.get("processKey")),
+                        row -> ((Number) row.get("cnt")).longValue(),
+                        (a, b) -> a));
+        records.forEach(def -> def.setInstanceCount(
+                counts.getOrDefault(def.getProcessKey(), 0L)));
     }
 
     /**

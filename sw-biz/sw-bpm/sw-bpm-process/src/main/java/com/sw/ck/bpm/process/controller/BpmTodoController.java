@@ -65,6 +65,7 @@ public class BpmTodoController {
     private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
+    private final com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper;
 
     public BpmTodoController(BpmTaskFacade bpmTaskFacade,
                              BpmInstanceService bpmInstanceService,
@@ -73,7 +74,7 @@ public class BpmTodoController {
                              com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
-                approvalActionService, objectMapper, null);
+                approvalActionService, objectMapper, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -83,7 +84,9 @@ public class BpmTodoController {
                              TaskActionService taskActionService,
                              com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService) {
+                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
+                             @org.springframework.beans.factory.annotation.Autowired(required = false)
+                             com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
@@ -91,6 +94,7 @@ public class BpmTodoController {
         this.approvalActionService = approvalActionService;
         this.objectMapper = objectMapper;
         this.participantNameService = participantNameService;
+        this.deadlineMapper = deadlineMapper;
     }
 
     /**
@@ -112,8 +116,26 @@ public class BpmTodoController {
         long total = bpmTaskFacade.countTodo(tenantId, assignee)
                 .orElse(0L);
 
+        // 3:2 截止标签：批量取本页任务的既有期限（只读展示；无期限不伪造）。
+        // 提醒触发后 run_state 会变为 DONE，但任务仍待办时期限仍然有效（过期如实展示），
+        // 因此只排除 CANCELLED（转办/撤销后失效的旧期限）。
+        java.util.Map<String, LocalDateTime> dueByTask = new java.util.HashMap<>();
+        if (deadlineMapper != null && !tasks.isEmpty()) {
+            java.util.List<String> taskIds = tasks.stream()
+                    .map(BpmTaskDTO::getTaskId).filter(java.util.Objects::nonNull).toList();
+            if (!taskIds.isEmpty()) {
+                for (com.sw.ck.bpm.process.entity.BpmTaskDeadline d : deadlineMapper.selectList(
+                        com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.bpm.process.entity.BpmTaskDeadline>lambdaQuery()
+                                .in(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getTaskId, taskIds)
+                                .ne(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getRunState, "CANCELLED"))) {
+                    if (d.getDueAt() == null) continue;
+                    dueByTask.merge(d.getTaskId(), d.getDueAt(),
+                            (a, b) -> a.isBefore(b) ? a : b);
+                }
+            }
+        }
         List<TodoTaskRespDTO> dtos = tasks.stream()
-                .map(this::toTodoTaskDTO)
+                .map(task -> toTodoTaskDTO(task, dueByTask.get(task.getTaskId())))
                 .collect(Collectors.toList());
 
         log.debug("待办查询: tenantId={}, assignee={}, total={}, pageNum={}, pageSize={}",
@@ -265,6 +287,7 @@ public class BpmTodoController {
         // 发起人与流程实例状态
         bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .ifPresent(instance -> {
+                    dto.setInstanceId(instance.getId());
                     dto.setInitiatorId(instance.getInitiatorId());
                     dto.setInstanceStatus(instance.getStatus());
                     dto.setInitiatorName(taskActionService.resolveUserNames(
@@ -292,8 +315,10 @@ public class BpmTodoController {
         // 已办详情只读：无意见表单、canHandle 恒 false；待办按服务端办理权限判定
         if (finished) {
             dto.setCanHandle(false);
+            dto.setAllowedActions(List.of());
         } else {
             dto.setOpinionForm(taskActionService.resolveOpinionForm(task));
+            dto.setAllowedActions(taskActionService.resolveAllowedActions(task));
             dto.setCanHandle(bpmTaskFacade
                     .canHandle(taskId, String.valueOf(loginUser.getUserId()))
                     .orElse(false));
@@ -338,6 +363,7 @@ public class BpmTodoController {
                 ApprovalActionRecord action = actions.get(item.getTaskId());
                 if (action == null) continue;
                 item.setAction(action.getAction());
+                item.setActionRecordId(action.getId());
                 item.setApprovalResult("APPROVE".equals(action.getAction()) ? "APPROVED"
                         : "REJECT".equals(action.getAction()) ? "REJECTED" : null);
                 item.setOpinionFormId(action.getOpinionFormId());
@@ -408,9 +434,10 @@ public class BpmTodoController {
         return R.ok(pageResult);
     }
 
-    private TodoTaskRespDTO toTodoTaskDTO(BpmTaskDTO task) {
+    private TodoTaskRespDTO toTodoTaskDTO(BpmTaskDTO task, LocalDateTime dueAt) {
         TodoTaskRespDTO dto = new TodoTaskRespDTO();
         dto.setTaskId(task.getTaskId());
+        dto.setDueAt(dueAt);
         dto.setProcessInstanceId(task.getProcessInstanceId());
         // P64 阶段Ⅱ：待办查询含候选组任务（candidateOrAssigned），assignee 为空即候选任务，
         // 前端展示「领取」入口而非直接办理按钮

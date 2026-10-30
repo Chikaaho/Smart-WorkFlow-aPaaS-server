@@ -40,19 +40,22 @@ public class IotReservationDispatchJob {
     private final ObjectProvider<com.sw.ck.iot.util.DeferredControlUtil> senderProvider;
     private final CommandQueueService commandQueueService;
     private final Clock clock;
+    private final com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
 
     public IotReservationDispatchJob(IotCommandReservationMapper reservationMapper,
                                      IotDeviceCommandMapper commandMapper,
                                      IotDeviceService deviceService,
                                      ObjectProvider<com.sw.ck.iot.util.DeferredControlUtil> senderProvider,
                                      CommandQueueService commandQueueService,
-                                     Clock clock) {
+                                     Clock clock,
+                                     com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission) {
         this.reservationMapper = reservationMapper;
         this.commandMapper = commandMapper;
         this.deviceService = deviceService;
         this.senderProvider = senderProvider;
         this.commandQueueService = commandQueueService;
         this.clock = clock;
+        this.tenantWorkAdmission = java.util.Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Scheduled(fixedDelay = 10_000L)
@@ -120,12 +123,13 @@ public class IotReservationDispatchJob {
             }
             return;
         }
-        int claimed = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
+        int claimed = tenantWorkAdmission.claim(reservation.getTenantId(), () -> reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
                 .set(IotCommandReservation::getStatus, "DISPATCHING")
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                 .eq(IotCommandReservation::getId, reservation.getId())
+                .eq(IotCommandReservation::getTenantId, reservation.getTenantId())
                 .eq(IotCommandReservation::getStatus, "PENDING")
-                .eq(IotCommandReservation::getDeleted, 0));
+                .eq(IotCommandReservation::getDeleted, 0)));
         if (claimed != 1) {
             return; // 已被取消/过期：竞争只有一个结果生效
         }

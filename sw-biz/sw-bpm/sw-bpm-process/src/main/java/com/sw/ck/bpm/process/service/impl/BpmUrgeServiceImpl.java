@@ -80,15 +80,33 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
     @Override
     @Transactional
     public UrgeRespDTO urge(Long instanceRecordId) {
+        return urge(instanceRecordId, null, null);
+    }
+
+    @Override
+    @Transactional
+    public UrgeRespDTO urge(Long instanceRecordId, String message) {
+        return urge(instanceRecordId, message, null);
+    }
+
+    @Override
+    @Transactional
+    public UrgeRespDTO urge(Long instanceRecordId, String message, List<Long> recipientIds) {
+        String normalizedMessage = normalizeMessage(message);
         LoginUser loginUser = LoginUserHolder.get();
         BpmInstance instance = bpmInstanceService.getById(instanceRecordId);
         if (instance == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在");
         }
-        if (!loginUser.getUserId().equals(instance.getInitiatorId())) {
+        // empty = 实例标识缺失：与“无活动审批任务”同判拒绝（后续拒绝文案按活动任务空处理）
+        List<BpmTaskDTO> activeTasks = bpmTaskFacade
+                .queryByProcessInstance(instance.getProcessInstanceId())
+                .orElse(List.of());
+        if (!isLegalUrgeOperator(instance, loginUser, activeTasks)) {
             log.warn("催办越权拒绝: instanceId={}, initiator={}, currentUser={}",
                     instanceRecordId, instance.getInitiatorId(), loginUser.getUserId());
-            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅发起人可催办该实例");
+            throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(),
+                    "仅发起人或当前待办参与人可催办该实例");
         }
         // 同实例并发催办进程内串行：未及时拿到锁按受控拒绝收敛（不产生 500）
         ReentrantLock lock = instanceLocks.computeIfAbsent(instanceRecordId, k -> new ReentrantLock());
@@ -103,13 +121,31 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "该实例正在催办中，请勿重复提交");
         }
         try {
-            return doUrge(instance, loginUser, instanceRecordId);
+            return doUrge(instance, loginUser, instanceRecordId, normalizedMessage,
+                    recipientIds, activeTasks);
         } finally {
             lock.unlock();
         }
     }
 
-    private UrgeRespDTO doUrge(BpmInstance instance, LoginUser loginUser, Long instanceRecordId) {
+    /** 合法催办操作者：实例发起人，或当前活动任务的办理人/候选办理人（服务端以引擎状态为准）。 */
+    private boolean isLegalUrgeOperator(BpmInstance instance, LoginUser loginUser,
+                                        List<BpmTaskDTO> activeTasks) {
+        if (loginUser == null || loginUser.getUserId() == null) return false;
+        if (loginUser.getUserId().equals(instance.getInitiatorId())) return true;
+        String uid = String.valueOf(loginUser.getUserId());
+        for (BpmTaskDTO task : activeTasks) {
+            if (uid.equals(task.getAssignee())) return true;
+            if (task.getCandidateUserIds() != null && task.getCandidateUserIds().contains(uid)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private UrgeRespDTO doUrge(BpmInstance instance, LoginUser loginUser, Long instanceRecordId,
+                               String normalizedMessage, List<Long> recipientIds,
+                               List<BpmTaskDTO> activeTasks) {
 
         // 实例行加锁串行化同实例并发催办（H2/PG 语义一致），核对在锁内完成。
         // 并发失败方等待锁期间可能触发 H2 锁等待超时（PG 侧为 lock_timeout/锁冲突异常），
@@ -140,11 +176,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
             }
         }
 
-        // 服务端核对活动审批任务（任务变化/实例结束以引擎当前状态为准）
-        // empty = 实例标识缺失：与“无活动审批任务”同判拒绝
-        List<BpmTaskDTO> activeTasks = bpmTaskFacade
-                .queryByProcessInstance(instance.getProcessInstanceId())
-                .orElse(List.of());
+        // 服务端核对活动审批任务（任务变化/实例结束以引擎当前状态为准；已在入口查询）
         if (activeTasks.isEmpty()) {
             return reject(instance, loginUser.getUserId(), "当前无活动审批任务，不能催办");
         }
@@ -170,10 +202,25 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
             return reject(instance, loginUser.getUserId(), "活动任务无待办人，不能催办");
         }
 
+        // 接收人限定：必须是服务端核定的当前实例合法待办人子集；空 = 旧语义（全部待办人）
+        List<Long> selectedTargets = new java.util.ArrayList<>(targets);
+        if (recipientIds != null && !recipientIds.isEmpty()) {
+            Set<Long> requested = new LinkedHashSet<>();
+            for (Long id : recipientIds) {
+                if (id != null) requested.add(id);
+            }
+            if (requested.isEmpty() || !targets.containsAll(requested)) {
+                log.warn("催办接收人越界拒绝: instanceId={}, requested={}, legal={}",
+                        instanceRecordId, requested, targets);
+                return reject(instance, loginUser.getUserId(), "催办接收人不在当前实例合法待办范围");
+            }
+            selectedTargets = new java.util.ArrayList<>(requested);
+        }
+
         // I6 统一投递权威：催办 = TASK_URGE 事件，渠道/订阅由路由裁决（IN_APP 保底），
         // 每次催办具有新的稳定发生标识（冷却窗批次），站内信至少送达。
-        Long firstTarget = targets.iterator().next();
-        for (Long target : targets) {
+        Long firstTarget = selectedTargets.iterator().next();
+        for (Long target : selectedTargets) {
             java.util.List<NotifyChannel> urgeChannels = notifyRoutingService == null
                     ? java.util.List.of(NotifyChannel.IN_APP)
                     // empty = 事件类型/上下文缺失无法裁决路由：与路由服务缺席同用 IN_APP 保底
@@ -185,7 +232,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                         .channel(channel)
                         .recipientId(target)
                         .title("催办提醒")
-                        .content("您有待办任务被催办：实例 " + instance.getProcessInstanceId())
+                        .content(urgeContent(instance.getProcessInstanceId(), normalizedMessage))
                         .bizType(NotifyBizType.WF_TODO)
                         .bizId(instance.getProcessInstanceId())
                         .tenantId(loginUser.getTenantId())
@@ -204,14 +251,39 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         record.setInitiatorId(loginUser.getUserId());
         record.setTargetUserId(firstTarget);
         record.setResult(RESULT_ACCEPTED);
-        record.setDetail("已通知待办人: " + targets);
+        record.setDetail(urgeDetail(targets, normalizedMessage));
         record.setCooldownKey("t:" + loginUser.getTenantId() + ":i:" + instance.getProcessInstanceId()
                 + ":b:" + (System.currentTimeMillis() / 600000L));
         urgeRecordMapper.insert(record);
         log.info("催办已受理: instance={}, operator={}, targets={}",
                 instance.getProcessInstanceId(), loginUser.getUserId(), targets);
         return UrgeRespDTO.builder().result(RESULT_ACCEPTED)
-                .detail("已通知待办人: " + targets).recordId(record.getId()).build();
+                .detail(urgeDetail(targets, normalizedMessage)).recordId(record.getId()).build();
+    }
+
+    /** 留言规范化：去空白；超长（>200）拒绝，避免通知与留痕被超长内容撑爆。 */
+    private String normalizeMessage(String message) {
+        if (message == null) {
+            return null;
+        }
+        String trimmed = message.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.length() > 200) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "催办留言最长 200 字");
+        }
+        return trimmed;
+    }
+
+    private String urgeContent(String processInstanceId, String message) {
+        String base = "您有待办任务被催办：实例 " + processInstanceId;
+        return message == null ? base : base + "；留言：" + message;
+    }
+
+    private String urgeDetail(Set<Long> targets, String message) {
+        String base = "已通知待办人: " + targets;
+        return message == null ? base : base + "；留言：" + message;
     }
 
     /** 同一冷却窗口内并发催办共享同一发生次序（10 分钟窗，与既有冷却唯一键同粒度）。 */

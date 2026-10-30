@@ -30,7 +30,18 @@ class UserControllerTest {
     private final SysUserService sysUserService = mock(SysUserService.class);
     private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
             mock(com.sw.ck.system.api.user.UserQueryFacade.class);
-    private final UserController controller = new UserController(sysUserService, userQueryFacade);
+    private final com.sw.ck.system.service.ManagementTenantContext tenantContext =
+            mock(com.sw.ck.system.service.ManagementTenantContext.class);
+    private final UserController controller = new UserController(sysUserService, userQueryFacade, tenantContext);
+
+    @org.junit.jupiter.api.BeforeEach
+    void defaultOwnedObject() {
+        when(tenantContext.readTarget(nullable(Long.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        com.sw.ck.system.entity.SysUser owner = new com.sw.ck.system.entity.SysUser();
+        owner.setId(1L);
+        owner.setTenantId(1L);
+        when(sysUserService.getById(1L)).thenReturn(owner);
+    }
 
     // ==================== GET /options — 选择器候选（V012-BUG-019） ====================
 
@@ -38,10 +49,10 @@ class UserControllerTest {
     @DisplayName("options → 命中返回最小展示字段列表，limit 封顶 200")
     void options_shouldReturnMinimalOptions() {
         UserOptionDTO opt = new UserOptionDTO(1L, "admin", "系统管理员");
-        when(userQueryFacade.searchActiveUsers(eq("系统"), eq(200)))
+        when(userQueryFacade.searchActiveUsers(eq("系统"), eq(200), eq(false)))
                 .thenReturn(java.util.Optional.of(List.of(opt)));
 
-        var resp = controller.options("系统", 500);
+        var resp = controller.options("系统", 500, false);
 
         assertThat(resp.getData()).hasSize(1);
         assertThat(resp.getData().get(0).getId()).isEqualTo(1L);
@@ -49,11 +60,25 @@ class UserControllerTest {
     }
 
     @Test
+    @DisplayName("options includeDept → 透传部门查询（表单脚本组织成员）并返回 deptId")
+    void options_includeDept_shouldPassThrough() {
+        UserOptionDTO opt = new UserOptionDTO(2L, "zhangsan", "张三", 10L);
+        when(userQueryFacade.searchActiveUsers(org.mockito.ArgumentMatchers.isNull(), eq(200), eq(true)))
+                .thenReturn(java.util.Optional.of(List.of(opt)));
+
+        var resp = controller.options(null, 200, true);
+
+        assertThat(resp.getData()).hasSize(1);
+        assertThat(resp.getData().get(0).getDeptId()).isEqualTo(10L);
+    }
+
+    @Test
     @DisplayName("options → 门面返回 empty（无租户上下文）时回退空列表而非失败")
     void options_shouldFallBackToEmptyOnEmptyFacade() {
-        when(userQueryFacade.searchActiveUsers(any(), anyInt())).thenReturn(java.util.Optional.empty());
+        when(userQueryFacade.searchActiveUsers(any(), anyInt(), eq(false)))
+                .thenReturn(java.util.Optional.empty());
 
-        var resp = controller.options(null, 50);
+        var resp = controller.options(null, 50, false);
 
         assertThat(resp.getData()).isEmpty();
     }
