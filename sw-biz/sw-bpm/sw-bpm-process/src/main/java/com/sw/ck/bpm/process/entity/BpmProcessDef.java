@@ -133,4 +133,11 @@ public class BpmProcessDef extends BaseEntity {
      */
     @TableField(exist = false)
     private Long instanceCount;
+
+    /**
+     * 租户名（列表响应回填，非表列）：由 tenantId 批量解析 sys_tenant.name
+     * （owner-20261030-u020-q69-def-tenant；读失败留空）。
+     */
+    @TableField(exist = false)
+    private String tenantName;
 }

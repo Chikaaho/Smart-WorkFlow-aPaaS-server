@@ -57,11 +57,13 @@ public class BpmProcessDefController {
     /** 分类/实例数聚合数据源（列表展示字段回填；单元测试经 5 参构造保持 null，回填自动跳过）。 */
     private final BpmCategoryMapper categoryMapper;
     private final BpmInstanceMapper instanceMapper;
+    /** Q69（459:14712）租户名回填数据源；单测 5 参构造保持 null，回填自动跳过。 */
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
                                    ObjectMapper objectMapper,
                                    UserQueryFacade userQueryFacade) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, null, null, null, null);
+        this(bpmProcessDefService, objectMapper, userQueryFacade, null, null, null, null, null);
     }
 
     public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
@@ -69,7 +71,7 @@ public class BpmProcessDefController {
                                    UserQueryFacade userQueryFacade,
                                    BpmNodeRegistry nodeRegistry,
                                    com.sw.ck.bpm.process.service.ProcessThemeService processThemeService) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, nodeRegistry, processThemeService, null, null);
+        this(bpmProcessDefService, objectMapper, userQueryFacade, nodeRegistry, processThemeService, null, null, null);
     }
 
     @Autowired
@@ -79,7 +81,8 @@ public class BpmProcessDefController {
                                    BpmNodeRegistry nodeRegistry,
                                    com.sw.ck.bpm.process.service.ProcessThemeService processThemeService,
                                    BpmCategoryMapper categoryMapper,
-                                   BpmInstanceMapper instanceMapper) {
+                                   BpmInstanceMapper instanceMapper,
+                                   org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
         this.bpmProcessDefService = bpmProcessDefService;
         this.objectMapper = objectMapper;
         this.userQueryFacade = userQueryFacade;
@@ -87,6 +90,7 @@ public class BpmProcessDefController {
         this.processThemeService = processThemeService;
         this.categoryMapper = categoryMapper;
         this.instanceMapper = instanceMapper;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
@@ -241,15 +245,56 @@ public class BpmProcessDefController {
      *
      * @param pageParam 分页参数
      * @param formKey   可选，按绑定表单 formKey 精确过滤（表单工作台"关联流程"用）
+     * @param tenantId  可选租户过滤；仅超管生效（owner-20261030-u020-q69-def-tenant），
+     *                  普通调用方传参被忽略（隔离仍由既有租户拦截器保证）；响应回填真实 tenantName
      */
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping
     public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
-                                                 @RequestParam(required = false) String formKey) {
-        PageResult<BpmProcessDef> result = bpmProcessDefService.listDefs(pageParam, formKey);
+                                                 @RequestParam(required = false) String formKey,
+                                                 @RequestParam(required = false) Long tenantId) {
+        com.sw.ck.security.holder.LoginUser user = com.sw.ck.security.holder.LoginUserHolder.get();
+        boolean superAdmin = user != null && user.isSuperAdmin();
+        PageResult<BpmProcessDef> result =
+                bpmProcessDefService.listDefs(pageParam, formKey, superAdmin ? tenantId : null);
         fillCreatorNames(result.getRecords());
         fillListDisplayFields(result.getRecords());
+        fillTenantNames(result.getRecords());
         return R.ok(result);
+    }
+
+    /** 租户 id→名称映射（复用启用租户选项口径；jdbcTemplate 缺失或读失败为空映射，名称留空）。 */
+    private void fillTenantNames(List<BpmProcessDef> records) {
+        if (records == null || records.isEmpty() || jdbcTemplate == null) {
+            return;
+        }
+        Set<Long> tenantIds = records.stream()
+                .map(BpmProcessDef::getTenantId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (tenantIds.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names;
+        try {
+            names = new java.util.HashMap<>();
+            for (Map<String, Object> row : jdbcTemplate.queryForList(
+                    "SELECT id AS \"id\", name AS \"name\" FROM sys_tenant WHERE deleted = 0")) {
+                Object id = row.get("id");
+                Object name = row.get("name");
+                if (id instanceof Number number && name != null) {
+                    names.put(number.longValue(), String.valueOf(name));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("租户名回填失败（名称留空）: {}", e.getMessage());
+            return;
+        }
+        records.forEach(def -> {
+            if (def.getTenantId() != null) {
+                def.setTenantName(names.get(def.getTenantId()));
+            }
+        });
     }
 
     /**

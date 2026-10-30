@@ -158,7 +158,7 @@ class BpmProcessDefControllerAuthorizationTest {
                     .thenReturn(java.util.Optional.of(List.of()));
             BpmProcessDefService service = mock(BpmProcessDefService.class);
             // 列表网关放行后控制器读取分页结果，桩需返回真实空页而非 null
-            when(service.listDefs(any(), any())).thenReturn(PageResult.empty());
+            when(service.listDefs(any(), any(), any())).thenReturn(PageResult.empty());
             return new BpmProcessDefController(service,
                     new ObjectMapper(), mock(UserQueryFacade.class), registry,
                     mock(com.sw.ck.bpm.process.service.ProcessThemeService.class));
