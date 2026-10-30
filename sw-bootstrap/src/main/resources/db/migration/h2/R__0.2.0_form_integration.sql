@@ -1,5 +1,28 @@
 -- 0.2.0 表单受控集成：能力副作用登记、写副作用幂等账本、最小调用权限。
 -- 可重复执行；不保存秘密，不暴露外部 URL 给表单层。
+-- 存量库自足：sw_agent_tool_external 仅由基线种子在全新库创建，早期升级通道衔接的存量库
+-- 可能尚未含该表；本对账按种子原文幂等补表补索引后再补列，任意受支持入口均可执行。
+
+CREATE TABLE IF NOT EXISTS sw_agent_tool_external (
+    id              BIGINT NOT NULL PRIMARY KEY,
+    name            VARCHAR(100) NOT NULL,
+    description     VARCHAR(500) NOT NULL,
+    input_schema    CLOB,
+    url             VARCHAR(500) NOT NULL,
+    http_method     VARCHAR(10) NOT NULL DEFAULT 'POST',
+    timeout_seconds INT NOT NULL DEFAULT 30,
+    enabled         SMALLINT NOT NULL DEFAULT 1,
+    remark          VARCHAR(500),
+    create_time     TIMESTAMP,
+    create_by       VARCHAR(64),
+    update_time     TIMESTAMP,
+    update_by       VARCHAR(64),
+    deleted         SMALLINT NOT NULL DEFAULT 0,
+    tenant_id       BIGINT NOT NULL DEFAULT 0,
+    version         BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_sw_agent_tool_external_tenant_deleted ON sw_agent_tool_external (tenant_id, deleted);
 
 ALTER TABLE sw_agent_tool_external
     ADD COLUMN IF NOT EXISTS effect_scope varchar(16);
