@@ -118,11 +118,13 @@ public interface BpmProcessDefService {
     /**
      * 分页查询流程定义列表（不含 graph_json 大字段）。
      *
-     * @param pageParam 分页参数
-     * @param formKey   可选，按绑定表单 formKey 精确过滤（为空不过滤）
+     * @param pageParam      分页参数
+     * @param formKey        可选，按绑定表单 formKey 精确过滤（为空不过滤）
+     * @param tenantIdFilter 可选，按租户过滤；仅超管传入（调用方门控），普通调用方恒为 null，
+     *                       普通租户隔离仍由既有租户拦截器保证（owner-20261030-u020-q69-def-tenant）
      * @return 分页结果
      */
-    PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey);
+    PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey, Long tenantIdFilter);
 
     // 0.1.7 #21：流程定义不提供删除（发布/运行/历史引用不可逆，禁删）。
 

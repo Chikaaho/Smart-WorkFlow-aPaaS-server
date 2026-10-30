@@ -62,4 +62,16 @@ class ApprovalUserTaskDesignatedAssigneeTest {
         UserTask task = (UserTask) translator.translate(approvalNode(null));
         assertNull(task.getAssignee());
     }
+    @Test
+    void allowedActionsAreValidatedBeforePublishing() {
+        GraphElement node = approvalNode(Map.of("type", "DESIGNATED", "value", List.of("1")));
+        node.getConfig().put("allowedActions", List.of());
+        assertEquals(0, translator.validateConfig(node).orElseThrow().size());
+        node.getConfig().put("allowedActions", List.of("APPROVE", "TRANSFER"));
+        assertEquals(0, translator.validateConfig(node).orElseThrow().size());
+        node.getConfig().put("allowedActions", List.of("UNKNOWN"));
+        assertEquals(1, translator.validateConfig(node).orElseThrow().size());
+        node.getConfig().put("allowedActions", "APPROVE");
+        assertEquals(1, translator.validateConfig(node).orElseThrow().size());
+    }
 }

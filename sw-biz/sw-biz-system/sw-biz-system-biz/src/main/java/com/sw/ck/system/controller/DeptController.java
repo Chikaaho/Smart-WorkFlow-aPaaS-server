@@ -18,9 +18,12 @@ import java.util.List;
 public class DeptController {
 
     private final SysDeptService sysDeptService;
+    private final com.sw.ck.system.service.ManagementTenantContext tenantContext;
 
-    public DeptController(SysDeptService sysDeptService) {
+    public DeptController(SysDeptService sysDeptService,
+                          com.sw.ck.system.service.ManagementTenantContext tenantContext) {
         this.sysDeptService = sysDeptService;
+        this.tenantContext = tenantContext;
     }
 
     /**
@@ -35,11 +38,15 @@ public class DeptController {
     @GetMapping("/tree")
     @PreAuthorize("@ss.hasPermi('system:dept:list')")
     public R<List<SysDept>> tree(@RequestParam(required = false) String name,
-                                 @RequestParam(required = false) Integer status) {
+                                 @RequestParam(required = false) Integer status,
+                                 @RequestParam(required = false) Long tenantId) {
         DeptQuery query = new DeptQuery();
         query.setName(name);
         query.setStatus(status);
-        return R.ok(sysDeptService.listTree(query));
+        query.setTenantId(tenantContext.readTarget(tenantId));
+        List<SysDept> rows = sysDeptService.listTree(query);
+        tenantContext.decorateDepartments(rows);
+        return R.ok(rows);
     }
 
     /**
@@ -48,7 +55,9 @@ public class DeptController {
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:dept:list')")
     public R<SysDept> get(@PathVariable Long id) {
-        return R.ok(sysDeptService.getById(id));
+        SysDept dept = sysDeptService.getById(id);
+        if (dept != null) tenantContext.decorateDepartments(List.of(dept));
+        return R.ok(dept);
     }
 
     /**
@@ -57,6 +66,7 @@ public class DeptController {
     @PostMapping
     @PreAuthorize("@ss.hasPermi('system:dept:create')")
     public R<Long> create(@Valid @RequestBody SysDept dept) {
+        dept.setTenantId(tenantContext.createTarget(dept.getTenantId()));
         return R.ok(sysDeptService.create(dept));
     }
 
@@ -66,6 +76,8 @@ public class DeptController {
     @PutMapping
     @PreAuthorize("@ss.hasPermi('system:dept:update')")
     public R<Void> update(@Valid @RequestBody SysDept dept) {
+        SysDept owner = requireManagementDepartment(dept.getId());
+        dept.setTenantId(tenantContext.updateTarget(dept.getTenantId(), owner.getTenantId()));
         sysDeptService.update(dept);
         return R.ok();
     }
@@ -76,7 +88,14 @@ public class DeptController {
     @DeleteMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:dept:delete')")
     public R<Void> delete(@PathVariable Long id) {
+        tenantContext.updateTarget(null, requireManagementDepartment(id).getTenantId());
         sysDeptService.delete(id);
         return R.ok();
+    }
+    private SysDept requireManagementDepartment(Long id) {
+        SysDept dept = sysDeptService.getById(id);
+        if (dept == null) throw new com.sw.ck.common.exception.BaseException(
+                com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "部门不存在或无权访问");
+        return dept;
     }
 }

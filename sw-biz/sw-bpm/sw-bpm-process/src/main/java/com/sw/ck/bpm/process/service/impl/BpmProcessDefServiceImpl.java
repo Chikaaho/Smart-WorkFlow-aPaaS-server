@@ -223,11 +223,15 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    public PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey) {
+    public PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey, Long tenantIdFilter) {
         LambdaQueryWrapper<BpmProcessDef> wrapper = Wrappers.<BpmProcessDef>lambdaQuery()
                 .orderByDesc(BpmProcessDef::getUpdateTime);
         if (formKey != null && !formKey.isBlank()) {
             wrapper.eq(BpmProcessDef::getFormKey, formKey.trim());
+        }
+        // owner-20261030-u020-q69-def-tenant：租户过滤仅超管门控后传入，普通调用方恒 null（隔离由既有租户拦截器保证）
+        if (tenantIdFilter != null) {
+            wrapper.eq(BpmProcessDef::getTenantId, tenantIdFilter);
         }
         PageResult<BpmProcessDef> result = mapper.selectPage(pageParam, wrapper);
         // 列表不返回 graph_json 大字段
@@ -302,6 +306,13 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
             List<GraphValidationError> p64Errors = processVariableValidator.validate(graph);
             if (p64Errors != null && !p64Errors.isEmpty()) {
                 GraphValidationError first = p64Errors.get(0);
+                throw new BaseException(first.getErrorCode(), first.getMessage());
+            }
+            // 50:88 结束通知：接收对象/渠道/其他接收人租户与启用状态
+            List<GraphValidationError> notifyErrors =
+                    processVariableValidator.validateNotification(graph, def.getTenantId());
+            if (notifyErrors != null && !notifyErrors.isEmpty()) {
+                GraphValidationError first = notifyErrors.get(0);
                 throw new BaseException(first.getErrorCode(), first.getMessage());
             }
         }

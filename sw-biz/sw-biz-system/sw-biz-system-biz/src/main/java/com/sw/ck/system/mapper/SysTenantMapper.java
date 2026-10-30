@@ -16,4 +16,8 @@ public interface SysTenantMapper extends BaseMapperX<SysTenant> {
     /** 按主键全局读取（挂起租户过滤）。 */
     @Select("SELECT * FROM sys_tenant WHERE id = #{id} AND deleted = 0")
     SysTenant selectGlobalById(@Param("id") Long id);
+
+    /** 租户管理与后台认领串行化；必须在事务内调用，权限由调用服务校验。 */
+    @Select("SELECT * FROM sys_tenant WHERE id = #{id} AND deleted = 0 FOR UPDATE")
+    SysTenant selectGlobalByIdForUpdate(@Param("id") Long id);
 }

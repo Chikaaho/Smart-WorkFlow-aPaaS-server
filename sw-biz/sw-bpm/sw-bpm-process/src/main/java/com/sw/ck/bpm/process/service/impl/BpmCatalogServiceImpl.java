@@ -73,10 +73,17 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
     }
 
     @Override
-    public java.util.List<com.sw.ck.bpm.process.entity.BpmCategory> portalCategories() {
+    public java.util.List<com.sw.ck.bpm.process.dto.CategoryDTO> portalCategories() {
         return categoryMapper.selectList(
-                Wrappers.<com.sw.ck.bpm.process.entity.BpmCategory>lambdaQuery()
-                        .orderByAsc(com.sw.ck.bpm.process.entity.BpmCategory::getSortNo));
+                        Wrappers.<com.sw.ck.bpm.process.entity.BpmCategory>lambdaQuery()
+                                .orderByAsc(com.sw.ck.bpm.process.entity.BpmCategory::getSortNo))
+                .stream()
+                .map(category -> com.sw.ck.bpm.process.dto.CategoryDTO.builder()
+                        .id(category.getId())
+                        .name(category.getName())
+                        .sortNo(category.getSortNo())
+                        .build())
+                .toList();
     }
 
     @Override

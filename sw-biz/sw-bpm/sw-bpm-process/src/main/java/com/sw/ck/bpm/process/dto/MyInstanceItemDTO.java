@@ -39,5 +39,12 @@ public class MyInstanceItemDTO {
     /** 实例状态：RUNNING / APPROVED / REJECTED / FAILED / WITHDRAWN / DISCARDED。 */
     private String status;
 
+    /**
+     * 当前节点展示名（列表补充，0.2.0 4:2）：
+     * RUNNING = 当前活动任务名；APPROVED = 流程定义 END 节点名（定义未命名时为 null）；
+     * 其他终态为 null。仅展示，不参与状态机语义。
+     */
+    private String currentNode;
+
     private LocalDateTime createTime;
 }

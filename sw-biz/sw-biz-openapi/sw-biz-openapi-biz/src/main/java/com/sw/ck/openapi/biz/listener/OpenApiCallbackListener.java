@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.common.constant.CommonConstants;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
@@ -43,11 +44,14 @@ public class OpenApiCallbackListener {
 
     private final OpenApiAppMapper appMapper;
     private final OpenApiCallbackDeliveryService deliveryService;
+    private final TenantWorkAdmission tenantWorkAdmission;
 
     public OpenApiCallbackListener(OpenApiAppMapper appMapper,
-                                   OpenApiCallbackDeliveryService deliveryService) {
+                                   OpenApiCallbackDeliveryService deliveryService,
+                                   TenantWorkAdmission tenantWorkAdmission) {
         this.appMapper = appMapper;
         this.deliveryService = deliveryService;
+        this.tenantWorkAdmission = tenantWorkAdmission;
     }
 
     @Async
@@ -62,6 +66,11 @@ public class OpenApiCallbackListener {
             // 后台投递以事件携带的权威租户为唯一身份来源；缺失即拒绝，不得退化为全局查询
             log.warn("回调事件缺少权威租户身份，拒绝处理: trigger={}, bizId={}",
                     event.getTrigger(), event.getBizId());
+            return;
+        }
+        if (tenantWorkAdmission.claim(tenantId, () -> 1) == 0) {
+            log.info("回调加速投递暂停：租户未启用、已过期或缺失: tenantId={}, bizId={}",
+                    tenantId, event.getBizId());
             return;
         }
         // @Async 线程无请求线程身份：按事件租户还原执行身份后投递，租户行过滤保持生效

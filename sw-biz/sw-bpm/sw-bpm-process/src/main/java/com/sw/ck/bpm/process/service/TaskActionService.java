@@ -1,5 +1,8 @@
 package com.sw.ck.bpm.process.service;
 
+import com.sw.ck.bpm.api.node.NodeActionPolicy;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
@@ -26,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -70,6 +74,10 @@ public class TaskActionService {
     /** P64 阶段Ⅱ：主子流程编排（可选装配；无 CHILD 动作/批次零行为）。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
+
+    /** 50:88 结束通知配置解析（可选装配；未装配/旧定义保持原行为）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ProcessEndNotificationResolver endNotificationResolver;
 
     private com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService() {
         return nodeFormDataProvider == null ? null : nodeFormDataProvider.getIfAvailable();
@@ -301,16 +309,18 @@ public class TaskActionService {
         ApprovalAction action = effectiveRequest.getAction() == null ? ApprovalAction.APPROVE
                 : effectiveRequest.getAction();
         effectiveRequest.setAction(action);
+        assertNodeActionAllowed(task, action);
         // empty = 实例标识缺失或该实例不存在：按原有“无流程变量”结论继续（不阻断动作）
         Map<String, Object> processVariables = bpmTaskFacade.getVariables(processInstanceId)
                 .orElse(Map.of());
         // I3 动作资格：任务存在待处理加签时，普通办理（APPROVE/DISAPPROVE/REJECT/
         // RETURN）必须先等加签完成或取消（生命周期门）。
         com.sw.ck.bpm.process.service.ApprovalLifecycleService lifecycleService = lifecycle();
-        if (lifecycleService != null && !legacyInvocation) {
+        if (lifecycleService != null) {
             lifecycleService.assertNoPendingSign(taskId);
         }
         ApprovalOpinionValidator.validate(effectiveRequest, resolveOpinionForm(task), processVariables);
+        verifyOpinionUsers(effectiveRequest, resolveOpinionForm(task), loginUser);
         if (action == ApprovalAction.RETURN) {
             if (effectiveRequest.getReturnTargetNodeId() == null
                     || effectiveRequest.getReturnTargetNodeId().isBlank()) {
@@ -546,8 +556,76 @@ public class TaskActionService {
         }
     }
 
+    public List<String> resolveAllowedActions(BpmTaskDTO task) {
+        try {
+            return NodeActionPolicy.resolve(task.getNodeConfig())
+                    .orElseThrow(() -> new IllegalArgumentException("节点允许操作配置无效"));
+        } catch (IllegalArgumentException e) {
+            throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
+                    "节点允许操作配置无效");
+        }
+    }
+
+    public void assertNodeActionAllowed(BpmTaskDTO task, ApprovalAction action) {
+        if (action == null || !resolveAllowedActions(task).contains(action.name())) {
+            throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
+                    "当前节点不允许此操作");
+        }
+    }
+
     /** 解析任务节点的意见表单配置（详情与动作校验共用）。 */
+    /**
+     * 意见表单人员字段的租户边界（direction-ui-completion-020）：
+     * 提交的稳定用户 ID 必须全部是当前租户的启用用户；显示名不参与校验、不替代 ID。
+     * 无人员字段或旧意见字段（TEXT 等）不受影响。
+     */
+    private void verifyOpinionUsers(ApprovalActionRequest request,
+                                    Map<String, Object> opinionForm,
+                                    com.sw.ck.security.holder.LoginUser loginUser) {
+        Object rawFields = opinionForm == null ? null : opinionForm.get("fields");
+        if (!(rawFields instanceof Collection<?> fields) || request.getOpinionData() == null) {
+            return;
+        }
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        for (Object rawField : fields) {
+            if (!(rawField instanceof Map<?, ?> field)) continue;
+            Object type = field.get("type");
+            if (type == null || !"USER".equalsIgnoreCase(String.valueOf(type).trim())) continue;
+            Object key = field.get("key");
+            if (key == null || String.valueOf(key).isBlank()) continue;
+            Object value = request.getOpinionData().get(String.valueOf(key).trim());
+            if (value == null) continue;
+            Collection<?> values = value instanceof Collection<?> collection
+                    ? collection : java.util.List.of(value);
+            for (Object item : values) {
+                if (item == null) continue;
+                String text = String.valueOf(item).trim();
+                if (text.isEmpty()) continue;
+                try {
+                    ids.add(Long.parseLong(text));
+                } catch (NumberFormatException e) {
+                    throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+                }
+            }
+        }
+        if (ids.isEmpty() || userQueryFacade == null) return;
+        java.util.List<Long> active = userQueryFacade
+                .findActiveUserIds(ids, loginUser.getTenantId())
+                .orElse(java.util.List.of());
+        if (!new java.util.HashSet<>(active).containsAll(ids)) {
+            throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+        }
+    }
+
     public Map<String, Object> resolveOpinionForm(BpmTaskDTO task) {
+        if (task.getNodeConfig() != null) {
+            Object frozen = task.getNodeConfig().get("opinionForm");
+            if (frozen == null) return Map.of();
+            if (!(frozen instanceof Map<?, ?>)) {
+                throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
+            }
+            return (Map<String, Object>) frozen;
+        }
         if (bpmProcessDefService == null || objectMapper == null
                 || task.getProcessDefinitionKey() == null || task.getTaskDefinitionKey() == null) {
             return Map.of();
@@ -813,6 +891,19 @@ public class TaskActionService {
         if (instance == null) {
             log.warn("流程实例记录不存在: processInstanceId={}，跳过 {} 通知",
                     processInstanceId, trigger);
+            return;
+        }
+
+        if (trigger == BpmNotifyTrigger.PROCESS_APPROVED && endNotificationResolver != null) {
+            List<BpmNotifyEvent> configured = endNotificationResolver.resolveApproved(
+                    instance, loginUser.getUserId());
+            if (configured.isEmpty()) {
+                log.info("结束通知配置无可解析接收人，不发送: processInstanceId={}", processInstanceId);
+                return;
+            }
+            configured.forEach(domainEventPublisher::publish);
+            log.info("结束通知事件已发布: processInstanceId={}, recipients={}",
+                    processInstanceId, configured.size());
             return;
         }
 

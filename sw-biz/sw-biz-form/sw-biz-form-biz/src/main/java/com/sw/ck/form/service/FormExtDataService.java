@@ -7,8 +7,14 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.ExtQueryResult;
 import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.port.ExtDatasourceGrantPort;
 import com.sw.ck.form.api.port.ExtDatasourceQueryPort;
+import com.sw.ck.form.dto.ExtQueryContractView;
+import com.sw.ck.form.entity.FormConfigEntity;
+import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormExtQueryEntity;
+import com.sw.ck.form.mapper.FormConfigMapper;
+import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormExtQueryMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -46,13 +52,25 @@ public class FormExtDataService {
 
     private final FormExtQueryMapper extQueryMapper;
     private final ObjectProvider<ExtDatasourceQueryPort> queryPort;
+    private final ObjectProvider<ExtDatasourceGrantPort> grantPort;
+    private final FormDefMapper formDefMapper;
+    private final FormConfigMapper formConfigMapper;
+    private final FieldPermissionService fieldPermissionService;
     private final ObjectMapper objectMapper;
 
     public FormExtDataService(FormExtQueryMapper extQueryMapper,
                               ObjectProvider<ExtDatasourceQueryPort> queryPort,
+                              ObjectProvider<ExtDatasourceGrantPort> grantPort,
+                              FormDefMapper formDefMapper,
+                              FormConfigMapper formConfigMapper,
+                              FieldPermissionService fieldPermissionService,
                               ObjectMapper objectMapper) {
         this.extQueryMapper = extQueryMapper;
         this.queryPort = queryPort;
+        this.grantPort = grantPort;
+        this.formDefMapper = formDefMapper;
+        this.formConfigMapper = formConfigMapper;
+        this.fieldPermissionService = fieldPermissionService;
         this.objectMapper = objectMapper;
     }
 
@@ -70,6 +88,7 @@ public class FormExtDataService {
             throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID.getCode(),
                     "datasourceId 非法");
         }
+        requireReferenceAllowed(datasourceId);
         if (queryKey == null || !queryKey.matches("[a-z][a-z0-9_]{0,63}")) {
             throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID.getCode(),
                     "queryKey 必须匹配 [a-z][a-z0-9_]{0,63}");
@@ -124,6 +143,57 @@ public class FormExtDataService {
         return entity;
     }
 
+    // ==================== 契约清单与启停（F020） ====================
+
+    /**
+     * 契约清单（每个 queryKey 取最新版本）：按当前登录主体的引用授权过滤，
+     * 数据源管理员可见全部；SQL 文本不进入视图。
+     */
+    public List<ExtQueryContractView> listContracts(String queryKey, Integer enabled) {
+        requireGrantPort();
+        List<FormExtQueryEntity> rows = extQueryMapper.selectList(
+                Wrappers.lambdaQuery(FormExtQueryEntity.class)
+                        .like(queryKey != null && !queryKey.isBlank(), FormExtQueryEntity::getQueryKey,
+                                queryKey == null ? null : queryKey.trim())
+                        .orderByAsc(FormExtQueryEntity::getQueryKey)
+                        .orderByDesc(FormExtQueryEntity::getQueryVersion));
+        Set<Long> allowed = grantPort.getIfAvailable().referenceAllowedDatasourceIds()
+                .orElseGet(java.util.Set::of);
+        Map<String, FormExtQueryEntity> latestByKey = new LinkedHashMap<>();
+        for (FormExtQueryEntity row : rows) {
+            latestByKey.putIfAbsent(row.getQueryKey(), row);
+        }
+        List<ExtQueryContractView> views = new ArrayList<>();
+        for (FormExtQueryEntity row : latestByKey.values()) {
+            if (enabled != null && !enabled.equals(row.getEnabled())) {
+                continue;
+            }
+            if (!allowed.contains(row.getDatasourceId())) {
+                continue;
+            }
+            views.add(new ExtQueryContractView(row.getQueryKey(), row.getQueryVersion(),
+                    row.getDatasourceId(), outputFieldsAsMaps(row), row.getEnabled()));
+        }
+        return views;
+    }
+
+    /**
+     * 契约启停（作用于最新版本）：停用后设计预览与运行读取返回既有
+     * {@link FormErrorCode#EXT_QUERY_DISABLED} 语义，历史回看不受影响。
+     */
+    public FormExtQueryEntity setContractEnabled(String queryKey, boolean enabled) {
+        FormExtQueryEntity entity = findLatest(queryKey);
+        if (entity == null) {
+            throw new BaseException(FormErrorCode.EXT_QUERY_NOT_FOUND,
+                    "外部数据源查询契约不存在: " + queryKey);
+        }
+        entity.setEnabled(enabled ? 1 : 0);
+        extQueryMapper.updateById(entity);
+        log.info("Ext query contract {}: key={}, version={}", enabled ? "enabled" : "disabled",
+                queryKey, entity.getQueryVersion());
+        return entity;
+    }
+
     // ==================== 绑定校验（发布期） ====================
 
     /**
@@ -143,6 +213,7 @@ public class FormExtDataService {
             throw new BaseException(FormErrorCode.EXT_QUERY_DISABLED,
                     "外部数据源查询契约已停用: " + queryKey);
         }
+        requireReferenceAllowed(entity.getDatasourceId());
         Set<String> outputNames = outputFieldNames(entity);
         if (!outputNames.contains(valueField) || !outputNames.contains(displayField)) {
             throw new BaseException(FormErrorCode.EXT_OUTPUT_MISMATCH,
@@ -153,10 +224,62 @@ public class FormExtDataService {
     // ==================== 预览与对象解析（同一服务端入口） ====================
 
     /**
-     * 设计预览/运行读取：执行契约查询（行数已由执行引擎上限约束）。
+     * 设计预览/运行读取（同一服务端入口）：执行契约查询（行数已由执行引擎上限约束）。
+     * <p>
+     * BE020-G1 准入语义：本方法为<b>设计预览</b>路径——检查当前设计授权，撤权后
+     * 直接构造同 queryKey 预览被拒绝；运行读取走
+     * {@link #previewForPublishedBinding(String, Integer, String, String)}。
+     * </p>
      */
     public ExtQueryResult preview(String queryKey, Integer version) {
         FormExtQueryEntity entity = resolveEnabled(queryKey, version);
+        requireReferenceAllowed(entity.getDatasourceId());
+        return executeContract(entity);
+    }
+
+    /**
+     * 已发布表单的运行读取（BE020-G1）：仅接受具体发布绑定——formKey 的已发布表单中
+     * fieldName 字段为 DATASOURCE 且 dsBinding 命中本 queryKey，且当前运行人具备该字段
+     * 查看权。不追溯检查原设计者的引用授权；知道 queryKey 但无绑定/字段资格者拒绝。
+     */
+    public ExtQueryResult previewForPublishedBinding(String queryKey, Integer version,
+                                                     String formKey, String fieldName) {
+        FormDefEntity def = formDefMapper.selectOne(Wrappers.lambdaQuery(FormDefEntity.class)
+                .eq(FormDefEntity::getFormKey, formKey)
+                .eq(FormDefEntity::getStatus, "PUBLISHED")
+                .last("LIMIT 1"));
+        if (def == null) {
+            throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
+                    "表单不存在或未发布，无法读取外部数据: " + formKey);
+        }
+        FormConfigEntity config = formConfigMapper.selectOne(Wrappers.lambdaQuery(FormConfigEntity.class)
+                .eq(FormConfigEntity::getFormId, def.getId())
+                .last("LIMIT 1"));
+        if (config == null || config.getDefinition() == null || config.getDefinition().isBlank()) {
+            throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
+                    "表单定义缺失，无法读取外部数据: " + formKey);
+        }
+        JsonNode field = findDefinitionField(config.getDefinition(), fieldName);
+        if (field == null || !"DATASOURCE".equals(field.path("type").asText())) {
+            throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
+                    "字段不是外部数据源字段或不存在: " + fieldName);
+        }
+        if (!queryKey.equals(field.path("dsBinding").path("queryKey").asText(null))) {
+            throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
+                    "字段未绑定该查询契约: " + fieldName);
+        }
+        LoginUser user = LoginUserHolder.get();
+        if (!fieldPermissionService.canView(user, fieldName,
+                fieldPermissionService.parse(config.getDefinition()))) {
+            throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
+                    "当前身份无该字段查看权限: " + fieldName);
+        }
+        FormExtQueryEntity entity = resolveEnabled(queryKey, version);
+        return executeContract(entity);
+    }
+
+    /** 契约执行（准入判定的公共尾段）：受控端口执行 + 行数上限 + 输出校验。 */
+    private ExtQueryResult executeContract(FormExtQueryEntity entity) {
         ExtDatasourceQueryPort port = requirePort();
         LoginUser user = LoginUserHolder.get();
         ExtQueryResult result;
@@ -170,7 +293,7 @@ public class FormExtDataService {
                             "External datasource not found or disabled: id=" + entity.getDatasourceId()));
         } catch (ExternalDatasourceResultLimitExceededException e) {
             log.warn("External query rejected because result exceeds configured row limit: key={}, maxRows={}",
-                    queryKey, e.getMaxRows());
+                    entity.getQueryKey(), e.getMaxRows());
             throw new BaseException(FormErrorCode.EXT_RESULT_LIMIT_EXCEEDED,
                     "外部数据源返回结果超过行数上限，未返回不完整数据");
         }
@@ -178,13 +301,33 @@ public class FormExtDataService {
         return result;
     }
 
+    private JsonNode findDefinitionField(String definitionJson, String fieldName) {
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson);
+            JsonNode fields = root.isArray() ? root : root.get("fields");
+            if (fields == null || !fields.isArray()) {
+                return null;
+            }
+            for (JsonNode field : fields) {
+                if (fieldName.equals(field.path("name").asText(null))) {
+                    return field;
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
+        }
+    }
+
     /**
      * 提交期对象解析：按 valueField 匹配真实行，返回 displayField 值。
-     * 伪造/越权/失效对象在此被拒绝（不产生任何业务写入副作用）。
+     * 伪造/越权/失效对象在此被拒绝（不产生任何业务写入副作用）；
+     * 资格已由发布绑定与提交链承担，本路径不回查设计授权。
      */
     public String resolveSelection(String queryKey, Integer version,
                                    String valueField, String displayField, String value) {
-        ExtQueryResult result = preview(queryKey, version);
+        FormExtQueryEntity entity = resolveEnabled(queryKey, version);
+        ExtQueryResult result = executeContract(entity);
         for (Map<String, Object> row : result.getRows()) {
             Object candidate = row.get(valueField);
             if (candidate != null && String.valueOf(candidate).equals(value)) {
@@ -246,6 +389,37 @@ public class FormExtDataService {
                     "外部数据源执行引擎未装配");
         }
         return port;
+    }
+
+    private ExtDatasourceGrantPort requireGrantPort() {
+        ExtDatasourceGrantPort port = grantPort.getIfAvailable();
+        if (port == null) {
+            throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
+                    "外部数据源引用授权未装配");
+        }
+        return port;
+    }
+
+    /** 设计期引用授权校验：契约登记与发布绑定共用；运行期查询不回查授权。 */
+    private void requireReferenceAllowed(Long datasourceId) {
+        if (!requireGrantPort().isReferenceAllowed(datasourceId).orElse(false)) {
+            LoginUser user = LoginUserHolder.get();
+            log.warn("Ext datasource reference denied: datasourceId={}, operator={}",
+                    datasourceId, user == null ? "anonymous" : user.getUsername());
+            throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED,
+                    "未授权引用该外部数据源");
+        }
+    }
+
+    private List<Map<String, Object>> outputFieldsAsMaps(FormExtQueryEntity entity) {
+        try {
+            JsonNode arr = objectMapper.readTree(entity.getOutputFields());
+            return objectMapper.convertValue(arr,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+        } catch (Exception e) {
+            throw new BaseException(FormErrorCode.EXT_OUTPUT_MISMATCH.getCode(),
+                    "契约输出 schema 解析失败: " + entity.getQueryKey());
+        }
     }
 
     private String serializeOutput(List<Map<String, String>> outputFields) {

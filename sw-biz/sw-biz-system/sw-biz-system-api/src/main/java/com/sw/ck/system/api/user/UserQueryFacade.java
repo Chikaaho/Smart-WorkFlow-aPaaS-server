@@ -32,6 +32,15 @@ public interface UserQueryFacade {
     Optional<List<UserOptionDTO>> searchActiveUsers(String keyword, int limit);
 
     /**
+     * 同 {@link #searchActiveUsers(String, int)}，可选返回主部门 ID（表单脚本组织成员查询专用）。
+     * 默认实现不返回部门，保持旧调用方脱敏面不变。
+     */
+    default Optional<List<UserOptionDTO>> searchActiveUsers(String keyword, int limit,
+                                                            boolean includeDept) {
+        return searchActiveUsers(keyword, limit);
+    }
+
+    /**
      * 按用户 ID 批量查询展示名（用于审批人/发起人等场景的可读身份回显）。
      *
      * @param ids 用户 ID 集合

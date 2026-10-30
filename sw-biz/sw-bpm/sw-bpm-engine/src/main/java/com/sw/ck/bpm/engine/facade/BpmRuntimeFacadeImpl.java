@@ -6,7 +6,9 @@ import com.sw.ck.bpm.api.result.BpmProcessStatus;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 import org.flowable.common.engine.api.FlowableObjectNotFoundException;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,15 +35,30 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
 
     private final RuntimeService runtimeService;
     private final HistoryService historyService;
+    private final RepositoryService repositoryService;
 
-    public BpmRuntimeFacadeImpl(RuntimeService runtimeService, HistoryService historyService) {
+    public BpmRuntimeFacadeImpl(RuntimeService runtimeService, HistoryService historyService,
+                                RepositoryService repositoryService) {
         this.runtimeService = runtimeService;
         this.historyService = historyService;
+        this.repositoryService = repositoryService;
     }
 
     @Override
     public Optional<String> startProcess(String processDefKey, String businessKey,
                                          Map<String, Object> variables, String tenantId) {
+        // A14 挂起语义：部署缓存不反映定义挂起态（by-key 发起绕过 isSuspended 检查），
+        // 这里按 DB 权威状态显式闸门——挂起版本不受理新发起，按"目标缺失"空返回（表单数据已落库）。
+        ProcessDefinition latest = repositoryService.createProcessDefinitionQuery()
+                .processDefinitionKey(processDefKey)
+                .processDefinitionTenantId(tenantId)
+                .latestVersion()
+                .singleResult();
+        if (latest != null && latest.isSuspended()) {
+            log.warn("BPM process start blocked by suspended definition: processDefKey={}, tenantId={}, businessKey={}",
+                    processDefKey, tenantId, businessKey);
+            return Optional.empty();
+        }
         ProcessInstance instance;
         try {
             instance = runtimeService.startProcessInstanceByKeyAndTenantId(

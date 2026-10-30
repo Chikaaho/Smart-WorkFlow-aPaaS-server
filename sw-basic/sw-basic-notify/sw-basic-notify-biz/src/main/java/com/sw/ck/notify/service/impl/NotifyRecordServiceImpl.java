@@ -7,6 +7,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
@@ -27,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /** 通知发送记录服务实现。 */
 @Service
@@ -44,13 +46,16 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
     private final NotifyMessageMapper messageMapper;
     private final NotifySendAttemptMapper attemptMapper;
     private final NotifyFacade notifyFacade;
+    private final TenantWorkAdmission tenantWorkAdmission;
 
     public NotifyRecordServiceImpl(NotifyMessageMapper messageMapper,
                                    NotifySendAttemptMapper attemptMapper,
-                                   NotifyFacade notifyFacade) {
+                                   NotifyFacade notifyFacade,
+                                   TenantWorkAdmission tenantWorkAdmission) {
         this.messageMapper = messageMapper;
         this.attemptMapper = attemptMapper;
         this.notifyFacade = notifyFacade;
+        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Override
@@ -149,11 +154,12 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
                     "记录当前状态为 " + current + "，仅明确失败且无进行中重发的记录可重发");
         }
         // 条件更新兜底并发：FAILED→RESENDING，或接管时 RESENDING 原位确认
-        int accepted = messageMapper.update(null,
+        int accepted = tenantWorkAdmission.claim(message.getTenantId(), () -> messageMapper.update(null,
                 Wrappers.<NotifyMessage>lambdaUpdate()
                         .set(NotifyMessage::getDeliveryStatus, STATUS_RESENDING)
                         .eq(NotifyMessage::getId, id)
-                        .eq(NotifyMessage::getDeliveryStatus, current));
+                        .eq(NotifyMessage::getTenantId, message.getTenantId())
+                        .eq(NotifyMessage::getDeliveryStatus, current)));
         if (accepted == 0) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     "记录状态已变化，仅明确失败且无进行中重发的记录可重发");

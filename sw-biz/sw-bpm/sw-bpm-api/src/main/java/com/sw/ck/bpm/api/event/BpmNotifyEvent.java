@@ -3,6 +3,7 @@ package com.sw.ck.bpm.api.event;
 import lombok.Getter;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * BPM 通知事件。
@@ -50,18 +51,44 @@ public class BpmNotifyEvent implements Serializable {
      */
     private final Long occurrenceNo;
 
+    /**
+     * 本次结束通知显式选择的渠道令牌（IN_APP/EMAIL）；null/空 = 沿用通知路由原裁决。
+     * 实际投递仍与租户启停、订阅和路由渠道取交集。
+     */
+    private final List<String> channels;
+
+    /**
+     * 接收人是否为流程发起人：仅发起人收到“您的申请”文案；审批人/其他接收人使用中性文案。
+     * 旧构造路径默认 true，保持原“结果通知发给发起人”的行为。
+     */
+    private final boolean initiatorRecipient;
+
     public BpmNotifyEvent(BpmNotifyTrigger trigger, Long recipientId,
                           Long tenantId, Long actorUserId, String bizId) {
-        this(trigger, recipientId, tenantId, actorUserId, bizId, 1L);
+        this(trigger, recipientId, tenantId, actorUserId, bizId, 1L, null, true);
     }
 
     public BpmNotifyEvent(BpmNotifyTrigger trigger, Long recipientId,
                           Long tenantId, Long actorUserId, String bizId, Long occurrenceNo) {
+        this(trigger, recipientId, tenantId, actorUserId, bizId, occurrenceNo, null, true);
+    }
+
+    public BpmNotifyEvent(BpmNotifyTrigger trigger, Long recipientId,
+                          Long tenantId, Long actorUserId, String bizId, Long occurrenceNo,
+                          List<String> channels) {
+        this(trigger, recipientId, tenantId, actorUserId, bizId, occurrenceNo, channels, true);
+    }
+
+    public BpmNotifyEvent(BpmNotifyTrigger trigger, Long recipientId,
+                          Long tenantId, Long actorUserId, String bizId, Long occurrenceNo,
+                          List<String> channels, boolean initiatorRecipient) {
         this.trigger = trigger;
         this.recipientId = recipientId;
         this.tenantId = tenantId;
         this.actorUserId = actorUserId;
         this.bizId = bizId;
         this.occurrenceNo = occurrenceNo == null ? 1L : occurrenceNo;
+        this.channels = channels == null ? null : List.copyOf(channels);
+        this.initiatorRecipient = initiatorRecipient;
     }
 }

@@ -30,6 +30,9 @@ public class TaskDetailRespDTO {
     /** Flowable 流程实例 ID */
     private String processInstanceId;
 
+    /** 流程实例记录标识（催办等实例级操作的定位键；无实例记录时缺省）。 */
+    private Long instanceId;
+
     /** 流程定义 key */
     private String processDefinitionKey;
 
@@ -49,6 +52,9 @@ public class TaskDetailRespDTO {
 
     /** 当前登录用户是否可办理该任务（服务端办理权限判定；已办历史任务恒 false） */
     private Boolean canHandle;
+
+    /** 任务实际部署节点允许的动作；页面与接口使用同一发布配置。 */
+    private List<String> allowedActions;
 
     /** 发起人 ID */
     private Long initiatorId;

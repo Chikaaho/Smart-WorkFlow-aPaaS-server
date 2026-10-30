@@ -18,4 +18,5 @@ public class DeptQuery {
 
     /** 部门状态：0=正常 1=停用；null=全部 */
     private Integer status;
+    private Long tenantId;
 }

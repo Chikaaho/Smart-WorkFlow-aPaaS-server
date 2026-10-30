@@ -50,6 +50,11 @@ public interface SysUserService extends BaseService<SysUser> {
     SysUser getByUsername(String username);
 
     /**
+     * 按租户编码 + 用户名定位账号（0.2.0 用户名按租户唯一后，同名账号用租户编码区分）。
+     */
+    SysUser findByTenantCodeAndUsername(String tenantCode, String username);
+
+    /**
      * 根据 ID 查询用户。
      */
     SysUser getById(Long id);

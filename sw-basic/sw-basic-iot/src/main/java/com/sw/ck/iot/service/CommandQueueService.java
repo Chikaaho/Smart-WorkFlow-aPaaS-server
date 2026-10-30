@@ -24,7 +24,7 @@ public interface CommandQueueService {
      * 标记命令为发送中。
      *
      * @param commandId 命令 ID
-     * @return 更新后的命令
+     * @return 已持久认领的命令；租户不可用、过期或竞争失败返回 null，调用方不得外发
      */
     IotDeviceCommand markSending(Long commandId);
 

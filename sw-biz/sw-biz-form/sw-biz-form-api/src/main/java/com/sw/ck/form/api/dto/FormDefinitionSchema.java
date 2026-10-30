@@ -69,6 +69,10 @@ public class FormDefinitionSchema implements Serializable {
     /** 字段定义列表 */
     private List<FieldDef> fields;
 
+    /** 表单生命周期事件，键为 onLoad/beforeSubmitHandler/afterSubmitHandler。 */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    private Map<String, List<FormEventAction>> events;
+
     // ==================== 内嵌类型 ====================
 
     /**
@@ -102,6 +106,15 @@ public class FormDefinitionSchema implements Serializable {
 
         /** 字段最大长度（字符数） */
         private Integer length;
+
+        /** 非空文本值的 Unicode 码点最小长度。 */
+        private Integer minLength;
+
+        /** 文本值完整匹配所使用、由受控线性时间引擎执行的正则。 */
+        private String pattern;
+
+        /** 正则不匹配时向填报人展示的提示。 */
+        private String patternMessage;
 
         /**
          * 字段描述（0.1.7 #38）。
@@ -151,5 +164,21 @@ public class FormDefinitionSchema implements Serializable {
          * </p>
          */
         private List<FieldDef> subFields;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class FormEventAction implements Serializable {
+        /** 发布快照内稳定标识，用于诊断和提交后幂等重试。 */
+        private String id;
+        private String name;
+        private Boolean enabled;
+        private Integer order;
+        private String script;
+        /** 有值时由前端单独请求用户确认。 */
+        private String confirmMessage;
     }
 }

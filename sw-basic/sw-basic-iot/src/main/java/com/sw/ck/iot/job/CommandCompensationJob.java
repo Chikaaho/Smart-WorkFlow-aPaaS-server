@@ -219,7 +219,8 @@ public class CommandCompensationJob {
             log.warn("发送通道未装配，命令回退为可重试失败: id={}", command.getId());
             return false;
         }
-        sender.sendCommand(command);
+        command.setStatus("SENDING");
+        sender.sendClaimedCommand(command);
         return true;
     }
 }

@@ -1,8 +1,7 @@
 package com.sw.ck.bpm.engine.script;
 
 import java.io.IOException;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.CodeSource;
@@ -123,11 +122,18 @@ final class WorkerLaunchPlan {
                 }
             }
         }
-        String decoded = URLDecoder.decode(before, StandardCharsets.UTF_8);
         // 嵌套 URL 在 jar 路径与 '!entry' 之间带 '/'（nested:file:/app.jar/!BOOT-INF.classes），
         // 截断后留下尾部斜杠——文件路径带尾斜杠 isRegularFile 判 false，必须剥掉
-        String trimmed = decoded.replaceAll("/+$", "");
-        return Files.isRegularFile(Path.of(trimmed)) ? trimmed : null;
+        String trimmed = before.replaceAll("/+$", "");
+        // 按文件 URI 解析，保留路径中的 '+'；Windows 的 /C:/... 也由文件系统转换为 C:\...。
+        // URLDecoder 面向表单参数，会把 '+' 误当空格，且 Path.of(String) 不接受 Windows URI 路径。
+        if (trimmed.matches("^[A-Za-z]:/.*")) trimmed = "/" + trimmed;
+        try {
+            Path path = Path.of(URI.create("file:" + trimmed.replace(" ", "%20")));
+            return Files.isRegularFile(path) ? path.toString() : null;
+        } catch (IllegalArgumentException invalidLocation) {
+            return null;
+        }
     }
 
     static boolean containsEntry(Path jar, String entry) throws IOException {

@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,6 +14,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CategoryDTO {
 
+    /** 雪花 ID 超出 JS 安全整数：序列化为字符串，前端原样透传不丢精度 */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
 
     private String name;

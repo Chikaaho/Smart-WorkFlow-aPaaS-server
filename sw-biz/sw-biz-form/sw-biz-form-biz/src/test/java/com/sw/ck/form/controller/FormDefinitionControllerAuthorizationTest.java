@@ -159,6 +159,14 @@ class FormDefinitionControllerAuthorizationTest {
     }
 
     @Test
+    @DisplayName("运行期按版本读取冻结定义不要求 form:design（可见范围仍校验）")
+    void definitionByKeyVersion_runtimeWithoutDesignPermission_passesGateway() throws Exception {
+        TestAuthenticationFilter.permissions = List.of();
+        performAndAssertGatewayPassed(mockMvc, get("/form/def/by-key/f-1/versions/1/definition")
+                .header("X-Test-User", "viewer"));
+    }
+
+    @Test
     @DisplayName("未认证 → 401")
     void unauthenticated_unauthorized() throws Exception {
         mockMvc.perform(get("/form/def/f-1/snapshots"))

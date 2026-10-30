@@ -160,7 +160,7 @@ class BpmProcessDefServiceImplTest {
             pageResult.setPageSize(20);
             when(mapper.selectPage(any(PageParam.class), any())).thenReturn(pageResult);
 
-            service.listDefs(new PageParam(), formKey);
+            service.listDefs(new PageParam(), formKey, null);
 
             ArgumentCaptor<LambdaQueryWrapper<BpmProcessDef>> captor =
                     ArgumentCaptor.forClass(LambdaQueryWrapper.class);

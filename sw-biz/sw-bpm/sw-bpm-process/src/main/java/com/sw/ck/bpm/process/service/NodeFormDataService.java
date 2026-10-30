@@ -14,6 +14,7 @@ import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.bpm.process.mapper.BpmTaskFormDataMapper;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.i18n.LocalizedMessages;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -269,7 +270,8 @@ public class NodeFormDataService {
             List<String> errors = validateNodeFormData(formKey, boundFormVersion(existing, bindingFormVersion, formKey), effective);
             if (!errors.isEmpty()) {
                 throw new BaseException(BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getCode(),
-                        BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getMessage() + ": " + String.join("; ", errors));
+                        LocalizedMessages.text(BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getErrorKey(),
+                                BpmErrorCode.NODE_FORM_VALIDATION_FAILED.getMessage()) + ": " + String.join("; ", errors));
             }
         }
         effective = assignTableRowIds(formKey, effective);
@@ -376,9 +378,10 @@ public class NodeFormDataService {
         Optional<String> definitionJson = loadBoundDefinition(formKey, formVersion);
         if (definitionJson.isEmpty()) {
             // 绑定版本快照缺失：可诊断拒绝，不按最新定义静默校验（复审03 P1-04b）
+            log.warn("Node form definition unavailable: formKey={}, version={}", formKey, formVersion);
             errors.add(formVersion == null
-                    ? "表单定义不可用: " + formKey
-                    : "表单绑定版本快照缺失: " + formKey + "@v" + formVersion + "（不按最新定义静默校验，请管理员修复快照）");
+                    ? nodeFormMessage("configuration_unavailable", "表单配置暂不可用，请联系管理员")
+                    : nodeFormMessage("version_unavailable", "该表单版本暂不可用，请联系管理员"));
             return errors;
         }
         List<Map<String, Object>> fields;
@@ -390,30 +393,41 @@ public class NodeFormDataService {
                     ? list.stream().filter(Map.class::isInstance).map(item -> (Map<String, Object>) item).toList()
                     : List.of();
         } catch (Exception e) {
-            errors.add("表单定义解析失败: " + e.getMessage());
+            log.warn("Node form definition parsing failed: formKey={}, version={}", formKey, formVersion, e);
+            errors.add(nodeFormMessage("configuration_unavailable", "表单配置暂不可用，请联系管理员"));
             return errors;
         }
         Set<String> definedNames = fields.stream()
                 .map(field -> String.valueOf(field.get("name"))).collect(java.util.stream.Collectors.toSet());
         for (String key : data.keySet()) {
             if (!definedNames.contains(key)) {
-                errors.add("未知字段: " + key);
+                errors.add(nodeFormMessage("unknown_field", "表单内容与当前版本不一致，请重新打开后填写"));
             }
         }
         for (Map<String, Object> field : fields) {
             String name = String.valueOf(field.get("name"));
+            String label = fieldDisplayName(field, name);
             String type = field.get("type") == null ? "TEXT" : String.valueOf(field.get("type")).toUpperCase();
             boolean required = Boolean.TRUE.equals(field.get("required"));
             Object value = data.get(name);
             if (isEmptyValue(value)) {
                 if (required) {
-                    errors.add(name + ": 必填");
+                    errors.add(nodeFormMessage("required", "「{0}」为必填项，请填写", label));
                 }
                 continue;
             }
-            validateFieldValue(field, name, type, value, errors);
+            validateFieldValue(field, label, type, value, errors);
         }
         return errors;
+    }
+
+    private static String fieldDisplayName(Map<String, Object> field, String fallback) {
+        Object label = field.get("label");
+        return label == null || String.valueOf(label).isBlank() ? fallback : String.valueOf(label);
+    }
+
+    private static String nodeFormMessage(String key, String fallback, Object... args) {
+        return LocalizedMessages.textArgs("bpm.node_form_" + key, fallback, args);
     }
 
     @SuppressWarnings("unchecked")
@@ -425,18 +439,18 @@ public class NodeFormDataService {
                     new java.math.BigDecimal(String.valueOf(
                             value instanceof List<?> list ? list.get(0) : value));
                 } catch (Exception e) {
-                    errors.add(name + ": 必须是数字");
+                    errors.add(nodeFormMessage("number", "「{0}」必须填写数字", name));
                 }
             }
             case "BOOL" -> {
                 if (!(value instanceof Boolean) && !"true".equalsIgnoreCase(String.valueOf(value))
                         && !"false".equalsIgnoreCase(String.valueOf(value))) {
-                    errors.add(name + ": 必须是布尔值");
+                    errors.add(nodeFormMessage("boolean", "「{0}」的开关值无效，请重新选择", name));
                 }
             }
             case "TABLE" -> {
                 if (!(value instanceof List<?> rows)) {
-                    errors.add(name + ": 表格必须是行数组");
+                    errors.add(nodeFormMessage("table", "「{0}」的明细格式无效，请重新填写", name));
                     return;
                 }
                 List<Map<String, Object>> subFields = field.get("subFields") instanceof List<?> list
@@ -447,7 +461,7 @@ public class NodeFormDataService {
                 for (Object rowObj : rows) {
                     index++;
                     if (!(rowObj instanceof Map<?, ?>)) {
-                        errors.add(name + ": 第" + index + "行不是对象");
+                        errors.add(nodeFormMessage("table_row", "「{0}」第 {1} 行格式无效，请重新填写", name, index));
                         continue;
                     }
                     Map<String, Object> row = (Map<String, Object>) rowObj;
@@ -455,7 +469,7 @@ public class NodeFormDataService {
                         String subName = String.valueOf(sub.get("name"));
                         boolean subRequired = Boolean.TRUE.equals(sub.get("required"));
                         if (isEmptyValue(row.get(subName)) && subRequired) {
-                            errors.add(name + "." + subName + ": 第" + index + "行必填");
+                            errors.add(nodeFormMessage("table_required", "「{0}」第 {1} 行的「{2}」为必填项，请填写", name, index, fieldDisplayName(sub, subName)));
                         }
                     }
                 }
@@ -466,7 +480,7 @@ public class NodeFormDataService {
                         : List.of(String.valueOf(value));
                 if (field.get("multiple") != null && Boolean.TRUE.equals(field.get("multiple"))
                         && !(value instanceof List<?>)) {
-                    errors.add(name + ": 多选字段必须是 ID 数组");
+                    errors.add(nodeFormMessage("multiple", "「{0}」的多选内容无效，请重新选择", name));
                     return;
                 }
                 List<Long> parsed = new ArrayList<>();
@@ -474,7 +488,7 @@ public class NodeFormDataService {
                     try {
                         parsed.add(Long.parseLong(id));
                     } catch (Exception e) {
-                        errors.add(name + ": 必须是数字 ID");
+                        errors.add(nodeFormMessage("selection", "「{0}」的选项无效，请重新选择", name));
                         return;
                     }
                 }
@@ -486,7 +500,7 @@ public class NodeFormDataService {
                     if (facade != null) {
                         List<Long> active = facade.findActiveUserIds(parsed, currentTenantId()).orElse(List.of());
                         if (active.size() < distinct(parsed).size()) {
-                            errors.add(name + ": 含不存在或已停用的用户");
+                            errors.add(nodeFormMessage("user_unavailable", "「{0}」含不存在或已停用的用户，请重新选择", name));
                         }
                     }
                 } else {
@@ -494,7 +508,7 @@ public class NodeFormDataService {
                     if (facade != null) {
                         List<Long> active = facade.findActiveDeptIds(parsed).orElse(List.of());
                         if (active.size() < distinct(parsed).size()) {
-                            errors.add(name + ": 含不存在或已停用的部门");
+                            errors.add(nodeFormMessage("dept_unavailable", "「{0}」含不存在或已停用的部门，请重新选择", name));
                         }
                     }
                 }
@@ -508,7 +522,7 @@ public class NodeFormDataService {
                             : List.of(String.valueOf(value));
                     for (String code : values) {
                         if (!Boolean.TRUE.equals(dictFacade.isValidCode(dictType, code).orElse(false))) {
-                            errors.add(name + ": 字典值超出值域: " + code);
+                            errors.add(nodeFormMessage("option_unavailable", "「{0}」的选项已不可用，请重新选择", name));
                         }
                     }
                 }
@@ -525,14 +539,15 @@ public class NodeFormDataService {
             Optional<String> json = formDefinitionService.getFormDefinition(formKey);
             if (json.isEmpty()) {
                 throw new BaseException(BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),
-                        "节点业务表单定义不可用: " + formKey);
+                        nodeFormMessage("configuration_unavailable", "表单配置暂不可用，请联系管理员"));
             }
             return objectMapper.readValue(json.get(), new TypeReference<Map<String, Object>>() { });
         } catch (BaseException e) {
             throw e;
         } catch (Exception e) {
+            log.warn("Node form definition parsing failed: formKey={}", formKey, e);
             throw new BaseException(BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),
-                    "节点业务表单定义解析失败: " + formKey);
+                    nodeFormMessage("configuration_unavailable", "表单配置暂不可用，请联系管理员"));
         }
     }
 

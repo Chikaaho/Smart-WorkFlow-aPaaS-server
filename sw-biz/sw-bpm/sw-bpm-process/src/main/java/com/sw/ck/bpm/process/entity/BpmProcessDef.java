@@ -114,4 +114,30 @@ public class BpmProcessDef extends BaseEntity {
      */
     @TableField(exist = false)
     private String creatorName;
+
+    /**
+     * 分类名（列表响应回填，非表列）：由 category_id 批量解析；未分类为 null（前端显示占位）。
+     */
+    @TableField(exist = false)
+    private String categoryName;
+
+    /**
+     * 更新人展示名（列表响应回填，非表列）：update_by 优先、缺省回退 create_by；
+     * 与 creatorName 分开保留，避免覆盖真实 update_by 主键。
+     */
+    @TableField(exist = false)
+    private String updatedBy;
+
+    /**
+     * 已发起实例数（列表响应回填，非表列）：按 process_key 聚合 sw_bpm_instance。
+     */
+    @TableField(exist = false)
+    private Long instanceCount;
+
+    /**
+     * 租户名（列表响应回填，非表列）：由 tenantId 批量解析 sys_tenant.name
+     * （owner-20261030-u020-q69-def-tenant；读失败留空）。
+     */
+    @TableField(exist = false)
+    private String tenantName;
 }

@@ -161,6 +161,7 @@ class AgentToolConfigSecurityIntegrationTest {
                     input_schema    CLOB,
                     url             VARCHAR(500) NOT NULL,
                     http_method     VARCHAR(10) NOT NULL DEFAULT 'POST',
+                    effect_scope    VARCHAR(16),
                     timeout_seconds INT NOT NULL DEFAULT 30,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),

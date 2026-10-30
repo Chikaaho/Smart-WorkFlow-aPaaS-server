@@ -14,4 +14,21 @@ public interface BpmUrgeService {
      * </p>
      */
     UrgeRespDTO urge(Long instanceRecordId);
+
+    /**
+     * 同 {@link #urge(Long)}，附带发起人可选催办留言（最长 200 字，空白视为无留言）。
+     * <p>留言随站内催办通知一并送达待办人，并进入催办留痕明细；催办不改变审批结论。</p>
+     */
+    default UrgeRespDTO urge(Long instanceRecordId, String message) {
+        return urge(instanceRecordId);
+    }
+
+    /**
+     * 同 {@link #urge(Long, String)}，可限定接收人（稳定用户 ID）。
+     * <p>接收人必须是服务端核定的当前实例合法待办人的子集；空表示全部待办人（旧语义）。
+     * 越权/越界接收人明确拒绝，不向非本实例参与人发送。</p>
+     */
+    default UrgeRespDTO urge(Long instanceRecordId, String message, java.util.List<Long> recipientIds) {
+        return urge(instanceRecordId, message);
+    }
 }

@@ -35,6 +35,14 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class NotifyRecordServiceTest {
 
+    @org.junit.jupiter.api.BeforeAll
+    static void initializeMapperMetadata() {
+        var config = new com.baomidou.mybatisplus.core.MybatisConfiguration();
+        var assistant = new org.apache.ibatis.builder.MapperBuilderAssistant(config, "");
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, NotifyMessage.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, NotifySendAttempt.class);
+    }
+
     @Mock
     private NotifyMessageMapper messageMapper;
     @Mock
@@ -46,7 +54,8 @@ class NotifyRecordServiceTest {
 
     @BeforeEach
     void setUp() {
-        recordService = new NotifyRecordServiceImpl(messageMapper, attemptMapper, notifyFacade);
+        recordService = new NotifyRecordServiceImpl(messageMapper, attemptMapper, notifyFacade,
+                (tenantId, claim) -> claim.getAsInt());
     }
 
     private NotifyMessage failedMessage() {
@@ -61,6 +70,17 @@ class NotifyRecordServiceTest {
         msg.setFailureReason("未配置生产渠道适配器");
         msg.setTenantId(1L);
         return msg;
+    }
+
+    @Test
+    void inactiveTenantCannotAcceptManualResendOrAppendAttempt() {
+        recordService = new NotifyRecordServiceImpl(messageMapper, attemptMapper, notifyFacade, (tenantId, claim) -> 0);
+        when(messageMapper.selectById(2L)).thenReturn(failedMessage());
+        when(attemptMapper.selectList(any())).thenReturn(List.of());
+        assertThatThrownBy(() -> recordService.resend(2L)).isInstanceOf(BaseException.class);
+        verify(messageMapper, never()).update(isNull(), any());
+        verify(attemptMapper, never()).insert(any(NotifySendAttempt.class));
+        verify(notifyFacade, never()).attemptDelivery(any());
     }
 
     @Test

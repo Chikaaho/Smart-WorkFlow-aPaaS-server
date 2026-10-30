@@ -150,7 +150,8 @@ public class I6NotifyRestartSupport {
 
     @Bean
     public NotifyFacade notifyFacade(NotifyMessageService svc, List<NotifyChannelAdapter> adapters, com.sw.ck.notify.mapper.NotifySendAttemptMapper attemptMapper) {
-        return new com.sw.ck.notify.impl.NotifyFacadeImpl(svc, adapters, attemptMapper);
+        return new com.sw.ck.notify.impl.NotifyFacadeImpl(svc, adapters, attemptMapper,
+                (tenantId, claim) -> claim.getAsInt());
     }
 
     @Bean
@@ -158,7 +159,8 @@ public class I6NotifyRestartSupport {
             NotifyMessageMapper messageMapper,
             NotifySendAttemptMapper attemptMapper,
             NotifyFacade notifyFacade) {
-        return new NotifyDeliveryRecoveryServiceImpl(messageMapper, attemptMapper, notifyFacade);
+        return new NotifyDeliveryRecoveryServiceImpl(messageMapper, attemptMapper, notifyFacade,
+                (tenantId, claim) -> claim.getAsInt());
     }
 
     static class TestLoginContext implements LoginContextProvider {

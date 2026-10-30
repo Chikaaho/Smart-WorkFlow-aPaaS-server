@@ -710,7 +710,7 @@ class NotifyTemplateIntegrationTest {
 
         @Bean
         public NotifyFacadeImpl notifyFacade(NotifyMessageService messageService) {
-            return new NotifyFacadeImpl(messageService);
+            return new NotifyFacadeImpl(messageService, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
     }
 }

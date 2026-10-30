@@ -241,6 +241,18 @@ public class DeferredControlUtil {
      * <p>控制通道未装配时不进入 SENDING，直接记为可重试失败——绝不标记为已发送。</p>
      */
     public void sendCommand(IotDeviceCommand command) {
+        sendCommand(command, false);
+    }
+
+    /** 仅由成功持久认领的补偿调用方使用，延续同一次执行，不重复认领或增加重试数。 */
+    public void sendClaimedCommand(IotDeviceCommand command) {
+        if (command == null || command.getId() == null || !"SENDING".equals(command.getStatus())) {
+            throw new IllegalArgumentException("发送已认领命令需要有效的 SENDING 对象");
+        }
+        sendCommand(command, true);
+    }
+
+    private void sendCommand(IotDeviceCommand command, boolean alreadyClaimed) {
         // 窗口/有效期覆盖实际外发边界（P63 §4.2）：已过有效期的命令不再进入 SENDING、
         // 不触达控制通道，与预约窗口对齐的过期时间按同一口径收敛为 EXPIRED。
         if (command.getExpiryTime() != null && !java.time.LocalDateTime
@@ -254,6 +266,7 @@ public class DeferredControlUtil {
         IotDevice device = iotDeviceService.getByDeviceKeyForTenant(command.getTenantId(),
                 command.getDeviceKey());
         if (mqttDownlinkPublisher.isMqttBacked(device)) {
+            if (!alreadyClaimed && commandQueueService.markSending(command.getId()) == null) return;
             sendViaMqtt(command, device);
             return;
         }
@@ -263,8 +276,8 @@ public class DeferredControlUtil {
             log.warn("控制通道未装配，命令记为可重试失败（未下发）: id={}", command.getId());
             return;
         }
+        if (!alreadyClaimed && commandQueueService.markSending(command.getId()) == null) return;
         try {
-            commandQueueService.markSending(command.getId());
 
             DeviceControlProvider.DeviceControlResult result;
             if ("PROPERTY".equals(command.getCommandType())) {
@@ -297,7 +310,6 @@ public class DeferredControlUtil {
      */
     private void sendViaMqtt(IotDeviceCommand command, IotDevice device) {
         try {
-            commandQueueService.markSending(command.getId());
             MqttDownlinkPublisher.PublishOutcome outcome = mqttDownlinkPublisher
                     .publishDownlink(device, command.getPayload(), null)
                     .orElseThrow(() -> new IllegalStateException(

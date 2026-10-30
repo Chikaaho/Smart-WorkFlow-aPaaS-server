@@ -62,6 +62,20 @@ class P62ReceiptBoundaryPgTest {
         props.put("spring.datasource.dynamic.datasource.master.url", pgUrl);
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
+        // dev profile 默认叠加 db/migration/devseed（I5 夹具，含 tenant-100 WECOM 启用配置，
+        // 其密文按 I5 专用密钥生成）。本测试自备边界数据、不消费 devseed，显式收回到与生产
+        // 等价的 locations，避免启动期 SSO 凭据 fail-fast 门禁对夹具密文误报。
+        props.put("spring.flyway.locations",
+                "classpath:db/migration/{vendor}"
+                        + ",classpath:db/migration/bpm/{vendor}"
+                        + ",classpath:db/migration/notify/{vendor}"
+                        + ",classpath:db/migration/form/{vendor}"
+                        + ",classpath:db/migration/storage/{vendor}"
+                        + ",classpath:db/migration/job/{vendor}"
+                        + ",classpath:db/migration/agent/{vendor}"
+                        + ",classpath:db/migration/iot/{vendor}"
+                        + ",classpath:db/migration/openapi/{vendor}"
+                        + ",classpath:db/migration/system/{vendor}");
         props.put("sw.security.jwt.secret", "p62-boundary-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-boundary-digest-secret");

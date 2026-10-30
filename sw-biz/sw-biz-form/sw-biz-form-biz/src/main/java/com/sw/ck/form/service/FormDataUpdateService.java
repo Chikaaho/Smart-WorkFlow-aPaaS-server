@@ -148,6 +148,9 @@ public class FormDataUpdateService {
         if (!"PUBLISHED".equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED, "表单 '" + formKey + "' 未发布，不能更新");
         }
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "edit");
+        }
         String tableName = formDef.getPhysicalTableName();
         if (tableName == null || tableName.isBlank()) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,

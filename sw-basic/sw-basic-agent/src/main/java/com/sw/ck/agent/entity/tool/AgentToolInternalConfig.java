@@ -1,6 +1,8 @@
 package com.sw.ck.agent.entity.tool;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.sw.ck.agent.typehandler.BooleanSmallintTypeHandler;
 import com.sw.ck.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -15,7 +17,7 @@ import lombok.EqualsAndHashCode;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@TableName("sw_agent_tool_internal")
+@TableName(value = "sw_agent_tool_internal", autoResultMap = true)
 public class AgentToolInternalConfig extends BaseEntity {
 
     /** 工具名（英文下划线），传给 LLM */
@@ -33,7 +35,8 @@ public class AgentToolInternalConfig extends BaseEntity {
     /** 方法名（白名单值，约定签名 String execute(String params)） */
     private String methodName;
 
-    /** 1=启用 0=禁用 */
+    /** 1=启用 0=禁用（PG smallint 列，按 0/1 写入） */
+    @TableField(value = "enabled", typeHandler = BooleanSmallintTypeHandler.class)
     private Boolean enabled;
 
     private String remark;

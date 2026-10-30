@@ -37,4 +37,7 @@ public class SysDept extends BaseEntity {
     /** 部门负责人用户 ID（稳定用户标识；流程选人经组织权威解析） */
     @TableField("leader_id")
     private Long leaderId;
+    /** 管理界面展示归属；不参与持久化或授权判断。 */
+    @TableField(exist = false)
+    private String tenantName;
 }

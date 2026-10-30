@@ -22,14 +22,16 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 应用中心（表单分类统一）存量承接迁移验证（0.1.6→0.1.7 升级通道口径）。
+ * 应用中心（表单分类统一）存量承接迁移验证（0.1.5→0.1.6→0.1.7→0.2.0 升级通道口径）。
  * <p>
  * 用同一个 H2 内存库先迁移到 0.1.5 边界（升级通道 legacy 资源 + target，不含应用中心增量），
  * 插入代表性存量夹具（分类 / 流程事项 / 表单，含跨租户与多归属歧义），再执行
  * 0.1.6 存量升级脚本 {@code upgrade-to-0.1.6-from-0.1.5.h2.sql}（应用中心增量 DDL/承接
- * 逐字节嵌入 + 历史衔接）与 0.1.7 存量升级脚本
- * {@code upgrade-to-0.1.7-from-0.1.6.h2.sql}（0.1.7 期增量 + 历史衔接），
- * 最后以主链（V0.1.7 种子 + R__）验证零 versioned 重放与 validate 通过。逐对象断言承接规则：
+ * 逐字节嵌入 + 历史衔接）、0.1.7 存量升级脚本
+ * {@code upgrade-to-0.1.7-from-0.1.6.h2.sql}（0.1.7 期增量 + 历史衔接）与 0.2.0 存量升级脚本
+ * {@code upgrade-to-0.2.0-from-0.1.7.h2.sql}（0.1.8/0.1.9/0.1.10 增量逐字节嵌入 + 历史衔接收敛为
+ * V0.2.0 单条登记），
+ * 最后以主链（V0.2.0 种子 + R__）验证零 versioned 重放与 validate 通过。逐对象断言承接规则：
  * </p>
  * <ol>
  *   <li>每个有效分类承接为一个应用（id = lc&lt;categoryId&gt;，可追溯映射，可见范围 ALL）；</li>
@@ -123,7 +125,10 @@ class ApplicationCenterLegacyUpgradeTest {
         // —— 3.0 执行 0.1.7 存量升级脚本（0.1.7 期增量 + 历史衔接，发布资产原文）——
         execScript(classpathResource(UPGRADE_017_SCRIPT));
 
-        // —— 3.1 主链衔接验证：零 versioned 重放、0.1.7 登记校验和与发布种子一致（validate 通过）——
+        // —— 3.0.1 执行 0.2.0 存量升级脚本（0.1.8/0.1.9/0.1.10 增量 + 历史衔接收敛为 V0.2.0，发布资产原文）——
+        execScript(classpathResource(UPGRADE_020_SCRIPT));
+
+        // —— 3.1 主链衔接验证：V0.2.0 已由升级脚本登记、R__ 已全部对账，零重放且 validate 通过 ——
         Flyway upgrade = Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())
@@ -131,7 +136,7 @@ class ApplicationCenterLegacyUpgradeTest {
         MigrateResult result = upgrade.migrate();
         assertTrue(result.success, "主链衔接验证应成功");
         assertEquals(0, result.migrationsExecuted,
-                "升级脚本后主链不应重复执行任何迁移（R__ 已在基线阶段应用）");
+                "0.2.0 存量升级脚本衔接后，主链 versioned 已登记且 R__ 已对账，不重放任何迁移");
         upgrade.validate();
     }
 
@@ -241,7 +246,7 @@ class ApplicationCenterLegacyUpgradeTest {
         assertEquals(2L, queryLong("SELECT COUNT(*) FROM sys_role_menu WHERE menu_id = 9131 AND role_id IN (1,2)"));
     }
 
-    /** 现行 12 个 R__（复制到临时目录，构造不含主链 V0.1.7 种子的存量基线位置）。 */
+    /** 快照 12 支 R__（复制到临时目录，构造不含主链 V0.2.0 种子的存量基线位置）。 */
     private static final String[] REPEATABLES = {
             "R__0.1.7_catalog_menu_first.sql", "R__0.1.7_org_demo_seed.sql",
             "R__application_center_menu.sql", "R__bf20261013_catalog_admin_menu.sql",
@@ -256,7 +261,7 @@ class ApplicationCenterLegacyUpgradeTest {
         String url = "jdbc:h2:mem:app_center_hist_016;DB_CLOSE_DELAY=-1";
 
         // 1) 0.1.5 + 应用中心增量形态（模拟已执行时间戳 20261015190000 的库：
-        //    legacy 版本化资源 + 现行 R__ 临时目录，不含主链 V0.1.7 种子）
+        //    legacy 版本化资源 + 快照 R__ 临时目录，不含主链 V0.2.0 种子）
         Path rDir = Files.createTempDirectory("ac016-repeatables-");
         for (String r : REPEATABLES) {
             try (var in = ApplicationCenterLegacyUpgradeTest.class.getClassLoader()
@@ -278,20 +283,23 @@ class ApplicationCenterLegacyUpgradeTest {
         // 2.1) 0.1.7 存量升级脚本（0.1.7 期增量 + 历史衔接，发布资产原文）
         execScriptOn(url, classpathResource(UPGRADE_017_SCRIPT));
 
-        // 3) 版本化迁移零重放 + 新增 R__ 应用 + validate 通过 + 终点 0.1.7
+        // 2.2) 0.2.0 存量升级脚本（0.1.8/0.1.9/0.1.10 增量 + 历史衔接收敛为 V0.2.0，发布资产原文）
+        execScriptOn(url, classpathResource(UPGRADE_020_SCRIPT));
+
+        // 3) versioned 零重放 + 快照外新增 R__ 应用 + validate 通过 + 终点 0.2.0
         Flyway after = Flyway.configure()
                 .dataSource(url, USER, PASSWORD)
                 .locations(h2Locations())
                 .load();
         MigrateResult upgrade = after.migrate();
         assertTrue(upgrade.success, "衔接后主链应迁移成功");
-        // 0.1.10 起 R__application_center_menu 追加菜单对账（checksum 变化重放一次），
-        // 故衔接后执行 2 条：既有 R__ 重放 + 新增 R__；版本化迁移仍不得重放。
-        assertEquals(2, upgrade.migrationsExecuted, "衔接后执行既有 R__ 对账重放与新增 R__，不得重放版本化迁移");
+        // V0.2.0 已由升级脚本登记，仅执行快照（12 支 R__）之外新增的 6 支 R__；历史版本化迁移不得重放。
+        assertEquals(6, upgrade.migrationsExecuted,
+                "衔接后只应执行快照外新增的 6 支 R__ 对账，不得重放历史版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后主链不应重复执行任何迁移");
-        assertEquals("0.1.7", after.info().current().getVersion().getVersion(), "终点应为 0.1.7");
+        assertEquals("0.2.0", after.info().current().getVersion().getVersion(), "终点应为 0.2.0");
     }
 
     @Test
@@ -303,8 +311,8 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult result = again.migrate();
         assertEquals(0, result.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.1.7", again.info().current().getVersion().getVersion(),
-                "终点应为 0.1.7 种子版本");
+        assertEquals("0.2.0", again.info().current().getVersion().getVersion(),
+                "终点应为 0.2.0 版本");
         again.validate();
     }
 
@@ -318,6 +326,7 @@ class ApplicationCenterLegacyUpgradeTest {
 
     /** 0.1.7 存量升级脚本（发布资产原文，classpath 读取，测试即验证交付物本身）。 */
     private static final String UPGRADE_017_SCRIPT = "db/upgrade/0.1.7/upgrade-to-0.1.7-from-0.1.6.h2.sql";
+    private static final String UPGRADE_020_SCRIPT = "db/upgrade/0.2.0/upgrade-to-0.2.0-from-0.1.7.h2.sql";
 
     private static String classpathResource(String resource) throws SQLException {
         try (var in = ApplicationCenterLegacyUpgradeTest.class.getClassLoader().getResourceAsStream(resource)) {

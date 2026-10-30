@@ -24,15 +24,19 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
 
-    /** 用户组分页查询（数据范围纳管：组内成员用户部门命中当前数据范围）。 */
+    /** 用户组分页查询（数据范围纳管：超管全量；普通用户看自建组或成员命中数据范围的组）。 */
     @Select({"<script>",
             "SELECT DISTINCT g.* FROM sys_user_group g WHERE g.deleted = 0 ",
-            "AND EXISTS (SELECT 1 FROM sys_user um WHERE um.deleted = 0 ",
-            "  AND um.id IN (SELECT gm.user_id FROM sys_user_group_member gm WHERE gm.group_id = g.id AND gm.deleted = 0)",
-            "  AND um.tenant_id = g.tenant_id ",
-            "  <choose>",
-            "    <when test='__superAdmin__'>AND 1 = 1</when>",
-            "    <otherwise>",
+            // 自定义 @Select 不经过 MP 租户模板，显式按当前租户过滤，避免跨租户组泄露
+            "AND g.tenant_id = #{__tenantId__} ",
+            // 超管看全部（含空成员组）；普通用户看自己创建的组，或成员命中数据范围的组。
+            // 空成员组若不可见，创建后无法在列表中找到并补充成员，属显示与数据不一致。
+            "<choose>",
+            "  <when test='__superAdmin__'>AND 1 = 1</when>",
+            "  <otherwise>",
+            "    AND (g.create_by = #{__userId__} OR EXISTS (SELECT 1 FROM sys_user um WHERE um.deleted = 0 ",
+            "      AND um.id IN (SELECT gm.user_id FROM sys_user_group_member gm WHERE gm.group_id = g.id AND gm.deleted = 0)",
+            "      AND um.tenant_id = g.tenant_id ",
             "      <choose>",
             "        <when test='__scopeType__ == \"SELF\"'>AND um.create_by = #{__userId__}</when>",
             "        <when test='__scopeType__ == \"DEPT\"'>AND um.dept_id = #{__deptId__}</when>",
@@ -51,9 +55,9 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
             "          </choose>",
             "        </when>",
             "      </choose>",
-            "    </otherwise>",
-            "  </choose>",
-            "  ) ",
+            "    ))",
+            "  </otherwise>",
+            "</choose>",
             "<if test='q != null and q.groupCode != null and q.groupCode != \"\"'> AND g.group_code LIKE CONCAT('%', #{q.groupCode}, '%') </if>",
             "<if test='q != null and q.groupName != null and q.groupName != \"\"'> AND g.group_name LIKE CONCAT('%', #{q.groupName}, '%') </if>",
             "<if test='q != null and q.status != null'> AND g.status = #{q.status} </if>",
@@ -64,12 +68,15 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
                                         @Param("__scopeType__") String scopeType,
                                         @Param("__userId__") Long userId,
                                         @Param("__deptId__") Long deptId,
-                                        @Param("__customDeptIds__") java.util.List<Long> customDeptIds);
+                                        @Param("__customDeptIds__") java.util.List<Long> customDeptIds,
+                                        @Param("__tenantId__") Long tenantId);
 
     /** 组成员用户候选分页：仅启用用户 + 数据范围限定（与组列表同一套 EXISTS 语义）。 */
     @Select({"<script>",
             "SELECT DISTINCT u.id, u.username, u.real_name, u.dept_id, u.status ",
             "FROM sys_user u WHERE u.deleted = 0 AND u.status = 0 ",
+            // 自定义 @Select 不经过 MP 租户模板，显式按当前租户过滤，避免跨租户候选泄露
+            "AND u.tenant_id = #{__tenantId__} ",
             "AND (" +
             "  <choose>",
             "    <when test='__superAdmin__'>1 = 1</when>",
@@ -104,5 +111,6 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
                                           @Param("__scopeType__") String scopeType,
                                           @Param("__userId__") Long userId,
                                           @Param("__deptId__") Long deptId,
-                                          @Param("__customDeptIds__") java.util.List<Long> customDeptIds);
+                                          @Param("__customDeptIds__") java.util.List<Long> customDeptIds,
+                                          @Param("__tenantId__") Long tenantId);
 }

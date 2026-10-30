@@ -31,6 +31,9 @@ public class TriggerConfig implements Serializable {
     /** 业务名称。 */
     private String name;
 
+    /** 启用状态；旧定义缺省视为启用。 */
+    private Boolean enabled;
+
     /** 事件：TASK_SUBMITTED / NODE_ROUND_COMPLETED / PROCESS_COMPLETED。 */
     private String event;
 

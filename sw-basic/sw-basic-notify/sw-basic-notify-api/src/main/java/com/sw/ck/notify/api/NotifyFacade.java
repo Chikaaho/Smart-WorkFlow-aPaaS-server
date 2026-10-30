@@ -32,7 +32,10 @@ public interface NotifyFacade {
     /**
      * 统一渠道入口；IN_APP 必须先完成站内信持久化才能返回成功。
      *
-     * @return present = 投递结果（SUCCESS/FAILED/TIMEOUT 等）；当前契约恒 present，
+     * 外部渠道先持久化并认领意图；租户暂停或当前业务事务尚未提交时返回 PENDING，
+     * 保留原意图由恢复调度继续，不能在业务事务中先外发。
+     *
+     * @return present = 投递结果（PENDING/SUCCESS/FAILED/TIMEOUT 等）；当前契约恒 present，
      *         渠道失败以结果状态表达，真实基础设施异常按既有映射转为失败结果
      */
     Optional<NotifySendResult> send(NotifySendRequest request);

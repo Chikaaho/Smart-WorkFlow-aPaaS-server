@@ -159,7 +159,7 @@ class SysUserGroupServiceTest {
     @DisplayName("整量替换：全部用户可见可用 → 先删后插；空列表=清空")
     void updateMembers_validUsers_shouldReplace() {
         when(groupMapper.selectById(1L)).thenReturn(group(1L, "G-001", "组", 0));
-        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any())).thenReturn(pageOf(user(10L, 0), user(11L, 0)));
+        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any(), any())).thenReturn(pageOf(user(10L, 0), user(11L, 0)));
         when(memberMapper.delete(any(Wrapper.class))).thenReturn(0);
         when(memberMapper.insert(any(SysUserGroupMember.class))).thenReturn(1);
 
@@ -176,7 +176,7 @@ class SysUserGroupServiceTest {
     @DisplayName("整量替换：任一目标用户不存在/不可见 → 整体拒绝，不产生删除与写入")
     void updateMembers_invalidUser_shouldRejectAtomically() {
         when(groupMapper.selectById(1L)).thenReturn(group(1L, "G-001", "组", 0));
-        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any())).thenReturn(pageOf(user(10L, 0))); // 99 不可见 不在候选
+        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any(), any())).thenReturn(pageOf(user(10L, 0))); // 99 不可见 不在候选
 
         assertThatThrownBy(() -> service.updateMemberIds(1L, List.of(10L, 99L)))
                 .isInstanceOf(BaseException.class);
@@ -189,7 +189,7 @@ class SysUserGroupServiceTest {
     @DisplayName("整量替换：目标用户为停用/锁定状态 → 拒绝")
     void updateMembers_disabledUser_shouldReject() {
         when(groupMapper.selectById(1L)).thenReturn(group(1L, "G-001", "组", 0));
-        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any())).thenReturn(pageOf()); // 停用/锁定用户不在候选
+        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any(), any())).thenReturn(pageOf()); // 停用/锁定用户不在候选
 
         assertThatThrownBy(() -> service.updateMemberIds(1L, List.of(7L))).isInstanceOf(BaseException.class);
         assertThatThrownBy(() -> service.updateMemberIds(1L, List.of(8L))).isInstanceOf(BaseException.class);
@@ -201,7 +201,7 @@ class SysUserGroupServiceTest {
     @DisplayName("追加：已存在成员去重；空输入为幂等")
     void addMembers_shouldDedupe() {
         when(groupMapper.selectById(1L)).thenReturn(group(1L, "G-001", "组", 0));
-        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any())).thenReturn(pageOf(user(10L, 0), user(11L, 0)));
+        when(groupMapper.selectMemberCandidates(any(Page.class), isNull(), anyBoolean(), anyString(), any(), any(), any(), any())).thenReturn(pageOf(user(10L, 0), user(11L, 0)));
         when(memberMapper.selectList(any(Wrapper.class))).thenReturn(
                 List.of(member(1L, 10L))); // 10 已在组内
 
@@ -287,14 +287,14 @@ class SysUserGroupServiceTest {
         mpPage.setRecords(List.of(group(1L, "G-001", "组", 0)));
         mpPage.setTotal(1L);
         when(groupMapper.selectGroupPage(any(Page.class), any(SysUserGroup.class), anyBoolean(), anyString(),
-                any(), any(), any())).thenReturn(mpPage);
+                any(), any(), any(), any())).thenReturn(mpPage);
 
         PageResult<SysUserGroup> result = service.page(new PageParam(), group(1L, null, "组", null));
 
         assertThat(result.getTotal()).isEqualTo(1L);
-        // 无登录上下文时数据范围参数为安全默认（ALL、无过滤）
+        // 无登录上下文时数据范围参数为安全默认（ALL、无过滤）；租户显式传 null
         verify(groupMapper).selectGroupPage(any(Page.class), any(SysUserGroup.class), eq(false), eq("ALL"),
-                isNull(), isNull(), any());
+                isNull(), isNull(), any(), isNull());
     }
 
     @Test
@@ -304,13 +304,13 @@ class SysUserGroupServiceTest {
         mpPage.setRecords(List.of(user(5L, 0)));
         mpPage.setTotal(1L);
         when(groupMapper.selectMemberCandidates(any(Page.class), eq("张三"), anyBoolean(), anyString(),
-                any(), any(), any())).thenReturn(mpPage);
+                any(), any(), any(), any())).thenReturn(mpPage);
 
         PageResult<SysUser> result = service.memberCandidates(new PageParam(), "张三");
 
         assertThat(result.getTotal()).isEqualTo(1L);
         verify(groupMapper).selectMemberCandidates(any(Page.class), eq("张三"), eq(false), eq("ALL"),
-                isNull(), isNull(), any());
+                isNull(), isNull(), any(), isNull());
     }
 
     private SysUserGroupMember member(Long id, Long userId) {

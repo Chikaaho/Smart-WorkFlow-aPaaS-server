@@ -52,4 +52,7 @@ public class ProcessGraph implements Serializable {
 
     /** Trigger 判断配置（PD03；发布时校验并冻结）。 */
     private List<TriggerConfig> triggers;
+
+    /** 流程结束通知配置（50:88；发布时校验并随版本冻结；null = 旧定义原行为）。 */
+    private ProcessNotificationConfig notification;
 }

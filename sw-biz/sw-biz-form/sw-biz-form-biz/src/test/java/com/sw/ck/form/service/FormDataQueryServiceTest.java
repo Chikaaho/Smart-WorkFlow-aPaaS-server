@@ -14,6 +14,9 @@ import com.sw.ck.form.api.dto.FormDataFilter;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
+import com.sw.ck.form.dto.workspace.WorkspaceMetric;
+import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
 import com.sw.ck.form.dynamic.DynamicTableManager;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
@@ -927,6 +930,207 @@ class FormDataQueryServiceTest {
                 """);
     }
 
+    // ==================== 工作台数据组件：聚合 / 列表 / 权限 ====================
+
+    private void insertWorkspaceRow(String tableName, String title, int score,
+                                    int approved, long createBy) {
+        jdbcTemplate.update(
+                "INSERT INTO \"" + tableName + "\" (\"id\", \"tenant_id\", \"deleted\", \"create_time\", "
+                        + "\"create_by\", \"update_time\", \"update_by\", \"version\", \"title\", \"score\", \"is_approved\") "
+                        + "VALUES (?, ?, 0, NOW(), ?, NOW(), ?, 0, ?, ?, ?)",
+                UUID.randomUUID().toString(), TEST_TENANT_ID, createBy, createBy, title, score, approved);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Object> valuesOf(Map<String, Object> group) {
+        return (List<Object>) group.get("values");
+    }
+
+    private WorkspaceMetric metric(String field, String agg) {
+        WorkspaceMetric metric = new WorkspaceMetric();
+        metric.setField(field);
+        metric.setAgg(agg);
+        return metric;
+    }
+
+    @Test
+    @DisplayName("工作台聚合 → 先套用本人数据范围，再分组统计多指标")
+    void workspaceAggregate_shouldApplyDataScopeBeforeAggregation() {
+        var setup = setupQueryForm("ws_agg");
+        insertWorkspaceRow(setup.tableName, "本人A", 10, 1, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "本人B", 20, 0, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "他人", 30, 0, 42L);
+
+        LoginUser self = new LoginUser();
+        self.setUserId(TEST_USER_ID);
+        self.setTenantId(TEST_TENANT_ID);
+        self.setUsername("test_user");
+        self.setDataScope(com.sw.ck.security.holder.DataScope.SELF);
+        LoginUserHolder.set(self);
+
+        WorkspaceAggregateReq req = new WorkspaceAggregateReq();
+        req.setFormKey(setup.formKey);
+        req.setGroupBy("is_approved");
+        req.setMetrics(List.of(metric("score", "SUM"), metric(null, "COUNT")));
+        Map<String, Object> result = formDataQueryService.aggregateWorkspaceData(setup.formKey, req);
+
+        assertThat(result.get("totalRecords")).isEqualTo(2L);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> groups = (List<Map<String, Object>>) result.get("groups");
+        assertThat(groups).hasSize(2);
+        Map<String, Object> approved = groups.stream()
+                .filter(g -> String.valueOf(g.get("key")).equals("1"))
+                .findFirst().orElseThrow();
+        assertThat(valuesOf(approved)).containsExactly(
+                new java.math.BigDecimal("10.000000"), 1L);
+        Map<String, Object> rejected = groups.stream()
+                .filter(g -> String.valueOf(g.get("key")).equals("0"))
+                .findFirst().orElseThrow();
+        assertThat(valuesOf(rejected)).containsExactly(
+                new java.math.BigDecimal("20.000000"), 1L);
+
+        // 无维度 → 单行总值（指标卡/仪表盘）
+        req.setGroupBy(null);
+        req.setMetrics(List.of(metric(null, "COUNT")));
+        Map<String, Object> total = formDataQueryService.aggregateWorkspaceData(setup.formKey, req);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> totalGroups = (List<Map<String, Object>>) total.get("groups");
+        assertThat(totalGroups).hasSize(1);
+        assertThat(valuesOf(totalGroups.get(0))).containsExactly(2L);
+    }
+
+    @Test
+    @DisplayName("工作台选择器计数 → 与列表同一可见口径：软删排除、数据范围生效、未知表单拒绝")
+    void workspaceRecordCount_shouldApplySameVisibilityScope() {
+        var setup = setupQueryForm("ws_count");
+        insertWorkspaceRow(setup.tableName, "本人A", 10, 1, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "本人B", 20, 0, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "他人", 30, 0, 42L);
+        jdbcTemplate.update("UPDATE \"" + setup.tableName + "\" SET \"deleted\" = 1 WHERE \"title\" = '本人B'");
+
+        LoginUser self = new LoginUser();
+        self.setUserId(TEST_USER_ID);
+        self.setTenantId(TEST_TENANT_ID);
+        self.setUsername("test_user");
+        self.setDataScope(com.sw.ck.security.holder.DataScope.SELF);
+        LoginUserHolder.set(self);
+        assertThat(formDataQueryService.workspaceRecordCount(setup.formKey)).isEqualTo(1L);
+
+        LoginUser all = new LoginUser();
+        all.setUserId(TEST_USER_ID);
+        all.setTenantId(TEST_TENANT_ID);
+        all.setUsername("test_user");
+        all.setDataScope(com.sw.ck.security.holder.DataScope.ALL);
+        LoginUserHolder.set(all);
+        assertThat(formDataQueryService.workspaceRecordCount(setup.formKey)).isEqualTo(2L);
+
+        assertThatThrownBy(() -> formDataQueryService.workspaceRecordCount("no_such_form_key"))
+                .isInstanceOf(BaseException.class);
+    }
+
+    @Test
+    @DisplayName("工作台列表 → 显式列/排序/分页生效，越权或非标量列整请求拒绝")
+    void workspaceRows_shouldRespectColumnsSortAndPaging() {
+        var setup = setupQueryForm("ws_rows");
+        insertWorkspaceRow(setup.tableName, "低", 10, 1, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "中", 20, 0, TEST_USER_ID);
+        insertWorkspaceRow(setup.tableName, "高", 30, 1, TEST_USER_ID);
+
+        LoginUser all = new LoginUser();
+        all.setUserId(TEST_USER_ID);
+        all.setTenantId(TEST_TENANT_ID);
+        all.setUsername("test_user");
+        all.setDataScope(com.sw.ck.security.holder.DataScope.ALL);
+        LoginUserHolder.set(all);
+
+        WorkspaceRowsReq req = new WorkspaceRowsReq();
+        req.setFormKey(setup.formKey);
+        req.setColumns(List.of("title", "score"));
+        req.setSortField("score");
+        req.setSortOrder("ASC");
+        req.setPageNum(1);
+        req.setPageSize(2);
+        PageResult<Map<String, Object>> page = formDataQueryService.queryWorkspaceRows(setup.formKey, req);
+
+        assertThat(page.getTotal()).isEqualTo(3L);
+        assertThat(page.getRecords()).hasSize(2);
+        assertThat(page.getRecords().get(0)).containsKeys("id", "title", "score");
+        assertThat(page.getRecords().get(0)).doesNotContainKey("content");
+        assertThat(((Number) page.getRecords().get(0).get("score")).intValue()).isEqualTo(10);
+
+        WorkspaceRowsReq richText = new WorkspaceRowsReq();
+        richText.setFormKey(setup.formKey);
+        richText.setColumns(List.of("content"));
+        assertThatThrownBy(() -> formDataQueryService.queryWorkspaceRows(setup.formKey, richText))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("不支持工作台展示或分组");
+
+        WorkspaceRowsReq unknown = new WorkspaceRowsReq();
+        unknown.setFormKey(setup.formKey);
+        unknown.setColumns(List.of("no_such_field"));
+        assertThatThrownBy(() -> formDataQueryService.queryWorkspaceRows(setup.formKey, unknown))
+                .isInstanceOf(BaseException.class);
+
+        WorkspaceAggregateReq nonNumeric = new WorkspaceAggregateReq();
+        nonNumeric.setFormKey(setup.formKey);
+        nonNumeric.setGroupBy("is_approved");
+        nonNumeric.setMetrics(List.of(metric("title", "SUM")));
+        assertThatThrownBy(() -> formDataQueryService.aggregateWorkspaceData(setup.formKey, nonNumeric))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("不是数值字段");
+    }
+
+    @Test
+    @DisplayName("工作台字段目录 → 剔除无 view 权字段，聚合/列表同样拒绝")
+    void workspaceFields_shouldExcludeDeniedFields_andRejectUsage() {
+        String formKey = "ws_perm_" + System.nanoTime();
+        FormDefDTO draft = formDefService.createDraft(formKey, "权限表单", "ws_perm", null);
+        createdFormIds.add(draft.getId());
+        String definition = """
+                {
+                    "title": "权限表单",
+                    "fields": [
+                        {"name": "title", "type": "TEXT", "label": "标题"},
+                        {"name": "score", "type": "NUMBER", "label": "分数"},
+                        {"name": "is_approved", "type": "BOOL", "label": "是否通过"}
+                    ],
+                    "fieldPermissions": {
+                        "score": {"view": ["user:999"], "edit": ["user:999"]}
+                    }
+                }
+                """;
+        formDefService.saveConfig(draft.getId(), definition);
+        formDefService.publish(draft.getId());
+        String tableName = formDefMapper.selectById(draft.getId()).getPhysicalTableName();
+        createdTables.add(tableName);
+        insertWorkspaceRow(tableName, "记录", 15, 1, TEST_USER_ID);
+
+        LoginUser current = new LoginUser();
+        current.setUserId(TEST_USER_ID);
+        current.setTenantId(TEST_TENANT_ID);
+        current.setUsername("test_user");
+        current.setDataScope(com.sw.ck.security.holder.DataScope.ALL);
+        LoginUserHolder.set(current);
+
+        Map<String, Object> fields = formDataQueryService.workspaceFields(formKey);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> fieldList = (List<Map<String, Object>>) fields.get("fields");
+        assertThat(fieldList).extracting(f -> f.get("name")).contains("title").doesNotContain("score");
+
+        WorkspaceAggregateReq aggregate = new WorkspaceAggregateReq();
+        aggregate.setFormKey(formKey);
+        aggregate.setGroupBy("title");
+        aggregate.setMetrics(List.of(metric("score", "SUM")));
+        assertThatThrownBy(() -> formDataQueryService.aggregateWorkspaceData(formKey, aggregate))
+                .isInstanceOf(BaseException.class);
+
+        WorkspaceRowsReq rows = new WorkspaceRowsReq();
+        rows.setFormKey(formKey);
+        rows.setColumns(List.of("score"));
+        assertThatThrownBy(() -> formDataQueryService.queryWorkspaceRows(formKey, rows))
+                .isInstanceOf(BaseException.class);
+    }
+
     // ==================== 测试上下文配置 ====================
 
     @Configuration
@@ -1087,7 +1291,10 @@ class FormDataQueryServiceTest {
                                                           FormConfigMapper formConfigMapper,
                                                           JdbcTemplate jdbcTemplate,
                                                           ObjectMapper objectMapper) {
-            return new FormDataQueryService(formDefService, formDefMapper, formConfigMapper, jdbcTemplate, objectMapper);
+            FormDataQueryService service = new FormDataQueryService(formDefService, formDefMapper,
+                    formConfigMapper, jdbcTemplate, objectMapper);
+            service.setFieldPermissionService(new FieldPermissionService(objectMapper));
+            return service;
         }
     }
 }

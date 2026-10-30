@@ -92,6 +92,10 @@ class IotNativeMqttDeferredDispatchPgTest {
                             .registerBeanDefinition("natMqttLoginContextProvider", provider);
                 })
                 .run();
+        // 本用例显式调用生产调度入口；取消自动任务，避免后台先认领导致手动调用提前返回。
+        // 在插入任何预约或命令前完成取消，生产调度配置保持不变。
+        app.getBean(org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor.class)
+                .getScheduledTasks().forEach(task -> task.cancel(false));
         jdbc = app.getBean(JdbcTemplate.class);
         dispatchJob = app.getBean(IotReservationDispatchJob.class);
 
@@ -165,7 +169,8 @@ class IotNativeMqttDeferredDispatchPgTest {
                 .as("外发引用指向 MQTT 通道").startsWith("MQTT:nat/" + DEVICE_KEY + "/cmd:");
         assertThat(command.get("last_error")).as("无失败原因残留").isNull();
 
-        String received = awaitReceivedLineGrowth(before);
+        // QoS1 发布同步等待 PUBACK；Broker 在确认前已持久化接收行。
+        String received = receivedLineAfterPublish(before);
         assertThat(received).as("受控 Broker 实际收到预约命令（主题+载荷）")
                 .contains("nat/" + DEVICE_KEY + "/cmd").contains("机房断电").contains("火警告警");
         System.out.println("[NAT-EV] reservation-mqtt reservationId=" + reservationId + " commandId=" + commandId
@@ -202,7 +207,45 @@ class IotNativeMqttDeferredDispatchPgTest {
 
     // ==================== helpers ====================
 
+    @Test
+    void tenantPausePreservesPendingAndResumeSendsOnceWithoutExpiredCatchup() throws Exception {
+        long pendingId = 91933L;
+        long expiredId = 91934L;
+        long before = receivedLines();
+        Integer originalStatus = jdbc.queryForObject("SELECT status FROM sys_tenant WHERE id = ?", Integer.class, TENANT);
+        try {
+            jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", TENANT);
+            insertDueReservation(pendingId, "inst-native-tenant-paused");
+            insertReservation(expiredId, "inst-native-tenant-expired",
+                    LocalDateTime.now(ZoneOffset.UTC).minusSeconds(1200));
+            dispatchJob.dispatchDueReservations();
+            assertThat(jdbc.queryForObject("SELECT status FROM sw_iot_command_reservation WHERE id = ?", String.class, pendingId)).isEqualTo("PENDING");
+            assertThat(jdbc.queryForObject("SELECT command_id FROM sw_iot_command_reservation WHERE id = ?", Long.class, pendingId)).isNull();
+            assertThat(jdbc.queryForObject("SELECT status FROM sw_iot_command_reservation WHERE id = ?", String.class, expiredId)).isEqualTo("EXPIRED");
+            assertThat(receivedLines()).isEqualTo(before);
+
+            jdbc.update("UPDATE sys_tenant SET status = 0 WHERE id = ?", TENANT);
+            dispatchJob.dispatchDueReservations();
+            Long commandId = jdbc.queryForObject("SELECT command_id FROM sw_iot_command_reservation WHERE id = ?", Long.class, pendingId);
+            assertThat(commandId).isNotNull();
+            assertThat(jdbc.queryForObject("SELECT status FROM sw_iot_device_command WHERE id = ?", String.class, commandId)).isEqualTo("SENT");
+            assertThat(jdbc.queryForObject("SELECT command_id FROM sw_iot_command_reservation WHERE id = ?", Long.class, expiredId)).isNull();
+            assertThat(receivedLines()).isEqualTo(before + 1);
+            dispatchJob.dispatchDueReservations();
+            assertThat(receivedLines()).isEqualTo(before + 1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sw_iot_device_command WHERE approval_biz_id = 'inst-native-tenant-paused'", Long.class)).isEqualTo(1L);
+            System.out.println("[T020-IOT] stopped tenant pending=" + pendingId + ", resume command=" + commandId
+                    + " SENT once; expired=" + expiredId + " EXPIRED without command; brokerDelta=1");
+        } finally {
+            jdbc.update("UPDATE sys_tenant SET status = ? WHERE id = ?", originalStatus, TENANT);
+        }
+    }
+
     private void insertDueReservation(long reservationId, String processInstanceId) {
+        insertReservation(reservationId, processInstanceId, LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5));
+    }
+
+    private void insertReservation(long reservationId, String processInstanceId, LocalDateTime dueAtUtc) {
         jdbc.update("INSERT INTO sw_iot_command_reservation (id, create_time, update_time, deleted, tenant_id, "
                 + "version, process_instance_id, process_def_key, def_version, form_key, record_id, device_key, "
                 + "product_id, device_name, command_key, command_type, payload, due_at_utc, timezone_id, "
@@ -211,7 +254,7 @@ class IotNativeMqttDeferredDispatchPgTest {
                 + "'PROPERTY', '[\\\"机房断电\\\",\\\"火警告警\\\"]', ?, 'Asia/Shanghai', '2026-10-20 20:00:00', "
                 + "600, 'PENDING')",
                 reservationId, TENANT, processInstanceId, DEVICE_KEY, DEVICE_KEY, COMMAND_KEY,
-                LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5));
+                dueAtUtc);
     }
 
     private long receivedLines() {
@@ -225,20 +268,10 @@ class IotNativeMqttDeferredDispatchPgTest {
         }
     }
 
-    private String awaitReceivedLineGrowth(long before) throws Exception {
-        long deadline = System.currentTimeMillis() + 30_000L;
-        while (System.currentTimeMillis() < deadline) {
-            if (Files.exists(RECEIVED_LOG)) {
-                List<String> lines = Files.readAllLines(RECEIVED_LOG);
-                for (int i = (int) Math.min(before, lines.size()); i < lines.size(); i++) {
-                    if (lines.get(i).contains(DEVICE_KEY)) {
-                        return lines.get(i);
-                    }
-                }
-            }
-            Thread.sleep(200);
-        }
-        throw new AssertionError("30s 内受控 broker 未实际收到预约命令");
+    private String receivedLineAfterPublish(long before) throws Exception {
+        List<String> lines = Files.readAllLines(RECEIVED_LOG);
+        return lines.stream().skip(before).filter(line -> line.contains(DEVICE_KEY))
+                .findFirst().orElseThrow(() -> new AssertionError("QoS1 发布完成但 Broker 接收记录缺失"));
     }
 
     private static String generatedRsaPkcs8Base64() {

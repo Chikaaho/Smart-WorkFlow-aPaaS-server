@@ -775,6 +775,9 @@ public class ChildOrchestrationService {
                 .map(outcome -> {
                     log.info("等待节点唤醒结果: parent={}, activityId={}, outcome={}",
                             parentInstanceId, activityId, outcome);
+                    if (com.sw.ck.bpm.api.result.MutationOutcome.APPLIED.equals(outcome)) {
+                        syncParentStatusIfEnded(parent);
+                    }
                     return outcome;
                 })
                 .or(() -> {
@@ -782,6 +785,27 @@ public class ChildOrchestrationService {
                             parentInstanceId, activityId);
                     return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
                 });
+    }
+
+    /**
+     * 等待节点唤醒后父流程可能已到 END（无任务完成事件可触发状态同步）：
+     * 按引擎实际活跃节点核对，已结束则把本地实例状态从 RUNNING 收敛为 APPROVED。
+     */
+    private void syncParentStatusIfEnded(BpmInstance parent) {
+        bpmRuntimeFacade.getActiveActivityIds(parent.getProcessInstanceId()).ifPresent(active -> {
+            if (!active.isEmpty() || !"RUNNING".equals(parent.getStatus())) {
+                return;
+            }
+            boolean updated = bpmInstanceService.lambdaUpdate()
+                    .eq(BpmInstance::getId, parent.getId())
+                    .eq(BpmInstance::getStatus, "RUNNING")
+                    .set(BpmInstance::getStatus, "APPROVED")
+                    .update();
+            if (updated) {
+                log.info("父流程等待唤醒后已结束，实例状态同步为 APPROVED: processInstanceId={}",
+                        parent.getProcessInstanceId());
+            }
+        });
     }
 
     /** 等待节点引用的动作集合（配置为空 = 本图全部 CHILD 动作）。 */

@@ -349,6 +349,54 @@ class FormDefinitionServiceTest {
         System.out.println("=== 重复字段名发布被拦截 ===");
     }
 
+    @Test
+    @DisplayName("表单事件随定义保存和发布快照冻结")
+    void formEvents_shouldPersistAndFreezeInSnapshot() {
+        FormDefDTO draft = formDefService.createDraft("event_contract", "事件契约", null, null);
+        createdFormIds.add(draft.getId());
+        String definition = """
+                {
+                  "title": "事件契约",
+                  "fields": [{"name": "amount", "type": "NUMBER"}],
+                  "events": {
+                    "onLoad": [{"id": "load-1", "name": "初始化", "enabled": true, "order": 0, "script": "#设置字段值(amount, 1)"}],
+                    "beforeSubmitHandler": [{"id": "check-1", "name": "检查", "enabled": true, "order": 0, "script": "return #获取字段值(amount) > 0"}],
+                    "afterSubmitHandler": [{"id": "after-1", "name": "记录", "enabled": true, "order": 0, "script": "#提示消息(已提交)"}]
+                  }
+                }
+                """;
+        formDefService.saveConfig(draft.getId(), definition);
+        formDefService.publish(draft.getId());
+
+        FormDefEntity entity = formDefMapper.selectById(draft.getId());
+        createdTables.add(entity.getPhysicalTableName());
+        FormSnapshotEntity snapshot = formSnapshotMapper.selectOne(
+                Wrappers.lambdaQuery(FormSnapshotEntity.class)
+                        .eq(FormSnapshotEntity::getFormId, draft.getId())
+                        .eq(FormSnapshotEntity::getFormVersion, entity.getFormVersion()));
+        assertThat(snapshot).isNotNull();
+        assertThat(snapshot.getDefinition()).contains("\"events\"", "beforeSubmitHandler");
+    }
+
+    @Test
+    @DisplayName("重复表单事件动作 ID 在保存入口拒绝")
+    void duplicateFormEventIds_shouldRejectAtSave() {
+        FormDefDTO draft = formDefService.createDraft("event_invalid", "非法事件", null, null);
+        createdFormIds.add(draft.getId());
+        assertThatThrownBy(() -> formDefService.saveConfig(draft.getId(), """
+                {
+                  "fields": [{"name": "name", "type": "TEXT"}],
+                  "events": {"onLoad": [
+                    {"id": "same", "order": 0, "script": "return true"},
+                    {"id": "same", "order": 1, "script": "return true"}
+                  ]}
+                }
+                """))
+                .isInstanceOf(BaseException.class)
+                .satisfies(error -> assertThat(((BaseException) error).getCode())
+                        .isEqualTo(FormErrorCode.DEFINITION_INVALID.getCode()));
+    }
+
     // ==================== 测试 6：渲染接口 ====================
 
     @Test

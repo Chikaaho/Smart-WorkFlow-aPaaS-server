@@ -202,6 +202,9 @@ public class FormSubmitService {
         if (!isVisibleToCurrentUser(formDef)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
+        if (enrichment != null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "create");
+        }
         Map<String, Object> effectiveData = effectivePayload(formDef, submittedData);
         if (enrichment != null) {
             enrichment.enrichForWrite(formDef.getId(), effectiveData);
@@ -368,6 +371,9 @@ public class FormSubmitService {
         }
         if (!isVisibleToCurrentUser(formDef)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
+        }
+        if (enrichment != null && recordOwnerUserId == null) {
+            enrichment.assertCurrentUserCanPerformAction(formDef.getId(), "create");
         }
         // 应用范围闸门：绑定应用的表单，应用不可见/停用时不允许新提交（即新发起），
         // 拒绝发生在任何写入之前——不产生记录、不产生实例。系统/派发归属提交
@@ -572,7 +578,10 @@ public class FormSubmitService {
         // BPM 模块在位时于本事务内持久化受理事实（表单落库 ⇒ 发起命令可回查、不丢失）；
         // 仅当无 FlowStartPort（BPM 未装配）时保留历史进程内事件路径兜底。
         // ==========================================================
-        String submitterStr = String.valueOf(userId);
+        // 系统派发（submitOnBehalfOf）：目标流程发起人=记录归属人，而不是调度线程的系统用户；
+        // 普通提交仍使用当前登录用户。trace/审计列保持真实上下文用户不变。
+        String submitterStr = String.valueOf(
+                recordOwnerUserId != null ? recordOwnerUserId : userId);
         FormSubmittedEvent event = new FormSubmittedEvent(formKey, effectiveData, submitterStr, recordId,
                 tenantId, dispatchChannel, processDefKey);
         boolean canStartFlow = enrichment == null

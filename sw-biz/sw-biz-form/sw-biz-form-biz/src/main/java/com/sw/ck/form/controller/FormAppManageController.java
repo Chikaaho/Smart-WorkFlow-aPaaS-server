@@ -9,6 +9,8 @@ import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
 import com.sw.ck.form.dynamic.FixedTableSql;
 import com.sw.ck.form.service.FormAppService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -48,11 +50,42 @@ public class FormAppManageController {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /** 应用列表（含停用与承接应用），keyword 对名称模糊过滤。 */
+    /**
+     * 应用列表（含停用与承接应用），keyword 对名称模糊过滤。
+     * <p>owner-20261030-u020-q40-list-contract：下发真实归属 tenantId/tenantName；
+     * tenantId 过滤参数仅超管生效，普通调用方传参被忽略（隔离仍由既有拦截器保证）。</p>
+     */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
     @GetMapping("/list")
-    public R<List<FormAppDTO>> list(@RequestParam(required = false) String keyword) {
-        return R.ok(formAppService.listApps(keyword));
+    public R<List<FormAppDTO>> list(@RequestParam(required = false) String keyword,
+                                    @RequestParam(required = false) Long tenantId) {
+        LoginUser user = LoginUserHolder.get();
+        boolean superAdmin = user != null && user.isSuperAdmin();
+        List<FormAppDTO> apps = formAppService.listApps(keyword, superAdmin ? tenantId : null);
+        Map<Long, String> tenantNames = tenantNameMap();
+        for (FormAppDTO app : apps) {
+            if (app.getTenantId() != null) {
+                app.setTenantName(tenantNames.get(app.getTenantId()));
+            }
+        }
+        return R.ok(apps);
+    }
+
+    /** 租户 id→名称映射（复用既有启用租户选项来源；读失败为空映射，名称留空）。 */
+    private Map<Long, String> tenantNameMap() {
+        try {
+            Map<Long, String> names = new java.util.HashMap<>();
+            for (Map<String, Object> row : FixedTableSql.listEnabledTenantOptions(jdbcTemplate)) {
+                Object id = row.get("id");
+                Object name = row.get("name");
+                if (id instanceof Number number && name != null) {
+                    names.put(number.longValue(), String.valueOf(name));
+                }
+            }
+            return names;
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     /** 新建应用（名称/图标/颜色/排序/可见范围）。 */

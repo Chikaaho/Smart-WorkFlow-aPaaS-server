@@ -26,9 +26,12 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     private static final Logger log = LoggerFactory.getLogger(CommandQueueServiceImpl.class);
 
     private final IotDeviceCommandMapper commandMapper;
+    private final com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
 
-    public CommandQueueServiceImpl(IotDeviceCommandMapper commandMapper) {
+    public CommandQueueServiceImpl(IotDeviceCommandMapper commandMapper,
+                                   com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission) {
         this.commandMapper = commandMapper;
+        this.tenantWorkAdmission = java.util.Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Override
@@ -59,8 +62,17 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(400, "命令状态不允许发送: " + command.getStatus());
         }
 
+        int claimed = tenantWorkAdmission.claim(command.getTenantId(), () -> commandMapper.update(null,
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                        .set(IotDeviceCommand::getStatus, "SENDING")
+                        .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
+                        .eq(IotDeviceCommand::getId, commandId)
+                        .eq(IotDeviceCommand::getTenantId, command.getTenantId())
+                        .eq(IotDeviceCommand::getStatus, command.getStatus())
+                        .and(q -> q.isNull(IotDeviceCommand::getExpiryTime)
+                                .or().gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now()))));
+        if (claimed != 1) return null;
         command.setStatus("SENDING");
-        commandMapper.updateById(command);
 
         log.debug("命令已标记为发送中: id={}", commandId);
         return command;
@@ -138,10 +150,28 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
 
-        command.setStatus("FAILED");
-        command.setLastError(error);
-        command.setRetryCount(command.getRetryCount() + 1);
-        commandMapper.updateById(command);
+        String previous = command.getStatus();
+        int retries = (command.getRetryCount() == null ? 0 : command.getRetryCount()) + 1;
+        if ("QUEUED".equals(previous) || "FAILED".equals(previous)) {
+            int changed = tenantWorkAdmission.claim(command.getTenantId(), () -> commandMapper.update(null,
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                            .set(IotDeviceCommand::getStatus, "FAILED")
+                            .set(IotDeviceCommand::getLastError, error)
+                            .set(IotDeviceCommand::getRetryCount, retries)
+                            .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
+                            .eq(IotDeviceCommand::getId, commandId)
+                            .eq(IotDeviceCommand::getTenantId, command.getTenantId())
+                            .eq(IotDeviceCommand::getStatus, previous)));
+            if (changed != 1) return command;
+            command.setStatus("FAILED");
+            command.setLastError(error);
+            command.setRetryCount(retries);
+        } else {
+            command.setStatus("FAILED");
+            command.setLastError(error);
+            command.setRetryCount(retries);
+            commandMapper.updateById(command);
+        }
 
         log.warn("命令已标记为失败: id={}, error={}, retryCount={}",
                 commandId, error, command.getRetryCount());
@@ -220,27 +250,37 @@ public class CommandQueueServiceImpl implements CommandQueueService {
 
     @Override
     public boolean claimQueuedForSend(Long commandId, java.time.LocalDateTime staleBefore) {
-        int affected = commandMapper.update(null,
+        IotDeviceCommand owner = commandMapper.selectById(commandId);
+        if (owner == null) return false;
+        int affected = tenantWorkAdmission.claim(owner.getTenantId(), () -> commandMapper.update(null,
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
                         .set(IotDeviceCommand::getStatus, "SENDING")
                         // 领取即刷新租约时间：发送者崩溃后据此回收（wrapper 更新不会自动填充）
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                         .eq(IotDeviceCommand::getId, commandId)
+                        .eq(IotDeviceCommand::getTenantId, owner.getTenantId())
                         .eq(IotDeviceCommand::getStatus, "QUEUED")
-                        .le(IotDeviceCommand::getUpdateTime, staleBefore));
+                        .le(IotDeviceCommand::getUpdateTime, staleBefore)
+                        .and(q -> q.isNull(IotDeviceCommand::getExpiryTime)
+                                .or().gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now()))));
         return affected == 1;
     }
 
     @Override
     public boolean claimFailedForRetry(Long commandId, int maxRetryCount) {
-        int affected = commandMapper.update(null,
+        IotDeviceCommand owner = commandMapper.selectById(commandId);
+        if (owner == null) return false;
+        int affected = tenantWorkAdmission.claim(owner.getTenantId(), () -> commandMapper.update(null,
                 com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
                         .set(IotDeviceCommand::getStatus, "SENDING")
                         .setSql("retry_count = retry_count + 1")
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                         .eq(IotDeviceCommand::getId, commandId)
+                        .eq(IotDeviceCommand::getTenantId, owner.getTenantId())
                         .eq(IotDeviceCommand::getStatus, "FAILED")
-                        .lt(IotDeviceCommand::getRetryCount, maxRetryCount));
+                        .lt(IotDeviceCommand::getRetryCount, maxRetryCount)
+                        .and(q -> q.isNull(IotDeviceCommand::getExpiryTime)
+                                .or().gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now()))));
         return affected == 1;
     }
 

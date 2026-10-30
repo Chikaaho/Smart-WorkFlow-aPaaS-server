@@ -61,4 +61,10 @@ public class SysUser extends BaseEntity {
 
     @TableField(exist = false)
     private List<Long> postIds;
+    /** 管理界面展示归属；不参与持久化或授权判断。 */
+    @TableField(exist = false)
+    private String tenantName;
+    /** 租户 0 保留的系统超级管理员，只读展示。 */
+    @TableField(exist = false)
+    private boolean protectedAccount;
 }

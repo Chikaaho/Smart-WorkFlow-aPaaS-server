@@ -39,10 +39,17 @@ public class UserFacadeImpl implements UserQueryFacade {
 
     @Override
     public Optional<List<UserOptionDTO>> searchActiveUsers(String keyword, int limit) {
+        return searchActiveUsers(keyword, limit, false);
+    }
+
+    @Override
+    public Optional<List<UserOptionDTO>> searchActiveUsers(String keyword, int limit,
+                                                           boolean includeDept) {
         String kw = keyword == null ? "" : keyword.trim();
         int safeLimit = Math.max(limit, 1);
         List<SysUser> users = sysUserMapper.selectList(Wrappers.lambdaQuery(SysUser.class)
-                .select(SysUser::getId, SysUser::getUsername, SysUser::getRealName)
+                .select(SysUser::getId, SysUser::getUsername, SysUser::getRealName,
+                        SysUser::getDeptId)
                 .eq(SysUser::getStatus, STATUS_ACTIVE)
                 .and(!kw.isEmpty(), w -> w.like(SysUser::getUsername, kw)
                         .or().like(SysUser::getRealName, kw))
@@ -50,7 +57,8 @@ public class UserFacadeImpl implements UserQueryFacade {
                 .last("LIMIT " + safeLimit));
         // 关键字空白=列出全部；本契约恒 present，零匹配为空集合
         return Optional.of(users.stream()
-                .map(u -> new UserOptionDTO(u.getId(), u.getUsername(), u.getRealName()))
+                .map(u -> new UserOptionDTO(u.getId(), u.getUsername(), u.getRealName(),
+                        includeDept ? u.getDeptId() : null))
                 .toList());
     }
 

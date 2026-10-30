@@ -1,5 +1,7 @@
 package com.sw.ck.notify.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.SendNotifyCommand;
 import com.sw.ck.notify.api.NotifyChannel;
@@ -15,10 +17,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -46,6 +50,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
     private final NotifyMessageService notifyMessageService;
     private final Map<NotifyChannel, NotifyChannelAdapter> adapters;
     private final NotifySendAttemptMapper attemptMapper;
+    private final TenantWorkAdmission tenantWorkAdmission;
 
     /** 兼容既有单元/集成测试及直接调用方；未显式注册第三方渠道，尝试流水不记录。 */
     public NotifyFacadeImpl(NotifyMessageService notifyMessageService) {
@@ -58,12 +63,22 @@ public class NotifyFacadeImpl implements NotifyFacade {
         this(notifyMessageService, adapters, null);
     }
 
-    @Autowired
     public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
                             List<NotifyChannelAdapter> adapters,
                             NotifySendAttemptMapper attemptMapper) {
+        this(notifyMessageService, adapters, attemptMapper, (tenantId, claim) -> {
+            throw new IllegalStateException("外部通知缺少租户认领契约");
+        });
+    }
+
+    @Autowired
+    public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
+                            List<NotifyChannelAdapter> adapters,
+                            NotifySendAttemptMapper attemptMapper,
+                            TenantWorkAdmission tenantWorkAdmission) {
         this.notifyMessageService = notifyMessageService;
         this.attemptMapper = attemptMapper;
+        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
         this.adapters = adapters == null ? Map.of() : adapters.stream()
                 .collect(Collectors.toUnmodifiableMap(NotifyFacadeImpl::channelOf,
                         Function.identity(), (left, right) -> {
@@ -103,17 +118,12 @@ public class NotifyFacadeImpl implements NotifyFacade {
         if (forged != null) {
             return Optional.of(forged);
         }
-        // 1) 调用方显式幂等键优先
+        // 显式幂等键和稳定业务身份都复用原意图，PENDING 仍需认领后才投递。
+        NotifyMessage identityExisting = null;
         if (hasText(request.getIdempotencyKey())) {
-            NotifyMessage existing = notifyMessageService.findByIdempotencyKey(request.getIdempotencyKey());
-            if (existing != null) {
-                return Optional.of(mirrorResult(request.getChannel(), existing));
-            }
+            identityExisting = notifyMessageService.findByIdempotencyKey(request.getIdempotencyKey());
         }
-        // 2) 业务稳定身份幂等：命中既有业务通知；但“仅登记、尚未投递”的持久意图
-        //    （status=PENDING，由 recordIntent 在业务事务内写入）必须由本次调用完成投递，
-        //    否则提交后加速路径会把通知无限期推迟给恢复调度。
-        NotifyMessage identityExisting = findByIdentityRow(request);
+        if (identityExisting == null) identityExisting = findByIdentityRow(request);
         if (identityExisting != null && !isUndeliveredIntent(identityExisting)) {
             return Optional.of(mirrorResult(request.getChannel(), identityExisting));
         }
@@ -123,46 +133,17 @@ public class NotifyFacadeImpl implements NotifyFacade {
             persistDelivery(request, result);
             return Optional.of(result);
         }
-        NotifyChannelAdapter adapter = adapters.get(request.getChannel());
-        if (adapter == null) {
-            return Optional.of(persistDelivery(request, NotifySendResult.builder()
-                    .channel(request.getChannel()).status("FAILED")
-                    .failureReason("未配置生产渠道适配器").build()));
+        if (identityExisting == null) identityExisting = persistPendingRow(request);
+        if (!isUndeliveredIntent(identityExisting)) return Optional.of(mirrorResult(request.getChannel(), identityExisting));
+        // 当前业务事务内的新意图尚未提交；由提交后加速或持久恢复领取，不在事务内外发。
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            return Optional.of(mirrorResult(request.getChannel(), identityExisting));
         }
-        NotifySendResult result;
-        try {
-            Optional<NotifySendResult> delivered = adapter.send(request);
-            if (delivered.isEmpty()) {
-                result = NotifySendResult.builder().channel(request.getChannel()).status("FAILED")
-                        .failureReason("渠道适配器未返回结果").build();
-            } else {
-                result = delivered.orElseThrow();
-                if (result.getChannel() == null) {
-                    result = NotifySendResult.builder().channel(request.getChannel())
-                            .status(result.getStatus())
-                            .externalMessageId(result.getExternalMessageId())
-                            .failureReason(result.getFailureReason())
-                            .build();
-                }
-            }
-        } catch (Exception e) {
-            log.info("通知渠道投递异常: channel={}, exceptionClass={}", request.getChannel(),
-                    e.getClass().getSimpleName());
-            result = NotifySendResult.builder().channel(request.getChannel())
-                    .status("FAILED")
-                    .failureReason("投递失败："
-                            + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 300))
-                    .build();
-        }
-        if (identityExisting != null) {
-            // 既有持久意图：认领并回写结果，不产生第二条业务通知
-            NotifySendResult claimed = claimForDelivery(identityExisting, request);
-            if (claimed != null) {
-                return Optional.of(claimed);
-            }
-            return Optional.of(writeBackIntent(identityExisting, request, result));
-        }
-        return Optional.of(persistDelivery(request, result));
+        NotifySendResult claimed = claimForDelivery(identityExisting, request);
+        if (claimed != null) return Optional.of(claimed);
+        NotifySendResult result = attemptDelivery(request).orElseThrow(
+                () -> new IllegalStateException("通知渠道未返回投递结果"));
+        return Optional.of(writeBackIntent(identityExisting, request, result));
     }
 
     @Override
@@ -281,6 +262,10 @@ public class NotifyFacadeImpl implements NotifyFacade {
      * 由提交后加速或恢复调度完成实际投递。不执行任何渠道 I/O。
      */
     private NotifySendResult persistPendingIntent(NotifySendRequest request) {
+        return mirrorResult(request.getChannel(), persistPendingRow(request));
+    }
+
+    private NotifyMessage persistPendingRow(NotifySendRequest request) {
         NotifyMessage msg = newIntentRow(request);
         msg.setDeliveryStatus("PENDING");
         msg.setFailureClass(RETRYABLE);
@@ -294,12 +279,11 @@ public class NotifyFacadeImpl implements NotifyFacade {
                 winner = notifyMessageService.findByIdempotencyKey(request.getIdempotencyKey());
             }
             if (winner != null) {
-                return mirrorResult(request.getChannel(), winner);
+                return winner;
             }
             throw concurrent;
         }
-        return NotifySendResult.builder().channel(request.getChannel())
-                .status("PENDING").build();
+        return msg;
     }
 
     /**
@@ -309,14 +293,23 @@ public class NotifyFacadeImpl implements NotifyFacade {
      *         null = 认领成功，调用方继续投递并回写
      */
     private NotifySendResult claimForDelivery(NotifyMessage message, NotifySendRequest request) {
-        int claimed = notifyMessageService.getBaseMapper().update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<NotifyMessage>lambdaUpdate()
+        // 旧幂等查询保留兼容投影；PENDING 的认领需回读完整重试租约，不能猜为首次尝试。
+        if (message.getRetryCount() == null) {
+            NotifyMessage current = notifyMessageService.getById(message.getId());
+            if (current == null || !isUndeliveredIntent(current)) {
+                return mirrorResult(request.getChannel(), current == null ? message : current);
+            }
+            message.setRetryCount(current.getRetryCount());
+        }
+        int claimed = tenantWorkAdmission.claim(message.getTenantId(), () -> notifyMessageService.getBaseMapper().update(null,
+                Wrappers.<NotifyMessage>lambdaUpdate()
                         .set(NotifyMessage::getDeliveryStatus, "RESENDING")
                         .setSql("retry_count = retry_count + 1")
                         // 领取即刷新租约时间：进程崩溃后恢复调度据此回收（wrapper 更新不自动填充）
                         .set(NotifyMessage::getUpdateTime, LocalDateTime.now())
                         .eq(NotifyMessage::getId, message.getId())
-                        .eq(NotifyMessage::getDeliveryStatus, "PENDING"));
+                        .eq(NotifyMessage::getTenantId, message.getTenantId())
+                        .eq(NotifyMessage::getDeliveryStatus, "PENDING")));
         if (claimed == 0) {
             NotifyMessage latest = findByIdentityRow(request);
             return latest == null ? mirrorResult(request.getChannel(), message)
@@ -330,15 +323,24 @@ public class NotifyFacadeImpl implements NotifyFacade {
                                              NotifySendResult result) {
         String status = result.getStatus() == null ? "FAILED" : result.getStatus();
         String failureClass = failureClassOf(result);
-        NotifyMessage update = new NotifyMessage();
-        update.setId(message.getId());
-        update.setDeliveryStatus(status);
-        update.setExternalMessageId(result.getExternalMessageId());
-        update.setFailureReason(result.getFailureReason());
-        update.setFailureClass(failureClass);
-        update.setNextRetryTime(RETRYABLE.equals(failureClass) ? nextRetryTime(1) : null);
-        notifyMessageService.updateById(update);
-        recordAttempt(message.getId(), 1, request.getChannel().name(), result, failureClass);
+        int claimNumber = (message.getRetryCount() == null ? 0 : message.getRetryCount()) + 1;
+        int written = notifyMessageService.getBaseMapper().update(null,
+                Wrappers.<NotifyMessage>lambdaUpdate()
+                        .set(NotifyMessage::getDeliveryStatus, status)
+                        .set(NotifyMessage::getExternalMessageId, result.getExternalMessageId())
+                        .set(NotifyMessage::getFailureReason, result.getFailureReason())
+                        .set(NotifyMessage::getFailureClass, failureClass)
+                        .set(NotifyMessage::getNextRetryTime, RETRYABLE.equals(failureClass) ? nextRetryTime(claimNumber) : null)
+                        .set(NotifyMessage::getUpdateTime, LocalDateTime.now())
+                        .eq(NotifyMessage::getId, message.getId())
+                        .eq(NotifyMessage::getTenantId, message.getTenantId())
+                        .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
+                        .eq(NotifyMessage::getRetryCount, claimNumber));
+        recordAttempt(message.getId(), claimNumber, request.getChannel().name(), result, failureClass, message.getTenantId());
+        if (written == 0) {
+            NotifyMessage latest = notifyMessageService.getById(message.getId());
+            return mirrorResult(request.getChannel(), latest == null ? message : latest);
+        }
         return NotifySendResult.builder()
                 .channel(request.getChannel())
                 .status(status)
@@ -410,7 +412,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
             }
             throw concurrent;
         }
-        recordAttempt(msg.getId(), 1, msg.getChannel(), result, failureClass);
+        recordAttempt(msg.getId(), 1, msg.getChannel(), result, failureClass, msg.getTenantId());
         return result;
     }
 
@@ -440,12 +442,13 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     /** 记录一次投递尝试流水；流水失败不影响投递结果。 */
     private void recordAttempt(Long messageId, int attemptNo, String channel, NotifySendResult result,
-                               String failureClass) {
-        if (messageId == null) {
+                               String failureClass, Long tenantId) {
+        if (messageId == null || attemptMapper == null) {
             return;
         }
         try {
             NotifySendAttempt attempt = new NotifySendAttempt();
+            attempt.setTenantId(tenantId);
             attempt.setMessageId(messageId);
             attempt.setAttemptNo(attemptNo);
             attempt.setChannel(channel);

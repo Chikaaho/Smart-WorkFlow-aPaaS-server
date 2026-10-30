@@ -2,7 +2,7 @@ package com.sw.ck.bpm.process.controller;
 
 import com.sw.ck.bpm.process.dto.CatalogItemDTO;
 import com.sw.ck.bpm.process.dto.CategoryAssignReq;
-import com.sw.ck.bpm.process.entity.BpmCategory;
+import com.sw.ck.bpm.process.dto.CategoryDTO;
 import com.sw.ck.bpm.process.service.BpmCatalogService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -54,7 +54,7 @@ public class BpmCatalogController {
 
     /** 普通视角分类列表（仅名称/排序，登录即可用；不泄漏事项级信息）。 */
     @GetMapping("/categories")
-    public R<List<BpmCategory>> portalCategories() {
+    public R<List<CategoryDTO>> portalCategories() {
         return R.ok(catalogService.portalCategories());
     }
 
