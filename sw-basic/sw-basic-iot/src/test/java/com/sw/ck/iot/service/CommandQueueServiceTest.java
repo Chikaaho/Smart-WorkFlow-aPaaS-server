@@ -1,8 +1,11 @@
 package com.sw.ck.iot.service;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.impl.CommandQueueServiceImpl;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +35,10 @@ class CommandQueueServiceTest {
 
     @BeforeEach
     void setUp() {
+        // markSending/markFailed 的 IntSupplier 体内构造 MP lambdaUpdate()，依赖实体元数据缓存；
+        // 显式初始化，避免依赖同 JVM 其他测试先注册 IotDeviceCommand 的跨类执行顺序。
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), IotDeviceCommand.class);
         testCommand = new IotDeviceCommand();
         testCommand.setId(1L);
         testCommand.setTenantId(41L);
