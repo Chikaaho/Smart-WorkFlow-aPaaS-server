@@ -70,6 +70,12 @@ public class FormAppDTO implements Serializable {
     /** 应用内目录数 */
     private Long dirCount;
 
+    /** 归属租户 ID（owner-20261030-u020-q40-list-contract：管理列表下发，用户端视角不下发） */
+    private Long tenantId;
+
+    /** 归属租户名称（来自 sys_tenant，读失败为空；仅管理列表下发） */
+    private String tenantName;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;
