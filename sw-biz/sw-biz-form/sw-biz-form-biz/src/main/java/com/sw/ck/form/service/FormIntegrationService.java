@@ -13,14 +13,15 @@ import com.sw.ck.form.dto.FormIntegrationInvokeReq;
 import com.sw.ck.form.dto.FormIntegrationInvokeResult;
 import com.sw.ck.form.entity.FormIntegrationInvocationEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
+import com.sw.ck.form.entity.FormTraceEntity;
 import com.sw.ck.form.mapper.FormIntegrationInvocationMapper;
+import com.sw.ck.form.mapper.FormTraceMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -67,7 +68,7 @@ public class FormIntegrationService {
     private final ObjectProvider<ExternalCapabilityFacade> capabilityFacade;
     private final FormIntegrationInvocationMapper invocationMapper;
     private final FormIdGenerator idGenerator;
-    private final JdbcTemplate jdbcTemplate;
+    private final FormTraceMapper formTraceMapper;
     private final ObjectMapper objectMapper;
 
     public FormIntegrationService(FormDefService formDefService,
@@ -75,14 +76,14 @@ public class FormIntegrationService {
                                   ObjectProvider<ExternalCapabilityFacade> capabilityFacade,
                                   FormIntegrationInvocationMapper invocationMapper,
                                   FormIdGenerator idGenerator,
-                                  JdbcTemplate jdbcTemplate,
+                                  FormTraceMapper formTraceMapper,
                                   ObjectMapper objectMapper) {
         this.formDefService = formDefService;
         this.formDataQueryService = formDataQueryService;
         this.capabilityFacade = capabilityFacade;
         this.invocationMapper = invocationMapper;
         this.idGenerator = idGenerator;
-        this.jdbcTemplate = jdbcTemplate;
+        this.formTraceMapper = formTraceMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -307,12 +308,14 @@ public class FormIntegrationService {
     }
 
     private void assertSubmitter(String formId, String recordId, LoginUser user) {
-        List<Long> submitUsers = jdbcTemplate.queryForList(
-                "SELECT submit_user_id FROM sw_form_trace "
-                        + "WHERE tenant_id = ? AND form_id = ? AND record_id = ? AND deleted = 0 "
-                        + "ORDER BY submit_time DESC LIMIT 1",
-                Long.class, user.getTenantId(), formId, recordId);
-        if (submitUsers.isEmpty() || !user.getUserId().equals(submitUsers.get(0))) {
+        // 受控入口约定：生产代码不直接调用 JdbcTemplate，走 Mapper（逻辑删除由 @TableLogic 生效）
+        List<FormTraceEntity> traces = formTraceMapper.selectList(
+                Wrappers.<FormTraceEntity>lambdaQuery()
+                        .eq(FormTraceEntity::getTenantId, user.getTenantId())
+                        .eq(FormTraceEntity::getFormId, formId)
+                        .eq(FormTraceEntity::getRecordId, recordId)
+                        .orderByDesc(FormTraceEntity::getSubmitTime));
+        if (traces.isEmpty() || !user.getUserId().equals(traces.get(0).getSubmitUserId())) {
             throw new BaseException(FormErrorCode.INTEGRATION_RECORD_DENIED);
         }
     }

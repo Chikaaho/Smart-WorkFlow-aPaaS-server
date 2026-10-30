@@ -10,7 +10,9 @@ import com.sw.ck.form.dto.FormIntegrationInvokeReq;
 import com.sw.ck.form.dto.FormIntegrationInvokeResult;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.entity.FormIntegrationInvocationEntity;
+import com.sw.ck.form.entity.FormTraceEntity;
 import com.sw.ck.form.mapper.FormIntegrationInvocationMapper;
+import com.sw.ck.form.mapper.FormTraceMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.junit.jupiter.api.AfterEach;
@@ -18,7 +20,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 import java.util.Map;
@@ -43,7 +44,7 @@ class FormIntegrationServiceTest {
     private FormDataQueryService formDataQueryService;
     private ExternalCapabilityFacade facade;
     private FormIntegrationInvocationMapper invocationMapper;
-    private JdbcTemplate jdbcTemplate;
+    private FormTraceMapper formTraceMapper;
     private FormIntegrationService service;
 
     @BeforeEach
@@ -53,11 +54,11 @@ class FormIntegrationServiceTest {
         formDataQueryService = mock(FormDataQueryService.class);
         facade = mock(ExternalCapabilityFacade.class);
         invocationMapper = mock(FormIntegrationInvocationMapper.class);
-        jdbcTemplate = mock(JdbcTemplate.class);
+        formTraceMapper = mock(FormTraceMapper.class);
         ObjectProvider<ExternalCapabilityFacade> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(facade);
         service = new FormIntegrationService(formDefService, formDataQueryService, provider,
-                invocationMapper, new FormIdGenerator(), jdbcTemplate, new ObjectMapper());
+                invocationMapper, new FormIdGenerator(), formTraceMapper, new ObjectMapper());
 
         LoginUser user = new LoginUser();
         user.setUserId(7L);
@@ -132,8 +133,7 @@ class FormIntegrationServiceTest {
                 .thenReturn(new ExternalCapability("cap_w", "write", "WRITE", 30, 1L));
         when(facade.invoke(any(), anyString())).thenReturn("{\"count\":1}");
         when(formDataQueryService.getRecordDetail("u020_form", "rec-1")).thenReturn(Map.of());
-        when(jdbcTemplate.queryForList(anyString(), eq(Long.class), any(), any(), any()))
-                .thenReturn(List.of(7L));
+        when(formTraceMapper.selectList(any())).thenReturn(List.of(trace(7L)));
         when(invocationMapper.selectList(any())).thenReturn(List.of());
         when(invocationMapper.insert(any(FormIntegrationInvocationEntity.class))).thenReturn(1);
         when(invocationMapper.updateById(any(FormIntegrationInvocationEntity.class))).thenReturn(1);
@@ -163,8 +163,7 @@ class FormIntegrationServiceTest {
         when(facade.findEnabled(1L, "cap_w"))
                 .thenReturn(new ExternalCapability("cap_w", "write", "WRITE", 30, 1L));
         when(formDataQueryService.getRecordDetail("u020_form", "rec-1")).thenReturn(Map.of());
-        when(jdbcTemplate.queryForList(anyString(), eq(Long.class), any(), any(), any()))
-                .thenReturn(List.of(7L));
+        when(formTraceMapper.selectList(any())).thenReturn(List.of(trace(7L)));
         FormIntegrationInvocationEntity existing = new FormIntegrationInvocationEntity();
         existing.setStatus("SUCCEEDED");
         existing.setRequestHash("different-payload-hash");
@@ -184,14 +183,19 @@ class FormIntegrationServiceTest {
         stubForm("{\"fields\":[],\"allowedIntegrations\":[\"cap_w\"]}");
         when(facade.findEnabled(1L, "cap_w"))
                 .thenReturn(new ExternalCapability("cap_w", "write", "WRITE", 30, 1L));
-        when(jdbcTemplate.queryForList(anyString(), eq(Long.class), any(), any(), any()))
-                .thenReturn(List.of(99L));
+        when(formTraceMapper.selectList(any())).thenReturn(List.of(trace(99L)));
 
         BaseException error = assertThrows(BaseException.class,
                 () -> service.invoke(req("cap_w", "AFTER_SUBMIT", "rec-1", "rec-1")));
 
         assertEquals(FormErrorCode.INTEGRATION_RECORD_DENIED.getCode(), error.getCode());
         verify(facade, never()).invoke(any(), anyString());
+    }
+
+    private FormTraceEntity trace(long submitUserId) {
+        FormTraceEntity entity = new FormTraceEntity();
+        entity.setSubmitUserId(submitUserId);
+        return entity;
     }
 
     private void stubForm(String definition) {

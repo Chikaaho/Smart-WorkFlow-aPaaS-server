@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </ol>
  * <p>
  * 存量夹具以受支持升级入口（0.1.5 边界）建立：先以升级通道 legacy 资源 + target=0.1.5
- * 迁移到 0.1.5 边界，插入存量对象，用真实引擎发起流程并留下待办，再依次执行 0.1.6 与 0.1.7
+ * 迁移到 0.1.5 边界，插入存量对象，用真实引擎发起流程并留下待办，再依次执行 0.1.6、0.1.7 与 0.2.0
  * 升级脚本并验证主链零重放；全部断言在同一个库、同一组对象上完成。
  * </p>
  */
@@ -188,15 +188,18 @@ class ApplicationCenterUpgradeContinuityTest {
         // —— 4.0 执行 0.1.7 存量升级脚本（0.1.7 期增量 + 历史衔接，发布资产原文）——
         execScript(classpathResource(UPGRADE_017_SCRIPT));
 
-        // —— 4.1 主链衔接验证：零 versioned 重放、validate 通过 ——
+        // —— 4.0.1 执行 0.2.0 存量升级脚本（0.1.8/0.1.9/0.1.10 增量 + 历史衔接收敛为 V0.2.0，发布资产原文）——
+        execScript(classpathResource(UPGRADE_020_SCRIPT));
+
+        // —— 4.1 主链衔接验证：V0.2.0 已登记、R__ 已对账，零重放、validate 通过 ——
         MigrateResult upgrade = Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())
                 .load()
                 .migrate();
         assertTrue(upgrade.success, "主链衔接验证应成功");
-        assertEquals(3, upgrade.migrationsExecuted,
-                "升级脚本后只应执行 V0.1.8、V0.1.9 与 V0.1.10 增量，不重放历史迁移与 R__");
+        assertEquals(0, upgrade.migrationsExecuted,
+                "0.2.0 存量升级脚本衔接后，主链 versioned 已登记且 R__ 已对账，不重放任何迁移");
         Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())
@@ -334,6 +337,9 @@ class ApplicationCenterUpgradeContinuityTest {
 
     /** 0.1.7 存量升级脚本（发布资产原文，classpath 读取，测试即验证交付物本身）。 */
     private static final String UPGRADE_017_SCRIPT = "db/upgrade/0.1.7/upgrade-to-0.1.7-from-0.1.6.h2.sql";
+
+    /** 0.2.0 存量升级脚本（发布资产原文，classpath 读取，测试即验证交付物本身）。 */
+    private static final String UPGRADE_020_SCRIPT = "db/upgrade/0.2.0/upgrade-to-0.2.0-from-0.1.7.h2.sql";
 
     private static String classpathResource(String resource) throws SQLException {
         try (var in = ApplicationCenterUpgradeContinuityTest.class.getClassLoader().getResourceAsStream(resource)) {

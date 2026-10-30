@@ -158,9 +158,10 @@ class TriggerPartialFailureRecoveryTest {
     }
 
     private Optional<CommandEnvelope> findCommandByAction(String actionId) {
+        // 命令键已收敛为 P64ACT 摘要（不再含动作段），改由动作引用表按 action_id 回查 command_key
         return jdbcTemplate.queryForList(
-                "SELECT command_key FROM sw_bpm_command WHERE command_key LIKE ? ORDER BY id",
-                String.class, "%:" + actionId + ":%").stream()
+                "SELECT command_key FROM sw_bpm_action_ref WHERE tenant_id = ? AND action_id = ? ORDER BY id",
+                String.class, TENANT, actionId).stream()
                 .findFirst()
                 .flatMap(key -> queue.findByKey(TENANT, key));
     }
@@ -171,9 +172,8 @@ class TriggerPartialFailureRecoveryTest {
                         + "FROM sw_bpm_command WHERE id = ?", String.class, commandId);
     }
 
-    private void recordReceiverEffect(CommandEnvelope envelope) {
-        String key = envelope.getCommandKey();
-        String actionId = key.contains(":act-1:") ? "act-1" : "act-2";
+    private void recordReceiverEffect(CommandEnvelope envelope, String actionId) {
+        // 命令键已收敛为 P64ACT 摘要（不含动作段），动作归属由测试调用方显式传入
         receiverEffects.computeIfAbsent(actionId, k -> new AtomicInteger()).incrementAndGet();
     }
 
@@ -200,7 +200,7 @@ class TriggerPartialFailureRecoveryTest {
         CommandEnvelope act1Claimed = claimed.stream()
                 .filter(env -> env.getCommandId().equals(act1.get().getCommandId()))
                 .findFirst().orElseThrow();
-        recordReceiverEffect(act1Claimed);
+        recordReceiverEffect(act1Claimed, "act-1");
         queue.complete(act1Claimed.getCommandId(), act1Claimed.getClaimToken(),
                 "{\"status\":\"OK\",\"action\":\"act-1\"}");
         assertThat(commandState(act1Claimed.getCommandId()))
@@ -221,7 +221,7 @@ class TriggerPartialFailureRecoveryTest {
         // 4. 经既有合法恢复入口恢复 act-2（复用同键命令重新入队，不改历史行、不生成第二个实例）
         BpmActionRef act2Ref = actionRefMapper.selectOne(Wrappers.<BpmActionRef>lambdaQuery()
                 .eq(BpmActionRef::getTenantId, TENANT)
-                .like(BpmActionRef::getCommandKey, "%:act-2:%")
+                .eq(BpmActionRef::getActionId, "act-2")
                 .last("LIMIT 1"));
         assertThat(act2Ref).isNotNull();
         ActionRefRecoveryService recoveryService = new ActionRefRecoveryService(queue,
@@ -240,7 +240,7 @@ class TriggerPartialFailureRecoveryTest {
         CommandEnvelope act2Recovered = reclaimed.stream()
                 .filter(env -> env.getCommandId().equals(act2Claimed.getCommandId()))
                 .findFirst().orElseThrow();
-        recordReceiverEffect(act2Recovered);
+        recordReceiverEffect(act2Recovered, "act-2");
         queue.complete(act2Recovered.getCommandId(), act2Recovered.getClaimToken(),
                 "{\"status\":\"OK\",\"action\":\"act-2\",\"recovered\":true}");
         assertThat(receiverEffect("act-1")).as("已成功动作不重复执行").isEqualTo(1);

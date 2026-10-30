@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（189 常量 / 184 个唯一数值码 / 5 枚举）
+## 2. 全量登记（200 常量 / 195 个唯一数值码 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -109,6 +109,16 @@
 | form | `APP_DIR_NOT_FOUND` | 1704 | `form.app_dir_not_found` | 应用目录不存在或不属于该应用 |
 | form | `APP_DIR_NAME_DUPLICATE` | 1705 | `form.app_dir_name_duplicate` | 目录名称已存在 |
 | form | `APP_DIR_DELETE_RESTRICTED` | 1706 | `form.app_dir_delete_restricted` | 目录下仍有表单，须先处理归属再删除 |
+| form | `INTEGRATION_NOT_ALLOWED` | 1800 | `form.integration_not_allowed` | 该表单版本未授权调用此集成能力 |
+| form | `INTEGRATION_UNAVAILABLE` | 1801 | `form.integration_unavailable` | 集成能力未登记、跨租户、已停用或未分类 |
+| form | `INTEGRATION_PHASE_DENIED` | 1802 | `form.integration_phase_denied` | 当前阶段不允许调用该集成能力 |
+| form | `INTEGRATION_REQUEST_INVALID` | 1803 | `form.integration_request_invalid` | 集成调用请求不合法 |
+| form | `INTEGRATION_RESULT_TOO_LARGE` | 1804 | `form.integration_result_too_large` | 集成能力返回结果超过上限 |
+| form | `INTEGRATION_CALL_FAILED` | 1805 | `form.integration_call_failed` | 集成能力调用失败 |
+| form | `INTEGRATION_IN_PROGRESS` | 1806 | `form.integration_in_progress` | 相同提交标识的集成调用正在处理中，请稍后重试 |
+| form | `INTEGRATION_RECORD_DENIED` | 1807 | `form.integration_record_denied` | 当前身份无权对该记录执行此集成调用 |
+| form | `INTEGRATION_NOT_CONFIGURED` | 1808 | `form.integration_not_configured` | 表单未配置可调用的集成能力 |
+| form | `INTEGRATION_IDEMPOTENCY_CONFLICT` | 1809 | `form.integration_idempotency_conflict` | 相同提交标识的集成请求内容不一致，已拒绝 |
 | bpm | `GRAPH_MISSING_START` | 2000 | `bpm.graph_missing_start` | 图缺少开始节点 |
 | bpm | `GRAPH_MULTIPLE_START` | 2001 | `bpm.graph_multiple_start` | 图存在多个开始节点 |
 | bpm | `GRAPH_MISSING_END` | 2002 | `bpm.graph_missing_end` | 图缺少结束节点 |
@@ -205,6 +215,7 @@
 | bpm | `DELEGATE_RESOLVE_FAILED` | 2452 | `bpm.delegate_resolve_failed` | 岗位委托解析失败：委托链超过 4 跳、受托岗位缺有效人员或关系失效，请检查委托配置 |
 | bpm | `PARTICIPANT_AGGREGATE_INVALID` | 2453 | `bpm.participant_aggregate_invalid` | 节点表单人员聚合配置无效：来源节点、字段或轮次不满足要求，无法解析下一轮参与人 |
 | bpm | `REWORK_LOOP_OVER_LIMIT` | 2454 | `bpm.rework_loop_over_limit` | 异常处理→复检自动循环超过上限，已阻止自动派发并挂起等待有权用户处置 |
+| bpm | `NOTIFICATION_CONFIG_INVALID` | 2455 | `bpm.notification_config_invalid` | 结束通知配置无效：接收人、渠道或租户范围不满足发布要求 |
 | openapi | `APP_NOT_FOUND` | 3000 | `openapi.app_not_found` | 开放应用不存在 |
 | openapi | `APP_DISABLED` | 3001 | `openapi.app_disabled` | 开放应用已停用 |
 | openapi | `SIGN_INVALID` | 3002 | `openapi.signature_invalid` | 签名校验失败 |

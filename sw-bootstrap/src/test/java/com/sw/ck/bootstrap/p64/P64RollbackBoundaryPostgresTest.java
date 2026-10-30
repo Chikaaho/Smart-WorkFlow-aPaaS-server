@@ -65,7 +65,7 @@ class P64RollbackBoundaryPostgresTest {
                 .locations(P64AppendMigrationUpgradePostgresTest.appLocations()).load().migrate();
         assertTrue(result.success, "种子链迁移应成功");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
-            assertEquals("0.1.10", currentVersion(conn), "在役基线应为最新迁移");
+            assertEquals("0.2.0", currentVersion(conn), "在役基线应为最新迁移");
         }
 
         // 2) 旧代码等价迁移集：从 classpath 真实复制 0.1.5 期版本化迁移（V0.1.5 种子 + 应用中心增量）
@@ -85,18 +85,18 @@ class P64RollbackBoundaryPostgresTest {
         assertTrue(legacyNames.stream().noneMatch(n -> n.equals("V0.1.7__baseline_seed.sql")),
                 "旧迁移集不得包含 0.1.7 种子（等价回退代码）");
 
-        // 3) 回退观察：旧迁移集对在役 0.1.7 库 validate → 必须失败并指名未解析的 0.1.7
+        // 3) 回退观察：旧迁移集对在役 0.2.0 库 validate → 必须失败并指名未解析的 0.2.0
         ValidateResult validation = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations("filesystem:" + legacyDir.toAbsolutePath())
                 .ignoreMigrationPatterns("*:ignored").load().validateWithResult();
         assertFalse(validation.validationSuccessful,
-                "旧迁移集对在役 0.1.7 库 validate 必须失败（不得把不能处理存量的旧代码直接切回）");
+                "旧迁移集对在役 0.2.0 库 validate 必须失败（不得把不能处理存量的旧代码直接切回）");
         List<String> unresolvedVersions = validation.invalidMigrations.stream()
                 .map(migration -> String.valueOf(migration.version))
                 .toList();
         System.out.println("[r017-rollback] unresolved=" + unresolvedVersions);
-        assertTrue(unresolvedVersions.contains("0.1.7"),
-                "validate 未解析迁移应含 0.1.7 种子，实际: " + unresolvedVersions);
+        assertTrue(unresolvedVersions.contains("0.2.0"),
+                "validate 未解析迁移应含 0.2.0 收敛基线，实际: " + unresolvedVersions);
 
         // 4) 对照一：旧迁移集对旧终点库（0.1.5 期链尾 20261015190000）迁移 + validate 全通过——失败只源于收敛
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);

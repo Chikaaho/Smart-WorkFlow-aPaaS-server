@@ -644,6 +644,7 @@ class TenantAdministrationDatabaseTest {
         final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(4);
         final TenantAdminService service;
         final String vendor;
+        final boolean oldVersion;
         final com.sw.ck.system.service.SysUserService users;
         final com.sw.ck.system.service.SysDeptService departments;
         final com.sw.ck.system.service.ManagementTenantContext management;
@@ -658,6 +659,7 @@ class TenantAdministrationDatabaseTest {
         final com.sw.ck.system.controller.DeptController deptController;
 
         Fixture(Database database, boolean oldVersion) throws Exception {
+            this.oldVersion = oldVersion;
             vendor = database == Database.H2 ? "h2" : "postgresql";
             if (database == Database.POSTGRES) {
                 postgres = EmbeddedPostgres.builder().start();
@@ -744,7 +746,11 @@ class TenantAdministrationDatabaseTest {
         }
 
         Flyway flyway(String target) {
-            String[] locations = {"db/migration/", "db/migration/bpm/", "db/migration/notify/", "db/migration/form/", "db/migration/storage/", "db/migration/job/", "db/migration/agent/", "db/migration/iot/", "db/migration/openapi/", "db/migration/system/"};
+            // 旧链形态夹具（0.1.8 终点）使用 0.2.0 升级通道归档的逐字节原件构造 versioned 链，
+            // 避免把收敛后的 V0.2.0 基线重放到旧结构库（0.1.9 增量 DDL 无守卫会重复执行）。
+            String[] locations = oldVersion
+                    ? new String[]{"db/upgrade/0.2.0/legacy-0.1.10/", "db/migration/bpm/", "db/migration/notify/", "db/migration/form/", "db/migration/storage/", "db/migration/job/", "db/migration/agent/", "db/migration/iot/", "db/migration/openapi/", "db/migration/system/"}
+                    : new String[]{"db/migration/", "db/migration/bpm/", "db/migration/notify/", "db/migration/form/", "db/migration/storage/", "db/migration/job/", "db/migration/agent/", "db/migration/iot/", "db/migration/openapi/", "db/migration/system/"};
             var configuration = Flyway.configure().dataSource(dataSource).locations(java.util.Arrays.stream(locations).map(path -> "classpath:" + path + vendor).toArray(String[]::new));
             if (target != null) configuration.target(target);
             return configuration.load();

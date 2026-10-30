@@ -99,15 +99,15 @@ class I6G7bOldBaselineUpgradePostgresTest {
         var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(21, result.migrationsExecuted,
-                "全新库应执行 21 条（V0.1.7 种子 + V0.1.8/V0.1.9/V0.1.10 增量 + 17 个 R__，"
+        assertEquals(19, result.migrationsExecuted,
+                "全新库应执行 19 条（V0.2.0 基线种子 + 18 个 R__，"
                         + "含 0.2.0 用户组菜单 R__u020_user_group_menu）");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
                      "SELECT version FROM flyway_schema_history WHERE success = true AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")) {
             assertTrue(rs.next());
-            assertEquals("0.1.10", rs.getString(1), "升级终点应为最后一个 versioned 迁移");
+            assertEquals("0.2.0", rs.getString(1), "升级终点应为最后一个 versioned 迁移");
         }
     }
 
@@ -122,7 +122,7 @@ class I6G7bOldBaselineUpgradePostgresTest {
         } catch (SQLException e) {
             throw new IllegalStateException("清理临时库失败", e);
         }
-        System.out.println("[G7b] identity: " + DB_NAME + " (本机真实 PG 临时库，基线终态 0.1.0，已清理)");
+        System.out.println("[G7b] identity: " + DB_NAME + " (本机真实 PG 临时库，基线终态 0.2.0，已清理)");
     }
 
     @Test
@@ -170,7 +170,7 @@ class I6G7bOldBaselineUpgradePostgresTest {
     }
 
     @Test
-    @DisplayName("基线库：通知门面表齐备，历史表含 0.1.6 与可重复对账")
+    @DisplayName("基线库：通知门面表齐备，历史表含 0.2.0 与可重复对账")
     void baselineHistoryAndFacadeTables() throws Exception {
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement()) {
@@ -184,8 +184,8 @@ class I6G7bOldBaselineUpgradePostgresTest {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT COUNT(*) FROM flyway_schema_history WHERE success = true")) {
                 assertTrue(rs.next());
-                assertEquals(21, rs.getInt(1),
-                        "历史表应恰有 21 条成功记录（V0.1.7 种子 + V0.1.8/V0.1.9/V0.1.10 + 17 个 R__，"
+                assertEquals(19, rs.getInt(1),
+                        "历史表应恰有 19 条成功记录（V0.2.0 基线种子 + 18 个 R__，"
                                 + "含 0.2.0 用户组菜单）");
             }
         }
