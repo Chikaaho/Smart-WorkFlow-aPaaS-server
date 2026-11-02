@@ -74,6 +74,14 @@ public class SsoAuthService {
     private static final String SSO_TENANT_AMBIGUOUS_MSG =
             "该企业名称存在多个匹配，请联系管理员确认后重试";
 
+    /** 登录页免填企业（B021-016）：按 Provider 反查零命中。 */
+    private static final String SSO_TENANT_PROVIDER_NONE_MSG =
+            "尚未有企业启用该登录方式，请联系管理员或改用账号密码登录";
+
+    /** 登录页免填企业（B021-016）：多企业启用同一 Provider，暂不自动识别。 */
+    private static final String SSO_TENANT_PROVIDER_AMBIGUOUS_MSG =
+            "多个企业启用了该登录方式，暂时无法自动识别所属企业，请改用账号密码登录";
+
     /** 登录态缺失：需要重新登录。 */
     private static final String SESSION_REQUIRED_MSG =
             "登录状态已失效，请重新登录";
@@ -588,12 +596,50 @@ public class SsoAuthService {
     }
 
     /**
-     * 登录前安全发起——租户名称入口（V012-BUG-019）：登录页只提交租户名称，
-     * 服务端按名称精确解析为唯一租户后走既有 ID 发起链。
+     * 登录前安全发起——租户名称入口：登录页免填企业（B021-016）且未提供名称时，
+     * 按 Provider 反查唯一可用企业；提供了名称则按名称精确解析（V012-BUG-019 既有语义）。
      */
     @Transactional
     public AuthorizeStart startAuthorizeLogin(String provider, String tenantName, String redirectPath) {
-        return startAuthorizeLogin(provider, resolveTenantIdByNameExact(tenantName), redirectPath);
+        Long tenantId = tenantName == null || tenantName.isBlank()
+                ? resolveDefaultTenantIdForProvider(provider)
+                : resolveTenantIdByNameExact(tenantName);
+        return startAuthorizeLogin(provider, tenantId, redirectPath);
+    }
+
+    /**
+     * 登录页免填企业（B021-016）：按 Provider 反查启用配置——恰好一个可用企业
+     * 启用该登录方式即视为目标；零命中/多行命中均 fail closed（多企业歧义后续
+     * 由扫码选择所属企业承接，不在此处任意选中）。停用/过期企业不参与自动识别。
+     * 查询发生在免认证路径，挂起租户拦截器（配置表按 tenant_id 显式过滤语义）。
+     */
+    @Transactional
+    public Long resolveDefaultTenantIdForProvider(String provider) {
+        requireProvider(provider);
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            List<SsoProviderConfig> hits = configMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<SsoProviderConfig>lambdaQuery()
+                            .eq(SsoProviderConfig::getProvider, provider)
+                            .eq(SsoProviderConfig::getEnabled, 1));
+            List<SsoProviderConfig> usable = new java.util.ArrayList<>();
+            for (SsoProviderConfig hit : hits) {
+                if (tenantValidityService.isValid(hit.getTenantId())) {
+                    usable.add(hit);
+                }
+            }
+            if (usable.isEmpty()) {
+                throw new SsoRejectionException(SystemErrorKeys.SSO_TENANT_NOT_FOUND,
+                        SSO_TENANT_PROVIDER_NONE_MSG);
+            }
+            if (usable.size() > 1) {
+                log.warn("SSO 登录前发起按 Provider 反查命中多行: provider={} count={}",
+                        provider, usable.size());
+                throw new SsoRejectionException(SystemErrorKeys.SSO_TENANT_AMBIGUOUS,
+                        SSO_TENANT_PROVIDER_AMBIGUOUS_MSG);
+            }
+            return usable.get(0).getTenantId();
+        }
     }
 
     @Transactional
