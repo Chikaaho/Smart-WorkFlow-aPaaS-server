@@ -533,12 +533,15 @@ public class BpmProcessDefController {
      * </p>
      *
      * @param keyword 关键字（匹配用户名/姓名，可空）
+     * @param deptId  部门 ID（选择组织架构节点后按部门 + 子孙部门过滤，可空）
      * @return 用户候选选项列表
      */
     @GetMapping("/approver-candidates")
     public R<List<UserOptionDTO>> approverCandidates(
-            @RequestParam(required = false, defaultValue = "") String keyword) {
-        java.util.Optional<List<UserOptionDTO>> candidates = userQueryFacade.searchActiveUsers(keyword, 50);
+            @RequestParam(required = false, defaultValue = "") String keyword,
+            @RequestParam(required = false) Long deptId) {
+        java.util.Optional<List<UserOptionDTO>> candidates =
+                userQueryFacade.searchActiveUsersInDept(keyword, deptId, 50);
         if (candidates.isEmpty()) {
             // empty = 缺少可用租户范围等查询上下文：以空候选列表呈现，
             // 对外响应结构保持不变（不把“无法查询”暴露为 500）

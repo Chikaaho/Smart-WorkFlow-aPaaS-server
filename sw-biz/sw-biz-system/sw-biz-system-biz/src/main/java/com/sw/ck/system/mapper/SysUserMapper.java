@@ -34,13 +34,13 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
     java.util.List<SysUser> selectGlobalByUsernameAll(
             @org.apache.ibatis.annotations.Param("username") String username);
 
-    /** 按租户编码 + 用户名精确定位（同名账号存在于多个租户时使用）。 */
+    /** 按企业（租户）名称 + 用户名精确定位候选（同名账号存在于多个租户时使用；名称歧义由调用方 fail closed）。 */
     @Select("SELECT u.* FROM sys_user u JOIN sys_tenant t ON t.id = u.tenant_id "
-            + "WHERE t.code = #{tenantCode} AND u.username = #{username} "
-            + "AND u.deleted = 0 AND t.deleted = 0 LIMIT 1")
+            + "WHERE t.name = #{tenantName} AND u.username = #{username} "
+            + "AND u.deleted = 0 AND t.deleted = 0 ORDER BY u.id")
     @InterceptorIgnore(tenantLine = "true")
-    SysUser selectByTenantCodeAndUsername(
-            @org.apache.ibatis.annotations.Param("tenantCode") String tenantCode,
+    java.util.List<SysUser> selectByTenantNameAndUsernameAll(
+            @org.apache.ibatis.annotations.Param("tenantName") String tenantName,
             @org.apache.ibatis.annotations.Param("username") String username);
 
     @Select({"<script>",
