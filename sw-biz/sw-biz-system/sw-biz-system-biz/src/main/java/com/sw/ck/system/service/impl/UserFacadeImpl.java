@@ -3,14 +3,21 @@ package com.sw.ck.system.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
+import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysUser;
+import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -32,9 +39,11 @@ public class UserFacadeImpl implements UserQueryFacade {
     private static final int STATUS_ACTIVE = 0;
 
     private final SysUserMapper sysUserMapper;
+    private final SysDeptMapper sysDeptMapper;
 
-    public UserFacadeImpl(SysUserMapper sysUserMapper) {
+    public UserFacadeImpl(SysUserMapper sysUserMapper, SysDeptMapper sysDeptMapper) {
         this.sysUserMapper = sysUserMapper;
+        this.sysDeptMapper = sysDeptMapper;
     }
 
     @Override
@@ -60,6 +69,61 @@ public class UserFacadeImpl implements UserQueryFacade {
                 .map(u -> new UserOptionDTO(u.getId(), u.getUsername(), u.getRealName(),
                         includeDept ? u.getDeptId() : null))
                 .toList());
+    }
+
+    /**
+     * B021-027：审批人候选按组织架构筛选——部门 + 全部子孙部门内的正常状态用户。
+     * deptId 为空时退回全量关键字搜索（与原行为一致）。
+     */
+    @Override
+    public Optional<List<UserOptionDTO>> searchActiveUsersInDept(String keyword, Long deptId,
+                                                                 int limit) {
+        if (deptId == null) {
+            return searchActiveUsers(keyword, limit, false);
+        }
+        String kw = keyword == null ? "" : keyword.trim();
+        int safeLimit = Math.max(limit, 1);
+        List<Long> deptIds = new ArrayList<>();
+        deptIds.add(deptId);
+        deptIds.addAll(listDescendantDeptIds(deptId));
+        List<SysUser> users = sysUserMapper.selectList(Wrappers.lambdaQuery(SysUser.class)
+                .select(SysUser::getId, SysUser::getUsername, SysUser::getRealName,
+                        SysUser::getDeptId)
+                .eq(SysUser::getStatus, STATUS_ACTIVE)
+                .in(SysUser::getDeptId, deptIds)
+                .and(!kw.isEmpty(), w -> w.like(SysUser::getUsername, kw)
+                        .or().like(SysUser::getRealName, kw))
+                .orderByAsc(SysUser::getId)
+                .last("LIMIT " + safeLimit));
+        return Optional.of(users.stream()
+                .map(u -> new UserOptionDTO(u.getId(), u.getUsername(), u.getRealName(),
+                        u.getDeptId()))
+                .toList());
+    }
+
+    /** 子孙部门 ID（环保护）：与 DeptScopeProviderImpl 同口径，单次查全量部门后层级遍历。 */
+    private List<Long> listDescendantDeptIds(Long deptId) {
+        Map<Long, List<Long>> childrenByParent = sysDeptMapper.selectList(null).stream()
+                .filter(dept -> dept.getId() != null && dept.getParentId() != null)
+                .collect(Collectors.groupingBy(SysDept::getParentId,
+                        Collectors.mapping(SysDept::getId, Collectors.toList())));
+        List<Long> result = new ArrayList<>();
+        Deque<Long> stack = new ArrayDeque<>(
+                childrenByParent.getOrDefault(deptId, List.of()));
+        Set<Long> visited = new HashSet<>();
+        visited.add(deptId);
+        while (!stack.isEmpty()) {
+            Long current = stack.pop();
+            if (!visited.add(current)) {
+                continue;
+            }
+            result.add(current);
+            List<Long> children = childrenByParent.get(current);
+            if (children != null) {
+                stack.addAll(children);
+            }
+        }
+        return result;
     }
 
     @Override
