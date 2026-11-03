@@ -293,9 +293,9 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult upgrade = after.migrate();
         assertTrue(upgrade.success, "衔接后主链应迁移成功");
-        // V0.2.0 已由升级脚本登记，仅执行快照（12 支 R__）之外新增的 6 支 R__；历史版本化迁移不得重放。
-        assertEquals(6, upgrade.migrationsExecuted,
-                "衔接后只应执行快照外新增的 6 支 R__ 对账，不得重放历史版本化迁移");
+        // V0.2.0 已由升级脚本登记，仅执行快照（12 支 R__）之外新增的 7 支 R__；历史版本化迁移不得重放。
+        assertEquals(7, upgrade.migrationsExecuted,
+                "衔接后只应执行快照外新增的 7 支 R__ 对账，不得重放历史版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后主链不应重复执行任何迁移");
