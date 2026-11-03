@@ -330,8 +330,9 @@ class I4CrossTenantServiceEntryTest {
 
         @Bean
         public com.sw.ck.system.api.user.UserQueryFacade userQueryFacade(
-                com.sw.ck.system.mapper.SysUserMapper mapper) {
-            return new UserFacadeImpl(mapper);
+                com.sw.ck.system.mapper.SysUserMapper mapper,
+                com.sw.ck.system.mapper.SysDeptMapper deptMapper) {
+            return new UserFacadeImpl(mapper, deptMapper);
         }
 
         @Bean

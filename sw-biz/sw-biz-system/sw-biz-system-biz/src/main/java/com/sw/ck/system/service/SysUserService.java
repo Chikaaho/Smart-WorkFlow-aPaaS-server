@@ -50,9 +50,10 @@ public interface SysUserService extends BaseService<SysUser> {
     SysUser getByUsername(String username);
 
     /**
-     * 按租户编码 + 用户名定位账号（0.2.0 用户名按租户唯一后，同名账号用租户编码区分）。
+     * 按企业（租户）名称 + 用户名定位账号（0.2.0 用户名按租户唯一后，同名账号用企业名称区分；
+     * 名称命中多行（同名企业）时 fail closed 返回 null，由登录链统一“密码错误”语义）。
      */
-    SysUser findByTenantCodeAndUsername(String tenantCode, String username);
+    SysUser findByTenantNameAndUsername(String tenantName, String username);
 
     /**
      * 根据 ID 查询用户。

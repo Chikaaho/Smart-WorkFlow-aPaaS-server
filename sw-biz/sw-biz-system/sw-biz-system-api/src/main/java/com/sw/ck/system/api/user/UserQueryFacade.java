@@ -41,6 +41,20 @@ public interface UserQueryFacade {
     }
 
     /**
+     * 按部门（含子孙部门）搜索正常状态用户（审批人候选按组织架构筛选）。
+     *
+     * @param keyword 关键字（匹配 username 或 real_name，空白视为列出全部）
+     * @param deptId  部门 ID；{@code null} 表示不按部门过滤
+     * @param limit   最大返回条数（正数；&lt;=0 时按 1 处理）
+     * @return 语义同 {@link #searchActiveUsers(String, int)}
+     */
+    default Optional<List<UserOptionDTO>> searchActiveUsersInDept(String keyword, Long deptId,
+                                                                  int limit) {
+        // 默认实现忽略部门过滤，保持既有实现的兼容行为
+        return searchActiveUsers(keyword, limit);
+    }
+
+    /**
      * 按用户 ID 批量查询展示名（用于审批人/发起人等场景的可读身份回显）。
      *
      * @param ids 用户 ID 集合

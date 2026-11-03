@@ -181,8 +181,9 @@ class OrgAuthorityFacadeIntegrationTest {
         }
 
         @Bean
-        public UserQueryFacade userQueryFacade(com.sw.ck.system.mapper.SysUserMapper sysUserMapper) {
-            return new UserFacadeImpl(sysUserMapper);
+        public UserQueryFacade userQueryFacade(com.sw.ck.system.mapper.SysUserMapper sysUserMapper,
+                                               SysDeptMapper sysDeptMapper) {
+            return new UserFacadeImpl(sysUserMapper, sysDeptMapper);
         }
 
         @Bean

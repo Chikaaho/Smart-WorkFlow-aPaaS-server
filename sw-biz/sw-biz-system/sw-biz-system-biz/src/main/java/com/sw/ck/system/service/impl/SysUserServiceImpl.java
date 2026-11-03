@@ -174,14 +174,17 @@ public class SysUserServiceImpl
 
     @Override
     public SysUser getByUsername(String username) {
-        // 用户名按租户唯一（0.2.0）：跨租户不唯一时 fail closed，重名账号须用租户编码定位
+        // 用户名按租户唯一（0.2.0）：跨租户不唯一时 fail closed，重名账号须用企业名称定位
         java.util.List<SysUser> rows = baseMapper.selectGlobalByUsernameAll(username);
         return rows.size() == 1 ? rows.get(0) : null;
     }
 
     @Override
-    public SysUser findByTenantCodeAndUsername(String tenantCode, String username) {
-        return baseMapper.selectByTenantCodeAndUsername(tenantCode.trim(), username);
+    public SysUser findByTenantNameAndUsername(String tenantName, String username) {
+        // 租户名称不强制唯一：同名企业命中多行时 fail closed（null → 统一“密码错误”语义）
+        java.util.List<SysUser> rows =
+                baseMapper.selectByTenantNameAndUsernameAll(tenantName.trim(), username);
+        return rows.size() == 1 ? rows.get(0) : null;
     }
 
     @Override

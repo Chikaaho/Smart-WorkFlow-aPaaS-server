@@ -773,15 +773,68 @@ class SsoAuthServiceTest {
         com.sw.ck.system.service.TenantValidityService v =
                 Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
         Mockito.doNothing().when(v).requireValid(org.mockito.ArgumentMatchers.any());
+        Mockito.when(v.isValid(org.mockito.ArgumentMatchers.any())).thenReturn(true);
         return v;
     }
 
     @Test
-    @DisplayName("V012-BUG-019 名称解析：空白 → sso_tenant_required")
-    void resolveTenantName_blank_shouldReject() {
-        assertThatThrownBy(() -> service.startAuthorizeLogin("WECOM", "   ", null))
+    @DisplayName("B021-016 免填企业：无启用配置 → sso_tenant_not_found，不签发 state")
+    void authorizeLogin_blankName_zeroEnabledConfig_shouldReject() {
+        SsoAuthService svc =
+                serviceWithTenantMapper(Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class));
+        Mockito.when(configMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "   ", null))
                 .isInstanceOf(SsoRejectionException.class)
-                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_REQUIRED);
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_NOT_FOUND);
+        Mockito.verify(stateMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+    }
+
+    @Test
+    @DisplayName("B021-016 免填企业：唯一可用企业启用 → 自动解析该企业并按既有链发起")
+    void authorizeLogin_blankName_singleEnabledConfig_shouldAutoResolve() {
+        SsoAuthService svc =
+                serviceWithTenantMapper(Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class));
+        SsoProviderConfig config = new SsoProviderConfig();
+        config.setId(21L);
+        config.setTenantId(100L);
+        config.setProvider("WECOM");
+        config.setEnabled(1);
+        Mockito.when(configMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(config));
+
+        SsoAuthService.AuthorizeStart start =
+                svc.startAuthorizeLogin("WECOM", (String) null, "/workspace");
+
+        assertThat(start.authorizeUrl()).contains("appid=ww-test-corp");
+        Mockito.verify(stateMapper).insert(org.mockito.ArgumentMatchers.<SsoAuthState>argThat(s ->
+                s.getTenantId() != null && s.getTenantId() == 100L && s.getConsumed() == 0));
+    }
+
+    @Test
+    @DisplayName("B021-016 免填企业：多企业启用同一 Provider → sso_tenant_ambiguous，不任意选中")
+    void authorizeLogin_blankName_multiEnabledConfig_shouldReject() {
+        SsoAuthService svc =
+                serviceWithTenantMapper(Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class));
+        SsoProviderConfig a = new SsoProviderConfig();
+        a.setId(21L);
+        a.setTenantId(100L);
+        a.setProvider("WECOM");
+        a.setEnabled(1);
+        SsoProviderConfig b = new SsoProviderConfig();
+        b.setId(22L);
+        b.setTenantId(101L);
+        b.setProvider("WECOM");
+        b.setEnabled(1);
+        Mockito.when(configMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(a, b));
+
+        assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "  ", null))
+                .isInstanceOf(SsoRejectionException.class)
+                .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_AMBIGUOUS);
+        Mockito.verify(stateMapper, Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
