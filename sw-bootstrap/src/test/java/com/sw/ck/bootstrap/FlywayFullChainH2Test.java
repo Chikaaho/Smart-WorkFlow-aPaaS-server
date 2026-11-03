@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * 完全一致（{vendor} 按 H2 连接解析为 h2）。0.2.0 发版收敛后，versioned 迁移为
  * 单一基线 {@code V0.2.0__baseline_seed.sql}（0.1.7 基线种子与 0.1.8/0.1.9/0.1.10
  * 租户增量按版本序逐字节合并），加 18 个可重复对账 R__，
- * 全新库共执行 20 条（V0.2.0 基线 + 19 个 R__ 可重复对账）。
+ * 全新库共执行 21 条（V0.2.0 基线 + V0.2.2 F1 + 19 个 R__ 可重复对账）。
  * 历史版本升级演练随 0.1.3「仅支持全新建库」与 0.1.5「单一种子 + 独立升级通道」
  * 的边界一并退役；本测试保留并延续全部终态数据/语义断言。
  * </p>
@@ -81,20 +81,20 @@ class FlywayFullChainH2Test {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(20, result.migrationsExecuted,
-                "全新库应执行 20 条（V0.2.0 基线种子 + 19 个 R__ 可重复对账，"
+        assertEquals(21, result.migrationsExecuted,
+                "全新库应执行 21 条（V0.2.0 基线种子 + V0.2.2 F1 供应商/模型 + 19 个 R__ 可重复对账，"
                         + "含 0.2.0 用户组菜单 R__u020_user_group_menu），实际: "
                         + result.migrationsExecuted);
-        assertEquals("0.2.0", flyway.info().current().getVersion().getVersion(),
-                "终点当前版本应为最后一个 versioned 迁移（0.2.0）");
+        assertEquals("0.2.2", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移（V0.2.2）");
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 20 条（V0.2.0 基线 + 19 个可重复对账）")
+    @DisplayName("种子迁移后：info().applied() 共 21 条（V0.2.0 基线 + V0.2.2 F1 供应商/模型 + 19 个可重复对账）")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway.info().applied();
-        assertEquals(20, applied.length,
-                "已应用迁移数应为 20（V0.2.0 基线种子 + 19 个 R__，含 0.2.0 用户组菜单与 0.2.1 指标卡种子）");
+        assertEquals(21, applied.length,
+                "已应用迁移数应为 21（V0.2.0 基线种子 + V0.2.2 + 19 个 R__，含 0.2.0 用户组菜单与 0.2.1 指标卡种子）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -119,7 +119,7 @@ class FlywayFullChainH2Test {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway.migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.2.0", flyway.info().current().getVersion().getVersion(),
+        assertEquals("0.2.2", flyway.info().current().getVersion().getVersion(),
                 "版本应保持最后一个 versioned 迁移（0.2.0）");
     }
 
