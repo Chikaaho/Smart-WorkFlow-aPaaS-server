@@ -427,11 +427,13 @@ public class AgentGraphExecutionServiceImpl
             switch (node.getType()) {
                 case AgentGraphInterpreter.NODE_TYPE_LLM -> {
                     Object idObj = configValue(node, AgentGraphInterpreter.CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
-                    if (!(idObj instanceof Number n)) {
+                    // 接受 Number/数字字符串：graph_json 落库后 Long 一律是字符串形态
+                    // （全局 Jackson Long→String），仅收 Number 会让已发布图无法执行
+                    Long modelConfigId = AgentGraphInterpreter.parseConfigLong(idObj);
+                    if (modelConfigId == null) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "LLM 节点缺少模型配置引用: " + node.getId());
                     }
-                    Long modelConfigId = n.longValue();
                     // F1 阶段 1：经运行时服务校验（存在性 + 模型/供应商启停），并预热单例
                     modelRuntimeService.assertUsable(modelConfigId);
                 }
@@ -475,7 +477,8 @@ public class AgentGraphExecutionServiceImpl
                     // ⑧ maxIterations 存在且 <1 → 非法（缺失用默认 10，不报错）
                     Object maxIterations = configValue(node,
                             AgentGraphInterpreter.CONFIG_KEY_MAX_ITERATIONS);
-                    if (maxIterations instanceof Number n && n.intValue() < 1) {
+                    Long parsed = AgentGraphInterpreter.parseConfigLong(maxIterations);
+                    if (parsed != null && parsed < 1) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "LOOP 节点 maxIterations 必须 ≥ 1: " + node.getId());
                     }
@@ -518,10 +521,11 @@ public class AgentGraphExecutionServiceImpl
      */
     private int maxIterationsOf(GraphElement node) {
         Object value = configValue(node, AgentGraphInterpreter.CONFIG_KEY_MAX_ITERATIONS);
-        if (!(value instanceof Number n)) {
+        Long parsed = AgentGraphInterpreter.parseConfigLong(value);
+        if (parsed == null) {
             return AgentGraphInterpreter.DEFAULT_MAX_ITERATIONS;
         }
-        return n.intValue();
+        return parsed.intValue();
     }
 
     /** 从唯一 START 沿边 BFS，判断是否存在可达的 END 节点 */

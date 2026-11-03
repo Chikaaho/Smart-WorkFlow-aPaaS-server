@@ -68,7 +68,11 @@ public class AgentChatModelAssembler {
             builder.topP(toDouble(model.getTopP()));
         }
         if (model.getMaxTokens() != null) {
-            builder.maxCompletionTokens(model.getMaxTokens());
+            // 用统一 max_tokens 槽位而非 maxCompletion_tokens：与 ChatRequest.maxOutputTokens
+            // 同槽互覆，绝不双发（部分兼容网关对双参数返回 conflicting_token_limits 400，
+            // D022-01 的目标是 baseUrl 可换任意兼容网关；OpenAI 官方 o 系列如需
+            // max_completion_tokens 由后续 format 级配置承接）。
+            builder.maxTokens(model.getMaxTokens());
         }
         return builder.build();
     }

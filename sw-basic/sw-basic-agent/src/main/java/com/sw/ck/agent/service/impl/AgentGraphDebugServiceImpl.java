@@ -549,11 +549,13 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         if (config == null) {
             return AgentGraphInterpreter.DEFAULT_MAX_ITERATIONS;
         }
-        Object value = config.get(AgentGraphInterpreter.CONFIG_KEY_MAX_ITERATIONS);
-        if (!(value instanceof Number n)) {
+        // 接受 Number/数字字符串（graph_json 落库后 Long 为字符串形态，全局 Long→String 约定）
+        Long parsed = AgentGraphInterpreter.parseConfigLong(
+                config.get(AgentGraphInterpreter.CONFIG_KEY_MAX_ITERATIONS));
+        if (parsed == null) {
             return AgentGraphInterpreter.DEFAULT_MAX_ITERATIONS;
         }
-        return n.intValue();
+        return parsed.intValue();
     }
 
     private void persistTrace(Long sessionId, AgentGraphInterpreter.NodeExecutionTrace trace) {
@@ -782,11 +784,12 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
             switch (node.getType()) {
                 case AgentGraphInterpreter.NODE_TYPE_LLM -> {
                     Object idObj = configValue(node, AgentGraphInterpreter.CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
-                    if (!(idObj instanceof Number n)) {
+                    // 接受 Number/数字字符串：graph_json 落库后 Long 一律是字符串形态
+                    Long modelConfigId = AgentGraphInterpreter.parseConfigLong(idObj);
+                    if (modelConfigId == null) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "LLM 节点缺少模型配置引用: " + node.getId());
                     }
-                    Long modelConfigId = n.longValue();
                     // F1 阶段 1：经运行时服务校验（存在性 + 模型/供应商启停），并预热单例
                     modelRuntimeService.assertUsable(modelConfigId);
                 }
@@ -824,7 +827,8 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                 }
                 case AgentGraphInterpreter.NODE_TYPE_LOOP -> {
                     Object maxIterations = configValue(node, AgentGraphInterpreter.CONFIG_KEY_MAX_ITERATIONS);
-                    if (maxIterations instanceof Number n && n.intValue() < 1) {
+                    Long parsed = AgentGraphInterpreter.parseConfigLong(maxIterations);
+                    if (parsed != null && parsed < 1) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "LOOP 节点 maxIterations 必须 ≥ 1: " + node.getId());
                     }

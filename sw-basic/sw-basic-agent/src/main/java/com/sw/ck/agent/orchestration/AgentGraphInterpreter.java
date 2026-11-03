@@ -676,11 +676,11 @@ public class AgentGraphInterpreter {
         if (config == null) {
             return DEFAULT_MAX_ITERATIONS;
         }
-        Object value = config.get(CONFIG_KEY_MAX_ITERATIONS);
-        if (!(value instanceof Number n)) {
+        Long parsed = parseConfigLong(config.get(CONFIG_KEY_MAX_ITERATIONS));
+        if (parsed == null) {
             return DEFAULT_MAX_ITERATIONS;
         }
-        return n.intValue();
+        return parsed.intValue();
     }
 
     // ==================== 内部辅助 ====================
@@ -720,14 +720,38 @@ public class AgentGraphInterpreter {
         throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID, "边引用了不存在的节点: " + id);
     }
 
+    /**
+     * 解析节点 config 中的数值 id（{@code agentModelConfigId} 等）。
+     * <p>
+     * 接受 {@link Number} 与十进制数字字符串：项目全局 Jackson 对 Long 启用
+     * ToStringSerializer（防 JS 精度丢失），graph_json 落库后 id 一律是字符串形态；
+     * 仅收 Number 会让任何含 LLM 节点的已发布图都无法执行（F1 阶段 1 真实联调发现）。
+     * 空白或非数字 → null（由调用方决定错误语义）。
+     * </p>
+     */
+    public static Long parseConfigLong(Object value) {
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Long.parseLong(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     /** 读取节点 config 中的 Long 型必填键（缺失/非数值 → 运行时错误，防御性兜底） */
     private Long requireConfigId(GraphElement node, String key) {
         Map<String, Object> config = node.getConfig();
-        if (config == null || !(config.get(key) instanceof Number n)) {
+        Long parsed = config == null ? null : parseConfigLong(config.get(key));
+        if (parsed == null) {
             throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
                     "节点缺少 " + key + ": " + node.getId());
         }
-        return n.longValue();
+        return parsed;
     }
 
     /** 读取节点 config 中的 String 型必填键（缺失/空白 → 运行时错误，防御性兜底） */

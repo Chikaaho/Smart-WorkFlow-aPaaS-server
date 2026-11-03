@@ -98,6 +98,9 @@ public class AgentProviderServiceImpl
         checkNameUnique(req.getName(), id);
         AgentProvider entity = toEntity(req);
         entity.setId(id);
+        // 携带旧 version：乐观锁插件据此自增（version+1 WHERE version=old）——
+        // 单例复用按修订号重建（D022-04），供应商侧换 Key/改地址必须让下一次 acquire 重建实例
+        entity.setVersion(existing.getVersion());
         if (req.getApiKey() != null && !req.getApiKey().isEmpty()) {
             entity.setApiKeyCipher(cipher.encrypt(req.getApiKey()));
         } else {
@@ -105,7 +108,11 @@ public class AgentProviderServiceImpl
             entity.setApiKeyCipher(existing.getApiKeyCipher());
         }
         try {
-            updateById(entity);
+            boolean updated = updateById(entity);
+            if (!updated) {
+                // version 已被并发修改（0 行命中）→ 显式冲突，避免静默丢失更新
+                throw new BaseException(CommonErrorCode.PARAM_ERROR, "供应商已被修改，请刷新后重试");
+            }
         } catch (DuplicateKeyException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "供应商名称已存在：" + req.getName());
         }

@@ -15,7 +15,7 @@ CREATE TABLE sw_agent_provider (
     api_format      VARCHAR(30) NOT NULL,
     base_url        VARCHAR(500) NOT NULL,
     api_key_cipher  TEXT,
-    enabled         SMALLINT NOT NULL DEFAULT 1,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     remark          VARCHAR(500),
     create_time     TIMESTAMP,
     create_by       VARCHAR(64),
@@ -44,7 +44,7 @@ CREATE TABLE sw_agent_model (
     top_p           DECIMAL(4,2),
     timeout_seconds INT NOT NULL DEFAULT 30,
     retry_count     INT NOT NULL DEFAULT 0,
-    enabled         SMALLINT NOT NULL DEFAULT 1,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     group_key       VARCHAR(100),
     sort            INT NOT NULL DEFAULT 0,
     locked_until    TIMESTAMP,
@@ -77,7 +77,7 @@ SELECT c.id,
        CASE WHEN c.protocol_type = 'ollama' AND c.base_url NOT LIKE '%/v1'
             THEN c.base_url || '/v1' ELSE c.base_url END,
        c.api_key_cipher,
-       CASE WHEN c.protocol_type = 'other' THEN 0 ELSE c.enabled END,
+       CASE WHEN c.protocol_type = 'other' THEN FALSE ELSE c.enabled <> 0 END,
        'D022-03 迁移自 sw_agent_model_config（protocol=' || c.protocol_type || '）',
        c.create_time, c.create_by, c.update_time, c.update_by, c.deleted, c.tenant_id, c.version
 FROM sw_agent_model_config c;
@@ -88,7 +88,7 @@ INSERT INTO sw_agent_model (id, provider_id, name, model_name, capabilities,
                             remark, create_time, create_by, update_time, update_by, deleted, tenant_id, version)
 SELECT c.id, c.id, c.name, c.model_name, 'CHAT',
        c.temperature, c.max_tokens, c.top_p, c.timeout_seconds, c.retry_count,
-       c.enabled, c.group_key, c.sort, c.locked_until, c.quota_cooldown_seconds,
+       c.enabled <> 0, c.group_key, c.sort, c.locked_until, c.quota_cooldown_seconds,
        c.remark, c.create_time, c.create_by, c.update_time, c.update_by, c.deleted, c.tenant_id, c.version
 FROM sw_agent_model_config c;
 

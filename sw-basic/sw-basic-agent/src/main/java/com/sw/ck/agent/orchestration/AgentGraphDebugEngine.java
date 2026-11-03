@@ -527,11 +527,12 @@ public class AgentGraphDebugEngine {
         if (config == null) {
             return DEFAULT_MAX_ITERATIONS;
         }
-        Object value = config.get(CONFIG_KEY_MAX_ITERATIONS);
-        if (!(value instanceof Number n)) {
+        // 接受 Number/数字字符串（graph_json 落库后 Long 为字符串形态，全局 Long→String 约定）
+        Long parsed = AgentGraphInterpreter.parseConfigLong(config.get(CONFIG_KEY_MAX_ITERATIONS));
+        if (parsed == null) {
             return DEFAULT_MAX_ITERATIONS;
         }
-        return n.intValue();
+        return parsed.intValue();
     }
 
     private GraphElement findStart(List<GraphElement> elements) {
@@ -565,11 +566,13 @@ public class AgentGraphDebugEngine {
 
     private Long requireConfigId(GraphElement node, String key) {
         Map<String, Object> config = node.getConfig();
-        if (config == null || !(config.get(key) instanceof Number n)) {
+        // 接受 Number/数字字符串（graph_json 落库后 Long 为字符串形态，全局 Long→String 约定）
+        Long parsed = config == null ? null : AgentGraphInterpreter.parseConfigLong(config.get(key));
+        if (parsed == null) {
             throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
                     "节点缺少 " + key + ": " + node.getId());
         }
-        return n.longValue();
+        return parsed;
     }
 
     private String requireConfigString(GraphElement node, String key) {

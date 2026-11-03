@@ -99,13 +99,20 @@ public class AgentModelManageServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, AgentModelSaveReqDTO req) {
-        requireEntity(id);
+        AgentModel existing = requireEntity(id);
         requireProvider(req.getProviderId());
         checkNameUnique(req.getName(), id);
         AgentModel entity = toEntity(req);
         entity.setId(id);
+        // 携带旧 version：乐观锁插件据此自增——单例复用按修订号重建（D022-04），
+        // 改采样参数/超时/启停必须让下一次 acquire 装配新配置（改参数热生效，无需重启）
+        entity.setVersion(existing.getVersion());
         try {
-            updateById(entity);
+            boolean updated = updateById(entity);
+            if (!updated) {
+                // version 已被并发修改（0 行命中）→ 显式冲突，避免静默丢失更新
+                throw new BaseException(CommonErrorCode.PARAM_ERROR, "模型配置已被修改，请刷新后重试");
+            }
         } catch (DuplicateKeyException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "模型名称已存在：" + req.getName());
         }
