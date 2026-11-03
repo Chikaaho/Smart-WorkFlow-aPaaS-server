@@ -8,9 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
-import com.sw.ck.agent.dto.AgentModelConfigDTO;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
-import com.sw.ck.agent.service.AgentModelConfigService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -50,16 +48,21 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * sw_agent_model_config / sw_agent_graph_execution 分页数据范围真过滤测试（验收标准 2）。
+ * sw_agent_graph_execution 分页数据范围真过滤测试（验收标准 2）。
+ * <p>
+ * F1 两级模型改造（D022-02）后，供应商/模型管理页不再做部门级数据范围过滤
+ * （租户隔离 + 权限码控制可见性），模型配置分页用例已随旧表下线；
+ * 图执行记录按 create_by 的部门数据范围过滤保持不变。
+ * </p>
  * <p>
  * 两表均无 dept_id 列、归属用户列为 create_by（VARCHAR(64)，存 userId 字符串形态），
  * 等效条件（SELF → create_by = CAST(userId AS VARCHAR)；部门三档 → create_by IN
  * (SELECT CAST(id AS VARCHAR) FROM sys_user WHERE dept_id IN (...))；空集恒假）在
- * {@code selectModelConfigPage} / {@code selectExecutionPage} 内实现。
+ * {@code selectExecutionPage} 内实现。
  * </p>
  * <p>
  * 用户：u1/u2 ∈ 部门 11，u3 ∈ 111，u4 ∈ 112，u5 ∈ 12（子部门映射：11 → {111, 112}）。
- * 数据：两表各 5 行，create_by 分别为 '1'..'5'。
+ * 数据：执行记录 5 行，create_by 分别为 '1'..'5'。
  * </p>
  */
 @SpringBootTest(
@@ -73,13 +76,10 @@ import static org.assertj.core.api.Assertions.assertThat;
         }
 )
 @Transactional
-@DisplayName("Agent 两表分页数据范围过滤测试")
+@DisplayName("Agent 图执行记录分页数据范围过滤测试")
 class AgentDataScopeTest {
 
     private static final Long TENANT = 100L;
-
-    @Autowired
-    private AgentModelConfigService modelConfigService;
 
     @Autowired
     private AgentGraphExecutionService graphExecutionService;
@@ -91,25 +91,6 @@ class AgentDataScopeTest {
 
     @BeforeAll
     static void createTables(@Autowired JdbcTemplate jt) {
-        jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
-                    id              BIGINT NOT NULL PRIMARY KEY,
-                    name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
-                    base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
-                    api_key_cipher  CLOB,
-                    create_time     TIMESTAMP,
-                    create_by       VARCHAR(64),
-                    update_time     TIMESTAMP,
-                    update_by       VARCHAR(64),
-                    deleted         SMALLINT NOT NULL DEFAULT 0,
-                    tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
-                    enabled         SMALLINT NOT NULL DEFAULT 1,
-                    timeout_seconds INT NOT NULL DEFAULT 30
-                )
-                """);
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_graph_execution (
                     id                BIGINT NOT NULL PRIMARY KEY,
@@ -142,7 +123,6 @@ class AgentDataScopeTest {
                     deleted     SMALLINT NOT NULL DEFAULT 0
                 )
                 """);
-        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model_config (tenant_id, name)");
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sys_user_username ON sys_user (username)");
     }
 
@@ -153,7 +133,6 @@ class AgentDataScopeTest {
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution");
         jdbcTemplate.update("DELETE FROM sys_user");
         seedUser(1L, 11L, "u1");
@@ -161,11 +140,6 @@ class AgentDataScopeTest {
         seedUser(3L, 111L, "u3");
         seedUser(4L, 112L, "u4");
         seedUser(5L, 12L, "u5");
-        seedModelConfig(1L, "m1", "1");
-        seedModelConfig(2L, "m2", "2");
-        seedModelConfig(3L, "m3", "3");
-        seedModelConfig(4L, "m4", "4");
-        seedModelConfig(5L, "m5", "5");
         seedExecution(1L, 10L, "1");
         seedExecution(2L, 10L, "2");
         seedExecution(3L, 10L, "3");
@@ -184,15 +158,6 @@ class AgentDataScopeTest {
                         VALUES (?, ?, 'x', 0, ?, ?)
                         """,
                 id, username, deptId, TENANT);
-    }
-
-    private void seedModelConfig(Long id, String name, String createBy) {
-        jdbcTemplate.update("""
-                        INSERT INTO sw_agent_model_config
-                        (id, name, protocol_type, base_url, model_name, create_time, create_by, tenant_id)
-                        VALUES (?, ?, 'openai', 'http://x', 'gpt-x', CURRENT_TIMESTAMP, ?, ?)
-                        """,
-                id, name, createBy, TENANT);
     }
 
     private void seedExecution(Long id, Long graphDefId, String createBy) {
@@ -218,19 +183,8 @@ class AgentDataScopeTest {
         LoginUserHolder.set(user);
     }
 
-    private List<String> modelNames(PageResult<AgentModelConfigDTO> result) {
-        return result.getRecords().stream().map(AgentModelConfigDTO::getName).toList();
-    }
-
     private List<Long> executionIds(PageResult<AgentGraphExecutionDTO> result) {
         return result.getRecords().stream().map(AgentGraphExecutionDTO::getId).toList();
-    }
-
-    private PageResult<AgentModelConfigDTO> pageModels() {
-        PageParam param = new PageParam();
-        param.setPageNum(1);
-        param.setPageSize(50);
-        return modelConfigService.pageModels(param, null);
     }
 
     private PageResult<AgentGraphExecutionDTO> pageExecutions() {
@@ -238,101 +192,6 @@ class AgentDataScopeTest {
         param.setPageNum(1);
         param.setPageSize(50);
         return graphExecutionService.pageExecutions(param, null);
-    }
-
-    // ==================== sw_agent_model_config ====================
-
-    @Nested
-    @DisplayName("sw_agent_model_config.pageModels")
-    class ModelConfigScopeTests {
-
-        @Test
-        @DisplayName("ALL：返回全量 5 条")
-        void all_shouldReturnAll() {
-            loginAs(DataScopeType.ALL, 1L, 11L, Set.of(), false);
-
-            PageResult<AgentModelConfigDTO> result = pageModels();
-
-            assertThat(result.getTotal()).isEqualTo(5L);
-            assertThat(modelNames(result)).containsExactlyInAnyOrder("m1", "m2", "m3", "m4", "m5");
-        }
-
-        @Test
-        @DisplayName("超管：短路全部范围限制")
-        void superAdmin_shouldReturnAll() {
-            loginAs(DataScopeType.SELF, 1L, 11L, Set.of(), true);
-
-            assertThat(pageModels().getTotal()).isEqualTo(5L);
-        }
-
-        @Test
-        @DisplayName("SELF：仅 create_by=本人（1）的 m1")
-        void self_shouldReturnOnlyOwn() {
-            loginAs(DataScopeType.SELF, 1L, 11L, Set.of(), false);
-
-            PageResult<AgentModelConfigDTO> result = pageModels();
-
-            assertThat(result.getTotal()).isEqualTo(1L);
-            assertThat(modelNames(result)).containsExactly("m1");
-        }
-
-        @Test
-        @DisplayName("DEPT：仅本部门（11）成员创建的 m1/m2（VARCHAR 列字符串比较）")
-        void dept_shouldReturnOnlySameDeptCreators() {
-            loginAs(DataScopeType.DEPT, 1L, 11L, Set.of(), false);
-
-            PageResult<AgentModelConfigDTO> result = pageModels();
-
-            assertThat(result.getTotal()).isEqualTo(2L);
-            assertThat(modelNames(result)).containsExactlyInAnyOrder("m1", "m2");
-        }
-
-        @Test
-        @DisplayName("DEPT_AND_CHILD：本部门及子部门（11+111+112）→ m1..m4")
-        void deptAndChild_shouldIncludeChildDeptCreators() {
-            loginAs(DataScopeType.DEPT_AND_CHILD, 1L, 11L, Set.of(), false);
-
-            PageResult<AgentModelConfigDTO> result = pageModels();
-
-            assertThat(result.getTotal()).isEqualTo(4L);
-            assertThat(modelNames(result)).containsExactlyInAnyOrder("m1", "m2", "m3", "m4");
-        }
-
-        @Test
-        @DisplayName("CUSTOM：仅关联部门（111+12）→ m3/m5")
-        void custom_shouldReturnOnlyCustomDeptCreators() {
-            loginAs(DataScopeType.CUSTOM, 1L, 11L, Set.of(111L, 12L), false);
-
-            PageResult<AgentModelConfigDTO> result = pageModels();
-
-            assertThat(result.getTotal()).isEqualTo(2L);
-            assertThat(modelNames(result)).containsExactlyInAnyOrder("m3", "m5");
-        }
-
-        @Test
-        @DisplayName("CUSTOM：未配置任何部门 → 恒假返回 0 行")
-        void custom_withEmptyDeptIds_shouldReturnEmpty() {
-            loginAs(DataScopeType.CUSTOM, 1L, 11L, Set.of(), false);
-
-            PageResult<AgentModelConfigDTO> result = pageModels();
-
-            assertThat(result.getTotal()).isZero();
-            assertThat(result.getRecords()).isEmpty();
-        }
-
-        @Test
-        @DisplayName("SELF + nameKeyword：范围条件与业务过滤叠加")
-        void self_combinedWithNameKeyword() {
-            loginAs(DataScopeType.SELF, 1L, 11L, Set.of(), false);
-
-            PageParam param = new PageParam();
-            param.setPageNum(1);
-            param.setPageSize(50);
-            PageResult<AgentModelConfigDTO> result = modelConfigService.pageModels(param, "m1");
-
-            assertThat(result.getTotal()).isEqualTo(1L);
-            assertThat(modelNames(result)).containsExactly("m1");
-        }
     }
 
     // ==================== sw_agent_graph_execution ====================
@@ -461,8 +320,8 @@ class AgentDataScopeTest {
         }
 
         @Bean
-        public com.sw.ck.agent.orchestration.ChatModelFactory chatModelFactory() {
-            return new com.sw.ck.agent.orchestration.ChatModelFactory();
+        public com.sw.ck.agent.orchestration.AgentModelRuntimeService agentModelRuntimeService() {
+            return org.mockito.Mockito.mock(com.sw.ck.agent.orchestration.AgentModelRuntimeService.class);
         }
 
         @Bean
@@ -578,29 +437,18 @@ class AgentDataScopeTest {
         }
 
         @Bean
-        public AgentModelConfigService agentModelConfigService(
-                LoginContextProvider loginContextProvider,
-                DeptScopeProvider deptScopeProvider) {
-            return new com.sw.ck.agent.service.impl.AgentModelConfigServiceImpl(
-                    new com.sw.ck.common.crypto.AesGcmCipher(TEST_BASE64_KEY),
-                    loginContextProvider, deptScopeProvider);
-        }
-
-        @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
                 com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.AgentModelConfigMapper modelConfigMapper,
+                com.sw.ck.agent.orchestration.AgentModelRuntimeService modelRuntimeService,
                 com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
-                com.sw.ck.agent.orchestration.ChatModelFactory chatModelFactory,
                 LoginContextProvider loginContextProvider,
                 DeptScopeProvider deptScopeProvider) {
             return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
-                    objectMapper, modelConfigMapper, internalToolMapper, externalToolMapper,
-                    executionMapper, executionNodeMapper, chatModelFactory,
-                    new com.sw.ck.common.crypto.AesGcmCipher(TEST_BASE64_KEY),
+                    objectMapper, modelRuntimeService, internalToolMapper, externalToolMapper,
+                    executionMapper, executionNodeMapper,
                     loginContextProvider, deptScopeProvider);
         }
     }

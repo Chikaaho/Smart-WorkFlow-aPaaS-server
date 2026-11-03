@@ -100,18 +100,8 @@ spring:
     async-executor-activate: false
     database-schema-update: true
 
-  # ======================== Spring AI ========================
-  ai:
-    openai:
-      api-key: ${OPENAI_API_KEY:}
-      chat:
-        options:
-          model: gpt-4o
-    ollama:
-      base-url: http://localhost:11434
-      chat:
-        options:
-          model: llama3
+  # F1 阶段 1（D022-01）：Agent 模型接入已切换 LangChain4j，模型地址/密钥经
+  # sw_agent_provider / sw_agent_model 配置，全局 spring.ai 默认配置移除。
 
   # ======================== MQTT ========================
   mqtt:

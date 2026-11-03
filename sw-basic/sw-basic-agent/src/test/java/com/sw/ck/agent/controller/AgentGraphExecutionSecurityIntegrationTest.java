@@ -9,7 +9,7 @@ import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.crypto.AesGcmCipher;
@@ -571,8 +571,8 @@ class AgentGraphExecutionSecurityIntegrationTest {
         private static final String TEST_CIPHER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 
         @Bean
-        public ChatModelFactory chatModelFactory() {
-            return mock(ChatModelFactory.class);
+        public AgentModelRuntimeService agentModelRuntimeService() {
+            return mock(AgentModelRuntimeService.class);
         }
 
         @Bean
@@ -588,18 +588,16 @@ class AgentGraphExecutionSecurityIntegrationTest {
         @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.AgentModelConfigMapper modelConfigMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
-                ChatModelFactory chatModelFactory,
-                AesGcmCipher aesGcmCipher,
+                AgentModelRuntimeService modelRuntimeService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
             return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
-                    objectMapper, modelConfigMapper, internalToolMapper, externalToolMapper,
-                    executionMapper, executionNodeMapper, chatModelFactory, aesGcmCipher,
+                    objectMapper, modelRuntimeService, internalToolMapper, externalToolMapper,
+                    executionMapper, executionNodeMapper,
                     loginContextProvider, deptScopeProvider);
         }
 

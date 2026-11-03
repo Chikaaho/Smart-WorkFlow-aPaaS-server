@@ -13,20 +13,17 @@ import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecution;
 import com.sw.ck.agent.entity.AgentGraphExecutionNode;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
-import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
@@ -73,7 +70,7 @@ import java.util.Set;
  * </p>
  * <p>
  * <b>LLM 节点模型配置</b>：执行前校验一次性加载图内全部 LLM 节点引用的
- * {@link AgentModelConfig}（租户拦截器自动隔离）并传给解释器——单一查询、无
+ * 模型经运行时服务校验（启停含供应商）并预热单例——单一查询、无
  * 校验与执行之间的 TOCTOU 窗口，解释器保持纯 Java 无 DB 访问。
  * </p>
  */
@@ -95,13 +92,11 @@ public class AgentGraphExecutionServiceImpl
     private static final String STATUS_FAILED = "FAILED";
 
     private final ObjectMapper objectMapper;
-    private final AgentModelConfigMapper modelConfigMapper;
+    private final AgentModelRuntimeService modelRuntimeService;
     private final AgentToolInternalConfigMapper internalToolMapper;
     private final AgentToolExternalConfigMapper externalToolMapper;
     private final AgentGraphExecutionMapper executionMapper;
     private final AgentGraphExecutionNodeMapper executionNodeMapper;
-    private final ChatModelFactory chatModelFactory;
-    private final AesGcmCipher cipher;
     private final LoginContextProvider loginContextProvider;
     private final DeptScopeProvider deptScopeProvider;
 
@@ -113,23 +108,19 @@ public class AgentGraphExecutionServiceImpl
     private AgentToolCallbackFactory agentToolCallbackFactory;
 
     public AgentGraphExecutionServiceImpl(ObjectMapper objectMapper,
-                                          AgentModelConfigMapper modelConfigMapper,
+                                          AgentModelRuntimeService modelRuntimeService,
                                           AgentToolInternalConfigMapper internalToolMapper,
                                           AgentToolExternalConfigMapper externalToolMapper,
                                           AgentGraphExecutionMapper executionMapper,
                                           AgentGraphExecutionNodeMapper executionNodeMapper,
-                                          ChatModelFactory chatModelFactory,
-                                          AesGcmCipher cipher,
                                           LoginContextProvider loginContextProvider,
                                           DeptScopeProvider deptScopeProvider) {
         this.objectMapper = objectMapper;
-        this.modelConfigMapper = modelConfigMapper;
+        this.modelRuntimeService = modelRuntimeService;
         this.internalToolMapper = internalToolMapper;
         this.externalToolMapper = externalToolMapper;
         this.executionMapper = executionMapper;
         this.executionNodeMapper = executionNodeMapper;
-        this.chatModelFactory = chatModelFactory;
-        this.cipher = cipher;
         this.loginContextProvider = loginContextProvider;
         this.deptScopeProvider = deptScopeProvider;
     }
@@ -154,7 +145,7 @@ public class AgentGraphExecutionServiceImpl
         // 执行前校验（§2-D）：任一失败即 PARAM_ERROR，不做部分执行；返回校验通过的
         // 模型配置映射（LLM 节点执行数据，解释器直接消费）。校验失败发生在执行阶段
         // 之前 → 不产生执行历史记录（对齐 F04"配置非法不落脏数据"先例）
-        Map<Long, AgentModelConfig> modelConfigs = validateForExecution(graph);
+        validateForExecution(graph);
 
         // —— Step12 执行历史：进入执行阶段即建 RUNNING 记录（成功/失败两路径均落库） ——
         AgentGraphExecution exec = new AgentGraphExecution();
@@ -182,8 +173,8 @@ public class AgentGraphExecutionServiceImpl
             }
         }
         int maxSteps = nodeCount * 2 + loopBudget * nodeCount;
-        AgentGraphInterpreter interpreter = new AgentGraphInterpreter(chatModelFactory,
-                agentToolCallbackFactory, modelConfigs, cipher,
+        AgentGraphInterpreter interpreter = new AgentGraphInterpreter(modelRuntimeService,
+                agentToolCallbackFactory,
                 loginContextProvider.getTenantId(), maxSteps);
 
         long start = System.currentTimeMillis();
@@ -402,7 +393,7 @@ public class AgentGraphExecutionServiceImpl
     /**
      * 执行前最小校验（非完整拓扑校验器，方案 §3 已裁定）：
      * ①PUBLISHED（调用方已校验）②唯一 START + 至少一个 END 可达 ③LLM 节点
-     * agentModelConfigId 可解析到租户内 AgentModelConfig ④TOOL 节点 toolName 精确
+     * agentModelConfigId 可解析到租户内启用模型（含供应商启停）④TOOL 节点 toolName 精确
      * 匹配 enabled=1 白名单 ⑤CONDITION 出边默认边唯一 ⑥FORK 出边数 ≥ 2 ⑦JOIN 入边数
      * ≥ 2 ⑧LOOP maxIterations（存在时）≥ 1。
      * <p>
@@ -411,9 +402,8 @@ public class AgentGraphExecutionServiceImpl
      * 去重天然容忍环。
      * </p>
      *
-     * @return 图内全部 LLM 节点引用的模型配置（id → 配置）
      */
-    private Map<Long, AgentModelConfig> validateForExecution(ProcessGraph graph) {
+    private void validateForExecution(ProcessGraph graph) {
         List<GraphElement> elements = graph.getElements();
         List<GraphElement> nodes = elements.stream()
                 .filter(e -> "node".equals(e.getKind()))
@@ -433,7 +423,6 @@ public class AgentGraphExecutionServiceImpl
         }
 
         // —— ③④⑤ 按节点类型逐项校验 ——
-        Map<Long, AgentModelConfig> modelConfigs = new HashMap<>();
         for (GraphElement node : nodes) {
             switch (node.getType()) {
                 case AgentGraphInterpreter.NODE_TYPE_LLM -> {
@@ -443,12 +432,8 @@ public class AgentGraphExecutionServiceImpl
                                 "LLM 节点缺少模型配置引用: " + node.getId());
                     }
                     Long modelConfigId = n.longValue();
-                    AgentModelConfig mc = modelConfigMapper.selectById(modelConfigId);
-                    if (mc == null) {
-                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
-                                "LLM 节点引用的模型配置不存在: " + modelConfigId);
-                    }
-                    modelConfigs.put(modelConfigId, mc);
+                    // F1 阶段 1：经运行时服务校验（存在性 + 模型/供应商启停），并预热单例
+                    modelRuntimeService.assertUsable(modelConfigId);
                 }
                 case AgentGraphInterpreter.NODE_TYPE_TOOL -> {
                     Object nameObj = configValue(node, AgentGraphInterpreter.CONFIG_KEY_TOOL_NAME);
@@ -498,7 +483,6 @@ public class AgentGraphExecutionServiceImpl
                 default -> { /* START/END 及其他：无执行前校验 */ }
             }
         }
-        return modelConfigs;
     }
 
     /** 节点 config 读取（config 为不透明 Map，本校验只按执行契约读已定义键，null 安全） */

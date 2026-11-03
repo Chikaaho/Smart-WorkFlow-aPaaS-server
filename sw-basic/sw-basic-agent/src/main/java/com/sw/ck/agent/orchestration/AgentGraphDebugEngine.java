@@ -5,16 +5,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
-import com.sw.ck.agent.entity.AgentModelConfig;
-import com.sw.ck.common.crypto.AesGcmCipher;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.util.json.JsonParser;
+import com.sw.ck.common.exception.BaseException;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.response.ChatResponse;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -73,15 +69,16 @@ public class AgentGraphDebugEngine {
     private static final String ERROR_CATEGORY_MODEL_CALL_FAILED = AgentGraphInterpreter.ERROR_CATEGORY_MODEL_CALL_FAILED;
     private static final String ERROR_CATEGORY_TOOL_CALL_FAILED = AgentGraphInterpreter.ERROR_CATEGORY_TOOL_CALL_FAILED;
 
+    /** 工具入参/返回 JSON 编码（Jackson，替代旧 spring-ai JsonParser） */
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     // ==================== 状态 ====================
 
     private final ProcessGraph graph;
     private final int maxSteps;
 
-    private final ChatModelFactory chatModelFactory;
+    private final AgentModelRuntimeService modelRuntimeService;
     private final AgentToolCallbackFactory toolCallbackFactory;
-    private final Map<Long, AgentModelConfig> modelConfigs;
-    private final AesGcmCipher cipher;
     private final Long tenantId;
 
     private Map<String, String> variables;
@@ -100,17 +97,13 @@ public class AgentGraphDebugEngine {
     public AgentGraphDebugEngine(ProcessGraph graph,
                                  String input,
                                  int maxSteps,
-                                 ChatModelFactory chatModelFactory,
+                                 AgentModelRuntimeService modelRuntimeService,
                                  AgentToolCallbackFactory toolCallbackFactory,
-                                 Map<Long, AgentModelConfig> modelConfigs,
-                                 AesGcmCipher cipher,
                                  Long tenantId) {
         this.graph = graph;
         this.maxSteps = maxSteps;
-        this.chatModelFactory = chatModelFactory;
+        this.modelRuntimeService = modelRuntimeService;
         this.toolCallbackFactory = toolCallbackFactory;
-        this.modelConfigs = modelConfigs != null ? modelConfigs : new HashMap<>();
-        this.cipher = cipher;
         this.tenantId = tenantId;
 
         this.variables = new HashMap<>();
@@ -128,10 +121,8 @@ public class AgentGraphDebugEngine {
      */
     private AgentGraphDebugEngine(ProcessGraph graph,
                                   int maxSteps,
-                                  ChatModelFactory chatModelFactory,
+                                  AgentModelRuntimeService modelRuntimeService,
                                   AgentToolCallbackFactory toolCallbackFactory,
-                                  Map<Long, AgentModelConfig> modelConfigs,
-                                  AesGcmCipher cipher,
                                   Long tenantId,
                                   Map<String, String> variables,
                                   List<ActivePoint> activePoints,
@@ -141,10 +132,8 @@ public class AgentGraphDebugEngine {
                                   int steps) {
         this.graph = graph;
         this.maxSteps = maxSteps;
-        this.chatModelFactory = chatModelFactory;
+        this.modelRuntimeService = modelRuntimeService;
         this.toolCallbackFactory = toolCallbackFactory;
-        this.modelConfigs = modelConfigs != null ? modelConfigs : new HashMap<>();
-        this.cipher = cipher;
         this.tenantId = tenantId;
         this.variables = variables;
         this.activePoints = activePoints;
@@ -257,10 +246,8 @@ public class AgentGraphDebugEngine {
                                                         ObjectMapper objectMapper,
                                                         ProcessGraph graph,
                                                         int maxSteps,
-                                                        ChatModelFactory chatModelFactory,
+                                                        AgentModelRuntimeService modelRuntimeService,
                                                         AgentToolCallbackFactory toolCallbackFactory,
-                                                        Map<Long, AgentModelConfig> modelConfigs,
-                                                        AesGcmCipher cipher,
                                                         Long tenantId) throws JsonProcessingException {
         if (json == null || json.isBlank()) {
             throw new IllegalArgumentException("stateJson 不能为空");
@@ -271,8 +258,8 @@ public class AgentGraphDebugEngine {
         List<ActivePoint> activePoints = state.activePoints != null ? state.activePoints : new ArrayList<>();
         Map<String, Integer> loopCounts = state.loopCounts != null ? state.loopCounts : new HashMap<>();
         Map<String, Integer> joinCounts = state.joinCounts != null ? state.joinCounts : new HashMap<>();
-        return new AgentGraphDebugEngine(graph, maxSteps, chatModelFactory, toolCallbackFactory,
-                modelConfigs, cipher, tenantId,
+        return new AgentGraphDebugEngine(graph, maxSteps, modelRuntimeService, toolCallbackFactory,
+                tenantId,
                 variables, activePoints, loopCounts, joinCounts,
                 state.traceSeq, state.steps);
     }
@@ -332,22 +319,14 @@ public class AgentGraphDebugEngine {
     private String callLlmNode(GraphElement node, String text, Map<String, String> variables,
                                AgentGraphInterpreter.NodeExecutionTrace currentTrace) {
         Long modelConfigId = requireConfigId(node, CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
-        AgentModelConfig modelConfig = modelConfigs.get(modelConfigId);
-        if (modelConfig == null) {
-            throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                    "LLM 节点引用的模型配置不存在: " + modelConfigId);
-        }
-        String plainApiKey = null;
         try {
-            if (modelConfig.getApiKeyCipher() != null && !modelConfig.getApiKeyCipher().isEmpty()) {
-                plainApiKey = cipher.decrypt(modelConfig.getApiKeyCipher());
-            }
-            ChatModel chatModel = chatModelFactory.build(modelConfig, plainApiKey);
+            // F1 阶段 1：经运行时服务解析（启停校验 + LangChain4j 单例复用）
+            ChatModel chatModel = modelRuntimeService.acquire(modelConfigId).chatModel();
             String systemPrompt = configString(node, CONFIG_KEY_SYSTEM_PROMPT);
             String userPromptTemplate = configString(node, CONFIG_KEY_USER_PROMPT_TEMPLATE);
-            List<Message> messages = new ArrayList<>();
+            List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
             if (systemPrompt != null && !systemPrompt.isBlank()) {
-                messages.add(new SystemMessage(systemPrompt));
+                messages.add(SystemMessage.from(systemPrompt));
             }
             String userText;
             if (userPromptTemplate == null || userPromptTemplate.isBlank()) {
@@ -355,25 +334,29 @@ public class AgentGraphDebugEngine {
             } else {
                 userText = interpolateTemplate(userPromptTemplate, node, variables);
             }
-            messages.add(new UserMessage(userText));
-            ChatResponse response = chatModel.call(new Prompt(messages));
-            String output = response.getResult().getOutput().getText();
+            messages.add(UserMessage.from(userText));
+            ChatResponse response = chatModel.chat(dev.langchain4j.model.chat.request.ChatRequest
+                    .builder().messages(messages).build());
+            String output = response.aiMessage().text();
             if (output == null) {
                 throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
                         "LLM 节点未返回文本: " + node.getId());
             }
-            Long[] tokens = TokenUsageResolver.resolve(
-                    response.getMetadata() != null ? response.getMetadata().getUsage() : null);
-            currentTrace.setInputTokens(tokens[0]);
-            currentTrace.setOutputTokens(tokens[1]);
+            dev.langchain4j.model.output.TokenUsage usage =
+                    response.metadata() != null ? response.metadata().tokenUsage() : null;
+            currentTrace.setInputTokens(usage != null && usage.inputTokenCount() != null
+                    ? usage.inputTokenCount().longValue() : null);
+            currentTrace.setOutputTokens(usage != null && usage.outputTokenCount() != null
+                    ? usage.outputTokenCount().longValue() : null);
             return output;
         } catch (AgentGraphInterpreter.GraphExecutionException e) {
             throw e;
+        } catch (BaseException e) {
+            throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
+                    e.getMessage(), e);
         } catch (Exception e) {
             throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
                     e.getMessage(), e);
-        } finally {
-            plainApiKey = null;
         }
     }
 
@@ -383,13 +366,18 @@ public class AgentGraphDebugEngine {
             throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
                     "工具工厂未装配，无法执行 TOOL 节点: " + toolName);
         }
-        ToolCallback target = toolCallbackFactory.buildToolCallbacks(tenantId).stream()
-                .filter(cb -> toolName.equals(cb.getToolDefinition().name()))
+        AgentToolCallbackFactory.ToolHandle target = toolCallbackFactory.buildToolCallbacks(tenantId).stream()
+                .filter(handle -> toolName.equals(handle.specification().name()))
                 .findFirst()
                 .orElseThrow(() -> new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
                         "TOOL 节点引用的工具不存在或未启用: " + toolName));
         try {
-            String result = target.call(JsonParser.toJson(text));
+            ToolExecutionRequest request = ToolExecutionRequest.builder()
+                    .id("debug-tool-" + node.getId())
+                    .name(toolName)
+                    .arguments(JSON.writeValueAsString(text))
+                    .build();
+            String result = target.executor().execute(request, null);
             String decoded = decodeIfJsonString(result);
             if (decoded == null) {
                 throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
@@ -560,7 +548,7 @@ public class AgentGraphDebugEngine {
             return null;
         }
         try {
-            return JsonParser.fromJson(result, String.class);
+            return JSON.readValue(result, String.class);
         } catch (Exception e) {
             return result;
         }

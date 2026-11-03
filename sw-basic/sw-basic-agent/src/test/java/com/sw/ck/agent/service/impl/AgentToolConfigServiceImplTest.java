@@ -13,15 +13,21 @@ import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
 import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
 import com.sw.ck.agent.orchestration.AgentGraphFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
 import com.sw.ck.agent.service.AgentOrchestrationService;
 import com.sw.ck.agent.service.AgentToolConfigService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
@@ -46,11 +52,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -84,12 +85,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 组合装配 + {@code @Transactional} 每用例回滚）。
  * <p>
  * 内部/外部工具 CRUD 全组覆盖（创建/查询/更新/删除/启用禁用/分页 + 校验 + 工厂侧
- * 查询）。另含编排集成（用例 7）：TestConfig 装配完整编排栈（ChatModelFactory +
+ * 查询）。另含编排集成（用例 7）：TestConfig 装配完整编排栈（AgentModelRuntimeService +
  * CompiledGraph + AgentToolCallbackFactory + AgentOrchestrationServiceImpl），验证
  * 白名单工具经 {@code run()} 加载绑定、正常完成与异常完成（模型服务不可达）后
  * {@code clearTools()} 均执行（无 ThreadLocal 泄漏）——泄漏可观测点：run() 返回后
- * 直接 invoke 图（不绑定工具），若泄漏则 callModel 的 Prompt 会携带
- * {@code ToolCallingChatOptions}。
+ * 直接 invoke 图（不绑定工具），若泄漏则 callModel 的 ChatRequest 会携带
+ * {@code toolSpecifications}（LangChain4j）。
  * </p>
  */
 @SpringBootTest(
@@ -121,7 +122,10 @@ class AgentToolConfigServiceImplTest {
     private AgentToolExternalConfigMapper externalMapper;
 
     @Autowired
-    private AgentModelConfigMapper modelMapper;
+    private AgentProviderMapper providerMapper;
+
+    @Autowired
+    private AgentModelMapper modelMapper;
 
     @Autowired
     private AgentOrchestrationService orchestrationService;
@@ -140,18 +144,12 @@ class AgentToolConfigServiceImplTest {
     @BeforeAll
     static void createTables(@Autowired JdbcTemplate jt) {
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
+                CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
+                    api_format      VARCHAR(32) NOT NULL,
                     name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
-                    base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
+                    base_url        VARCHAR(500),
                     api_key_cipher  CLOB,
-                    temperature     DECIMAL(4,2),
-                    max_tokens      INT,
-                    top_p           DECIMAL(4,2),
-                    timeout_seconds INT NOT NULL DEFAULT 30,
-                    retry_count     INT NOT NULL DEFAULT 0,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),
                     create_time     TIMESTAMP,
@@ -160,13 +158,39 @@ class AgentToolConfigServiceImplTest {
                     update_by       VARCHAR(64),
                     deleted         SMALLINT NOT NULL DEFAULT 0,
                     tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_provider_name ON sw_agent_provider (tenant_id, name)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_model (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    provider_id     BIGINT NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    model_name      VARCHAR(100) NOT NULL,
+                    capabilities    VARCHAR(50),
+                    temperature     DECIMAL(4,2),
+                    max_tokens      INT,
+                    top_p           DECIMAL(4,2),
+                    timeout_seconds INT NOT NULL DEFAULT 30,
+                    retry_count     INT NOT NULL DEFAULT 0,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
                     group_key       VARCHAR(100),
                     sort            INT NOT NULL DEFAULT 0,
                     locked_until    TIMESTAMP,
-                    quota_cooldown_seconds INT NOT NULL DEFAULT 60
+                    quota_cooldown_seconds INT NOT NULL DEFAULT 60,
+                    remark          VARCHAR(500),
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model (tenant_id, name)");
+        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_group ON sw_agent_model (tenant_id, group_key, sort)");
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_tool_internal (
                     id              BIGINT NOT NULL PRIMARY KEY,
@@ -207,8 +231,6 @@ class AgentToolConfigServiceImplTest {
                     version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
-        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model_config (tenant_id, name)");
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_group ON sw_agent_model_config (tenant_id, group_key, sort)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_tool_internal_tenant_deleted ON sw_agent_tool_internal (tenant_id, deleted)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_tool_external_tenant_deleted ON sw_agent_tool_external (tenant_id, deleted)");
         // M07 Step4 F04：V21/V22/V23 H2 脚本 DDL（用例 7 端到端 run() 需写会话/消息/工具日志）
@@ -271,7 +293,8 @@ class AgentToolConfigServiceImplTest {
     void setUp() {
         jdbcTemplate.update("DELETE FROM sw_agent_tool_internal");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_external");
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
+        jdbcTemplate.update("DELETE FROM sw_agent_model");
+        jdbcTemplate.update("DELETE FROM sw_agent_provider");
         jdbcTemplate.update("DELETE FROM sw_agent_message");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_call_log");
         jdbcTemplate.update("DELETE FROM sw_agent_session");
@@ -469,7 +492,7 @@ class AgentToolConfigServiceImplTest {
             server.stop(0);
         }
         // 泄漏检查：run() 返回后直接 invoke 图（不绑定工具）——若 clearTools 未执行，
-        // callModel 构造的 Prompt 会携带 ToolCallingChatOptions
+        // callModel 构造的 ChatRequest 会携带 toolSpecifications
         assertNoToolsLeaked();
 
         // 异常完成路径（模型服务不可达 → run() 内部 catch → finally 仍须清除）
@@ -491,20 +514,26 @@ class AgentToolConfigServiceImplTest {
     }
 
     private Long insertModelConfig(String protocol, String baseUrl) {
-        AgentModelConfig entity = new AgentModelConfig();
-        entity.setName("tool-orch-" + System.nanoTime());
-        entity.setProtocolType(protocol);
-        entity.setBaseUrl(baseUrl);
-        entity.setModelName("gpt-4o");
-        entity.setApiKeyCipher(cipher.encrypt(TEST_API_KEY));
-        entity.setTimeoutSeconds(10);
-        entity.setRetryCount(0);
-        entity.setEnabled(true);
-        modelMapper.insert(entity);
-        return entity.getId();
+        AgentProvider provider = new AgentProvider();
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setName("tool-provider-" + System.nanoTime());
+        provider.setBaseUrl(baseUrl + "/v1");
+        provider.setApiKeyCipher(cipher.encrypt(TEST_API_KEY));
+        provider.setEnabled(true);
+        providerMapper.insert(provider);
+        AgentModel model = new AgentModel();
+        model.setProviderId(provider.getId());
+        model.setName("tool-orch-" + System.nanoTime());
+        model.setModelName("gpt-4o");
+        model.setCapabilities("CHAT");
+        model.setTimeoutSeconds(10);
+        model.setRetryCount(0);
+        model.setEnabled(true);
+        modelMapper.insert(model);
+        return model.getId();
     }
 
-    /** 泄漏检查：绑定捕获型 ChatModel 直接 invoke 图，断言 callModel 收到的 Prompt 不携带工具 options */
+    /** 泄漏检查：绑定捕获型 ChatModel 直接 invoke 图，断言 callModel 收到的 ChatRequest 不携带 toolSpecifications */
     private void assertNoToolsLeaked() throws Exception {
         CapturingChatModel stub = new CapturingChatModel("leak-check");
         AgentGraphFactory.bindChatModel(stub);
@@ -512,9 +541,9 @@ class AgentToolConfigServiceImplTest {
             Optional<AgentState> result = agentCompiledGraph.invoke(
                     Map.of("input", "leak-check", "chatModel", stub));
             assertThat(result).isPresent();
-            assertThat(stub.capturedPrompt.getOptions())
+            assertThat(stub.capturedRequest.toolSpecifications())
                     .as("run() 结束后工具回调不得残留在 ThreadLocal（bind/clear 对称）")
-                    .isNull();
+                    .isNullOrEmpty();
         } finally {
             AgentGraphFactory.clearChatModel();
         }
@@ -573,19 +602,19 @@ class AgentToolConfigServiceImplTest {
         return dto;
     }
 
-    /** 记录收到的 Prompt 的 ChatModel 桩 */
+    /** 记录收到的 ChatRequest 的 ChatModel 桩 */
     static class CapturingChatModel implements ChatModel {
         private final String reply;
-        Prompt capturedPrompt;
+        ChatRequest capturedRequest;
 
         CapturingChatModel(String reply) {
             this.reply = reply;
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
-            this.capturedPrompt = prompt;
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        public ChatResponse chat(ChatRequest request) {
+            this.capturedRequest = request;
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
         }
     }
 
@@ -739,8 +768,11 @@ class AgentToolConfigServiceImplTest {
         }
 
         @Bean
-        public ChatModelFactory chatModelFactory() {
-            return new ChatModelFactory();
+        public AgentModelRuntimeService agentModelRuntimeService(
+                AgentModelMapper agentModelMapper,
+                AgentProviderMapper agentProviderMapper,
+                AesGcmCipher aesGcmCipher) {
+            return new AgentModelRuntimeService(agentModelMapper, agentProviderMapper, aesGcmCipher);
         }
 
         @Bean
@@ -759,14 +791,12 @@ class AgentToolConfigServiceImplTest {
 
         @Bean
         public AgentOrchestrationService agentOrchestrationService(
-                AgentModelConfigMapper agentModelConfigMapper,
-                AesGcmCipher aesGcmCipher,
-                ChatModelFactory chatModelFactory,
+                AgentModelRuntimeService modelRuntimeService,
                 CompiledGraph<AgentState> agentCompiledGraph) {
-            // 4 参直构（Step2 同款）；agentToolCallbackFactory 经 @Autowired(required=false)
-            // 字段注入（容器后处理器对 @Bean 实例生效）
-            return new AgentOrchestrationServiceImpl(
-                    agentModelConfigMapper, aesGcmCipher, chatModelFactory, agentCompiledGraph);
+            // F1 阶段 1 新构造器（AgentModelRuntimeService + CompiledGraph）；会话/消息/工具日志
+            // Mapper 为 @Autowired 字段注入，agentToolCallbackFactory 经
+            // @Autowired(required=false) 字段注入（容器后处理器对 @Bean 实例生效）
+            return new AgentOrchestrationServiceImpl(modelRuntimeService, agentCompiledGraph);
         }
     }
 }

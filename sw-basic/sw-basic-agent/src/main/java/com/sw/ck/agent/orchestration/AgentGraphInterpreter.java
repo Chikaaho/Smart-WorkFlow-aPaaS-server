@@ -2,16 +2,13 @@ package com.sw.ck.agent.orchestration;
 
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
-import com.sw.ck.agent.entity.AgentModelConfig;
-import com.sw.ck.common.crypto.AesGcmCipher;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.util.json.JsonParser;
+import com.sw.ck.common.exception.BaseException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.response.ChatResponse;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -43,10 +40,10 @@ import java.util.regex.Pattern;
  * <b>与 F01 的关系（方案 §2-A）</b>：本类是与 {@link AgentGraphFactory}/LangGraph4j
  * 并存的独立执行路径，互不修改、互不依赖。F01 是"LLM 自主决定是否调工具"的单跳
  * agentic 调用；本类是"用户显式画出的多步顺序，工具何时调、条件怎么分支由图拓扑
- * 决定"的图解释执行——复用更底层的构造块 {@link ChatModelFactory#build} 与
+ * 决定"的图解释执行——复用更底层的构造块 {@link AgentModelRuntimeService}（LangChain4j 装配 + 单例复用）与
  * {@link AgentToolCallbackFactory#buildToolCallbacks}，但以不同方式调用：
  * LLM 节点按 {@code config.agentModelConfigId} 指向单个配置单跳调用；
- * 工具节点从白名单装载结果中<b>按名称精确定位单个</b> {@link ToolCallback} 调用，
+ * 工具节点从白名单装载结果中<b>按名称精确定位单个</b>执行器调用，
  * 而非像 F01 把全部工具注入 LLM。
  * </p>
  * <p>
@@ -191,19 +188,18 @@ public class AgentGraphInterpreter {
     /** 未分类兜底（理论不可达：全部抛出点均已带分类） */
     public static final String ERROR_CATEGORY_UNKNOWN = "UNKNOWN";
 
+    /** 工具入参 JSON 编码（Jackson，替代旧 spring-ai JsonParser） */
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     /** 根分支路径（非 FORK 分支的 branchId；FORK 扇出后按出边顺序追加 "-<下标>"） */
     private static final String ROOT_BRANCH_ID = "0";
 
     // ==================== 依赖（纯构造注入，无 Spring 注解，可 mock 单测） ====================
 
-    private final ChatModelFactory chatModelFactory;
+    /** 模型运行时（LangChain4j 装配 + 单例复用 + 启停校验，F1 阶段 1） */
+    private final AgentModelRuntimeService modelRuntimeService;
 
     private final AgentToolCallbackFactory toolCallbackFactory;
-
-    /** LLM 节点引用的模型配置（执行前校验已确认全部可解析到租户内配置，此处直接消费） */
-    private final Map<Long, AgentModelConfig> modelConfigs;
-
-    private final AesGcmCipher cipher;
 
     /** 工具白名单装载的租户过滤条件（null 时不显式过滤，由 MyBatis-Plus 租户拦截器隔离） */
     private final Long tenantId;
@@ -215,23 +211,17 @@ public class AgentGraphInterpreter {
     private List<NodeExecutionTrace> traces;
 
     /**
-     * @param chatModelFactory    动态模型客户端工厂（F01 既有，只读复用）
-     * @param toolCallbackFactory 工具回调工厂（F01 既有，只读复用；null 时 TOOL 节点抛错）
-     * @param modelConfigs        图内全部 LLM 节点引用的模型配置（id → 配置，执行前校验产物）
-     * @param cipher              AES 解密器（解密 apiKeyCipher）
+     * @param modelRuntimeService 模型运行时（LangChain4j 装配 + 单例复用 + 启停校验）
+     * @param toolCallbackFactory 工具工厂（只读复用；null 时 TOOL 节点抛错）
      * @param tenantId            当前租户（透传给工具白名单装载）
      * @param maxSteps            执行步数上限（防死循环）
      */
-    public AgentGraphInterpreter(ChatModelFactory chatModelFactory,
+    public AgentGraphInterpreter(AgentModelRuntimeService modelRuntimeService,
                                  AgentToolCallbackFactory toolCallbackFactory,
-                                 Map<Long, AgentModelConfig> modelConfigs,
-                                 AesGcmCipher cipher,
                                  Long tenantId,
                                  int maxSteps) {
-        this.chatModelFactory = chatModelFactory;
+        this.modelRuntimeService = modelRuntimeService;
         this.toolCallbackFactory = toolCallbackFactory;
-        this.modelConfigs = modelConfigs;
-        this.cipher = cipher;
         this.tenantId = tenantId;
         this.maxSteps = maxSteps;
     }
@@ -388,24 +378,15 @@ public class AgentGraphInterpreter {
      */
     private String callLlmNode(GraphElement node, String text, Map<String, String> variables) {
         Long modelConfigId = requireConfigId(node, CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
-        AgentModelConfig modelConfig = modelConfigs.get(modelConfigId);
-        if (modelConfig == null) {
-            // 执行前校验已拦截（PARAM_ERROR），此处为防御性兜底
-            throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                    "LLM 节点引用的模型配置不存在: " + modelConfigId);
-        }
-        String plainApiKey = null;
         try {
-            if (modelConfig.getApiKeyCipher() != null && !modelConfig.getApiKeyCipher().isEmpty()) {
-                plainApiKey = cipher.decrypt(modelConfig.getApiKeyCipher());
-            }
-            ChatModel chatModel = chatModelFactory.build(modelConfig, plainApiKey);
+            // F1 阶段 1：经运行时服务解析（启停校验 + LangChain4j 单例复用 + 模板装配）
+            ChatModel chatModel = modelRuntimeService.acquire(modelConfigId).chatModel();
             // === Prompt 契约组装 ===
             String systemPrompt = configString(node, CONFIG_KEY_SYSTEM_PROMPT);
             String userPromptTemplate = configString(node, CONFIG_KEY_USER_PROMPT_TEMPLATE);
-            List<Message> messages = new ArrayList<>();
+            List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
             if (systemPrompt != null && !systemPrompt.isBlank()) {
-                messages.add(new SystemMessage(systemPrompt));
+                messages.add(SystemMessage.from(systemPrompt));
             }
             String userText;
             if (userPromptTemplate == null || userPromptTemplate.isBlank()) {
@@ -414,33 +395,37 @@ public class AgentGraphInterpreter {
             } else {
                 userText = interpolateTemplate(userPromptTemplate, node, variables);
             }
-            messages.add(new UserMessage(userText));
-            ChatResponse response = chatModel.call(new Prompt(messages));
-            String output = response.getResult().getOutput().getText();
+            messages.add(UserMessage.from(userText));
+            ChatResponse response = chatModel.chat(dev.langchain4j.model.chat.request.ChatRequest
+                    .builder().messages(messages).build());
+            String output = response.aiMessage().text();
             if (output == null) {
                 throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
                         "LLM 节点未返回文本: " + node.getId());
             }
-            // M07-F04-02: 提取 usage 数据并设置到当前 trace
-            // 供应商缺失/部分缺失 usage 保持 null（不写零、不估算）；经 TokenUsageResolver
-            // 读取原生字段，避免 DefaultUsage/EmptyUsage 的 null→0 伪零（与 F01 同款语义）
-            Long[] tokens = TokenUsageResolver.resolve(
-                    response.getMetadata() != null ? response.getMetadata().getUsage() : null);
+            // M07-F04-02（F1 LangChain4j 化）: 提取 usage 并设置到当前 trace；
+            // 供应商缺失/部分缺失 usage 保持 null（不写零、不估算）
+            dev.langchain4j.model.output.TokenUsage usage =
+                    response.metadata() != null ? response.metadata().tokenUsage() : null;
             NodeExecutionTrace currentTrace = traces.get(traces.size() - 1);
-            currentTrace.inputTokens = tokens[0];
-            currentTrace.outputTokens = tokens[1];
+            currentTrace.inputTokens = usage != null && usage.inputTokenCount() != null
+                    ? usage.inputTokenCount().longValue() : null;
+            currentTrace.outputTokens = usage != null && usage.outputTokenCount() != null
+                    ? usage.outputTokenCount().longValue() : null;
             return output;
         } catch (GraphExecutionException e) {
             // 自有异常（未返回文本等）已带分类，原样上抛
             throw e;
+        } catch (BaseException e) {
+            // 运行时服务拒绝（模型/供应商停用或不存在）：归入模型调用失败分类
+            throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
+                    e.getMessage(), e);
         } catch (Exception e) {
             // 第三方异常（解密失败/模型网络超时/429/未识别响应等）：包装为带分类的
             // 图执行异常（Step12 错误分类维度），message 沿用 cause 最深非空文本，
             // errorMessage 摘要语义不变
             throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
                     e.getMessage(), e);
-        } finally {
-            plainApiKey = null;
         }
     }
 
@@ -462,8 +447,8 @@ public class AgentGraphInterpreter {
             throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
                     "工具工厂未装配，无法执行 TOOL 节点: " + toolName);
         }
-        ToolCallback target = toolCallbackFactory.buildToolCallbacks(tenantId).stream()
-                .filter(cb -> toolName.equals(cb.getToolDefinition().name()))
+        AgentToolCallbackFactory.ToolHandle target = toolCallbackFactory.buildToolCallbacks(tenantId).stream()
+                .filter(handle -> toolName.equals(handle.specification().name()))
                 .findFirst()
                 .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
                         "TOOL 节点引用的工具不存在或未启用: " + toolName));
@@ -474,7 +459,14 @@ public class AgentGraphInterpreter {
         // 累积文本（图执行上下文是给下游节点/最终输出使用的用户可读文本，与 F01 中
         // LLM 直接消费编码文本的用途不同）。
         try {
-            String result = target.call(JsonParser.toJson(text));
+            // 执行器契约：arguments 为 JSON 编码字符串（与旧 FunctionToolCallback 的
+            // call(JsonParser.toJson(text)) 语义一致），返回值经 JSON 编码
+            ToolExecutionRequest request = ToolExecutionRequest.builder()
+                    .id("graph-tool-" + node.getId())
+                    .name(toolName)
+                    .arguments(JSON.writeValueAsString(text))
+                    .build();
+            String result = target.executor().execute(request, null);
             String decoded = decodeIfJsonString(result);
             if (decoded == null) {
                 throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
@@ -712,7 +704,7 @@ public class AgentGraphInterpreter {
             return null;
         }
         try {
-            return JsonParser.fromJson(result, String.class);
+            return JSON.readValue(result, String.class);
         } catch (Exception e) {
             return result;
         }

@@ -13,21 +13,18 @@ import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDebugNode;
 import com.sw.ck.agent.entity.AgentGraphDebugSession;
 import com.sw.ck.agent.entity.AgentGraphDef;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDebugNodeMapper;
 import com.sw.ck.agent.mapper.AgentGraphDebugSessionMapper;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
 import com.sw.ck.agent.orchestration.AgentGraphDebugEngine;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphDebugService;
-import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
@@ -66,11 +63,9 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     private final AgentGraphDefMapper graphDefMapper;
     private final AgentGraphDebugSessionMapper sessionMapper;
     private final AgentGraphDebugNodeMapper debugNodeMapper;
-    private final AgentModelConfigMapper modelConfigMapper;
     private final AgentToolInternalConfigMapper internalToolMapper;
     private final AgentToolExternalConfigMapper externalToolMapper;
-    private final ChatModelFactory chatModelFactory;
-    private final AesGcmCipher cipher;
+    private final AgentModelRuntimeService modelRuntimeService;
     private final LoginContextProvider loginContextProvider;
     private final DeptScopeProvider deptScopeProvider;
 
@@ -81,22 +76,18 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                                       AgentGraphDefMapper graphDefMapper,
                                       AgentGraphDebugSessionMapper sessionMapper,
                                       AgentGraphDebugNodeMapper debugNodeMapper,
-                                      AgentModelConfigMapper modelConfigMapper,
                                       AgentToolInternalConfigMapper internalToolMapper,
                                       AgentToolExternalConfigMapper externalToolMapper,
-                                      ChatModelFactory chatModelFactory,
-                                      AesGcmCipher cipher,
+                                      AgentModelRuntimeService modelRuntimeService,
                                       LoginContextProvider loginContextProvider,
                                       DeptScopeProvider deptScopeProvider) {
         this.objectMapper = objectMapper;
         this.graphDefMapper = graphDefMapper;
         this.sessionMapper = sessionMapper;
         this.debugNodeMapper = debugNodeMapper;
-        this.modelConfigMapper = modelConfigMapper;
         this.internalToolMapper = internalToolMapper;
         this.externalToolMapper = externalToolMapper;
-        this.chatModelFactory = chatModelFactory;
-        this.cipher = cipher;
+        this.modelRuntimeService = modelRuntimeService;
         this.loginContextProvider = loginContextProvider;
         this.deptScopeProvider = deptScopeProvider;
     }
@@ -117,11 +108,11 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图数据为空，无法调试");
         }
-        Map<Long, AgentModelConfig> modelConfigs = validateForExecution(graph);
+        validateForExecution(graph);
 
         int maxSteps = computeMaxSteps(graph);
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(graph, input, maxSteps,
-                chatModelFactory, agentToolCallbackFactory, modelConfigs, cipher,
+                modelRuntimeService, agentToolCallbackFactory,
                 loginContextProvider.getTenantId());
 
         AgentGraphDebugSession session = new AgentGraphDebugSession();
@@ -174,14 +165,14 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         }
 
         ProcessGraph graph = parseGraph(session.getGraphJson());
-        Map<Long, AgentModelConfig> modelConfigs = validateForExecution(graph);
+        validateForExecution(graph);
         int maxSteps = computeMaxSteps(graph);
 
         AgentGraphDebugEngine engine;
         try {
             engine = AgentGraphDebugEngine.deserializeState(session.getStateJson(), objectMapper,
-                    graph, maxSteps, chatModelFactory, agentToolCallbackFactory,
-                    modelConfigs, cipher, loginContextProvider.getTenantId());
+                    graph, maxSteps, modelRuntimeService, agentToolCallbackFactory,
+                    loginContextProvider.getTenantId());
         } catch (Exception e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "调试状态反序列化失败: " + e.getMessage());
         }
@@ -278,14 +269,14 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         Set<String> breakpoints = parseBreakpoints(session.getBreakpoints());
         // 空断点集合 = 一直跑到终态
         ProcessGraph graph = parseGraph(session.getGraphJson());
-        Map<Long, AgentModelConfig> modelConfigs = validateForExecution(graph);
+        validateForExecution(graph);
         int maxSteps = computeMaxSteps(graph);
 
         AgentGraphDebugEngine engine;
         try {
             engine = AgentGraphDebugEngine.deserializeState(session.getStateJson(), objectMapper,
-                    graph, maxSteps, chatModelFactory, agentToolCallbackFactory,
-                    modelConfigs, cipher, loginContextProvider.getTenantId());
+                    graph, maxSteps, modelRuntimeService, agentToolCallbackFactory,
+                    loginContextProvider.getTenantId());
         } catch (Exception e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "调试状态反序列化失败: " + e.getMessage());
         }
@@ -711,11 +702,11 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
             try {
                 ProcessGraph graph = parseGraph(session.getGraphJson());
                 if (graph != null) {
-                    Map<Long, AgentModelConfig> modelConfigs = validateForExecution(graph);
+                    validateForExecution(graph);
                     int maxSteps = computeMaxSteps(graph);
                     engine = AgentGraphDebugEngine.deserializeState(session.getStateJson(), objectMapper,
-                            graph, maxSteps, chatModelFactory, agentToolCallbackFactory,
-                            modelConfigs, cipher, loginContextProvider.getTenantId());
+                            graph, maxSteps, modelRuntimeService, agentToolCallbackFactory,
+                            loginContextProvider.getTenantId());
                 }
             } catch (Exception e) {
                 // 忽略，反序列化失败则不提供 nextNodeId
@@ -769,7 +760,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     // ==================== 执行前校验（与执行服务同语义，本地复制） ====================
 
-    private Map<Long, AgentModelConfig> validateForExecution(ProcessGraph graph) {
+    private void validateForExecution(ProcessGraph graph) {
         List<GraphElement> elements = graph.getElements();
         List<GraphElement> nodes = elements.stream()
                 .filter(e -> "node".equals(e.getKind()))
@@ -787,7 +778,6 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图中不存在可达的 END 节点");
         }
 
-        Map<Long, AgentModelConfig> modelConfigs = new HashMap<>();
         for (GraphElement node : nodes) {
             switch (node.getType()) {
                 case AgentGraphInterpreter.NODE_TYPE_LLM -> {
@@ -797,12 +787,8 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                                 "LLM 节点缺少模型配置引用: " + node.getId());
                     }
                     Long modelConfigId = n.longValue();
-                    AgentModelConfig mc = modelConfigMapper.selectById(modelConfigId);
-                    if (mc == null) {
-                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
-                                "LLM 节点引用的模型配置不存在: " + modelConfigId);
-                    }
-                    modelConfigs.put(modelConfigId, mc);
+                    // F1 阶段 1：经运行时服务校验（存在性 + 模型/供应商启停），并预热单例
+                    modelRuntimeService.assertUsable(modelConfigId);
                 }
                 case AgentGraphInterpreter.NODE_TYPE_TOOL -> {
                     Object nameObj = configValue(node, AgentGraphInterpreter.CONFIG_KEY_TOOL_NAME);
@@ -846,7 +832,6 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                 default -> { }
             }
         }
-        return modelConfigs;
     }
 
     private Object configValue(GraphElement node, String key) {

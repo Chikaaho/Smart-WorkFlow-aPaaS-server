@@ -3,17 +3,16 @@ package com.sw.ck.agent.orchestration;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
-import com.sw.ck.agent.entity.AgentModelConfig;
-import com.sw.ck.common.crypto.AesGcmCipher;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.function.FunctionToolCallback;
 
 import java.util.Arrays;
 import java.util.List;
@@ -22,24 +21,20 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link AgentGraphDebugEngine} 测试（M07-F02-04 图单步调试，纯 Java 单测）。
+ * {@link AgentGraphDebugEngine} 测试（M07-F02-04 图单步调试，纯 Java 单测；F1 阶段 1
+ * LangChain4j 化翻新：模型经 mock {@link AgentModelRuntimeService} 解析，LC4j ChatModel 桩）。
  * <p>
- * mock {@link ChatModelFactory}/{@link AgentToolCallbackFactory}，不起 Spring 上下文；
- * {@link AesGcmCipher} 用真实实例（测试密钥）验证解密→build 全链路。
  * 覆盖：构造初始化、单步推进、CONDITION 分支、LOOP 迭代/LIMIT、FORK/JOIN、序列化往返、终态/peek。
  * </p>
  */
 @DisplayName("图单步调试引擎测试（纯 Java）")
 class AgentGraphDebugEngineTest {
 
-    private static final String TEST_CIPHER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
-    private final AesGcmCipher cipher = new AesGcmCipher(TEST_CIPHER_KEY);
-    private final ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
+    private final AgentModelRuntimeService modelRuntimeService = mock(AgentModelRuntimeService.class);
     private final AgentToolCallbackFactory toolCallbackFactory = mock(AgentToolCallbackFactory.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -105,7 +100,7 @@ class AgentGraphDebugEngineTest {
     @DisplayName("用例1: 构造时初始化 variables 含默认变量 input，activePoints 指向 START，isTerminal=false")
     void construction_shouldInitVariablesAndActivePoints() {
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                linearGraph(1L), "hello", 100, chatModelFactory, toolCallbackFactory, Map.of(), cipher, 100L);
+                linearGraph(1L), "hello", 100, modelRuntimeService, toolCallbackFactory, 100L);
         assertThat(engine.getVariables()).containsEntry("input", "hello");
         assertThat(engine.getActivePoints()).hasSize(1);
         assertThat(engine.getActivePoints().get(0).getNodeId()).isEqualTo("node_start");
@@ -123,7 +118,7 @@ class AgentGraphDebugEngineTest {
     @DisplayName("用例2: START 单步 → 产生 trace，activePoints 移至下一节点，peek 更新")
     void step_onStart_shouldMoveToNextNode() {
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                linearGraph(1L), "hello", 100, chatModelFactory, toolCallbackFactory, Map.of(), cipher, 100L);
+                linearGraph(1L), "hello", 100, modelRuntimeService, toolCallbackFactory, 100L);
         AgentGraphDebugEngine.StepResult result = engine.step();
         assertThat(result.isTerminal()).isFalse();
         assertThat(result.isPendingJoin()).isFalse();
@@ -138,11 +133,9 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例3: LLM 单步 → 写入默认变量 input，variables 更新，步骤计数递增")
     void step_onLlm_shouldUpdateVariableAndProgress() {
-        AgentModelConfig cfg = modelConfig(1L, "sk-1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("llm-output"));
+        stubModel(1L, new StubChatModel("llm-output"));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                linearGraph(1L), "hello", 100, chatModelFactory, toolCallbackFactory, Map.of(1L, cfg), cipher, 100L);
+                linearGraph(1L), "hello", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START
         AgentGraphDebugEngine.StepResult result = engine.step(); // LLM
         assertThat(result.isTerminal()).isFalse();
@@ -157,11 +150,9 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例4: END 单步 → terminal=true，resultText 为当前变量值，isTerminal 后续状态保持")
     void step_onEnd_shouldReturnTerminal() {
-        AgentModelConfig cfg = modelConfig(1L, "sk-1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("final-output"));
+        stubModel(1L, new StubChatModel("final-output"));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                linearGraph(1L), "start", 100, chatModelFactory, toolCallbackFactory, Map.of(1L, cfg), cipher, 100L);
+                linearGraph(1L), "start", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START
         engine.step(); // LLM
         AgentGraphDebugEngine.StepResult result = engine.step(); // END
@@ -177,27 +168,19 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例5: CONDITION 按关键词分支 — 输入含 urgent 走 keyword 边，否则走默认边")
     void step_onCondition_shouldBranchByKeyword() {
-        // 准备两个 LLM 配置，分别对应两条分支
-        AgentModelConfig cfg1 = modelConfig(1L, "sk-a");
-        AgentModelConfig cfg2 = modelConfig(2L, "sk-b");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenAnswer(inv -> {
-                    AgentModelConfig c = inv.getArgument(0);
-                    if (c.getId().equals(1L)) return new StubChatModel("A路");
-                    return new StubChatModel("B路");
-                });
+        // 准备两个 LLM 模型桩，分别对应两条分支
+        stubModel(1L, new StubChatModel("A路"));
+        stubModel(2L, new StubChatModel("B路"));
         // urgent 分支
         AgentGraphDebugEngine engineUrgent = new AgentGraphDebugEngine(
-                conditionGraph(), "this is urgent", 100, chatModelFactory, toolCallbackFactory,
-                Map.of(1L, cfg1, 2L, cfg2), cipher, 100L);
+                conditionGraph(), "this is urgent", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engineUrgent.step(); // START
         engineUrgent.step(); // CONDITION -> should route to node_a
         assertThat(engineUrgent.peekNextNodeId()).isEqualTo("node_a");
 
         // 默认分支
         AgentGraphDebugEngine engineDefault = new AgentGraphDebugEngine(
-                conditionGraph(), "normal text", 100, chatModelFactory, toolCallbackFactory,
-                Map.of(1L, cfg1, 2L, cfg2), cipher, 100L);
+                conditionGraph(), "normal text", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engineDefault.step(); // START
         engineDefault.step(); // CONDITION -> default
         assertThat(engineDefault.peekNextNodeId()).isEqualTo("node_b");
@@ -208,12 +191,9 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例6: LOOP 迭代计数 — 3 次循环正常退出，第 4 次超 maxIterations=3 抛 LOOP_LIMIT")
     void loop_shouldCountIterationsAndThrowOnLimit() {
-        AgentModelConfig cfg = modelConfig(1L, "sk-loop");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new SequencedChatModel("continue", "continue", "exit"));
+        stubModel(1L, new SequencedChatModel("continue", "continue", "exit"));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                loopGraph(1L), "start", 100, chatModelFactory, toolCallbackFactory,
-                Map.of(1L, cfg), cipher, 100L);
+                loopGraph(1L), "start", 100, modelRuntimeService, toolCallbackFactory, 100L);
         // 完整步进直到退出：START -> LOOP(1) -> LLM -> CONDITION -> LOOP(2) -> LLM -> CONDITION -> LOOP(3) -> LLM -> CONDITION -> END
         int steps = 0;
         AgentGraphDebugEngine.StepResult last = null;
@@ -237,11 +217,8 @@ class AgentGraphDebugEngineTest {
                 edge("e1", "node_start", "node_loop", Map.of()),
                 edge("e2", "node_loop", "node_llm", Map.of()),
                 edge("e3", "node_llm", "node_loop", Map.of()));
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("loop-body"));
         AgentGraphDebugEngine engineLimit = new AgentGraphDebugEngine(
-                smallLoop, "start", 100, chatModelFactory, toolCallbackFactory,
-                Map.of(1L, cfg), cipher, 100L);
+                smallLoop, "start", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engineLimit.step(); // START
         engineLimit.step(); // LOOP iter 1
         engineLimit.step(); // LLM
@@ -256,7 +233,7 @@ class AgentGraphDebugEngineTest {
     @DisplayName("用例7: FORK 扇出 — 产生 2 个分支，branchId 分别为 0-0 / 0-1")
     void fork_shouldFanOutWithDistinctBranchIds() {
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                forkGraph(1L, 2L), "in", 100, chatModelFactory, toolCallbackFactory, Map.of(), cipher, 100L);
+                forkGraph(1L, 2L), "in", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START -> FORK
         AgentGraphDebugEngine.StepResult forkResult = engine.step(); // FORK fan-out
         assertThat(forkResult.isTerminal()).isFalse();
@@ -273,13 +250,10 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例8: JOIN 汇合 — 第一次到达 pendingJoin=true，第二次才放行")
     void join_shouldWaitUntilAllBranchesArrive() {
-        AgentModelConfig c1 = modelConfig(1L, "sk-a");
-        AgentModelConfig c2 = modelConfig(2L, "sk-b");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("out"));
+        stubModel(1L, new StubChatModel("out"));
+        stubModel(2L, new StubChatModel("out"));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                forkGraph(1L, 2L), "in", 100, chatModelFactory, toolCallbackFactory,
-                Map.of(1L, c1, 2L, c2), cipher, 100L);
+                forkGraph(1L, 2L), "in", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START
         engine.step(); // FORK -> 2 branches
         engine.step(); // branch 0-0: LLM_a -> JOIN
@@ -302,18 +276,16 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例9: 序列化往返 — 序列化 stateJson 后反序列化，variables/activePoints/steps 完全一致，继续推进结果一致")
     void serializeDeserialize_shouldRestoreState() throws Exception {
-        AgentModelConfig cfg = modelConfig(1L, "sk-1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("mid"));
+        stubModel(1L, new StubChatModel("mid"));
         ProcessGraph graph = linearGraph(1L);
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                graph, "hello", 100, chatModelFactory, toolCallbackFactory, Map.of(1L, cfg), cipher, 100L);
+                graph, "hello", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START
         engine.step(); // LLM -> input = mid
         String json = engine.serializeState(objectMapper);
         assertThat(json).isNotBlank();
         AgentGraphDebugEngine restored = AgentGraphDebugEngine.deserializeState(
-                json, objectMapper, graph, 100, chatModelFactory, toolCallbackFactory, Map.of(1L, cfg), cipher, 100L);
+                json, objectMapper, graph, 100, modelRuntimeService, toolCallbackFactory, 100L);
         assertThat(restored.getVariables()).isEqualTo(engine.getVariables());
         assertThat(restored.getActivePoints()).hasSize(engine.getActivePoints().size());
         assertThat(restored.peekNextNodeId()).isEqualTo(engine.peekNextNodeId());
@@ -331,11 +303,9 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例10: isTerminal / peekNextNodeId 随单步推进精确变化（START→LLM→END）")
     void terminalAndPeek_shouldTrackProgressively() {
-        AgentModelConfig cfg = modelConfig(1L, "sk-1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("out"));
+        stubModel(1L, new StubChatModel("out"));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                linearGraph(1L), "hi", 100, chatModelFactory, toolCallbackFactory, Map.of(1L, cfg), cipher, 100L);
+                linearGraph(1L), "hi", 100, modelRuntimeService, toolCallbackFactory, 100L);
         assertThat(engine.isTerminal()).isFalse();
         assertThat(engine.peekNextNodeId()).isEqualTo("node_start");
         engine.step(); // START
@@ -354,13 +324,9 @@ class AgentGraphDebugEngineTest {
     // ==================== Test 11: TOOL node branch coverage ====================
 
     @Test
-    @DisplayName("用例11: TOOL 节点单步 — 按 toolName 精确匹配回调，输出写入默认变量")
+    @DisplayName("用例11: TOOL 节点单步 — 按 toolName 精确匹配句柄，输出写入默认变量")
     void step_onTool_shouldCallCallbackAndWriteVariable() {
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "echo:" + s)
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
-        when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
+        when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echoTool("echo_tool", "echo:")));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_tool", "TOOL", Map.of("toolName", "echo_tool")),
@@ -368,7 +334,7 @@ class AgentGraphDebugEngineTest {
                 edge("e1", "node_start", "node_tool", Map.of()),
                 edge("e2", "node_tool", "node_end", Map.of()));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                graph, "hello", 100, chatModelFactory, toolCallbackFactory, Map.of(), cipher, 100L);
+                graph, "hello", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START
         AgentGraphDebugEngine.StepResult toolResult = engine.step(); // TOOL
         assertThat(toolResult.isTerminal()).isFalse();
@@ -381,9 +347,7 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例12: 命名变量 outputVar/inputVar — LLM 写 v1，END 读 v1")
     void step_namedVariable_shouldChainThroughVariables() {
-        AgentModelConfig cfg = modelConfig(1L, "sk-1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("named-out"));
+        stubModel(1L, new StubChatModel("named-out"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_llm", "LLM", Map.of("agentModelConfigId", 1L, "outputVar", "v1")),
@@ -391,7 +355,7 @@ class AgentGraphDebugEngineTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e2", "node_llm", "node_end", Map.of()));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                graph, "hello", 100, chatModelFactory, toolCallbackFactory, Map.of(1L, cfg), cipher, 100L);
+                graph, "hello", 100, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START
         engine.step(); // LLM writes v1
         assertThat(engine.getVariables()).containsEntry("v1", "named-out");
@@ -406,16 +370,14 @@ class AgentGraphDebugEngineTest {
     @Test
     @DisplayName("用例13: 步数超限 — maxSteps=2 时第 3 步抛 STEP_LIMIT")
     void step_shouldThrowStepLimitWhenExceeded() {
-        AgentModelConfig cfg = modelConfig(1L, "sk-1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("loop"));
+        stubModel(1L, new StubChatModel("loop"));
         ProcessGraph loopForever = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_llm", "LLM", Map.of("agentModelConfigId", 1L)),
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e2", "node_llm", "node_llm", Map.of()));
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(
-                loopForever, "hi", 2, chatModelFactory, toolCallbackFactory, Map.of(1L, cfg), cipher, 100L);
+                loopForever, "hi", 2, modelRuntimeService, toolCallbackFactory, 100L);
         engine.step(); // START (steps=1)
         engine.step(); // LLM 1 (steps=2)
         assertThatThrownBy(engine::step) // LLM 2 self-loop → steps=3 > maxSteps=2 → STEP_LIMIT
@@ -450,14 +412,33 @@ class AgentGraphDebugEngineTest {
                 .build();
     }
 
-    private AgentModelConfig modelConfig(Long id, String plainKey) {
-        AgentModelConfig config = new AgentModelConfig();
-        config.setId(id);
-        config.setProtocolType("openai");
-        config.setBaseUrl("http://localhost:9999/v1");
-        config.setModelName("stub-model");
-        config.setApiKeyCipher(cipher.encrypt(plainKey));
-        return config;
+    /** 打桩运行时服务：acquire(id) 返回携带指定 ChatModel 的 ModelInstance */
+    private void stubModel(Long id, ChatModel chatModel) {
+        AgentModel model = new AgentModel();
+        model.setId(id);
+        model.setName("stub-model-" + id);
+        model.setEnabled(true);
+        AgentProvider provider = new AgentProvider();
+        provider.setId(100L);
+        provider.setName("stub-provider");
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setEnabled(true);
+        when(modelRuntimeService.acquire(id))
+                .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
+    }
+
+    /** 回声工具句柄：解码 JSON 入参 → 加前缀 → JSON 编码返回（与工厂执行器契约一致） */
+    private static AgentToolCallbackFactory.ToolHandle echoTool(String name, String prefix) {
+        return new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name(name).description("回声工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> {
+                    try {
+                        String arg = new ObjectMapper().readValue(request.arguments(), String.class);
+                        return new ObjectMapper().writeValueAsString(prefix + arg);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
     }
 
     // ==================== ChatModel stubs ====================
@@ -465,8 +446,8 @@ class AgentGraphDebugEngineTest {
     static class StubChatModel implements ChatModel {
         private final String reply;
         StubChatModel(String reply) { this.reply = reply; }
-        @Override public ChatResponse call(Prompt prompt) {
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        @Override public ChatResponse chat(ChatRequest request) {
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
         }
     }
 
@@ -474,10 +455,10 @@ class AgentGraphDebugEngineTest {
         private final String[] replies;
         private int index = 0;
         SequencedChatModel(String... replies) { this.replies = replies; }
-        @Override public ChatResponse call(Prompt prompt) {
+        @Override public ChatResponse chat(ChatRequest request) {
             String reply = replies[Math.min(index, replies.length - 1)];
             index++;
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
         }
     }
 }

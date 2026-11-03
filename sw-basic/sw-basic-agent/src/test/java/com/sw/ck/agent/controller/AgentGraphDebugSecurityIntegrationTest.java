@@ -10,7 +10,7 @@ import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphDebugService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.crypto.AesGcmCipher;
@@ -144,34 +144,6 @@ class AgentGraphDebugSecurityIntegrationTest {
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_key ON sw_agent_graph_def (tenant_id, graph_key)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_graph_tenant_deleted ON sw_agent_graph_def (tenant_id, deleted)");
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
-                    id              BIGINT NOT NULL PRIMARY KEY,
-                    name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
-                    base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
-                    api_key_cipher  CLOB,
-                    temperature     DECIMAL(4,2),
-                    max_tokens      INT,
-                    top_p           DECIMAL(4,2),
-                    timeout_seconds INT NOT NULL DEFAULT 30,
-                    retry_count     INT NOT NULL DEFAULT 0,
-                    enabled         SMALLINT NOT NULL DEFAULT 1,
-                    remark          VARCHAR(500),
-                    create_time     TIMESTAMP,
-                    create_by       VARCHAR(64),
-                    update_time     TIMESTAMP,
-                    update_by       VARCHAR(64),
-                    deleted         SMALLINT NOT NULL DEFAULT 0,
-                    tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
-                    group_key       VARCHAR(100),
-                    sort            INT NOT NULL DEFAULT 0,
-                    locked_until    TIMESTAMP,
-                    quota_cooldown_seconds INT NOT NULL DEFAULT 60
-                )
-                """);
-        jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_tool_internal (
                     id              BIGINT NOT NULL PRIMARY KEY,
                     name            VARCHAR(100) NOT NULL,
@@ -266,7 +238,6 @@ class AgentGraphDebugSecurityIntegrationTest {
         jdbcTemplate.update("DELETE FROM sw_agent_graph_debug_node");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_debug_session");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_def");
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_internal");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_external");
         LoginUserHolder.clear();
@@ -809,7 +780,7 @@ class AgentGraphDebugSecurityIntegrationTest {
         private static final String TEST_CIPHER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 
         @Bean
-        public ChatModelFactory chatModelFactory() { return mock(ChatModelFactory.class); }
+        public AgentModelRuntimeService agentModelRuntimeService() { return mock(AgentModelRuntimeService.class); }
 
         @Bean
         public AgentToolCallbackFactory agentToolCallbackFactory() { return mock(AgentToolCallbackFactory.class); }
@@ -823,17 +794,15 @@ class AgentGraphDebugSecurityIntegrationTest {
                 com.sw.ck.agent.mapper.AgentGraphDefMapper graphDefMapper,
                 com.sw.ck.agent.mapper.AgentGraphDebugSessionMapper sessionMapper,
                 com.sw.ck.agent.mapper.AgentGraphDebugNodeMapper debugNodeMapper,
-                com.sw.ck.agent.mapper.AgentModelConfigMapper modelConfigMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
-                ChatModelFactory chatModelFactory,
-                AesGcmCipher aesGcmCipher,
+                AgentModelRuntimeService modelRuntimeService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
             return new com.sw.ck.agent.service.impl.AgentGraphDebugServiceImpl(
                     objectMapper, graphDefMapper, sessionMapper, debugNodeMapper,
-                    modelConfigMapper, internalToolMapper, externalToolMapper,
-                    chatModelFactory, aesGcmCipher, loginContextProvider, deptScopeProvider);
+                    internalToolMapper, externalToolMapper,
+                    modelRuntimeService, loginContextProvider, deptScopeProvider);
         }
 
         @Bean
@@ -854,18 +823,16 @@ class AgentGraphDebugSecurityIntegrationTest {
         @Bean
         public com.sw.ck.agent.service.AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.AgentModelConfigMapper modelConfigMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
-                ChatModelFactory chatModelFactory,
-                AesGcmCipher aesGcmCipher,
+                AgentModelRuntimeService modelRuntimeService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
             return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
-                    objectMapper, modelConfigMapper, internalToolMapper, externalToolMapper,
-                    executionMapper, executionNodeMapper, chatModelFactory, aesGcmCipher,
+                    objectMapper, modelRuntimeService, internalToolMapper, externalToolMapper,
+                    executionMapper, executionNodeMapper,
                     loginContextProvider, deptScopeProvider);
         }
 

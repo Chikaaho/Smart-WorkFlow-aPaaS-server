@@ -13,7 +13,7 @@ import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl;
@@ -751,8 +751,8 @@ class AgentGraphDefControllerTest {
         private static final String TEST_CIPHER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 
         @Bean
-        public ChatModelFactory chatModelFactory() {
-            return mock(ChatModelFactory.class);
+        public AgentModelRuntimeService agentModelRuntimeService() {
+            return mock(AgentModelRuntimeService.class);
         }
 
         @Bean
@@ -768,18 +768,17 @@ class AgentGraphDefControllerTest {
         @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.AgentModelConfigMapper modelConfigMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
                 com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
-                ChatModelFactory chatModelFactory,
-                AesGcmCipher aesGcmCipher,
+                AgentModelRuntimeService modelRuntimeService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new AgentGraphExecutionServiceImpl(objectMapper, modelConfigMapper,
+            return new AgentGraphExecutionServiceImpl(objectMapper,
+                    modelRuntimeService,
                     internalToolMapper, externalToolMapper, executionMapper,
-                    executionNodeMapper, chatModelFactory, aesGcmCipher,
+                    executionNodeMapper,
                     loginContextProvider, deptScopeProvider);
         }
 
