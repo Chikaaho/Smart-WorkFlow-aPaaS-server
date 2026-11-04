@@ -870,12 +870,16 @@ public class FormAppBundleService {
             }
             String newKey = resolutions.get(oldKey);
             if (newKey == null || newKey.isBlank()) {
-                throw new BaseException(FormErrorCode.BUNDLE_OPINION_KEY_REQUIRED.getCode(),
+                // F2-G1：errorKey + 冲突项标识随拒绝结果返回（P61 R3 目录参数），
+                // 前端据此把提示映射到对应输入项，而不是只弹全局 toast
+                throw new BaseException(FormErrorCode.BUNDLE_OPINION_KEY_REQUIRED,
+                        new Object[]{oldKey},
                         "审批意见表单“" + oldKey + "”在目标租户已存在同名标识，须提供新标识后才能确认导入");
             }
             newKey = newKey.trim();
             if (ctx.facts.existingFormKeys().contains(newKey) || ctx.reservedKeys.contains(newKey)) {
-                throw new BaseException(FormErrorCode.BUNDLE_OPINION_KEY_CONFLICT.getCode(),
+                throw new BaseException(FormErrorCode.BUNDLE_OPINION_KEY_CONFLICT,
+                        new Object[]{newKey},
                         "审批意见表单新标识“" + newKey + "”在目标租户已存在，请修改后重试");
             }
             ctx.opinionKeyMap.put(oldKey, newKey);

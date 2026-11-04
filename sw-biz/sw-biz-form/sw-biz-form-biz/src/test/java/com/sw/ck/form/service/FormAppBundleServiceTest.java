@@ -977,8 +977,23 @@ class FormAppBundleServiceTest {
 
         // 意见表单冲突未解决 → 结构化拒绝，且零写入
         assertThatThrownBy(() -> bundleService.confirmImport(bundleBytes(), null))
-                .isInstanceOfSatisfying(BaseException.class, e -> assertThat(e.getCode())
-                        .isEqualTo(FormErrorCode.BUNDLE_OPINION_KEY_REQUIRED.getCode()));
+                .isInstanceOfSatisfying(BaseException.class, e -> {
+                    assertThat(e.getCode())
+                            .isEqualTo(FormErrorCode.BUNDLE_OPINION_KEY_REQUIRED.getCode());
+                    // F2-G1：拒绝结果携带 errorKey + 冲突项标识，前端据此定位到对应输入项
+                    assertThat(e.getErrorKey()).isEqualTo("form.bundle_opinion_key_required");
+                });
+        assertThat(count("SELECT COUNT(*) FROM sw_form_app WHERE tenant_id = 2")).isEqualTo(1);
+
+        // F2-G1：提供的新 key 在目标租户已存在 → CONFLICT 拒绝带 errorKey 与冲突 key，零写入
+        assertThatThrownBy(() -> bundleService.confirmImport(bundleBytes(),
+                "[{\"formKey\":\"op_form\",\"newKey\":\"op_form\"}]"))
+                .isInstanceOfSatisfying(BaseException.class, e -> {
+                    assertThat(e.getCode())
+                            .isEqualTo(FormErrorCode.BUNDLE_OPINION_KEY_CONFLICT.getCode());
+                    assertThat(e.getErrorKey()).isEqualTo("form.bundle_opinion_key_conflict");
+                    assertThat(e.getMessage()).contains("op_form");
+                });
         assertThat(count("SELECT COUNT(*) FROM sw_form_app WHERE tenant_id = 2")).isEqualTo(1);
 
         String opinionKeys = "[{\"formKey\":\"op_form\",\"newKey\":\"op_form_new\"}]";
