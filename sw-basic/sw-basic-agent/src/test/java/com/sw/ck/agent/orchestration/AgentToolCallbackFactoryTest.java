@@ -6,18 +6,16 @@ import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.state.AgentState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.model.tool.ToolCallingChatOptions;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.context.ApplicationContext;
 
@@ -37,20 +35,20 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link AgentToolCallbackFactory} 测试（M07 Step3 §10，纯 JUnit，不启动 Spring 上下文）。
+ * {@link AgentToolCallbackFactory} 测试（F1 阶段 1 LangChain4j 化）。
  * <p>
  * 策略：mock 两个 Mapper（{@code selectList} 返回配置列表）+ mock {@link ApplicationContext}
  * （{@code getBean} 返回白名单 bean 或抛 {@link NoSuchBeanDefinitionException}）。
- * 外部工具调用用 JDK 内置 {@code com.sun.net.httpserver.HttpServer}（localhost 随机端口，
- * 同 Step2 先例），超时行为用"服务端延迟响应 > 配置 readTimeout"行为验证。
+ * 外部工具调用用 JDK 内置 {@code com.sun.net.httpserver.HttpServer}（localhost 随机端口），
+ * 超时行为用"服务端延迟响应 > 配置 readTimeout"行为验证。
  * </p>
  * <p>
- * 入参约定（回执 §3.4 实测）：{@code inputType(String.class)} 时 tool_calls 的 arguments
- * 必须是 JSON 字符串字面量，lambda 收到原始参数字符串——测试中调用
- * {@code cb.call("\"{\\\"a\\\":1}\"")}（内层双引号为 JSON 字符串字面量语法）。
+ * LC4j 参数约定：工具 schema 固定单字符串属性 {@code input}；{@link ToolExecutor}
+ * 收到的 {@code request.arguments()} 即 LLM 产出的该属性 JSON 值——字符串入参时
+ * 为 JSON 字符串字面量（含首尾双引号），由工厂反序列化为原始字符串后反射调用。
  * </p>
  */
-@DisplayName("工具回调工厂测试")
+@DisplayName("工具回调工厂测试（LangChain4j ToolHandle）")
 class AgentToolCallbackFactoryTest {
 
     private HttpServer server;
@@ -66,16 +64,13 @@ class AgentToolCallbackFactoryTest {
     // ==================== 用例 1：内部工具构造 + 调用链路 ====================
 
     @Test
-    @DisplayName("用例1: 内部工具 FunctionToolCallback 构造正确（name/description/inputSchema 传入；inputSchema=null 回退生成 schema），call 链路到达白名单 bean 方法")
-    void internalTool_shouldBuildCallbackWithDefinitionAndInvokeBean() {
+    @DisplayName("用例1: 内部工具 ToolHandle 构造正确（name/description/单字符串 input schema），executor 链路到达白名单 bean 方法")
+    void internalTool_shouldBuildHandleAndInvokeBean() {
         AgentToolInternalConfig config = internalConfig("sum_tool", "求和工具",
                 "{\"type\":\"string\"}", "echoToolBean", "execute");
-        // inputSchema=null 场景（回执 §3.4b：不 NPE，回退由 inputType 生成 {"type":"string"}）
-        AgentToolInternalConfig nullSchema = internalConfig("null_schema_tool", "无 schema 工具",
-                null, "echoToolBean", "execute");
 
         AgentToolInternalConfigMapper internalMapper = mock(AgentToolInternalConfigMapper.class);
-        when(internalMapper.selectList(any())).thenReturn(List.of(config, nullSchema));
+        when(internalMapper.selectList(any())).thenReturn(List.of(config));
         AgentToolExternalConfigMapper externalMapper = mock(AgentToolExternalConfigMapper.class);
         when(externalMapper.selectList(any())).thenReturn(List.of());
         ApplicationContext ctx = mock(ApplicationContext.class);
@@ -83,28 +78,27 @@ class AgentToolCallbackFactoryTest {
         when(ctx.getBean("echoToolBean")).thenReturn(bean);
 
         AgentToolCallbackFactory factory = new AgentToolCallbackFactory(internalMapper, externalMapper, ctx);
-        List<ToolCallback> callbacks = factory.buildToolCallbacks(100L);
+        List<AgentToolCallbackFactory.ToolHandle> handles = factory.buildToolCallbacks(100L);
 
-        assertThat(callbacks).hasSize(2);
-        ToolCallback cb = callbacks.get(0);
-        assertThat(cb.getToolDefinition().name()).isEqualTo("sum_tool");
-        assertThat(cb.getToolDefinition().description()).isEqualTo("求和工具");
-        assertThat(cb.getToolDefinition().inputSchema()).isEqualTo("{\"type\":\"string\"}");
-        // call 链路：JSON 字符串字面量入参 → 反序列化为原始字符串 → 反射调用 bean.execute(String)
-        String result = cb.call("\"{\\\"a\\\":1}\"");
+        assertThat(handles).hasSize(1);
+        AgentToolCallbackFactory.ToolHandle handle = handles.get(0);
+        assertThat(handle.specification().name()).isEqualTo("sum_tool");
+        assertThat(handle.specification().description()).isEqualTo("求和工具");
+        // DB inputSchema 不再拼进请求 schema：固定单字符串属性 input
+        assertThat(handle.specification().parameters().properties()).containsKey("input");
+        assertThat(handle.specification().parameters().required()).containsExactly("input");
+        // executor 链路：arguments JSON 字符串字面量 → 反序列化原始字符串 → 反射调用 bean.execute(String)
+        String result = handle.executor().execute(
+                ToolExecutionRequest.builder().id("t1").name("sum_tool").arguments("\"{\\\"a\\\":1}\"").build(),
+                "memory-1");
         assertThat(result).contains("echo:");
-
-        ToolCallback nullSchemaCb = callbacks.get(1);
-        assertThat(nullSchemaCb.getToolDefinition().inputSchema())
-                .as("inputSchema=null 时不 NPE，回退由 inputType 生成 string schema")
-                .contains("string");
     }
 
     // ==================== 用例 2：外部工具构造 + 真实 HTTP 调用 ====================
 
     @Test
-    @DisplayName("用例2: 外部工具 FunctionToolCallback 构造正确，call 发起 POST 到白名单 URL 并返回响应体")
-    void externalTool_shouldBuildCallbackAndCallMockServer() throws Exception {
+    @DisplayName("用例2: 外部工具 ToolHandle 构造正确，executor 发起 POST 到白名单 URL 并返回响应体")
+    void externalTool_shouldBuildHandleAndCallMockServer() throws Exception {
         server = startServer((exchange, body) -> {
             String respBody = "pong:" + body;
             byte[] out = respBody.getBytes(StandardCharsets.UTF_8);
@@ -123,15 +117,17 @@ class AgentToolCallbackFactoryTest {
 
         AgentToolCallbackFactory factory = new AgentToolCallbackFactory(
                 internalMapper, externalMapper, mock(ApplicationContext.class));
-        List<ToolCallback> callbacks = factory.buildToolCallbacks(null);
+        List<AgentToolCallbackFactory.ToolHandle> handles = factory.buildToolCallbacks(null);
 
-        assertThat(callbacks).hasSize(1);
-        ToolCallback cb = callbacks.get(0);
-        assertThat(cb.getToolDefinition().name()).isEqualTo("weather_tool");
-        assertThat(cb.getToolDefinition().description()).isEqualTo("天气查询工具");
-        assertThat(cb.getToolDefinition().inputSchema()).isEqualTo("{\"type\":\"object\"}");
+        assertThat(handles).hasSize(1);
+        AgentToolCallbackFactory.ToolHandle handle = handles.get(0);
+        assertThat(handle.specification().name()).isEqualTo("weather_tool");
+        assertThat(handle.specification().description()).isEqualTo("天气查询工具");
 
-        String result = cb.call("\"{\\\"city\\\":\\\"beijing\\\"}\"");
+        String result = handle.executor().execute(
+                ToolExecutionRequest.builder().id("t2").name("weather_tool")
+                        .arguments("\"{\\\"city\\\":\\\"beijing\\\"}\"").build(),
+                "memory-2");
         assertThat(result).contains("pong:").contains("city");
     }
 
@@ -162,9 +158,11 @@ class AgentToolCallbackFactoryTest {
 
         AgentToolCallbackFactory factory = new AgentToolCallbackFactory(
                 internalMapper, externalMapper, mock(ApplicationContext.class));
-        ToolCallback cb = factory.buildToolCallbacks(null).get(0);
+        AgentToolCallbackFactory.ToolHandle handle = factory.buildToolCallbacks(null).get(0);
 
-        assertThatThrownBy(() -> cb.call("\"ping\""))
+        ToolExecutionRequest request = ToolExecutionRequest.builder()
+                .id("t3").name("slow_tool").arguments("\"ping\"").build();
+        assertThatThrownBy(() -> handle.executor().execute(request, "memory-3"))
                 .as("readTimeout=1s 时慢服务应触发读超时（超时值来自 DB timeout_seconds）")
                 .isInstanceOf(RuntimeException.class)
                 .hasRootCauseInstanceOf(SocketTimeoutException.class);
@@ -211,12 +209,12 @@ class AgentToolCallbackFactoryTest {
                 .hasMessageContaining("DELETE");
     }
 
-    // ==================== 用例 5：图 wiring（bindTools → callModel 携带 ToolCallingChatOptions） ====================
+    // ==================== 用例 5：图 wiring（bindTools → ChatRequest 携带 toolSpecifications） ====================
 
     @Test
-    @DisplayName("用例5: 绑定工具后 callModel 的 Prompt 携带 ToolCallingChatOptions 且含该回调；未绑定工具时与 Step2 行为一致（options=null）")
-    void toolsBound_shouldCarryOptionsIntoPrompt_unbound_shouldKeepStep2Behavior() throws Exception {
-        // 用工厂真实产出的回调（内部工具，mock bean）验证全链路
+    @DisplayName("用例5: 绑定工具后 callModel 的 ChatRequest 携带 toolSpecifications 且含该工具；未绑定工具时不携带")
+    void toolsBound_shouldCarrySpecsIntoRequest_unbound_shouldOmit() throws Exception {
+        // 用工厂真实产出的句柄（内部工具，mock bean）验证全链路
         AgentToolInternalConfig config = internalConfig("sum_tool", "求和工具",
                 null, "echoToolBean", "execute");
         AgentToolInternalConfigMapper internalMapper = mock(AgentToolInternalConfigMapper.class);
@@ -225,25 +223,24 @@ class AgentToolCallbackFactoryTest {
         when(externalMapper.selectList(any())).thenReturn(List.of());
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean("echoToolBean")).thenReturn(new EchoToolBean());
-        List<ToolCallback> callbacks = new AgentToolCallbackFactory(internalMapper, externalMapper, ctx)
+        List<AgentToolCallbackFactory.ToolHandle> handles = new AgentToolCallbackFactory(internalMapper, externalMapper, ctx)
                 .buildToolCallbacks(null);
 
         CompiledGraph<AgentState> graph = new AgentGraphFactory().buildGraph();
         CapturingChatModel stub = new CapturingChatModel("工具回复");
         AgentGraphFactory.bindChatModel(stub);
-        AgentGraphFactory.bindTools(callbacks);
+        AgentGraphFactory.bindTools(handles);
         try {
             graph.invoke(Map.of("input", "hi", "chatModel", stub));
         } finally {
             AgentGraphFactory.clearChatModel();
             AgentGraphFactory.clearTools();
         }
-        assertThat(stub.capturedPrompt.getOptions()).isInstanceOf(ToolCallingChatOptions.class);
-        List<ToolCallback> inOptions = ((ToolCallingChatOptions) stub.capturedPrompt.getOptions()).getToolCallbacks();
-        assertThat(inOptions).hasSize(1);
-        assertThat(inOptions.get(0).getToolDefinition().name()).isEqualTo("sum_tool");
+        assertThat(stub.capturedRequest.toolSpecifications()).isNotNull();
+        assertThat(stub.capturedRequest.toolSpecifications()).hasSize(1);
+        assertThat(stub.capturedRequest.toolSpecifications().get(0).name()).isEqualTo("sum_tool");
 
-        // 未绑定工具：Prompt 构造与 Step2 完全一致（getOptions()=null，回执实测）
+        // 未绑定工具：ChatRequest 不携带 toolSpecifications（与无工具路径一致）
         CapturingChatModel plainStub = new CapturingChatModel("普通回复");
         AgentGraphFactory.bindChatModel(plainStub);
         try {
@@ -251,13 +248,13 @@ class AgentToolCallbackFactoryTest {
         } finally {
             AgentGraphFactory.clearChatModel();
         }
-        assertThat(plainStub.capturedPrompt.getOptions()).isNull();
+        assertThat(plainStub.capturedRequest.toolSpecifications()).isNullOrEmpty();
     }
 
-    // ==================== 用例 6：M07 Step4 F04 工具调用记录捕获 ====================
+    // ==================== 用例 6：F04 工具调用记录捕获 ====================
 
     @Test
-    @DisplayName("用例6: 绑定 TOOL_CALL_RECORDS_BINDING 后调用回调，ToolCallRecord（name/args/result/latencyMs）被捕获；未绑定时调用不抛异常")
+    @DisplayName("用例6: 绑定 TOOL_CALL_RECORDS_BINDING 后执行工具，ToolCallRecord（name/args/result/latencyMs）被捕获；未绑定时调用不抛异常")
     void toolCallRecord_shouldBeCapturedWhenBound() {
         AgentToolInternalConfig config = internalConfig("sum_tool", "求和工具",
                 null, "echoToolBean", "execute");
@@ -267,19 +264,20 @@ class AgentToolCallbackFactoryTest {
         when(externalMapper.selectList(any())).thenReturn(List.of());
         ApplicationContext ctx = mock(ApplicationContext.class);
         when(ctx.getBean("echoToolBean")).thenReturn(new EchoToolBean());
-        ToolCallback cb = new AgentToolCallbackFactory(internalMapper, externalMapper, ctx)
+        AgentToolCallbackFactory.ToolHandle handle = new AgentToolCallbackFactory(internalMapper, externalMapper, ctx)
                 .buildToolCallbacks(100L).get(0);
 
-        // 绑定记录载体（ServiceImpl invoke 前同款）→ 调用被包装计时并捕获
+        // 绑定记录载体（ServiceImpl invoke 前同款）→ 执行被包装计时并捕获
         List<ToolCallRecord> records = new ArrayList<>();
         AgentGraphFactory.bindToolCallRecords(records);
         try {
-            String result = cb.call("\"hello\"");
+            String result = handle.executor().execute(
+                    ToolExecutionRequest.builder().id("t6").name("sum_tool").arguments("\"hello\"").build(),
+                    "memory-6");
             assertThat(result).contains("echo:");
             assertThat(records).hasSize(1);
             ToolCallRecord record = records.get(0);
             assertThat(record.getToolName()).isEqualTo("sum_tool");
-            // 实测：lambda 收到的是 arguments（JSON 字符串字面量）反序列化后的纯字符串
             assertThat(record.getArgs()).isEqualTo("hello");
             assertThat(record.getResult()).contains("echo:");
             assertThat(record.getLatencyMs()).isGreaterThanOrEqualTo(0);
@@ -287,8 +285,10 @@ class AgentToolCallbackFactoryTest {
             AgentGraphFactory.clearToolCallRecords();
         }
 
-        // 未绑定（Step3 行为）：调用不抛异常、不产生记录
-        assertThat(cb.call("\"world\"")).contains("echo:");
+        // 未绑定：调用不抛异常、不产生记录
+        assertThat(handle.executor().execute(
+                ToolExecutionRequest.builder().id("t6b").name("sum_tool").arguments("\"world\"").build(),
+                "memory-6")).contains("echo:");
     }
 
     // ==================== 测试数据工厂 ====================
@@ -335,19 +335,19 @@ class AgentToolCallbackFactoryTest {
         }
     }
 
-    /** 记录收到的 Prompt 的 ChatModel 桩 */
+    /** 记录收到的 ChatRequest 的 ChatModel 桩 */
     static class CapturingChatModel implements ChatModel {
         private final String reply;
-        Prompt capturedPrompt;
+        ChatRequest capturedRequest;
 
         CapturingChatModel(String reply) {
             this.reply = reply;
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
-            this.capturedPrompt = prompt;
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        public ChatResponse chat(ChatRequest request) {
+            this.capturedRequest = request;
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
         }
     }
 

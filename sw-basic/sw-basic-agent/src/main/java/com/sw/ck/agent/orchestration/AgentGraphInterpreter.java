@@ -2,17 +2,17 @@ package com.sw.ck.agent.orchestration;
 
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
-import com.sw.ck.agent.entity.AgentModelConfig;
-import com.sw.ck.common.crypto.AesGcmCipher;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.util.json.JsonParser;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.response.ChatResponse;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -43,10 +43,10 @@ import java.util.regex.Pattern;
  * <b>与 F01 的关系（方案 §2-A）</b>：本类是与 {@link AgentGraphFactory}/LangGraph4j
  * 并存的独立执行路径，互不修改、互不依赖。F01 是"LLM 自主决定是否调工具"的单跳
  * agentic 调用；本类是"用户显式画出的多步顺序，工具何时调、条件怎么分支由图拓扑
- * 决定"的图解释执行——复用更底层的构造块 {@link ChatModelFactory#build} 与
+ * 决定"的图解释执行——复用更底层的构造块 {@link AgentModelRuntimeService}（LangChain4j 装配 + 单例复用）与
  * {@link AgentToolCallbackFactory#buildToolCallbacks}，但以不同方式调用：
  * LLM 节点按 {@code config.agentModelConfigId} 指向单个配置单跳调用；
- * 工具节点从白名单装载结果中<b>按名称精确定位单个</b> {@link ToolCallback} 调用，
+ * 工具节点从白名单装载结果中<b>按名称精确定位单个</b>执行器调用，
  * 而非像 F01 把全部工具注入 LLM。
  * </p>
  * <p>
@@ -119,13 +119,40 @@ public class AgentGraphInterpreter {
     /** 汇合节点（入边 ≥ 2，静态入边数全部到达后合成单个活跃点继续，出边唯一） */
     public static final String NODE_TYPE_JOIN = "JOIN";
 
+    /** 知识检索节点（F1 阶段 3：按知识库检索，结果写入变量供下游 LLM 使用） */
+    public static final String NODE_TYPE_KNOWLEDGE = "KNOWLEDGE";
+
     // ==================== 节点 config 键（本 Step 定义的执行契约） ====================
 
     /** LLM 节点 config 键：模型配置 id（Long） */
     public static final String CONFIG_KEY_AGENT_MODEL_CONFIG_ID = "agentModelConfigId";
 
+    /** LLM 节点 config 键：所选供应商 id（Long，可选；存在时校验模型归属该供应商） */
+    public static final String CONFIG_KEY_PROVIDER_ID = "providerId";
+
+    /** LLM 节点 config 键：挂载的工具名列表（List&lt;String&gt; 或逗号分隔字符串，可选） */
+    public static final String CONFIG_KEY_TOOL_NAMES = "toolNames";
+
+    /** LLM 节点 config 键：工具调用最大轮次（Integer，可选，缺省 {@value #DEFAULT_MAX_TOOL_ROUNDS}） */
+    public static final String CONFIG_KEY_MAX_TOOL_ROUNDS = "maxToolRounds";
+
+    /** LLM 节点工具调用默认最大轮次 */
+    public static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
+
     /** TOOL 节点 config 键：白名单工具名（String） */
     public static final String CONFIG_KEY_TOOL_NAME = "toolName";
+
+    /** KNOWLEDGE 节点 config 键：知识库 id（Long，必填） */
+    public static final String CONFIG_KEY_KNOWLEDGE_BASE_ID = "knowledgeBaseId";
+
+    /** KNOWLEDGE 节点 config 键：返回条数（Integer，缺省 {@value #DEFAULT_KNOWLEDGE_TOP_K}） */
+    public static final String CONFIG_KEY_TOP_K = "topK";
+
+    /** KNOWLEDGE 节点 config 键：相似度阈值（Double，0~1，缺省 0） */
+    public static final String CONFIG_KEY_SIMILARITY_THRESHOLD = "similarityThreshold";
+
+    /** KNOWLEDGE 节点默认 topK */
+    public static final int DEFAULT_KNOWLEDGE_TOP_K = 5;
 
     /** CONDITION 出边 config 键：关键词（String，空/null 的边为默认边） */
     public static final String CONFIG_KEY_KEYWORD = "keyword";
@@ -170,6 +197,9 @@ public class AgentGraphInterpreter {
     /** 执行步数超限（疑似环路） */
     public static final String ERROR_CATEGORY_STEP_LIMIT = "STEP_LIMIT";
 
+    /** 图级执行超时（阶段 2：执行服务按图配置的总时限终止并落失败记录） */
+    public static final String ERROR_CATEGORY_GRAPH_TIMEOUT = "GRAPH_TIMEOUT";
+
     /** 循环迭代超限（LOOP maxIterations 耗尽） */
     public static final String ERROR_CATEGORY_LOOP_LIMIT = "LOOP_LIMIT";
 
@@ -188,22 +218,27 @@ public class AgentGraphInterpreter {
     /** 工具调用失败（第三方异常/工具不存在/未返回文本） */
     public static final String ERROR_CATEGORY_TOOL_CALL_FAILED = "TOOL_CALL_FAILED";
 
+    /** 知识检索失败（知识库不存在/跨租户/Embedding 或向量检索异常） */
+    public static final String ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED = "KNOWLEDGE_RETRIEVAL_FAILED";
+
     /** 未分类兜底（理论不可达：全部抛出点均已带分类） */
     public static final String ERROR_CATEGORY_UNKNOWN = "UNKNOWN";
+
+    /** 工具入参 JSON 编码（Jackson，替代旧 spring-ai JsonParser） */
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     /** 根分支路径（非 FORK 分支的 branchId；FORK 扇出后按出边顺序追加 "-<下标>"） */
     private static final String ROOT_BRANCH_ID = "0";
 
     // ==================== 依赖（纯构造注入，无 Spring 注解，可 mock 单测） ====================
 
-    private final ChatModelFactory chatModelFactory;
+    /** 模型运行时（LangChain4j 装配 + 单例复用 + 启停校验，F1 阶段 1） */
+    private final AgentModelRuntimeService modelRuntimeService;
 
     private final AgentToolCallbackFactory toolCallbackFactory;
 
-    /** LLM 节点引用的模型配置（执行前校验已确认全部可解析到租户内配置，此处直接消费） */
-    private final Map<Long, AgentModelConfig> modelConfigs;
-
-    private final AesGcmCipher cipher;
+    /** 知识检索服务（阶段 3；null 时 KNOWLEDGE 节点显式报错，保持旧单测可构造） */
+    private final KnowledgeRetrievalService knowledgeRetrievalService;
 
     /** 工具白名单装载的租户过滤条件（null 时不显式过滤，由 MyBatis-Plus 租户拦截器隔离） */
     private final Long tenantId;
@@ -215,23 +250,29 @@ public class AgentGraphInterpreter {
     private List<NodeExecutionTrace> traces;
 
     /**
-     * @param chatModelFactory    动态模型客户端工厂（F01 既有，只读复用）
-     * @param toolCallbackFactory 工具回调工厂（F01 既有，只读复用；null 时 TOOL 节点抛错）
-     * @param modelConfigs        图内全部 LLM 节点引用的模型配置（id → 配置，执行前校验产物）
-     * @param cipher              AES 解密器（解密 apiKeyCipher）
+     * @param modelRuntimeService 模型运行时（LangChain4j 装配 + 单例复用 + 启停校验）
+     * @param toolCallbackFactory 工具工厂（只读复用；null 时 TOOL 节点抛错）
      * @param tenantId            当前租户（透传给工具白名单装载）
      * @param maxSteps            执行步数上限（防死循环）
      */
-    public AgentGraphInterpreter(ChatModelFactory chatModelFactory,
+    public AgentGraphInterpreter(AgentModelRuntimeService modelRuntimeService,
                                  AgentToolCallbackFactory toolCallbackFactory,
-                                 Map<Long, AgentModelConfig> modelConfigs,
-                                 AesGcmCipher cipher,
                                  Long tenantId,
                                  int maxSteps) {
-        this.chatModelFactory = chatModelFactory;
+        this(modelRuntimeService, toolCallbackFactory, null, tenantId, maxSteps);
+    }
+
+    /**
+     * 阶段 3 构造：额外注入知识检索服务（图执行/调试按租户检索知识库）。
+     */
+    public AgentGraphInterpreter(AgentModelRuntimeService modelRuntimeService,
+                                 AgentToolCallbackFactory toolCallbackFactory,
+                                 KnowledgeRetrievalService knowledgeRetrievalService,
+                                 Long tenantId,
+                                 int maxSteps) {
+        this.modelRuntimeService = modelRuntimeService;
         this.toolCallbackFactory = toolCallbackFactory;
-        this.modelConfigs = modelConfigs;
-        this.cipher = cipher;
+        this.knowledgeRetrievalService = knowledgeRetrievalService;
         this.tenantId = tenantId;
         this.maxSteps = maxSteps;
     }
@@ -268,7 +309,8 @@ public class AgentGraphInterpreter {
         // 节点级耗时与变量快照；成功/失败路径都完整留痕（失败节点在 catch 中补录后
         // 上抛）。轨迹由调用方（执行 Service）经 getTraces() 读取落库——解释器只采集
         // 不持久化，保持纯 Java 无 Mapper 依赖（方向文档 §5.4）。
-        traces = new ArrayList<>();
+        // CopyOnWriteArrayList：执行超时取消时主线程可安全读取已产生的轨迹
+        traces = new java.util.concurrent.CopyOnWriteArrayList<>();
         long traceSeq = 0;
         int steps = 0;
         while (!activePoints.isEmpty()) {
@@ -294,8 +336,17 @@ public class AgentGraphInterpreter {
                 switch (current.getType()) {
                     case NODE_TYPE_LLM -> writeOutput(current, variables,
                             callLlmNode(current, readInput(current, variables), variables));
-                    case NODE_TYPE_TOOL -> writeOutput(current, variables,
-                            callToolNode(current, readInput(current, variables)));
+                    case NODE_TYPE_TOOL -> {
+                        // F1S2-G1：工具节点真实入参/输出写入轨迹（节点卡片可见）
+                        String toolInput = readInput(current, variables);
+                        trace.setInputText(toolInput);
+                        String toolOutput = callToolNode(current, toolInput);
+                        trace.setOutputText(toolOutput);
+                        writeOutput(current, variables, toolOutput);
+                    }
+                    case NODE_TYPE_KNOWLEDGE -> writeOutput(current, variables,
+                            retrieveKnowledge(knowledgeRetrievalService, current,
+                                    readInput(current, variables), trace));
                     // START/CONDITION 为纯路由点：START 不写变量（入参已在初始变量表），
                     // CONDITION 只读匹配文本（inputVar）不写变量
                     case NODE_TYPE_START, NODE_TYPE_CONDITION -> { }
@@ -336,6 +387,8 @@ public class AgentGraphInterpreter {
                 finishTrace(trace, stepStartNanos, variables);
             } catch (RuntimeException e) {
                 // 本步失败：节点轨迹仍完整留痕（耗时 + 失败时点变量快照），再上抛
+                trace.setStatus("FAILED");
+                trace.setErrorMessage(e.getMessage());
                 finishTrace(trace, stepStartNanos, variables);
                 throw e;
             }
@@ -354,13 +407,15 @@ public class AgentGraphInterpreter {
      * 读取落库——解释器只采集不持久化，保持纯 Java 可独立单测定位。
      */
     public List<NodeExecutionTrace> getTraces() {
-        return traces == null ? List.of() : traces;
+        // 阶段 2：执行超时后主线程在取消工作线程的同时读取轨迹，返回稳定快照
+        return traces == null ? List.of() : List.copyOf(traces);
     }
 
     /** 完成一条节点轨迹：节点级耗时（出队到本步结束）+ 该时点变量表快照 */
     private void finishTrace(NodeExecutionTrace trace, long stepStartNanos,
                              Map<String, String> variables) {
         trace.nodeLatencyMs = (System.nanoTime() - stepStartNanos) / 1_000_000;
+        trace.endTime = LocalDateTime.now();
         trace.variableSnapshot = new HashMap<>(variables);
     }
 
@@ -388,24 +443,15 @@ public class AgentGraphInterpreter {
      */
     private String callLlmNode(GraphElement node, String text, Map<String, String> variables) {
         Long modelConfigId = requireConfigId(node, CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
-        AgentModelConfig modelConfig = modelConfigs.get(modelConfigId);
-        if (modelConfig == null) {
-            // 执行前校验已拦截（PARAM_ERROR），此处为防御性兜底
-            throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                    "LLM 节点引用的模型配置不存在: " + modelConfigId);
-        }
-        String plainApiKey = null;
         try {
-            if (modelConfig.getApiKeyCipher() != null && !modelConfig.getApiKeyCipher().isEmpty()) {
-                plainApiKey = cipher.decrypt(modelConfig.getApiKeyCipher());
-            }
-            ChatModel chatModel = chatModelFactory.build(modelConfig, plainApiKey);
+            // F1 阶段 1：经运行时服务解析（启停校验 + LangChain4j 单例复用 + 模板装配；
+            // D022-05：429 时组内密钥轮换，与编排入口同语义）
             // === Prompt 契约组装 ===
             String systemPrompt = configString(node, CONFIG_KEY_SYSTEM_PROMPT);
             String userPromptTemplate = configString(node, CONFIG_KEY_USER_PROMPT_TEMPLATE);
-            List<Message> messages = new ArrayList<>();
+            List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
             if (systemPrompt != null && !systemPrompt.isBlank()) {
-                messages.add(new SystemMessage(systemPrompt));
+                messages.add(SystemMessage.from(systemPrompt));
             }
             String userText;
             if (userPromptTemplate == null || userPromptTemplate.isBlank()) {
@@ -414,34 +460,221 @@ public class AgentGraphInterpreter {
             } else {
                 userText = interpolateTemplate(userPromptTemplate, node, variables);
             }
-            messages.add(new UserMessage(userText));
-            ChatResponse response = chatModel.call(new Prompt(messages));
-            String output = response.getResult().getOutput().getText();
-            if (output == null) {
-                throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                        "LLM 节点未返回文本: " + node.getId());
-            }
-            // M07-F04-02: 提取 usage 数据并设置到当前 trace
-            // 供应商缺失/部分缺失 usage 保持 null（不写零、不估算）；经 TokenUsageResolver
-            // 读取原生字段，避免 DefaultUsage/EmptyUsage 的 null→0 伪零（与 F01 同款语义）
-            Long[] tokens = TokenUsageResolver.resolve(
-                    response.getMetadata() != null ? response.getMetadata().getUsage() : null);
+            messages.add(UserMessage.from(userText));
             NodeExecutionTrace currentTrace = traces.get(traces.size() - 1);
-            currentTrace.inputTokens = tokens[0];
-            currentTrace.outputTokens = tokens[1];
-            return output;
+            // F1S2-G1：节点真实输入（模板插值后的用户消息）
+            currentTrace.setInputText(userText);
+            // 阶段 2：节点可挂工具，模型请求工具时在节点内完成工具调用循环
+            return executeChatWithTools(modelRuntimeService, toolCallbackFactory, tenantId,
+                    node, modelConfigId, messages, currentTrace);
         } catch (GraphExecutionException e) {
             // 自有异常（未返回文本等）已带分类，原样上抛
             throw e;
+        } catch (BaseException e) {
+            // 运行时服务拒绝（模型/供应商停用或不存在）：归入模型调用失败分类
+            throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
+                    e.getMessage(), e);
         } catch (Exception e) {
             // 第三方异常（解密失败/模型网络超时/429/未识别响应等）：包装为带分类的
             // 图执行异常（Step12 错误分类维度），message 沿用 cause 最深非空文本，
             // errorMessage 摘要语义不变
             throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
                     e.getMessage(), e);
-        } finally {
-            plainApiKey = null;
         }
+    }
+
+    /**
+     * 知识检索节点（阶段 3，图执行与单步调试共用）：读取 knowledgeBaseId/topK/
+     * similarityThreshold，检索结果按"文档 + 相似度 + 分片正文"拼成文本写入输出变量，
+     * 供下游 LLM 的 userPromptTemplate 直接引用。空结果写固定提示，避免下游模型把
+     * 空字符串误当上下文。
+     */
+    static String retrieveKnowledge(KnowledgeRetrievalService service, GraphElement node,
+                                    String query, NodeExecutionTrace trace) {
+        trace.setInputText(query);
+        if (service == null) {
+            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "知识检索服务未装配，无法执行 KNOWLEDGE 节点: " + node.getId());
+        }
+        Long kbId = parseConfigLong(node.getConfig() == null
+                ? null : node.getConfig().get(CONFIG_KEY_KNOWLEDGE_BASE_ID));
+        if (kbId == null) {
+            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "KNOWLEDGE 节点缺少知识库引用: " + node.getId());
+        }
+        int topK = configInt(node, CONFIG_KEY_TOP_K, DEFAULT_KNOWLEDGE_TOP_K);
+        double threshold = configDouble(node, CONFIG_KEY_SIMILARITY_THRESHOLD, 0.0);
+        java.util.List<KnowledgeHitDTO> hits;
+        try {
+            hits = service.retrieve(kbId, query, topK, threshold);
+        } catch (GraphExecutionException e) {
+            throw e;
+        } catch (BaseException e) {
+            throw new GraphExecutionException(ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED,
+                    e.getMessage(), e);
+        } catch (Exception e) {
+            throw new GraphExecutionException(ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED,
+                    e.getMessage(), e);
+        }
+        String output = formatKnowledgeHits(hits);
+        trace.setOutputText(output);
+        return output;
+    }
+
+    private static String formatKnowledgeHits(java.util.List<KnowledgeHitDTO> hits) {
+        if (hits == null || hits.isEmpty()) {
+            return "未检索到相关内容。";
+        }
+        StringBuilder sb = new StringBuilder();
+        int index = 1;
+        for (KnowledgeHitDTO hit : hits) {
+            if (sb.length() > 0) {
+                sb.append("\n\n---\n\n");
+            }
+            sb.append('[').append(index++).append("] 文档：")
+                    .append(hit.getDocumentName() == null ? "-" : hit.getDocumentName())
+                    .append("（相似度 ").append(String.format(java.util.Locale.ROOT, "%.3f",
+                            hit.getSimilarity() == null ? 0.0 : hit.getSimilarity()))
+                    .append("）\n").append(hit.getContent());
+        }
+        return sb.toString();
+    }
+
+    /** Double 配置读取（Number/数字字符串；null/非法 → 默认值）。 */
+    public static double configDouble(GraphElement node, String key, double defaultValue) {
+        Object value = node.getConfig() == null ? null : node.getConfig().get(key);
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Double.parseDouble(text.trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    }
+
+
+    /**
+     * 模型调用 + 节点内工具循环（阶段 2，图执行与单步调试共用）：
+     * 按 config.toolNames 取启用工具规格随请求下发；模型返回工具请求时逐个执行并把
+     * 结果回喂模型，直到模型给出最终文本或轮次超限。每次工具调用的入参与输出写入
+     * 当前节点轨迹。
+     */
+    static String executeChatWithTools(AgentModelRuntimeService runtime,
+                                       AgentToolCallbackFactory factory,
+                                       Long tenantId,
+                                       GraphElement node,
+                                       Long modelConfigId,
+                                       List<dev.langchain4j.data.message.ChatMessage> messages,
+                                       NodeExecutionTrace trace) {
+        List<String> toolNames = configStringList(node, CONFIG_KEY_TOOL_NAMES);
+        List<AgentToolCallbackFactory.ToolHandle> handles = new ArrayList<>();
+        if (!toolNames.isEmpty()) {
+            if (factory == null) {
+                throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                        "工具工厂未装配，无法执行 LLM 节点工具: " + node.getId());
+            }
+            List<AgentToolCallbackFactory.ToolHandle> available = factory.buildToolCallbacks(tenantId);
+            for (String toolName : toolNames) {
+                AgentToolCallbackFactory.ToolHandle handle = available.stream()
+                        .filter(h -> toolName.equals(h.specification().name()))
+                        .findFirst()
+                        .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                                "LLM 节点引用的工具不存在或未启用: " + toolName));
+                handles.add(handle);
+            }
+        }
+        List<dev.langchain4j.agent.tool.ToolSpecification> specs = handles.stream()
+                .map(AgentToolCallbackFactory.ToolHandle::specification)
+                .toList();
+        int maxRounds = configInt(node, CONFIG_KEY_MAX_TOOL_ROUNDS, DEFAULT_MAX_TOOL_ROUNDS);
+        long inputTokens = 0L;
+        long outputTokens = 0L;
+        boolean inputSeen = false;
+        boolean outputSeen = false;
+        int rounds = 0;
+        while (true) {
+            ChatResponse response = runtime.chatWithRotation(modelConfigId, messages, specs);
+            dev.langchain4j.model.output.TokenUsage usage =
+                    response.metadata() != null ? response.metadata().tokenUsage() : null;
+            if (usage != null && usage.inputTokenCount() != null) {
+                inputTokens += usage.inputTokenCount();
+                inputSeen = true;
+            }
+            if (usage != null && usage.outputTokenCount() != null) {
+                outputTokens += usage.outputTokenCount();
+                outputSeen = true;
+            }
+            var ai = response.aiMessage();
+            if (ai == null) {
+                throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
+                        "LLM 节点未返回消息: " + node.getId());
+            }
+            if (!ai.hasToolExecutionRequests()) {
+                String output = ai.text();
+                if (output == null) {
+                    throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
+                            "LLM 节点未返回文本: " + node.getId());
+                }
+                trace.setInputTokens(inputSeen ? inputTokens : null);
+                trace.setOutputTokens(outputSeen ? outputTokens : null);
+                // F1S2-G1：节点真实输出 = 模型最终回答（含工具循环后的收敛结果）
+                trace.setOutputText(output);
+                return output;
+            }
+            if (++rounds > maxRounds) {
+                throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                        "工具调用轮次超过上限 " + maxRounds + ": " + node.getId());
+            }
+            messages.add(ai);
+            for (ToolExecutionRequest request : ai.toolExecutionRequests()) {
+                AgentToolCallbackFactory.ToolHandle handle = handles.stream()
+                        .filter(h -> request.name().equals(h.specification().name()))
+                        .findFirst()
+                        .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                                "模型请求了未挂载的工具: " + request.name()));
+                String result;
+                try {
+                    result = handle.executor().execute(request, null);
+                } catch (Exception e) {
+                    // 工具执行失败回喂错误文本，让模型自行收敛；不中断整个节点
+                    result = "工具执行失败: " + e.getMessage();
+                }
+                String decoded = decodeIfJsonString(result);
+                trace.addToolCall(new ToolCallTrace(request.name(), request.arguments(), decoded));
+                messages.add(dev.langchain4j.data.message.ToolExecutionResultMessage
+                        .from(request, decoded));
+            }
+        }
+    }
+
+    /** config 读取字符串列表（支持 List&lt;String&gt; 与逗号分隔字符串；空/缺失返回空列表）。 */
+    public static List<String> configStringList(GraphElement node, String key) {
+        Object value = node.getConfig() == null ? null : node.getConfig().get(key);
+        List<String> result = new ArrayList<>();
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof String s && !s.isBlank()) {
+                    result.add(s.trim());
+                }
+            }
+        } else if (value instanceof String s && !s.isBlank()) {
+            for (String part : s.split(",")) {
+                if (!part.isBlank()) {
+                    result.add(part.trim());
+                }
+            }
+        }
+        return result;
+    }
+
+    /** config 读取正整数（缺失/非法用默认值；最小 1）。 */
+    public static int configInt(GraphElement node, String key, int defaultValue) {
+        Long parsed = parseConfigLong(node.getConfig() == null ? null : node.getConfig().get(key));
+        return parsed == null ? defaultValue : (int) Math.max(1L, Math.min(parsed, 50L));
     }
 
     // ==================== TOOL 节点 ====================
@@ -462,8 +695,8 @@ public class AgentGraphInterpreter {
             throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
                     "工具工厂未装配，无法执行 TOOL 节点: " + toolName);
         }
-        ToolCallback target = toolCallbackFactory.buildToolCallbacks(tenantId).stream()
-                .filter(cb -> toolName.equals(cb.getToolDefinition().name()))
+        AgentToolCallbackFactory.ToolHandle target = toolCallbackFactory.buildToolCallbacks(tenantId).stream()
+                .filter(handle -> toolName.equals(handle.specification().name()))
                 .findFirst()
                 .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
                         "TOOL 节点引用的工具不存在或未启用: " + toolName));
@@ -474,7 +707,14 @@ public class AgentGraphInterpreter {
         // 累积文本（图执行上下文是给下游节点/最终输出使用的用户可读文本，与 F01 中
         // LLM 直接消费编码文本的用途不同）。
         try {
-            String result = target.call(JsonParser.toJson(text));
+            // 执行器契约：arguments 为 JSON 编码字符串（与旧 FunctionToolCallback 的
+            // call(JsonParser.toJson(text)) 语义一致），返回值经 JSON 编码
+            ToolExecutionRequest request = ToolExecutionRequest.builder()
+                    .id("graph-tool-" + node.getId())
+                    .name(toolName)
+                    .arguments(JSON.writeValueAsString(text))
+                    .build();
+            String result = target.executor().execute(request, null);
             String decoded = decodeIfJsonString(result);
             if (decoded == null) {
                 throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
@@ -684,11 +924,11 @@ public class AgentGraphInterpreter {
         if (config == null) {
             return DEFAULT_MAX_ITERATIONS;
         }
-        Object value = config.get(CONFIG_KEY_MAX_ITERATIONS);
-        if (!(value instanceof Number n)) {
+        Long parsed = parseConfigLong(config.get(CONFIG_KEY_MAX_ITERATIONS));
+        if (parsed == null) {
             return DEFAULT_MAX_ITERATIONS;
         }
-        return n.intValue();
+        return parsed.intValue();
     }
 
     // ==================== 内部辅助 ====================
@@ -707,12 +947,12 @@ public class AgentGraphInterpreter {
      * 工具返回解码：JSON 字符串字面量（如 {@code "hello"}）解码还原为纯文本；
      * 非 JSON 字符串（如外部工具返回的裸文本/JSON 对象）原样保留，不做转换。
      */
-    private String decodeIfJsonString(String result) {
+    static String decodeIfJsonString(String result) {
         if (result == null) {
             return null;
         }
         try {
-            return JsonParser.fromJson(result, String.class);
+            return JSON.readValue(result, String.class);
         } catch (Exception e) {
             return result;
         }
@@ -728,14 +968,38 @@ public class AgentGraphInterpreter {
         throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID, "边引用了不存在的节点: " + id);
     }
 
+    /**
+     * 解析节点 config 中的数值 id（{@code agentModelConfigId} 等）。
+     * <p>
+     * 接受 {@link Number} 与十进制数字字符串：项目全局 Jackson 对 Long 启用
+     * ToStringSerializer（防 JS 精度丢失），graph_json 落库后 id 一律是字符串形态；
+     * 仅收 Number 会让任何含 LLM 节点的已发布图都无法执行（F1 阶段 1 真实联调发现）。
+     * 空白或非数字 → null（由调用方决定错误语义）。
+     * </p>
+     */
+    public static Long parseConfigLong(Object value) {
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Long.parseLong(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     /** 读取节点 config 中的 Long 型必填键（缺失/非数值 → 运行时错误，防御性兜底） */
     private Long requireConfigId(GraphElement node, String key) {
         Map<String, Object> config = node.getConfig();
-        if (config == null || !(config.get(key) instanceof Number n)) {
+        Long parsed = config == null ? null : parseConfigLong(config.get(key));
+        if (parsed == null) {
             throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
                     "节点缺少 " + key + ": " + node.getId());
         }
-        return n.longValue();
+        return parsed;
     }
 
     /** 读取节点 config 中的 String 型必填键（缺失/空白 → 运行时错误，防御性兜底） */
@@ -808,6 +1072,24 @@ public class AgentGraphInterpreter {
 
         private long nodeLatencyMs;
 
+        /** 节点开始时间（出队时点；F1S2-G1 节点卡片时间展示） */
+        private final LocalDateTime startTime;
+
+        /** 节点结束时间（本步执行/路由完成时点） */
+        private LocalDateTime endTime;
+
+        /** 该节点真实输入（LLM=实际发送的用户消息；TOOL=工具入参文本） */
+        private String inputText;
+
+        /** 该节点真实输出（LLM=模型最终回答；TOOL=工具返回文本） */
+        private String outputText;
+
+        /** 节点执行状态：SUCCESS / FAILED */
+        private String status = "SUCCESS";
+
+        /** 节点失败原因（成功时为 null） */
+        private String errorMessage;
+
         private Map<String, String> variableSnapshot;
 
         /** 该节点 LLM 调用的输入 Token（非 LLM 节点或供应商未返回时为 null） */
@@ -816,11 +1098,15 @@ public class AgentGraphInterpreter {
         /** 该节点 LLM 调用的输出 Token（非 LLM 节点或供应商未返回时为 null） */
         private Long outputTokens;
 
+        /** 该节点内 LLM 工具调用轨迹（阶段 2；非工具调用节点为空列表） */
+        private final java.util.List<ToolCallTrace> toolCalls = new java.util.ArrayList<>();
+
         public NodeExecutionTrace(long nodeSeq, String branchId, String nodeId, String nodeType) {
             this.nodeSeq = nodeSeq;
             this.branchId = branchId;
             this.nodeId = nodeId;
             this.nodeType = nodeType;
+            this.startTime = LocalDateTime.now();
         }
 
         public long getNodeSeq() {
@@ -847,6 +1133,50 @@ public class AgentGraphInterpreter {
             this.nodeLatencyMs = nodeLatencyMs;
         }
 
+        public LocalDateTime getStartTime() {
+            return startTime;
+        }
+
+        public LocalDateTime getEndTime() {
+            return endTime;
+        }
+
+        public void setEndTime(LocalDateTime endTime) {
+            this.endTime = endTime;
+        }
+
+        public String getInputText() {
+            return inputText;
+        }
+
+        public void setInputText(String inputText) {
+            this.inputText = inputText;
+        }
+
+        public String getOutputText() {
+            return outputText;
+        }
+
+        public void setOutputText(String outputText) {
+            this.outputText = outputText;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public void setStatus(String status) {
+            this.status = status;
+        }
+
+        public String getErrorMessage() {
+            return errorMessage;
+        }
+
+        public void setErrorMessage(String errorMessage) {
+            this.errorMessage = errorMessage;
+        }
+
         public Map<String, String> getVariableSnapshot() {
             return variableSnapshot;
         }
@@ -869,6 +1199,42 @@ public class AgentGraphInterpreter {
 
         public void setOutputTokens(Long outputTokens) {
             this.outputTokens = outputTokens;
+        }
+
+        public java.util.List<ToolCallTrace> getToolCalls() {
+            return toolCalls;
+        }
+
+        public void addToolCall(ToolCallTrace toolCall) {
+            this.toolCalls.add(toolCall);
+        }
+    }
+
+    /** LLM 节点工具调用轨迹（阶段 2：执行轨迹里可看到工具输入与输出） */
+    public static class ToolCallTrace {
+
+        private final String tool;
+
+        private final String arguments;
+
+        private final String result;
+
+        public ToolCallTrace(String tool, String arguments, String result) {
+            this.tool = tool;
+            this.arguments = arguments;
+            this.result = result;
+        }
+
+        public String getTool() {
+            return tool;
+        }
+
+        public String getArguments() {
+            return arguments;
+        }
+
+        public String getResult() {
+            return result;
         }
     }
 

@@ -29,6 +29,9 @@ public class AgentGraphDefDTO {
     /** 状态：DRAFT / PUBLISHED */
     private String status;
 
+    /** 图级执行超时（秒） */
+    private Integer executionTimeoutSeconds;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

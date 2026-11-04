@@ -43,4 +43,7 @@ public class DictItemDTO implements Serializable {
 
     /** 列表类名 */
     private String listClass;
+
+    /** 备注（对应 sys_dict_data.description） */
+    private String description;
 }

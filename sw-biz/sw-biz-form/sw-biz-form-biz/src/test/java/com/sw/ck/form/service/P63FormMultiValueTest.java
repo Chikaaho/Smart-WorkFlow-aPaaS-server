@@ -509,6 +509,26 @@ class P63FormMultiValueTest {
                 public java.util.Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
                     return java.util.Optional.of(List.of());
                 }
+
+                @Override
+                public java.util.Optional<java.util.Map<String, com.sw.ck.system.api.dict.DictTypeDetailDTO>> findDictTypeDetails(
+                        java.util.Collection<String> codes) {
+                    return codes == null || codes.isEmpty()
+                            ? java.util.Optional.empty() : java.util.Optional.of(java.util.Map.of());
+                }
+
+                @Override
+                public java.util.Optional<String> inspectDictTypeForImport(String code) {
+                    return code == null || code.isBlank()
+                            ? java.util.Optional.empty() : java.util.Optional.of("MISSING");
+                }
+
+                @Override
+                public java.util.Optional<Boolean> createDictTypeForImport(String code, String name,
+                                                                           Integer status, String description,
+                                                                           java.util.List<com.sw.ck.system.api.dict.DictItemDTO> items) {
+                    return java.util.Optional.of(false);
+                }
             };
         }
     }

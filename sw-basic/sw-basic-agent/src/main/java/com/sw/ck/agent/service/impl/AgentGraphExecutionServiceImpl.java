@@ -13,20 +13,17 @@ import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecution;
 import com.sw.ck.agent.entity.AgentGraphExecutionNode;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
-import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
@@ -73,7 +70,7 @@ import java.util.Set;
  * </p>
  * <p>
  * <b>LLM 节点模型配置</b>：执行前校验一次性加载图内全部 LLM 节点引用的
- * {@link AgentModelConfig}（租户拦截器自动隔离）并传给解释器——单一查询、无
+ * 模型经运行时服务校验（启停含供应商）并预热单例——单一查询、无
  * 校验与执行之间的 TOCTOU 窗口，解释器保持纯 Java 无 DB 访问。
  * </p>
  */
@@ -94,14 +91,20 @@ public class AgentGraphExecutionServiceImpl
     /** 执行记录状态：执行失败（运行时错误，含第三方异常） */
     private static final String STATUS_FAILED = "FAILED";
 
+    /** 图级执行超时默认值（秒，与 V0.2.3 列默认一致） */
+    private static final int DEFAULT_EXECUTION_TIMEOUT_SECONDS = 300;
+
+    /** 执行线程池（虚拟线程：超时取消后不占用平台线程；执行记录仍由主线程收尾） */
+    private final java.util.concurrent.ExecutorService timeoutExecutor =
+            java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+
     private final ObjectMapper objectMapper;
-    private final AgentModelConfigMapper modelConfigMapper;
+    private final AgentModelRuntimeService modelRuntimeService;
+    private final AgentGraphSnapshotServiceImpl snapshotService;
     private final AgentToolInternalConfigMapper internalToolMapper;
     private final AgentToolExternalConfigMapper externalToolMapper;
     private final AgentGraphExecutionMapper executionMapper;
     private final AgentGraphExecutionNodeMapper executionNodeMapper;
-    private final ChatModelFactory chatModelFactory;
-    private final AesGcmCipher cipher;
     private final LoginContextProvider loginContextProvider;
     private final DeptScopeProvider deptScopeProvider;
 
@@ -112,24 +115,26 @@ public class AgentGraphExecutionServiceImpl
     @Autowired(required = false)
     private AgentToolCallbackFactory agentToolCallbackFactory;
 
+    /** 知识检索服务（阶段 3；knowledge 模块 bean，缺失时 KNOWLEDGE 节点运行时报错） */
+    @Autowired(required = false)
+    private com.sw.ck.knowledge.service.KnowledgeRetrievalService knowledgeRetrievalService;
+
     public AgentGraphExecutionServiceImpl(ObjectMapper objectMapper,
-                                          AgentModelConfigMapper modelConfigMapper,
+                                          AgentModelRuntimeService modelRuntimeService,
+                                          AgentGraphSnapshotServiceImpl snapshotService,
                                           AgentToolInternalConfigMapper internalToolMapper,
                                           AgentToolExternalConfigMapper externalToolMapper,
                                           AgentGraphExecutionMapper executionMapper,
                                           AgentGraphExecutionNodeMapper executionNodeMapper,
-                                          ChatModelFactory chatModelFactory,
-                                          AesGcmCipher cipher,
                                           LoginContextProvider loginContextProvider,
                                           DeptScopeProvider deptScopeProvider) {
         this.objectMapper = objectMapper;
-        this.modelConfigMapper = modelConfigMapper;
+        this.modelRuntimeService = modelRuntimeService;
+        this.snapshotService = snapshotService;
         this.internalToolMapper = internalToolMapper;
         this.externalToolMapper = externalToolMapper;
         this.executionMapper = executionMapper;
         this.executionNodeMapper = executionNodeMapper;
-        this.chatModelFactory = chatModelFactory;
-        this.cipher = cipher;
         this.loginContextProvider = loginContextProvider;
         this.deptScopeProvider = deptScopeProvider;
     }
@@ -147,14 +152,15 @@ public class AgentGraphExecutionServiceImpl
         if (!STATUS_PUBLISHED.equals(entity.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图未发布，无法执行");
         }
-        ProcessGraph graph = parseGraph(entity.getGraphJson());
+        // D022-06：执行读取发布快照（按 defVersion 绑定），不读可被草稿编辑覆盖的 graph_json
+        ProcessGraph graph = snapshotService.loadPublishedGraph(entity);
         if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图数据为空，无法执行");
         }
         // 执行前校验（§2-D）：任一失败即 PARAM_ERROR，不做部分执行；返回校验通过的
         // 模型配置映射（LLM 节点执行数据，解释器直接消费）。校验失败发生在执行阶段
         // 之前 → 不产生执行历史记录（对齐 F04"配置非法不落脏数据"先例）
-        Map<Long, AgentModelConfig> modelConfigs = validateForExecution(graph);
+        validateForExecution(graph);
 
         // —— Step12 执行历史：进入执行阶段即建 RUNNING 记录（成功/失败两路径均落库） ——
         AgentGraphExecution exec = new AgentGraphExecution();
@@ -182,26 +188,58 @@ public class AgentGraphExecutionServiceImpl
             }
         }
         int maxSteps = nodeCount * 2 + loopBudget * nodeCount;
-        AgentGraphInterpreter interpreter = new AgentGraphInterpreter(chatModelFactory,
-                agentToolCallbackFactory, modelConfigs, cipher,
+        AgentGraphInterpreter interpreter = new AgentGraphInterpreter(modelRuntimeService,
+                agentToolCallbackFactory, knowledgeRetrievalService,
                 loginContextProvider.getTenantId(), maxSteps);
 
         long start = System.currentTimeMillis();
         AgentGraphExecuteRespDTO resp = new AgentGraphExecuteRespDTO();
         List<AgentGraphInterpreter.NodeExecutionTrace> traces;
         Throwable failure = null;
+        int timeoutSeconds = entity.getExecutionTimeoutSeconds() == null
+                ? DEFAULT_EXECUTION_TIMEOUT_SECONDS : entity.getExecutionTimeoutSeconds();
+        // 执行转移到工作线程后必须复制认证上下文：模型/工具运行时查询依赖租户拦截器
+        com.sw.ck.security.holder.LoginUser loginUser =
+                com.sw.ck.security.holder.LoginUserHolder.get();
+        java.util.concurrent.Future<String> future =
+                timeoutExecutor.submit(() -> {
+                    if (loginUser != null) {
+                        com.sw.ck.security.holder.LoginUserHolder.set(loginUser);
+                    }
+                    try {
+                        return interpreter.run(graph, input);
+                    } finally {
+                        com.sw.ck.security.holder.LoginUserHolder.clear();
+                    }
+                });
         try {
-            String output = interpreter.run(graph, input);
+            // 阶段 2：图级执行超时。超时后取消工作线程，主线程仍完成 RUNNING→FAILED 收尾
+            String output = future.get(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
             resp.setSuccess(true);
             resp.setOutput(output);
             traces = interpreter.getTraces();
-        } catch (Exception e) {
+        } catch (java.util.concurrent.TimeoutException timeout) {
+            future.cancel(true);
+            failure = new AgentGraphInterpreter.GraphExecutionException(
+                    AgentGraphInterpreter.ERROR_CATEGORY_GRAPH_TIMEOUT,
+                    "图执行超时（超过 " + timeoutSeconds + " 秒）");
+            resp.setSuccess(false);
+            resp.setErrorMessage(failure.getMessage());
+            traces = interpreter.getTraces();
+        } catch (java.util.concurrent.ExecutionException e) {
             // 运行时错误（GraphExecutionException / 模型或工具调用异常）：不上抛，
             // success=false + 异常摘要（与 F01 run() success=false 语义一致）；
             // 节点轨迹在解释器 catch 中已完整留痕，此处读取
+            failure = e.getCause() != null ? e.getCause() : e;
+            resp.setSuccess(false);
+            resp.setErrorMessage(summarizeError(failure));
+            traces = interpreter.getTraces();
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
             failure = e;
             resp.setSuccess(false);
-            resp.setErrorMessage(summarizeError(e));
+            resp.setErrorMessage("执行被中断");
             traces = interpreter.getTraces();
         }
         long latency = System.currentTimeMillis() - start;
@@ -292,6 +330,17 @@ public class AgentGraphExecutionServiceImpl
             // M07-F04-02: 设置 token 字段
             node.setInputTokens(trace.getInputTokens());
             node.setOutputTokens(trace.getOutputTokens());
+            // 阶段 2：工具调用轨迹（空列表不落库）
+            if (trace.getToolCalls() != null && !trace.getToolCalls().isEmpty()) {
+                node.setToolCalls(toJson(trace.getToolCalls()));
+            }
+            // F1S2-G1：节点真实输入/输出、时间与状态（执行详情节点卡片展示）
+            node.setInputText(trace.getInputText());
+            node.setOutputText(trace.getOutputText());
+            node.setStartTime(trace.getStartTime());
+            node.setEndTime(trace.getEndTime());
+            node.setStatus(trace.getStatus());
+            node.setErrorMessage(trace.getErrorMessage());
             // 汇总 token（只累加有数据的节点；每侧独立标记）
             if (trace.getInputTokens() != null) {
                 totalInputTokens += trace.getInputTokens();
@@ -335,7 +384,7 @@ public class AgentGraphExecutionServiceImpl
     }
 
     /** 变量表快照序列化（Map<String,String> → JSON；失败理论不可达，兜底 null） */
-    private String toJson(Map<String, String> variables) {
+    private String toJson(Object variables) {
         if (variables == null) {
             return null;
         }
@@ -394,6 +443,14 @@ public class AgentGraphExecutionServiceImpl
         // M07-F04-02: 添加 token 字段
         dto.setInputTokens(node.getInputTokens());
         dto.setOutputTokens(node.getOutputTokens());
+        dto.setToolCalls(node.getToolCalls());
+        // F1S2-G1：节点真实输入/输出与时间（历史行缺省值兜底为成功）
+        dto.setInput(node.getInputText());
+        dto.setOutput(node.getOutputText());
+        dto.setStartTime(node.getStartTime());
+        dto.setEndTime(node.getEndTime());
+        dto.setStatus(node.getStatus() != null ? node.getStatus() : "SUCCESS");
+        dto.setErrorMessage(node.getErrorMessage());
         return dto;
     }
 
@@ -402,7 +459,7 @@ public class AgentGraphExecutionServiceImpl
     /**
      * 执行前最小校验（非完整拓扑校验器，方案 §3 已裁定）：
      * ①PUBLISHED（调用方已校验）②唯一 START + 至少一个 END 可达 ③LLM 节点
-     * agentModelConfigId 可解析到租户内 AgentModelConfig ④TOOL 节点 toolName 精确
+     * agentModelConfigId 可解析到租户内启用模型（含供应商启停）④TOOL 节点 toolName 精确
      * 匹配 enabled=1 白名单 ⑤CONDITION 出边默认边唯一 ⑥FORK 出边数 ≥ 2 ⑦JOIN 入边数
      * ≥ 2 ⑧LOOP maxIterations（存在时）≥ 1。
      * <p>
@@ -411,9 +468,8 @@ public class AgentGraphExecutionServiceImpl
      * 去重天然容忍环。
      * </p>
      *
-     * @return 图内全部 LLM 节点引用的模型配置（id → 配置）
      */
-    private Map<Long, AgentModelConfig> validateForExecution(ProcessGraph graph) {
+    private void validateForExecution(ProcessGraph graph) {
         List<GraphElement> elements = graph.getElements();
         List<GraphElement> nodes = elements.stream()
                 .filter(e -> "node".equals(e.getKind()))
@@ -433,22 +489,45 @@ public class AgentGraphExecutionServiceImpl
         }
 
         // —— ③④⑤ 按节点类型逐项校验 ——
-        Map<Long, AgentModelConfig> modelConfigs = new HashMap<>();
         for (GraphElement node : nodes) {
             switch (node.getType()) {
                 case AgentGraphInterpreter.NODE_TYPE_LLM -> {
                     Object idObj = configValue(node, AgentGraphInterpreter.CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
-                    if (!(idObj instanceof Number n)) {
+                    // 接受 Number/数字字符串：graph_json 落库后 Long 一律是字符串形态
+                    // （全局 Jackson Long→String），仅收 Number 会让已发布图无法执行
+                    Long modelConfigId = AgentGraphInterpreter.parseConfigLong(idObj);
+                    if (modelConfigId == null) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "LLM 节点缺少模型配置引用: " + node.getId());
                     }
-                    Long modelConfigId = n.longValue();
-                    AgentModelConfig mc = modelConfigMapper.selectById(modelConfigId);
-                    if (mc == null) {
-                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
-                                "LLM 节点引用的模型配置不存在: " + modelConfigId);
+                    // F1 阶段 1：经运行时服务校验（存在性 + 模型/供应商启停），并预热单例
+                    modelRuntimeService.assertUsable(modelConfigId);
+                    // 阶段 2：节点两级选择（供应商 + 模型）时校验归属一致
+                    Long providerId = AgentGraphInterpreter.parseConfigLong(
+                            configValue(node, AgentGraphInterpreter.CONFIG_KEY_PROVIDER_ID));
+                    if (providerId != null) {
+                        AgentModelRuntimeService.ModelInstance instance =
+                                modelRuntimeService.acquire(modelConfigId);
+                        if (instance != null && !providerId.equals(instance.provider().getId())) {
+                            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                    "LLM 节点所选供应商与模型不匹配: " + node.getId());
+                        }
                     }
-                    modelConfigs.put(modelConfigId, mc);
+                    // 阶段 2：节点挂载的工具必须存在且启用
+                    List<String> toolNames = AgentGraphInterpreter.configStringList(
+                            node, AgentGraphInterpreter.CONFIG_KEY_TOOL_NAMES);
+                    if (!toolNames.isEmpty()) {
+                        if (agentToolCallbackFactory == null) {
+                            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                    "工具工厂未装配，无法执行 LLM 节点工具: " + node.getId());
+                        }
+                        for (String toolName : toolNames) {
+                            if (!toolExists(toolName)) {
+                                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                        "LLM 节点引用的工具不存在或未启用: " + toolName);
+                            }
+                        }
+                    }
                 }
                 case AgentGraphInterpreter.NODE_TYPE_TOOL -> {
                     Object nameObj = configValue(node, AgentGraphInterpreter.CONFIG_KEY_TOOL_NAME);
@@ -459,6 +538,27 @@ public class AgentGraphExecutionServiceImpl
                     if (!toolExists(toolName)) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "工具节点引用的工具不存在或未启用: " + toolName);
+                    }
+                }
+                case AgentGraphInterpreter.NODE_TYPE_KNOWLEDGE -> {
+                    Long kbId = AgentGraphInterpreter.parseConfigLong(
+                            configValue(node, AgentGraphInterpreter.CONFIG_KEY_KNOWLEDGE_BASE_ID));
+                    if (kbId == null) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "KNOWLEDGE 节点缺少知识库引用: " + node.getId());
+                    }
+                    int topK = AgentGraphInterpreter.configInt(node,
+                            AgentGraphInterpreter.CONFIG_KEY_TOP_K,
+                            AgentGraphInterpreter.DEFAULT_KNOWLEDGE_TOP_K);
+                    if (topK < 1 || topK > 20) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "KNOWLEDGE 节点 topK 必须在 1~20 之间: " + node.getId());
+                    }
+                    double threshold = AgentGraphInterpreter.configDouble(node,
+                            AgentGraphInterpreter.CONFIG_KEY_SIMILARITY_THRESHOLD, 0.0);
+                    if (threshold < 0.0 || threshold > 1.0) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "KNOWLEDGE 节点相似度阈值必须在 0~1 之间: " + node.getId());
                     }
                 }
                 case AgentGraphInterpreter.NODE_TYPE_CONDITION -> {
@@ -490,7 +590,8 @@ public class AgentGraphExecutionServiceImpl
                     // ⑧ maxIterations 存在且 <1 → 非法（缺失用默认 10，不报错）
                     Object maxIterations = configValue(node,
                             AgentGraphInterpreter.CONFIG_KEY_MAX_ITERATIONS);
-                    if (maxIterations instanceof Number n && n.intValue() < 1) {
+                    Long parsed = AgentGraphInterpreter.parseConfigLong(maxIterations);
+                    if (parsed != null && parsed < 1) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "LOOP 节点 maxIterations 必须 ≥ 1: " + node.getId());
                     }
@@ -498,7 +599,6 @@ public class AgentGraphExecutionServiceImpl
                 default -> { /* START/END 及其他：无执行前校验 */ }
             }
         }
-        return modelConfigs;
     }
 
     /** 节点 config 读取（config 为不透明 Map，本校验只按执行契约读已定义键，null 安全） */
@@ -534,10 +634,11 @@ public class AgentGraphExecutionServiceImpl
      */
     private int maxIterationsOf(GraphElement node) {
         Object value = configValue(node, AgentGraphInterpreter.CONFIG_KEY_MAX_ITERATIONS);
-        if (!(value instanceof Number n)) {
+        Long parsed = AgentGraphInterpreter.parseConfigLong(value);
+        if (parsed == null) {
             return AgentGraphInterpreter.DEFAULT_MAX_ITERATIONS;
         }
-        return n.intValue();
+        return parsed.intValue();
     }
 
     /** 从唯一 START 沿边 BFS，判断是否存在可达的 END 节点 */
@@ -580,14 +681,14 @@ public class AgentGraphExecutionServiceImpl
         Long internal = internalToolMapper.selectCount(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
                         .eq(AgentToolInternalConfig::getName, toolName)
-                        .eq(AgentToolInternalConfig::getEnabled, 1));
+                        .eq(AgentToolInternalConfig::getEnabled, true));
         if (internal != null && internal > 0) {
             return true;
         }
         Long external = externalToolMapper.selectCount(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
                         .eq(AgentToolExternalConfig::getName, toolName)
-                        .eq(AgentToolExternalConfig::getEnabled, 1));
+                        .eq(AgentToolExternalConfig::getEnabled, true));
         return external != null && external > 0;
     }
 

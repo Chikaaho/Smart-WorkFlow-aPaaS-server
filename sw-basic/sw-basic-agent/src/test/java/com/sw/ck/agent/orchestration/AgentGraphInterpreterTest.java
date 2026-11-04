@@ -1,20 +1,23 @@
 package com.sw.ck.agent.orchestration;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
-import com.sw.ck.agent.entity.AgentModelConfig;
-import com.sw.ck.common.crypto.AesGcmCipher;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.MessageType;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.function.FunctionToolCallback;
 
 import java.util.Arrays;
 import java.util.List;
@@ -23,7 +26,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -31,29 +35,27 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link AgentGraphInterpreter} 测试（M07-F02 Step8 §7，纯 Java 单测）。
+ * {@link AgentGraphInterpreter} 测试（M07-F02 Step8 §7，纯 Java 单测；F1 阶段 1 LangChain4j 化翻新）。
  * <p>
- * mock {@link ChatModelFactory}/{@link AgentToolCallbackFactory}，不起 Spring 上下文；
- * {@link AesGcmCipher} 为 final 类不 mock，用真实实例（测试密钥）验证解密→build 全链路。
+ * mock {@link AgentModelRuntimeService}/{@link AgentToolCallbackFactory}，不起 Spring 上下文；
+ * LLM 桩实现 LC4j {@link ChatModel}，chat() 返回含 aiMessage 文本的 {@link ChatResponse}。
  * </p>
  */
 @DisplayName("图解释执行引擎测试（纯 Java）")
 class AgentGraphInterpreterTest {
 
-    /** 测试 AES 密钥（32 字节 "0123456789abcdef0123456789abcdef" 的 Base64） */
-    private static final String TEST_CIPHER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+    /** 工具入参/返回 JSON 编码（与解释器同款 Jackson 约定） */
+    private static final ObjectMapper JSON = new ObjectMapper();
 
-    private final AesGcmCipher cipher = new AesGcmCipher(TEST_CIPHER_KEY);
-    private final ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
+    private final AgentModelRuntimeService modelRuntimeService = mock(AgentModelRuntimeService.class);
     private final AgentToolCallbackFactory toolCallbackFactory = mock(AgentToolCallbackFactory.class);
 
     // ==================== 用例 1：LLM 单跳覆盖 ====================
 
     @Test
-    @DisplayName("用例1: LLM 节点单跳执行 — 解密 Key→build→以当前文本为 UserMessage 调用→输出覆盖累积文本")
+    @DisplayName("用例1: LLM 节点单跳执行 — acquire 解析模型→以当前文本为 UserMessage 调用→输出覆盖累积文本")
     void llmNode_shouldOverwriteTextWithModelOutput() {
-        AgentModelConfig config = modelConfig(1L, "sk-llm-1");
-        when(chatModelFactory.build(config, "sk-llm-1")).thenReturn(new StubChatModel("模型回复-1"));
+        stubModel(1L, new StubChatModel("模型回复-1"));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -62,23 +64,76 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e2", "node_llm", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config), 10).run(graph, "原始输入");
+        String output = interpreter(10).run(graph, "原始输入");
 
         // 输出被模型回复整体覆盖；模型收到的 UserMessage 文本 = 累积文本（input）
         assertThat(output).isEqualTo("模型回复-1");
-        verify(chatModelFactory).build(config, "sk-llm-1");
+        verify(modelRuntimeService).acquire(1L);
+    }
+
+    @Test
+    @DisplayName("阶段2: LLM 节点工具循环——模型请求工具→执行回喂→最终文本，轨迹记录工具入参与输出")
+    void llmNode_withTools_shouldExecuteLoopAndRecordTrace() {
+        Long modelId = 77L;
+        stubModel(modelId, new ChatModel() {
+            private int calls = 0;
+
+            @Override
+            public ChatResponse chat(ChatRequest request) {
+                if (calls++ == 0) {
+                    return ChatResponse.builder()
+                            .aiMessage(AiMessage.from(ToolExecutionRequest.builder()
+                                    .id("tool-req-1")
+                                    .name("echo_tool")
+                                    .arguments("\"你好\"")
+                                    .build()))
+                            .build();
+                }
+                boolean hasToolResult = request.messages().stream()
+                        .anyMatch(m -> m instanceof dev.langchain4j.data.message.ToolExecutionResultMessage);
+                return ChatResponse.builder()
+                        .aiMessage(AiMessage.from(hasToolResult ? "最终答案" : "缺少工具结果"))
+                        .build();
+            }
+        });
+        when(toolCallbackFactory.buildToolCallbacks(any()))
+                .thenReturn(List.of(echoTool("echo_tool", "echo:")));
+
+        ProcessGraph graph = graphOf(
+                node("start", "START", Map.of()),
+                node("llm", "LLM", Map.of(
+                        "agentModelConfigId", modelId,
+                        "toolNames", List.of("echo_tool"))),
+                node("end", "END", Map.of()),
+                edge("e1", "start", "llm", Map.of()),
+                edge("e2", "llm", "end", Map.of()));
+
+        AgentGraphInterpreter interpreter = interpreter(10);
+        assertThat(interpreter.run(graph, "开始")).isEqualTo("最终答案");
+
+        AgentGraphInterpreter.NodeExecutionTrace llmTrace = interpreter.getTraces().stream()
+                .filter(t -> "LLM".equals(t.getNodeType()))
+                .findFirst().orElseThrow();
+        assertThat(llmTrace.getToolCalls()).hasSize(1);
+        assertThat(llmTrace.getToolCalls().get(0).getTool()).isEqualTo("echo_tool");
+        assertThat(llmTrace.getToolCalls().get(0).getArguments()).contains("你好");
+        assertThat(llmTrace.getToolCalls().get(0).getResult()).contains("echo:你好");
+        // F1S2-G1：节点卡片所需的真实输入/输出与时间
+        assertThat(llmTrace.getInputText()).isEqualTo("开始");
+        assertThat(llmTrace.getOutputText()).isEqualTo("最终答案");
+        assertThat(llmTrace.getStatus()).isEqualTo("SUCCESS");
+        assertThat(llmTrace.getStartTime()).isNotNull();
+        assertThat(llmTrace.getEndTime()).isNotNull();
+        assertThat(llmTrace.getEndTime()).isAfterOrEqualTo(llmTrace.getStartTime());
     }
 
     // ==================== 用例 2：TOOL 单跳覆盖 ====================
 
     @Test
-    @DisplayName("用例2: TOOL 节点单跳执行 — 按 toolName 精确匹配白名单单个 ToolCallback → 调用 → 覆盖累积文本")
+    @DisplayName("用例2: TOOL 节点单跳执行 — 按 toolName 精确匹配白名单单个 ToolHandle → 调用 → 覆盖累积文本")
     void toolNode_shouldOverwriteTextWithToolResult() {
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "echo:" + s)
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
-        when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
+        when(toolCallbackFactory.buildToolCallbacks(any()))
+                .thenReturn(List.of(echoTool("echo_tool", "echo:")));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -87,9 +142,71 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_tool", Map.of()),
                 edge("e2", "node_tool", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(), 10).run(graph, "你好");
+        AgentGraphInterpreter interpreter = interpreter(10);
+        String output = interpreter.run(graph, "你好");
 
         assertThat(output).isEqualTo("echo:你好");
+        AgentGraphInterpreter.NodeExecutionTrace toolTrace = interpreter.getTraces().stream()
+                .filter(t -> "TOOL".equals(t.getNodeType()))
+                .findFirst().orElseThrow();
+        assertThat(toolTrace.getInputText()).isEqualTo("你好");
+        assertThat(toolTrace.getOutputText()).isEqualTo("echo:你好");
+    }
+
+    // ==================== 阶段 3：KNOWLEDGE 节点 ====================
+
+    @Test
+    @DisplayName("F1S3-K01: KNOWLEDGE 节点检索命中 → 输出含文档名/相似度/正文，轨迹记录输入输出")
+    void knowledgeNode_shouldRetrieveAndWriteContextToVariable() {
+        KnowledgeRetrievalService retrieval = mock(KnowledgeRetrievalService.class);
+        KnowledgeHitDTO hit = new KnowledgeHitDTO();
+        hit.setChunkId(11L);
+        hit.setDocumentId(22L);
+        hit.setDocumentName("项目说明.md");
+        hit.setChunkIndex(0);
+        hit.setContent("项目代号是蓝鲸七号。");
+        hit.setSimilarity(0.87);
+        when(retrieval.retrieve(eq(7L), eq("项目代号是什么"), eq(2), eq(0.5)))
+                .thenReturn(List.of(hit));
+
+        ProcessGraph graph = graphOf(
+                node("node_start", "START", Map.of()),
+                node("node_kb", "KNOWLEDGE", Map.of(
+                        "knowledgeBaseId", 7L,
+                        "topK", 2,
+                        "similarityThreshold", 0.5)),
+                node("node_end", "END", Map.of()),
+                edge("e1", "node_start", "node_kb", Map.of()),
+                edge("e2", "node_kb", "node_end", Map.of()));
+
+        AgentGraphInterpreter interpreter = new AgentGraphInterpreter(
+                modelRuntimeService, toolCallbackFactory, retrieval, 100L, 10);
+        String output = interpreter.run(graph, "项目代号是什么");
+
+        assertThat(output).contains("项目说明.md").contains("0.870").contains("蓝鲸七号");
+        AgentGraphInterpreter.NodeExecutionTrace trace = interpreter.getTraces().stream()
+                .filter(t -> "KNOWLEDGE".equals(t.getNodeType()))
+                .findFirst().orElseThrow();
+        assertThat(trace.getInputText()).isEqualTo("项目代号是什么");
+        assertThat(trace.getOutputText()).contains("蓝鲸七号");
+        assertThat(trace.getStatus()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    @DisplayName("F1S3-K02: KNOWLEDGE 节点未装配检索服务 → TOPOLOGY_INVALID")
+    void knowledgeNode_withoutService_shouldFailWithTopologyInvalid() {
+        ProcessGraph graph = graphOf(
+                node("node_start", "START", Map.of()),
+                node("node_kb", "KNOWLEDGE", Map.of("knowledgeBaseId", 7L)),
+                node("node_end", "END", Map.of()),
+                edge("e1", "node_start", "node_kb", Map.of()),
+                edge("e2", "node_kb", "node_end", Map.of()));
+
+        AgentGraphInterpreter interpreter = interpreter(10);
+        assertThatThrownBy(() -> interpreter.run(graph, "问题"))
+                .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
+                .extracting(e -> ((AgentGraphInterpreter.GraphExecutionException) e).getCategory())
+                .isEqualTo(AgentGraphInterpreter.ERROR_CATEGORY_TOPOLOGY_INVALID);
     }
 
     // ==================== 用例 3：条件分支命中关键词边 ====================
@@ -97,10 +214,8 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例3: CONDITION 命中关键词边 — 按 elements 出现顺序取第一个命中（文本同时含两个关键词时走先出现的边）")
     void condition_shouldTakeFirstKeywordEdgeInElementsOrder() {
-        AgentModelConfig configA = modelConfig(1L, "sk-a");
-        AgentModelConfig configB = modelConfig(2L, "sk-b");
-        when(chatModelFactory.build(configA, "sk-a")).thenReturn(new StubChatModel("A路输出"));
-        when(chatModelFactory.build(configB, "sk-b")).thenReturn(new StubChatModel("B路输出"));
+        stubModel(1L, new StubChatModel("A路输出"));
+        stubModel(2L, new StubChatModel("B路输出"));
 
         // 注意 elements 顺序：keyword=发货 的边在 keyword=退款 的边之前（原始顺序即优先级）
         ProcessGraph graph = graphOf(
@@ -116,7 +231,7 @@ class AgentGraphInterpreterTest {
                 edge("e4", "node_llm_b", "node_end", Map.of()));
 
         // 文本同时命中两个关键词 → 取 elements 中先出现的"发货"边 → B 路
-        String output = interpreter(Map.of(1L, configA, 2L, configB), 20).run(graph, "用户要求退款并发货");
+        String output = interpreter(20).run(graph, "用户要求退款并发货");
         assertThat(output).isEqualTo("B路输出");
     }
 
@@ -125,10 +240,8 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例4: CONDITION 未命中任何关键词 → 走唯一无 keyword 的默认边")
     void condition_shouldTakeDefaultEdgeWhenNoKeywordMatches() {
-        AgentModelConfig configA = modelConfig(1L, "sk-a");
-        AgentModelConfig configB = modelConfig(2L, "sk-b");
-        when(chatModelFactory.build(configA, "sk-a")).thenReturn(new StubChatModel("关键词路"));
-        when(chatModelFactory.build(configB, "sk-b")).thenReturn(new StubChatModel("默认路"));
+        stubModel(1L, new StubChatModel("关键词路"));
+        stubModel(2L, new StubChatModel("默认路"));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -142,7 +255,7 @@ class AgentGraphInterpreterTest {
                 edge("e3", "node_llm_a", "node_end", Map.of()),
                 edge("e4", "node_llm_b", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, configA, 2L, configB), 20)
+        String output = interpreter(20)
                 .run(graph, "没有命中任何关键词的文本");
         assertThat(output).isEqualTo("默认路");
     }
@@ -161,7 +274,7 @@ class AgentGraphInterpreterTest {
                 edge("e_key", "node_cond", "node_llm", Map.of("keyword", "退款")),
                 edge("e2", "node_llm", "node_end", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(), 10).run(graph, "无关文本"))
+        assertThatThrownBy(() -> interpreter(10).run(graph, "无关文本"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("条件分支无匹配且无默认边");
     }
@@ -171,8 +284,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例6: 图存在环（LLM 自环）→ 步数超限抛 GraphExecutionException，不无限执行")
     void cycle_shouldStopAtStepLimit() {
-        AgentModelConfig config = modelConfig(1L, "sk-loop");
-        when(chatModelFactory.build(config, "sk-loop")).thenReturn(new StubChatModel("循环输出"));
+        stubModel(1L, new StubChatModel("循环输出"));
 
         // 自环：LLM 节点出边指回自身；节点数=2（START+LLM）→ maxSteps=4
         ProcessGraph graph = graphOf(
@@ -181,7 +293,7 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e_loop", "node_llm", "node_llm", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 4).run(graph, "进来就出不去"))
+        assertThatThrownBy(() -> interpreter(4).run(graph, "进来就出不去"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("执行步数超限");
     }
@@ -191,12 +303,10 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例7: START→LLM→LLM→END 顺序链路 — 逐节点单跳、输出整体覆盖（第二跳收到第一跳输出）")
     void sequentialChain_shouldExecuteInOrderWithOverwrite() {
-        AgentModelConfig config1 = modelConfig(1L, "sk-1");
-        AgentModelConfig config2 = modelConfig(2L, "sk-2");
         CapturingChatModel stub1 = new CapturingChatModel("第一跳输出");
         CapturingChatModel stub2 = new CapturingChatModel("第二跳输出");
-        when(chatModelFactory.build(config1, "sk-1")).thenReturn(stub1);
-        when(chatModelFactory.build(config2, "sk-2")).thenReturn(stub2);
+        stubModel(1L, stub1);
+        stubModel(2L, stub2);
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -207,12 +317,12 @@ class AgentGraphInterpreterTest {
                 edge("e2", "node_llm_1", "node_llm_2", Map.of()),
                 edge("e3", "node_llm_2", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config1, 2L, config2), 10).run(graph, "初始文本");
+        String output = interpreter(10).run(graph, "初始文本");
 
         assertThat(output).isEqualTo("第二跳输出");
         // 第一跳收到初始文本；第二跳收到第一跳的输出（整体覆盖语义）
-        assertThat(stub1.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("初始文本");
-        assertThat(stub2.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("第一跳输出");
+        assertThat(textOf(stub1.capturedRequest.messages().get(0))).isEqualTo("初始文本");
+        assertThat(textOf(stub2.capturedRequest.messages().get(0))).isEqualTo("第一跳输出");
     }
 
     // ==================== 用例 8：命名变量写入 + END 指定输出变量（Step10 多变量） ====================
@@ -220,11 +330,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例8: LLM outputVar 写命名变量 + END inputVar 读回 — 命名变量写入不污染默认变量")
     void llmNode_shouldWriteNamedVariableAndEndReadsIt() {
-        AgentModelConfig config1 = modelConfig(1L, "sk-1");
-        AgentModelConfig config2 = modelConfig(2L, "sk-2");
-        when(chatModelFactory.build(config1, "sk-1")).thenReturn(new StubChatModel("摘要输出"));
+        stubModel(1L, new StubChatModel("摘要输出"));
         CapturingChatModel stub2 = new CapturingChatModel("覆盖默认变量");
-        when(chatModelFactory.build(config2, "sk-2")).thenReturn(stub2);
+        stubModel(2L, stub2);
 
         // LLM1 写命名变量 summary（默认变量保持初始 input 不变）；LLM2 无变量键写默认
         // 变量；END inputVar=summary 取最终输出
@@ -237,12 +345,12 @@ class AgentGraphInterpreterTest {
                 edge("e2", "node_llm_1", "node_llm_2", Map.of()),
                 edge("e3", "node_llm_2", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config1, 2L, config2), 10).run(graph, "初始输入");
+        String output = interpreter(10).run(graph, "初始输入");
 
         // 最终输出来自 summary 变量（LLM1 输出）；LLM2 收到的仍是默认变量（初始 input，
         // 证明命名变量写入未覆盖默认变量——多变量互不污染）
         assertThat(output).isEqualTo("摘要输出");
-        assertThat(stub2.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("初始输入");
+        assertThat(textOf(stub2.capturedRequest.messages().get(0))).isEqualTo("初始输入");
     }
 
     // ==================== 用例 9：inputVar + outputVar 链式传递（Step10 多变量） ====================
@@ -250,11 +358,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例9: LLM inputVar 读命名变量 + outputVar 写另一命名变量 — 变量间链式传递")
     void llmNode_shouldReadFromInputVarAndWriteToOutputVar() {
-        AgentModelConfig config1 = modelConfig(1L, "sk-1");
-        AgentModelConfig config2 = modelConfig(2L, "sk-2");
-        when(chatModelFactory.build(config1, "sk-1")).thenReturn(new StubChatModel("中间结果"));
+        stubModel(1L, new StubChatModel("中间结果"));
         CapturingChatModel stub2 = new CapturingChatModel("最终结果");
-        when(chatModelFactory.build(config2, "sk-2")).thenReturn(stub2);
+        stubModel(2L, stub2);
 
         // LLM1 写 raw；LLM2 从 raw 读（UserMessage = raw 值）、写 final；END 从 final 读
         ProcessGraph graph = graphOf(
@@ -266,11 +372,11 @@ class AgentGraphInterpreterTest {
                 edge("e2", "node_llm_1", "node_llm_2", Map.of()),
                 edge("e3", "node_llm_2", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config1, 2L, config2), 10).run(graph, "初始输入");
+        String output = interpreter(10).run(graph, "初始输入");
 
         assertThat(output).isEqualTo("最终结果");
         // 第二跳收到的是 raw 变量值（LLM1 输出），不是默认变量（初始 input）
-        assertThat(stub2.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("中间结果");
+        assertThat(textOf(stub2.capturedRequest.messages().get(0))).isEqualTo("中间结果");
     }
 
     // ==================== 用例 10：未定义变量引用 → 运行时错误（Step10 多变量） ====================
@@ -278,8 +384,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例10: LLM inputVar 引用从未写入的变量 → 抛 GraphExecutionException（运行时错误，不做静态校验）")
     void llmNode_shouldThrowOnUndefinedVariable() {
-        AgentModelConfig config = modelConfig(1L, "sk-1");
-        when(chatModelFactory.build(config, "sk-1")).thenReturn(new StubChatModel("不应到达"));
+        stubModel(1L, new StubChatModel("不应到达"));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -288,7 +393,7 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e2", "node_llm", "node_end", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 10).run(graph, "文本"))
+        assertThatThrownBy(() -> interpreter(10).run(graph, "文本"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("引用了未定义的变量: notExists");
     }
@@ -298,12 +403,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例11: CONDITION inputVar 指定匹配变量 — 默认变量不含关键词也正确分支")
     void condition_shouldMatchAgainstNamedVariable() {
-        AgentModelConfig config1 = modelConfig(1L, "sk-1");
-        AgentModelConfig configOk = modelConfig(2L, "sk-ok");
-        AgentModelConfig configFail = modelConfig(3L, "sk-fail");
-        when(chatModelFactory.build(config1, "sk-1")).thenReturn(new StubChatModel("成功通过"));
-        when(chatModelFactory.build(configOk, "sk-ok")).thenReturn(new StubChatModel("成功路"));
-        when(chatModelFactory.build(configFail, "sk-fail")).thenReturn(new StubChatModel("失败路"));
+        stubModel(1L, new StubChatModel("成功通过"));
+        stubModel(2L, new StubChatModel("成功路"));
+        stubModel(3L, new StubChatModel("失败路"));
 
         // LLM1 输出写入 judge 变量（内容含"成功"）；默认变量（初始 input）不含关键词；
         // CONDITION inputVar=judge 基于 judge 匹配 → 走成功边
@@ -321,7 +423,7 @@ class AgentGraphInterpreterTest {
                 edge("e3", "node_llm_ok", "node_end", Map.of()),
                 edge("e4", "node_llm_fail", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config1, 2L, configOk, 3L, configFail), 20)
+        String output = interpreter(20)
                 .run(graph, "无关键词文本");
 
         // 默认变量不含"成功/失败"，若 CONDITION 误用默认变量会走失败边——此处走成功边
@@ -334,10 +436,8 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例12: 旧图（无变量名字段）— LLM 覆盖默认变量后 CONDITION 基于新值匹配（零迁移）")
     void legacyGraph_shouldKeepSingleTextSemantics() {
-        AgentModelConfig config1 = modelConfig(1L, "sk-1");
-        AgentModelConfig config2 = modelConfig(2L, "sk-2");
-        when(chatModelFactory.build(config1, "sk-1")).thenReturn(new StubChatModel("发货请求处理中"));
-        when(chatModelFactory.build(config2, "sk-2")).thenReturn(new StubChatModel("发货处理结果"));
+        stubModel(1L, new StubChatModel("发货请求处理中"));
+        stubModel(2L, new StubChatModel("发货处理结果"));
 
         // 全图无任何变量名字段（旧图形态）：LLM 覆盖默认变量 → CONDITION 基于覆盖后的
         // 默认变量匹配（Step8 单文本语义）
@@ -352,7 +452,7 @@ class AgentGraphInterpreterTest {
                 edge("e_ship", "node_cond", "node_llm_2", Map.of("keyword", "发货")),
                 edge("e3", "node_llm_2", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config1, 2L, config2), 10).run(graph, "初始文本");
+        String output = interpreter(10).run(graph, "初始文本");
 
         assertThat(output).isEqualTo("发货处理结果");
     }
@@ -362,10 +462,8 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例13: LOOP 循环正常退出 — 第三轮 CONDITION 命中退出关键词走 END，LLM 恰好调用 3 次（maxIterations=3 未超限）")
     void loop_shouldExitNormallyWhenConditionHitsExitKeyword() {
-        AgentModelConfig config = modelConfig(1L, "sk-loop-exit");
         // 有状态桩：前两轮输出不含退出关键词（默认边回 LOOP），第三轮输出"退出"命中关键词走 END
-        when(chatModelFactory.build(config, "sk-loop-exit"))
-                .thenReturn(new SequencedChatModel("结果1", "结果2", "退出"));
+        stubModel(1L, new SequencedChatModel("结果1", "结果2", "退出"));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -379,11 +477,11 @@ class AgentGraphInterpreterTest {
                 edge("e_exit", "node_cond", "node_end", Map.of("keyword", "退出")),
                 edge("e_back", "node_cond", "node_loop", Map.of()));   // 无 keyword = 默认边回 LOOP
 
-        String output = interpreter(Map.of(1L, config), 30).run(graph, "开始循环");
+        String output = interpreter(30).run(graph, "开始循环");
 
         // 输出 = 第三轮 LLM 输出（END 读默认变量）；恰好 3 次迭代（少迭代或多迭代该断言失败）
         assertThat(output).isEqualTo("退出");
-        verify(chatModelFactory, times(3)).build(config, "sk-loop-exit");
+        verify(modelRuntimeService, times(3)).acquire(1L);
     }
 
     // ==================== 用例 14：循环迭代超限（Step11 LOOP） ====================
@@ -391,8 +489,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例14: LOOP 迭代超限 — 第 3 次到达 LOOP（maxIterations=2）抛 循环迭代次数超限，LLM 恰好执行 2 次")
     void loop_shouldThrowWhenIterationExceedsMax() {
-        AgentModelConfig config = modelConfig(1L, "sk-loop-over");
-        when(chatModelFactory.build(config, "sk-loop-over")).thenReturn(new StubChatModel("循环体"));
+        stubModel(1L, new StubChatModel("循环体"));
 
         // LOOP→LLM→(回边直回 LOOP)，无 CONDITION：循环永不退出，靠 LOOP 迭代上限拦截
         ProcessGraph graph = graphOf(
@@ -403,11 +500,11 @@ class AgentGraphInterpreterTest {
                 edge("e2", "node_loop", "node_llm", Map.of()),
                 edge("e3", "node_llm", "node_loop", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 50).run(graph, "进循环"))
+        assertThatThrownBy(() -> interpreter(50).run(graph, "进循环"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("循环迭代次数超限: node_loop");
         // 第 1、2 次到达 LOOP 放行（LLM 各执行一次），第 3 次到达抛错
-        verify(chatModelFactory, times(2)).build(config, "sk-loop-over");
+        verify(modelRuntimeService, times(2)).acquire(1L);
     }
 
     // ==================== 用例 15：FORK→JOIN 两分支全执行（Step11 并行） ====================
@@ -415,16 +512,11 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例15: FORK→JOIN 两分支全执行 — LLM/TOOL 各执行 1 次，JOIN 汇合后 v2 变量保留可读（后验断言）")
     void forkJoin_shouldExecuteAllBranchesAndMerge() {
-        AgentModelConfig configB1 = modelConfig(1L, "sk-b1");
-        AgentModelConfig configObs = modelConfig(2L, "sk-obs");
-        when(chatModelFactory.build(configB1, "sk-b1")).thenReturn(new StubChatModel("分支1输出"));
+        stubModel(1L, new StubChatModel("分支1输出"));
         CapturingChatModel obs = new CapturingChatModel("观察输出");
-        when(chatModelFactory.build(configObs, "sk-obs")).thenReturn(obs);
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "分支2输出")
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
-        when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
+        stubModel(2L, obs);
+        when(toolCallbackFactory.buildToolCallbacks(any()))
+                .thenReturn(List.of(constTool("echo_tool", "分支2输出")));
 
         // B1: LLM 写 v1；B2: TOOL 写 v2；JOIN 后置观察节点从 v2 读（证明 v2 写入保留）
         ProcessGraph graph = graphOf(
@@ -443,14 +535,14 @@ class AgentGraphInterpreterTest {
                 edge("e6", "node_join", "node_obs", Map.of()),
                 edge("e7", "node_obs", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, configB1, 2L, configObs), 30).run(graph, "入参");
+        String output = interpreter(30).run(graph, "入参");
 
         // END 读到 v1（B1 分支输出）；JOIN 后观察节点从 v2 读到 B2 分支输出（v2 保留 =
         // 两分支全执行并成功汇合）；两个 LLM 各恰好执行 1 次
         assertThat(output).isEqualTo("分支1输出");
-        assertThat(obs.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("分支2输出");
-        verify(chatModelFactory).build(configB1, "sk-b1");
-        verify(chatModelFactory).build(configObs, "sk-obs");
+        assertThat(textOf(obs.capturedRequest.messages().get(0))).isEqualTo("分支2输出");
+        verify(modelRuntimeService).acquire(1L);
+        verify(modelRuntimeService).acquire(2L);
     }
 
     // ==================== 用例 16：并行同变量后写覆盖（Step11 用户决策） ====================
@@ -458,13 +550,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例16: 并行分支同变量后写覆盖 — B1 写 v=A、B2 写 v=B（出边顺序确定），END 读到后推进分支值 B")
     void forkJoin_sameVariable_shouldLastWriteWin() {
-        AgentModelConfig config = modelConfig(1L, "sk-b1");
-        when(chatModelFactory.build(config, "sk-b1")).thenReturn(new StubChatModel("A"));
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "B")
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
-        when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
+        stubModel(1L, new StubChatModel("A"));
+        when(toolCallbackFactory.buildToolCallbacks(any()))
+                .thenReturn(List.of(constTool("echo_tool", "B")));
 
         // 出边顺序：B1(LLM 写 v=A) 先于 B2(TOOL 写 v=B)；FIFO 交替推进 = B1 先写、B2 后写覆盖
         ProcessGraph graph = graphOf(
@@ -481,7 +569,7 @@ class AgentGraphInterpreterTest {
                 edge("e5", "node_tool_b2", "node_join", Map.of()),
                 edge("e6", "node_join", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config), 20).run(graph, "入参");
+        String output = interpreter(20).run(graph, "入参");
 
         // 用户已决策：并行同变量 = 最后写入覆盖（不拦截不告警）；确定性出边顺序 → 后推进
         // 分支（B2）的 "B" 覆盖先推进分支（B1）的 "A"
@@ -493,8 +581,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例17: JOIN 死锁兜底 — B1 挂起等待、B2 经 CONDITION 回边死循环永不达 JOIN → 全局步数超限抛错")
     void joinDeadlock_shouldStopAtStepLimit() {
-        AgentModelConfig config = modelConfig(1L, "sk-loop2");
-        when(chatModelFactory.build(config, "sk-loop2")).thenReturn(new StubChatModel("死循环"));
+        stubModel(1L, new StubChatModel("死循环"));
 
         // JOIN 静态入边 2 条：B1（FORK→JOIN 直达）与 B2（CONDITION 关键词边 →JOIN）。
         // B1 先到达（计数 1 < 2 → 挂起等待）；B2 经 CONDITION 默认边回 LLM 死循环（匹配
@@ -515,7 +602,7 @@ class AgentGraphInterpreterTest {
                 edge("e6", "node_cond", "node_llm_b2", Map.of()),   // 默认边回 LLM = 死循环
                 edge("e7", "node_join", "node_end", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 12).run(graph, "入参"))
+        assertThatThrownBy(() -> interpreter(12).run(graph, "入参"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("执行步数超限");
     }
@@ -525,8 +612,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例18: END 早到终止全部 — B1 直达 END 即返回，B2 分支不再执行（LLM 零调用）")
     void endEarly_shouldTerminateAllBranches() {
-        AgentModelConfig config = modelConfig(1L, "sk-never");
-        when(chatModelFactory.build(config, "sk-never")).thenReturn(new StubChatModel("不应执行"));
+        stubModel(1L, new StubChatModel("不应执行"));
 
         // 出边顺序：B1(→END) 先于 B2(→LLM)；END 一经处理立即返回，B2 分支永不执行
         ProcessGraph graph = graphOf(
@@ -538,11 +624,11 @@ class AgentGraphInterpreterTest {
                 edge("e2", "node_fork", "node_end", Map.of()),
                 edge("e3", "node_fork", "node_llm_b2", Map.of()));
 
-        String output = interpreter(Map.of(1L, config), 10).run(graph, "原始输入");
+        String output = interpreter(10).run(graph, "原始输入");
 
-        // END 读默认变量（无任何节点写入）→ 返回入参原值；B2 分支 LLM 从未被 build
+        // END 读默认变量（无任何节点写入）→ 返回入参原值；B2 分支 LLM 从未被 acquire
         assertThat(output).isEqualTo("原始输入");
-        verify(chatModelFactory, never()).build(any(AgentModelConfig.class), anyString());
+        verify(modelRuntimeService, never()).acquire(any());
     }
 
     // ==================== 用例 19：预算退化回归（Step11 无 LOOP 旧图） ====================
@@ -550,8 +636,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例19: 预算公式退化回归 — 旧图（无 LOOP）自环仍由 2×节点数预算兜底（行为与现状一致）")
     void legacyGraphSelfLoop_shouldStillHitStepLimit() {
-        AgentModelConfig config = modelConfig(1L, "sk-legacy-loop");
-        when(chatModelFactory.build(config, "sk-legacy-loop")).thenReturn(new StubChatModel("循环输出"));
+        stubModel(1L, new StubChatModel("循环输出"));
 
         // 仿用例6：START + LLM 自环，无 LOOP/END → 节点数 2 × 2 = 4 步后超限抛错
         ProcessGraph graph = graphOf(
@@ -560,7 +645,7 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e_loop", "node_llm", "node_llm", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 4).run(graph, "进来就出不去"))
+        assertThatThrownBy(() -> interpreter(4).run(graph, "进来就出不去"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("执行步数超限");
     }
@@ -570,8 +655,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例20: 顺序链路轨迹 — START→LLM→END 共 3 条记录，nodeSeq 1-3、branchId 全 0、快照含输入与模型输出")
     void sequential_trace_shouldRecordEveryNodeVisit() {
-        AgentModelConfig config = modelConfig(1L, "sk-trace");
-        when(chatModelFactory.build(config, "sk-trace")).thenReturn(new StubChatModel("轨迹输出"));
+        stubModel(1L, new StubChatModel("轨迹输出"));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -580,7 +664,7 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e2", "node_llm", "node_end", Map.of()));
 
-        AgentGraphInterpreter interpreter = interpreter(Map.of(1L, config), 10);
+        AgentGraphInterpreter interpreter = interpreter(10);
         String output = interpreter.run(graph, "原始输入");
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interpreter.getTraces();
 
@@ -608,13 +692,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例21: FORK→JOIN 并行轨迹 — 两分支 branchId 分别为 0-0/0-1（按出边顺序），JOIN 后沿用最后到达分支标识")
     void forkJoin_trace_shouldDistinguishBranches() {
-        AgentModelConfig configB1 = modelConfig(1L, "sk-b1");
-        when(chatModelFactory.build(configB1, "sk-b1")).thenReturn(new StubChatModel("分支1"));
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "分支2")
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
-        when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
+        stubModel(1L, new StubChatModel("分支1"));
+        when(toolCallbackFactory.buildToolCallbacks(any()))
+                .thenReturn(List.of(echoTool("echo_tool", "分支2")));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -630,7 +710,7 @@ class AgentGraphInterpreterTest {
                 edge("e5", "node_tool_b2", "node_join", Map.of()),
                 edge("e6", "node_join", "node_end", Map.of()));
 
-        AgentGraphInterpreter interpreter = interpreter(Map.of(1L, configB1), 30);
+        AgentGraphInterpreter interpreter = interpreter(30);
         String output = interpreter.run(graph, "入参");
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interpreter.getTraces();
 
@@ -656,9 +736,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例22: LOOP 迭代轨迹 — 同节点多次访问 = 多条 nodeSeq 递增记录，branchId 相同，快照反映迭代输出")
     void loop_trace_shouldRecordEveryIteration() {
-        AgentModelConfig config = modelConfig(1L, "sk-loop-trace");
-        when(chatModelFactory.build(config, "sk-loop-trace"))
-                .thenReturn(new SequencedChatModel("结果1", "结果2", "退出"));
+        stubModel(1L, new SequencedChatModel("结果1", "结果2", "退出"));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -672,7 +750,7 @@ class AgentGraphInterpreterTest {
                 edge("e_exit", "node_cond", "node_end", Map.of("keyword", "退出")),
                 edge("e_back", "node_cond", "node_loop", Map.of()));
 
-        AgentGraphInterpreter interpreter = interpreter(Map.of(1L, config), 30);
+        AgentGraphInterpreter interpreter = interpreter(30);
         String output = interpreter.run(graph, "开始循环");
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interpreter.getTraces();
 
@@ -707,7 +785,7 @@ class AgentGraphInterpreterTest {
                 edge("e_key", "node_cond", "node_llm", Map.of("keyword", "退款")),
                 edge("e2", "node_llm", "node_end", Map.of()));
 
-        AgentGraphInterpreter interpreter = interpreter(Map.of(), 10);
+        AgentGraphInterpreter interpreter = interpreter(10);
         assertThatThrownBy(() -> interpreter.run(graph, "无关文本"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("条件分支无匹配且无默认边")
@@ -727,8 +805,7 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例24: 错误分类 — 步数超限抛 GraphExecutionException.category = STEP_LIMIT")
     void stepLimit_shouldCarryCategory() {
-        AgentModelConfig config = modelConfig(1L, "sk-cat");
-        when(chatModelFactory.build(config, "sk-cat")).thenReturn(new StubChatModel("循环输出"));
+        stubModel(1L, new StubChatModel("循环输出"));
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -736,7 +813,7 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e_loop", "node_llm", "node_llm", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 4).run(graph, "进来就出不去"))
+        assertThatThrownBy(() -> interpreter(4).run(graph, "进来就出不去"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("执行步数超限")
                 .satisfies(ex -> assertThat(((AgentGraphInterpreter.GraphExecutionException) ex)
@@ -748,9 +825,8 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例25: 历史图无 systemPrompt/userPromptTemplate → 仅 UserMessage(inputVar 值)，结果与旧行为一致")
     void llmNodeWithoutPromptConfigBackwardCompatible() {
-        AgentModelConfig config = modelConfig(1L, "sk-hist");
         CapturingChatModel stub = new CapturingChatModel("历史回复");
-        when(chatModelFactory.build(config, "sk-hist")).thenReturn(stub);
+        stubModel(1L, stub);
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -759,13 +835,13 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e2", "node_llm", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config), 10).run(graph, "历史输入");
+        String output = interpreter(10).run(graph, "历史输入");
 
         assertThat(output).isEqualTo("历史回复");
-        List<Message> msgs = stub.capturedPrompt.getInstructions();
+        List<ChatMessage> msgs = stub.capturedRequest.messages();
         assertThat(msgs).hasSize(1);
-        assertThat(msgs.get(0).getMessageType()).isEqualTo(MessageType.USER);
-        assertThat(msgs.get(0).getText()).isEqualTo("历史输入");
+        assertThat(msgs.get(0)).isInstanceOf(UserMessage.class);
+        assertThat(textOf(msgs.get(0))).isEqualTo("历史输入");
     }
 
     // ==================== 用例 26：配置 systemPrompt → 消息列表含 SystemMessage + UserMessage ====================
@@ -773,9 +849,8 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例26: 配置 systemPrompt → 消息列表含 SystemMessage + UserMessage（顺序：System 在前，User 在后）")
     void llmNodeWithSystemPromptInjected() {
-        AgentModelConfig config = modelConfig(1L, "sk-sys");
         CapturingChatModel stub = new CapturingChatModel("系统回复");
-        when(chatModelFactory.build(config, "sk-sys")).thenReturn(stub);
+        stubModel(1L, stub);
 
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -785,15 +860,15 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_llm", Map.of()),
                 edge("e2", "node_llm", "node_end", Map.of()));
 
-        String output = interpreter(Map.of(1L, config), 10).run(graph, "你好");
+        String output = interpreter(10).run(graph, "你好");
 
         assertThat(output).isEqualTo("系统回复");
-        List<Message> msgs = stub.capturedPrompt.getInstructions();
+        List<ChatMessage> msgs = stub.capturedRequest.messages();
         assertThat(msgs).hasSize(2);
-        assertThat(msgs.get(0).getMessageType()).isEqualTo(MessageType.SYSTEM);
-        assertThat(msgs.get(0).getText()).isEqualTo("You are a helpful assistant.");
-        assertThat(msgs.get(1).getMessageType()).isEqualTo(MessageType.USER);
-        assertThat(msgs.get(1).getText()).isEqualTo("你好");
+        assertThat(msgs.get(0)).isInstanceOf(SystemMessage.class);
+        assertThat(textOf(msgs.get(0))).isEqualTo("You are a helpful assistant.");
+        assertThat(msgs.get(1)).isInstanceOf(UserMessage.class);
+        assertThat(textOf(msgs.get(1))).isEqualTo("你好");
     }
 
     // ==================== 用例 27：空 systemPrompt → 不注入 SystemMessage ====================
@@ -801,12 +876,10 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例27: systemPrompt=\"\" 或 \"   \" → 仅 UserMessage（空白系统 Prompt 不注入）")
     void llmNodeWithBlankSystemPromptNotInjected() {
-        AgentModelConfig config1 = modelConfig(1L, "sk-b1");
-        AgentModelConfig config2 = modelConfig(2L, "sk-b2");
         CapturingChatModel stub1 = new CapturingChatModel("空串回复");
         CapturingChatModel stub2 = new CapturingChatModel("空白回复");
-        when(chatModelFactory.build(config1, "sk-b1")).thenReturn(stub1);
-        when(chatModelFactory.build(config2, "sk-b2")).thenReturn(stub2);
+        stubModel(1L, stub1);
+        stubModel(2L, stub2);
 
         // 空串
         ProcessGraph graph1 = graphOf(
@@ -823,13 +896,13 @@ class AgentGraphInterpreterTest {
                 edge("x1", "s", "llm2", Map.of()),
                 edge("x2", "llm2", "e", Map.of()));
 
-        interpreter(Map.of(1L, config1), 10).run(graph1, "输入1");
-        interpreter(Map.of(2L, config2), 10).run(graph2, "输入2");
+        interpreter(10).run(graph1, "输入1");
+        interpreter(10).run(graph2, "输入2");
 
-        assertThat(stub1.capturedPrompt.getInstructions()).hasSize(1);
-        assertThat(stub1.capturedPrompt.getInstructions().get(0).getMessageType()).isEqualTo(MessageType.USER);
-        assertThat(stub2.capturedPrompt.getInstructions()).hasSize(1);
-        assertThat(stub2.capturedPrompt.getInstructions().get(0).getMessageType()).isEqualTo(MessageType.USER);
+        assertThat(stub1.capturedRequest.messages()).hasSize(1);
+        assertThat(stub1.capturedRequest.messages().get(0)).isInstanceOf(UserMessage.class);
+        assertThat(stub2.capturedRequest.messages()).hasSize(1);
+        assertThat(stub2.capturedRequest.messages().get(0)).isInstanceOf(UserMessage.class);
     }
 
     // ==================== 用例 28：userPromptTemplate 单变量插值 ====================
@@ -837,13 +910,10 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例28: userPromptTemplate=\"Hello, {{name}}\" + variables={name=alice} → 用户消息=\"Hello, alice\"")
     void llmNodeWithUserPromptTemplateSingleVar() {
-        AgentModelConfig config = modelConfig(1L, "sk-tpl");
         CapturingChatModel stub = new CapturingChatModel("模板回复");
-        when(chatModelFactory.build(config, "sk-tpl")).thenReturn(stub);
-
+        stubModel(1L, stub);
         // LLM1 写 name 变量；LLM2 用模板引用 {{name}}
-        AgentModelConfig configPre = modelConfig(2L, "sk-pre");
-        when(chatModelFactory.build(configPre, "sk-pre")).thenReturn(new StubChatModel("alice"));
+        stubModel(2L, new StubChatModel("alice"));
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -855,13 +925,13 @@ class AgentGraphInterpreterTest {
                 edge("x2", "llm1", "llm2", Map.of()),
                 edge("x3", "llm2", "e", Map.of()));
 
-        String output = interpreter(Map.of(1L, config, 2L, configPre), 10).run(graph, "ignored");
+        String output = interpreter(10).run(graph, "ignored");
 
         assertThat(output).isEqualTo("模板回复");
-        List<Message> msgs = stub.capturedPrompt.getInstructions();
+        List<ChatMessage> msgs = stub.capturedRequest.messages();
         assertThat(msgs).hasSize(1);
-        assertThat(msgs.get(0).getMessageType()).isEqualTo(MessageType.USER);
-        assertThat(msgs.get(0).getText()).isEqualTo("Hello, alice");
+        assertThat(msgs.get(0)).isInstanceOf(UserMessage.class);
+        assertThat(textOf(msgs.get(0))).isEqualTo("Hello, alice");
     }
 
     // ==================== 用例 29：userPromptTemplate 多变量插值 ====================
@@ -869,13 +939,10 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例29: userPromptTemplate=\"{{greeting}} {{name}}\" + 两个命名变量 → 正确拼接")
     void llmNodeWithUserPromptTemplateMultipleVars() {
-        AgentModelConfig configTpl = modelConfig(1L, "sk-tpl");
-        AgentModelConfig configG = modelConfig(2L, "sk-g");
-        AgentModelConfig configN = modelConfig(3L, "sk-n");
         CapturingChatModel stub = new CapturingChatModel("多变量回复");
-        when(chatModelFactory.build(configTpl, "sk-tpl")).thenReturn(stub);
-        when(chatModelFactory.build(configG, "sk-g")).thenReturn(new StubChatModel("Hi"));
-        when(chatModelFactory.build(configN, "sk-n")).thenReturn(new StubChatModel("bob"));
+        stubModel(1L, stub);
+        stubModel(2L, new StubChatModel("Hi"));
+        stubModel(3L, new StubChatModel("bob"));
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -889,9 +956,9 @@ class AgentGraphInterpreterTest {
                 edge("x3", "llm_n", "llm_tpl", Map.of()),
                 edge("x4", "llm_tpl", "e", Map.of()));
 
-        interpreter(Map.of(1L, configTpl, 2L, configG, 3L, configN), 10).run(graph, "ignored");
+        interpreter(10).run(graph, "ignored");
 
-        assertThat(stub.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("Hi bob");
+        assertThat(textOf(stub.capturedRequest.messages().get(0))).isEqualTo("Hi bob");
     }
 
     // ==================== 用例 30：同一变量出现两次 → 均被替换 ====================
@@ -899,11 +966,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例30: userPromptTemplate 同一变量出现两次 → 均被替换为同一值")
     void llmNodeWithUserPromptTemplateRepeatedVar() {
-        AgentModelConfig configTpl = modelConfig(1L, "sk-tpl");
-        AgentModelConfig configPre = modelConfig(2L, "sk-pre");
         CapturingChatModel stub = new CapturingChatModel("重复回复");
-        when(chatModelFactory.build(configTpl, "sk-tpl")).thenReturn(stub);
-        when(chatModelFactory.build(configPre, "sk-pre")).thenReturn(new StubChatModel("alice"));
+        stubModel(1L, stub);
+        stubModel(2L, new StubChatModel("alice"));
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -915,9 +980,9 @@ class AgentGraphInterpreterTest {
                 edge("x2", "llm1", "llm2", Map.of()),
                 edge("x3", "llm2", "e", Map.of()));
 
-        interpreter(Map.of(1L, configTpl, 2L, configPre), 10).run(graph, "ignored");
+        interpreter(10).run(graph, "ignored");
 
-        assertThat(stub.capturedPrompt.getInstructions().get(0).getText())
+        assertThat(textOf(stub.capturedRequest.messages().get(0)))
                 .isEqualTo("Hi alice, again alice!");
     }
 
@@ -926,11 +991,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例31: 模板含中文、变量值含中文/emoji → 正确替换不破坏编码")
     void llmNodeWithUserPromptTemplateNonAscii() {
-        AgentModelConfig configTpl = modelConfig(1L, "sk-tpl");
-        AgentModelConfig configPre = modelConfig(2L, "sk-pre");
         CapturingChatModel stub = new CapturingChatModel("非ASCII回复");
-        when(chatModelFactory.build(configTpl, "sk-tpl")).thenReturn(stub);
-        when(chatModelFactory.build(configPre, "sk-pre")).thenReturn(new StubChatModel("🌟小明"));
+        stubModel(1L, stub);
+        stubModel(2L, new StubChatModel("🌟小明"));
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -942,9 +1005,9 @@ class AgentGraphInterpreterTest {
                 edge("x2", "llm1", "llm2", Map.of()),
                 edge("x3", "llm2", "e", Map.of()));
 
-        interpreter(Map.of(1L, configTpl, 2L, configPre), 10).run(graph, "ignored");
+        interpreter(10).run(graph, "ignored");
 
-        assertThat(stub.capturedPrompt.getInstructions().get(0).getText())
+        assertThat(textOf(stub.capturedRequest.messages().get(0)))
                 .isEqualTo("你好，🌟小明！欢迎使用系统。");
     }
 
@@ -953,13 +1016,10 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例32: 变量值本身含 '{{x}}' → 不被二次解析（避免表达式注入）")
     void llmNodeWithTemplateValueContainingBracesNoSecondPass() {
-        AgentModelConfig configTpl = modelConfig(1L, "sk-tpl");
-        AgentModelConfig configPre = modelConfig(2L, "sk-pre");
         CapturingChatModel stub = new CapturingChatModel("安全回复");
-        when(chatModelFactory.build(configTpl, "sk-tpl")).thenReturn(stub);
+        stubModel(1L, stub);
         // 变量值含 {{x}} 样式（模拟用户输入被写入变量）
-        when(chatModelFactory.build(configPre, "sk-pre"))
-                .thenReturn(new StubChatModel("{{injected}}"));
+        stubModel(2L, new StubChatModel("{{injected}}"));
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -971,10 +1031,10 @@ class AgentGraphInterpreterTest {
                 edge("x2", "llm1", "llm2", Map.of()),
                 edge("x3", "llm2", "e", Map.of()));
 
-        interpreter(Map.of(1L, configTpl, 2L, configPre), 10).run(graph, "ignored");
+        interpreter(10).run(graph, "ignored");
 
         // 关键：变量值中的 {{injected}} 不被二次展开，原样出现在用户消息中
-        assertThat(stub.capturedPrompt.getInstructions().get(0).getText())
+        assertThat(textOf(stub.capturedRequest.messages().get(0)))
                 .isEqualTo("收到: {{injected}}");
     }
 
@@ -983,10 +1043,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例33: userPromptTemplate 引用未定义变量 → 抛 GraphExecutionException (UNDEFINED_VARIABLE)，不调用模型")
     void llmNodeWithTemplateUndefinedVariableFails() {
-        AgentModelConfig config = modelConfig(1L, "sk-tpl");
-        // 用 mock ChatModel 验证 call() 从未被调用（模板插值在 call 之前抛错）
+        // 用 mock ChatModel 验证 chat() 从未被调用（模板插值在 chat 之前抛错）
         ChatModel mockChatModel = mock(ChatModel.class);
-        when(chatModelFactory.build(config, "sk-tpl")).thenReturn(mockChatModel);
+        stubModel(1L, mockChatModel);
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -996,13 +1055,13 @@ class AgentGraphInterpreterTest {
                 edge("x1", "s", "llm", Map.of()),
                 edge("x2", "llm", "e", Map.of()));
 
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 10).run(graph, "ignored"))
+        assertThatThrownBy(() -> interpreter(10).run(graph, "ignored"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("引用了未定义的变量: missing")
                 .satisfies(ex -> assertThat(((AgentGraphInterpreter.GraphExecutionException) ex)
                         .getCategory()).isEqualTo("UNDEFINED_VARIABLE"));
-        // 模板插值在 chatModel.call() 之前抛错 —— 模型从未被调用
-        verify(mockChatModel, never()).call(any(Prompt.class));
+        // 模板插值在 chatModel.chat() 之前抛错 —— 模型从未被调用
+        verify(mockChatModel, never()).chat(any(ChatRequest.class));
     }
 
     // ==================== 用例 34：空 userPromptTemplate → 退化为 inputVar 原文 ====================
@@ -1010,12 +1069,10 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例34: userPromptTemplate=\"\" 或 null → 退化为 inputVar 原文（历史行为）")
     void llmNodeWithBlankUserPromptTemplateFallsBackToInputVar() {
-        AgentModelConfig config1 = modelConfig(1L, "sk-b1");
-        AgentModelConfig config2 = modelConfig(2L, "sk-b2");
         CapturingChatModel stub1 = new CapturingChatModel("空模板回复");
         CapturingChatModel stub2 = new CapturingChatModel("缺键回复");
-        when(chatModelFactory.build(config1, "sk-b1")).thenReturn(stub1);
-        when(chatModelFactory.build(config2, "sk-b2")).thenReturn(stub2);
+        stubModel(1L, stub1);
+        stubModel(2L, stub2);
 
         // 空串 userPromptTemplate
         ProcessGraph graph1 = graphOf(
@@ -1032,12 +1089,12 @@ class AgentGraphInterpreterTest {
                 edge("x1", "s", "llm2", Map.of()),
                 edge("x2", "llm2", "e", Map.of()));
 
-        interpreter(Map.of(1L, config1), 10).run(graph1, "原始输入1");
-        interpreter(Map.of(2L, config2), 10).run(graph2, "原始输入2");
+        interpreter(10).run(graph1, "原始输入1");
+        interpreter(10).run(graph2, "原始输入2");
 
         // 两者都退化为 inputVar 原文
-        assertThat(stub1.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("原始输入1");
-        assertThat(stub2.capturedPrompt.getInstructions().get(0).getText()).isEqualTo("原始输入2");
+        assertThat(textOf(stub1.capturedRequest.messages().get(0))).isEqualTo("原始输入1");
+        assertThat(textOf(stub2.capturedRequest.messages().get(0))).isEqualTo("原始输入2");
     }
 
     // ==================== 用例 35：systemPrompt + userPromptTemplate 组合 ====================
@@ -1045,11 +1102,9 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例35: 同时配置 systemPrompt + userPromptTemplate → 消息列表：System 在前、User 在后")
     void llmNodeWithTemplateAndSystemPromptCombined() {
-        AgentModelConfig configTpl = modelConfig(1L, "sk-tpl");
-        AgentModelConfig configPre = modelConfig(2L, "sk-pre");
         CapturingChatModel stub = new CapturingChatModel("组合回复");
-        when(chatModelFactory.build(configTpl, "sk-tpl")).thenReturn(stub);
-        when(chatModelFactory.build(configPre, "sk-pre")).thenReturn(new StubChatModel("alice"));
+        stubModel(1L, stub);
+        stubModel(2L, new StubChatModel("alice"));
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -1062,14 +1117,14 @@ class AgentGraphInterpreterTest {
                 edge("x2", "llm1", "llm2", Map.of()),
                 edge("x3", "llm2", "e", Map.of()));
 
-        interpreter(Map.of(1L, configTpl, 2L, configPre), 10).run(graph, "ignored");
+        interpreter(10).run(graph, "ignored");
 
-        List<Message> msgs = stub.capturedPrompt.getInstructions();
+        List<ChatMessage> msgs = stub.capturedRequest.messages();
         assertThat(msgs).hasSize(2);
-        assertThat(msgs.get(0).getMessageType()).isEqualTo(MessageType.SYSTEM);
-        assertThat(msgs.get(0).getText()).isEqualTo("你是一个客服机器人。");
-        assertThat(msgs.get(1).getMessageType()).isEqualTo(MessageType.USER);
-        assertThat(msgs.get(1).getText()).isEqualTo("用户名字: alice");
+        assertThat(msgs.get(0)).isInstanceOf(SystemMessage.class);
+        assertThat(textOf(msgs.get(0))).isEqualTo("你是一个客服机器人。");
+        assertThat(msgs.get(1)).isInstanceOf(UserMessage.class);
+        assertThat(textOf(msgs.get(1))).isEqualTo("用户名字: alice");
     }
 
     // ==================== 用例 36：模板含非标识符语法 → 原文保留不报错 ====================
@@ -1077,9 +1132,8 @@ class AgentGraphInterpreterTest {
     @Test
     @DisplayName("用例36: 模板含 '{{ invalid name }}'（空格）或 '{{123numeric}}'（非标识符开头）→ 不被识别为占位符，原文保留")
     void llmNodeWithTemplateContainingUnknownSyntaxLeftIntact() {
-        AgentModelConfig config = modelConfig(1L, "sk-tpl");
         CapturingChatModel stub = new CapturingChatModel("语法保留回复");
-        when(chatModelFactory.build(config, "sk-tpl")).thenReturn(stub);
+        stubModel(1L, stub);
 
         ProcessGraph graph = graphOf(
                 node("s", "START", Map.of()),
@@ -1099,32 +1153,86 @@ class AgentGraphInterpreterTest {
                 edge("x1", "s", "llm", Map.of()),
                 edge("x2", "llm", "e", Map.of()));
 
-        interpreter(Map.of(1L, config), 10).run(graphSafe, "ignored");
+        interpreter(10).run(graphSafe, "ignored");
 
         // 非标识符语法的占位符不被识别，原文保留
-        assertThat(stub.capturedPrompt.getInstructions().get(0).getText())
+        assertThat(textOf(stub.capturedRequest.messages().get(0)))
                 .isEqualTo("{{ invalid name }} and {{123numeric}} left as-is.");
         // 确认 graph（含 {{valid}}）会触发 UNDEFINED_VARIABLE
-        assertThatThrownBy(() -> interpreter(Map.of(1L, config), 10).run(graph, "ignored"))
+        assertThatThrownBy(() -> interpreter(10).run(graph, "ignored"))
                 .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
                 .hasMessageContaining("引用了未定义的变量: valid");
     }
 
     // ==================== 内部辅助 ====================
 
-    private AgentGraphInterpreter interpreter(Map<Long, AgentModelConfig> modelConfigs, int maxSteps) {
-        return new AgentGraphInterpreter(chatModelFactory, toolCallbackFactory, modelConfigs, cipher, null, maxSteps);
+    private AgentGraphInterpreter interpreter(int maxSteps) {
+        return new AgentGraphInterpreter(modelRuntimeService, toolCallbackFactory, null, maxSteps);
     }
 
-    /** 模型配置 POJO（apiKeyCipher 用真实 AES 加密，验证解密→build 全链路） */
-    private AgentModelConfig modelConfig(Long id, String plainKey) {
-        AgentModelConfig config = new AgentModelConfig();
-        config.setId(id);
-        config.setProtocolType("openai");
-        config.setBaseUrl("http://localhost:9999/v1");
-        config.setModelName("stub-model");
-        config.setApiKeyCipher(cipher.encrypt(plainKey));
-        return config;
+    /** 打桩运行时服务：acquire(id) 返回携带指定 ChatModel 的 ModelInstance */
+    private void stubModel(Long id, ChatModel chatModel) {
+        AgentModel model = new AgentModel();
+        model.setId(id);
+        model.setName("stub-model-" + id);
+        model.setEnabled(true);
+        AgentProvider provider = new AgentProvider();
+        provider.setId(100L);
+        provider.setName("stub-provider");
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setEnabled(true);
+        when(modelRuntimeService.acquire(id))
+                .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
+        // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）；
+        // 阶段 2：工具规格透传，供 LLM 节点工具循环测试使用
+        when(modelRuntimeService.chatWithRotation(eq(id), anyList(), any())).thenAnswer(inv -> {
+            ChatRequest.Builder builder = ChatRequest.builder()
+                    .messages((java.util.List<ChatMessage>) inv.getArgument(1));
+            List<ToolSpecification> specs = inv.getArgument(2);
+            if (specs != null && !specs.isEmpty()) {
+                builder.toolSpecifications(specs);
+            }
+            return modelRuntimeService.acquire(id).chatModel().chat(builder.build());
+        });
+    }
+
+    /** 消息文本（SystemMessage.text() / UserMessage.singleText()） */
+    private static String textOf(ChatMessage message) {
+        if (message instanceof SystemMessage sys) {
+            return sys.text();
+        }
+        if (message instanceof UserMessage user) {
+            return user.singleText();
+        }
+        throw new IllegalArgumentException("非文本消息: " + message.getClass());
+    }
+
+    /** 回声工具句柄：解码 JSON 入参 → 加前缀 → JSON 编码返回（与工厂执行器契约一致） */
+    private static AgentToolCallbackFactory.ToolHandle echoTool(String name, String prefix) {
+        return new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name(name).description("回声工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> {
+                    try {
+                        String arg = JSON.readValue(request.arguments(), String.class);
+                        return JSON.writeValueAsString(prefix + arg);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+    }
+
+
+    /** 恒定返回指定文本的工具句柄（忽略入参；FORK 分支用例同 HEAD 语义） */
+    private static AgentToolCallbackFactory.ToolHandle constTool(String name, String result) {
+        return new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name(name).description("恒定工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> {
+                    try {
+                        return JSON.writeValueAsString(result);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
     }
 
     private ProcessGraph graphOf(GraphElement... elements) {
@@ -1153,19 +1261,19 @@ class AgentGraphInterpreterTest {
 
     // ==================== ChatModel 桩 ====================
 
-    /** 记录收到的 Prompt 的 ChatModel 桩（ChatModel 接口仅 call(Prompt) 为抽象方法） */
+    /** 记录收到的 ChatRequest 的 ChatModel 桩 */
     static class CapturingChatModel implements ChatModel {
         private final String reply;
-        Prompt capturedPrompt;
+        ChatRequest capturedRequest;
 
         CapturingChatModel(String reply) {
             this.reply = reply;
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
-            this.capturedPrompt = prompt;
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        public ChatResponse chat(ChatRequest request) {
+            this.capturedRequest = request;
+            return responseOf(reply);
         }
     }
 
@@ -1178,8 +1286,8 @@ class AgentGraphInterpreterTest {
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        public ChatResponse chat(ChatRequest request) {
+            return responseOf(reply);
         }
     }
 
@@ -1193,10 +1301,15 @@ class AgentGraphInterpreterTest {
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
+        public ChatResponse chat(ChatRequest request) {
             String reply = replies[Math.min(index, replies.length - 1)];
             index++;
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+            return responseOf(reply);
         }
+    }
+
+    /** 统一构造含 aiMessage 文本的 ChatResponse */
+    private static ChatResponse responseOf(String text) {
+        return ChatResponse.builder().aiMessage(AiMessage.from(text)).build();
     }
 }

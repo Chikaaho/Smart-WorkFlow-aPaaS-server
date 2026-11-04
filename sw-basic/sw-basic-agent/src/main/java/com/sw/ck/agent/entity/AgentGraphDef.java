@@ -39,4 +39,7 @@ public class AgentGraphDef extends BaseEntity {
 
     /** 图 JSON 文档（ProcessGraph 序列化，节点 config/style 不透明透传） */
     private String graphJson;
+
+    /** 图级执行超时（秒，DB 默认 300；执行超时置 FAILED 并返回超时分类） */
+    private Integer executionTimeoutSeconds;
 }

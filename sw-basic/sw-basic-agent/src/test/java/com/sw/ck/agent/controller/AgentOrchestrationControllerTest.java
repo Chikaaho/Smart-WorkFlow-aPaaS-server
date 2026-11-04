@@ -9,12 +9,9 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.orchestration.AgentGraphFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
-import com.sw.ck.agent.service.AgentModelConfigService;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentOrchestrationService;
-import com.sw.ck.agent.service.impl.AgentModelConfigServiceImpl;
 import com.sw.ck.agent.service.impl.AgentOrchestrationServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.crypto.AesGcmCipher;
@@ -134,18 +131,12 @@ class AgentOrchestrationControllerTest {
     @BeforeAll
     static void createTables(@Autowired JdbcTemplate jt) {
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
+                CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
+                    api_format      VARCHAR(32) NOT NULL,
                     name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
-                    base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
+                    base_url        VARCHAR(500),
                     api_key_cipher  CLOB,
-                    temperature     DECIMAL(4,2),
-                    max_tokens      INT,
-                    top_p           DECIMAL(4,2),
-                    timeout_seconds INT NOT NULL DEFAULT 30,
-                    retry_count     INT NOT NULL DEFAULT 0,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),
                     create_time     TIMESTAMP,
@@ -154,21 +145,43 @@ class AgentOrchestrationControllerTest {
                     update_by       VARCHAR(64),
                     deleted         SMALLINT NOT NULL DEFAULT 0,
                     tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_model (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    provider_id     BIGINT NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    model_name      VARCHAR(200) NOT NULL,
+                    capabilities    VARCHAR(100) NOT NULL DEFAULT 'CHAT',
+                    temperature     DECIMAL(4,2),
+                    max_tokens      INT,
+                    top_p           DECIMAL(4,2),
+                    timeout_seconds INT NOT NULL DEFAULT 30,
+                    retry_count     INT NOT NULL DEFAULT 0,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
                     group_key       VARCHAR(100),
                     sort            INT NOT NULL DEFAULT 0,
                     locked_until    TIMESTAMP,
-                    quota_cooldown_seconds INT NOT NULL DEFAULT 60
+                    quota_cooldown_seconds INT NOT NULL DEFAULT 60,
+                    remark          CLOB,
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
-        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model_config (tenant_id, name)");
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_tenant_deleted ON sw_agent_model_config (tenant_id, deleted)");
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_group ON sw_agent_model_config (tenant_id, group_key, sort)");
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model (tenant_id, name)");
     }
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
+        jdbcTemplate.update("DELETE FROM sw_agent_model");
+        jdbcTemplate.update("DELETE FROM sw_agent_provider");
         LoginUserHolder.clear();
     }
 
@@ -181,22 +194,20 @@ class AgentOrchestrationControllerTest {
         return "Bearer " + jwtTokenProvider.generateToken(userId);
     }
 
-    private String createModelJson(String name) {
-        return """
-                {"name":"%s","protocolType":"openai","baseUrl":"http://127.0.0.1:1","modelName":"gpt-4o","apiKey":"sk-test-123456","timeoutSeconds":30,"retryCount":0,"enabled":true}
-                """.formatted(name);
-    }
-
-    private Long createModelAs(String token, String name) throws Exception {
-        MvcResult result = mockMvc.perform(post("/agent/models")
-                        .header("Authorization", token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(createModelJson(name)))
-                .andExpect(status().isOk())
-                .andReturn();
-        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
-        assertThat(body.get("code").asInt()).isZero();
-        return body.get("data").asLong();
+    /** 两级落库：供应商（OPENAI_CHAT，不可达端口）+ 模型，返回模型 id */
+    private Long createModelAs(String token, String name) {
+        jdbcTemplate.update("""
+                INSERT INTO sw_agent_provider (id, api_format, name, base_url, api_key_cipher, enabled, tenant_id)
+                VALUES (?, 'OPENAI_CHAT', ?, 'http://127.0.0.1:1', ?, 1, 100)
+                """, name.hashCode(), name + "-provider", null);
+        Long providerId = jdbcTemplate.queryForObject(
+                "SELECT id FROM sw_agent_provider WHERE name = ?", Long.class, name + "-provider");
+        jdbcTemplate.update("""
+                INSERT INTO sw_agent_model (id, provider_id, name, model_name, capabilities, timeout_seconds, retry_count, enabled, tenant_id)
+                VALUES (?, ?, ?, 'gpt-4o', 'CHAT', 3, 0, 1, 100)
+                """, name.hashCode() * 31L, providerId, name);
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM sw_agent_model WHERE name = ?", Long.class, name);
     }
 
     private JsonNode runOrchestrationAs(String token, Long modelId, String input) throws Exception {
@@ -407,12 +418,7 @@ class AgentOrchestrationControllerTest {
             return new AesGcmCipher(TEST_BASE64_KEY);
         }
 
-        @Bean
-        public AgentModelConfigService agentModelConfigService(AesGcmCipher agentAesGcmCipher,
-                                                               com.sw.ck.common.security.LoginContextProvider loginContextProvider,
-                                                               com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new AgentModelConfigServiceImpl(agentAesGcmCipher, loginContextProvider, deptScopeProvider);
-        }
+
 
         @Bean
         public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() {
@@ -420,14 +426,14 @@ class AgentOrchestrationControllerTest {
             return deptId -> java.util.List.of();
         }
 
-        @Bean
-        public AgentModelController agentModelController(AgentModelConfigService agentModelConfigService) {
-            return new AgentModelController(agentModelConfigService);
-        }
+
 
         @Bean
-        public ChatModelFactory chatModelFactory() {
-            return new ChatModelFactory();
+        public AgentModelRuntimeService agentModelRuntimeService(
+                com.sw.ck.agent.mapper.AgentModelMapper agentModelMapper,
+                com.sw.ck.agent.mapper.AgentProviderMapper agentProviderMapper,
+                AesGcmCipher agentAesGcmCipher) {
+            return new AgentModelRuntimeService(agentModelMapper, agentProviderMapper, agentAesGcmCipher);
         }
 
         @Bean
@@ -437,12 +443,9 @@ class AgentOrchestrationControllerTest {
 
         @Bean
         public AgentOrchestrationService agentOrchestrationService(
-                AgentModelConfigMapper agentModelConfigMapper,
-                AesGcmCipher agentAesGcmCipher,
-                ChatModelFactory chatModelFactory,
+                AgentModelRuntimeService modelRuntimeService,
                 CompiledGraph<AgentState> agentCompiledGraph) {
-            return new AgentOrchestrationServiceImpl(
-                    agentModelConfigMapper, agentAesGcmCipher, chatModelFactory, agentCompiledGraph);
+            return new AgentOrchestrationServiceImpl(modelRuntimeService, agentCompiledGraph);
         }
 
         @Bean

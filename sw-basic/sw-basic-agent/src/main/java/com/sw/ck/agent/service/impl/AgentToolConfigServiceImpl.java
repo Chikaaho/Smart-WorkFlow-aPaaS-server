@@ -63,10 +63,8 @@ public class AgentToolConfigServiceImpl
         if (query.getNameKeyword() != null && !query.getNameKeyword().isBlank()) {
             wrapper.like(AgentToolInternalConfig::getName, query.getNameKeyword());
         }
-        // enabled 条件用数字字面量（Boolean 参数与 SMALLINT 列比较在 H2/PG 下不稳定，
-        // M07 Step4 现场实证 H2 90110，见 step-4-execution 回执 §7）
         wrapper.eq(query.getEnabled() != null, AgentToolInternalConfig::getEnabled,
-                Boolean.TRUE.equals(query.getEnabled()) ? 1 : 0);
+                query.getEnabled());
         wrapper.orderByDesc(AgentToolInternalConfig::getId);
         Page<AgentToolInternalConfig> page = page(new Page<>(query.getPageNum(), query.getPageSize()), wrapper);
         return PageResult.of(page.convert(this::toInternalDTO));
@@ -115,7 +113,7 @@ public class AgentToolConfigServiceImpl
     public List<AgentToolInternalConfig> listEnabledInternalTools(Long tenantId) {
         return baseMapper.selectList(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
-                        .eq(AgentToolInternalConfig::getEnabled, 1)
+                        .eq(AgentToolInternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolInternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolInternalConfig::getId));
     }
@@ -131,7 +129,7 @@ public class AgentToolConfigServiceImpl
         // enabled 条件用数字字面量（Boolean 参数与 SMALLINT 列比较在 H2/PG 下不稳定，
         // M07 Step4 现场实证 H2 90110，见 step-4-execution 回执 §7）
         wrapper.eq(query.getEnabled() != null, AgentToolExternalConfig::getEnabled,
-                Boolean.TRUE.equals(query.getEnabled()) ? 1 : 0);
+                query.getEnabled());
         wrapper.orderByDesc(AgentToolExternalConfig::getId);
         Page<AgentToolExternalConfig> page = externalMapper.selectPage(
                 new Page<>(query.getPageNum(), query.getPageSize()), wrapper);
@@ -181,7 +179,7 @@ public class AgentToolConfigServiceImpl
     public List<AgentToolExternalConfig> listEnabledExternalTools(Long tenantId) {
         return externalMapper.selectList(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
-                        .eq(AgentToolExternalConfig::getEnabled, 1)
+                        .eq(AgentToolExternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolExternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolExternalConfig::getId));
     }
