@@ -14,6 +14,9 @@ jobs:
     # PostgreSQL 服务容器（0.2.2 整版发布新增）：应用中心恢复演练
     # ApplicationCenterRecoveryDrillPostgresTest 需要真实 PG（pg_dump/pg_restore + JDBC），
     # 方向 direction-022-close-release 第 4 阶段要求该测试在 CI 实际跑通（不得跳过）。
+    # 端口用 55432 而非 5432：H7TenantIsolationIntegrationTest 以裸 socket 探测
+    # localhost:5432 判定「本机常驻在役库」存在与否（在役库语义=全量 schema），
+    # 5432 上出现空容器会令其误判后失败；演练测试走 AC_G4_PG_URL 与端口解耦。
     services:
       redis:
         image: redis:7
@@ -30,7 +33,7 @@ jobs:
           POSTGRES_USER: runner
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U runner"
           --health-interval 10s
@@ -38,7 +41,7 @@ jobs:
           --health-retries 5
     env:
       # 恢复演练测试经 AC_G4_PG_URL 探测在役 PG（连接用户取 runner osUser，trust 免密）
-      AC_G4_PG_URL: 127.0.0.1:5432/postgres
+      AC_G4_PG_URL: 127.0.0.1:55432/postgres
     steps:
       - uses: actions/checkout@v4
 
