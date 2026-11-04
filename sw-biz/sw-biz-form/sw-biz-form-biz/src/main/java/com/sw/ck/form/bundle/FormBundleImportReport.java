@@ -36,6 +36,8 @@ public class FormBundleImportReport {
     private List<CreatedProcess> createdProcesses;
     private List<CreatedTxnAction> createdTxnActions;
     private List<CreatedQuery> createdExtQueries;
+    /** 新建的字典类型（编码、名称、字典项数；F2-G4） */
+    private List<CreatedDictType> createdDictTypes;
 
     /** 复用/匹配成功的外部对象 */
     private List<ReusedObject> reusedDictTypes;
@@ -103,6 +105,18 @@ public class FormBundleImportReport {
         private Integer queryVersion;
         private String datasourceName;
         private Long datasourceId;
+    }
+
+    /** 新建的字典类型：按对象列出编码、名称与字典项数（F2-G4）。 */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class CreatedDictType {
+        private String code;
+        private String name;
+        private Integer itemCount;
     }
 
     @Data

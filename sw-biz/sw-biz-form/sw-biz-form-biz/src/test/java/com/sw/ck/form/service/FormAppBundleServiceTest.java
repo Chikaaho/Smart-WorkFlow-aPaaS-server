@@ -946,8 +946,42 @@ class FormAppBundleServiceTest {
         assertThat(report.getClearedRefs()).extracting("kind")
                 .contains("USER", "DEPT", "PROCESS", "IOT_DEVICE");
         assertThat(report.getMatchedDatasources()).hasSize(1);
+        // 新建字典类型按对象列出：编码、名称、字典项数（F2-G4）
+        assertThat(report.getCreatedDictTypes()).hasSize(1);
+        assertThat(report.getCreatedDictTypes().get(0).getCode()).isEqualTo("dict_fresh");
+        assertThat(report.getCreatedDictTypes().get(0).getName()).isEqualTo("颜色");
+        assertThat(report.getCreatedDictTypes().get(0).getItemCount()).isEqualTo(2);
+        assertThat(report.getMatchedCategories()).hasSize(1);
         assertThat(count("SELECT COUNT(*) FROM sw_form_app_import_record WHERE tenant_id = 2 "
                 + "AND result = 'SUCCESS' AND app_id = ?", report.getAppId())).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("报告：复用字典按对象列出、两条流程命中同一分类只列一次（F2-G4）")
+    void importReportDictReuseAndCategoryDedup() throws Exception {
+        // 目标租户预置同编码字典 dict_fresh → REUSE 路径；包内两条流程同分类 → 报告去重
+        jdbcTemplate.update("INSERT INTO sys_dict_type (id, name, code, status, description, "
+                + "tenant_id, deleted, version) VALUES (900, '颜色', 'dict_fresh', 0, '', 2, 0, 0)");
+        login(ADMIN, TENANT_2);
+
+        Map<String, Object> doc = objectMapper.readValue(bundleBytesWithFreshDict(),
+                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+        List<Map<String, Object>> processes = (List<Map<String, Object>>) doc.get("processes");
+        Map<String, Object> second = new LinkedHashMap<>(processes.get(0));
+        second.put("processKey", "bpm_src_2");
+        second.put("name", "线索流程二");
+        processes.add(second);
+
+        var report = bundleService.confirmImport(objectMapper.writeValueAsBytes(doc), null);
+
+        // 复用字典列出（目标租户同编码）；包内无新建字典 → 清单为空
+        assertThat(report.getReusedDictTypes()).hasSize(1);
+        assertThat(report.getReusedDictTypes().get(0).getValue()).isEqualTo("dict_fresh");
+        assertThat(report.getCreatedDictTypes()).isEmpty();
+        // 两条流程命中同一分类（销售流程 → 88）：按对象去重只列一次
+        assertThat(stubProcessPort.inserted).hasSize(2);
+        assertThat(report.getMatchedCategories()).hasSize(1);
+        assertThat(report.getMatchedCategories().get(0).getId()).isEqualTo(88L);
     }
 
     @Test

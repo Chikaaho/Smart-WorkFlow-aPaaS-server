@@ -806,6 +806,7 @@ public class FormAppBundleService {
                 .createdProcesses(new ArrayList<>())
                 .createdTxnActions(new ArrayList<>())
                 .createdExtQueries(new ArrayList<>())
+                .createdDictTypes(new ArrayList<>())
                 .reusedDictTypes(new ArrayList<>())
                 .matchedDatasources(new ArrayList<>())
                 .matchedRoles(new ArrayList<>())
@@ -1195,6 +1196,10 @@ public class FormAppBundleService {
                 // 索引 uk_sys_dict_type_code），不中断导入，计入报告（D022-13）
                 ctx.report.getClearedRefs().add(cleared("DICT_OCCUPIED", type.getCode(),
                         "字典类型 " + type.getCode()));
+            } else {
+                // 新建字典类型按对象计入报告：编码、名称、字典项数（F2-G4）
+                ctx.report.getCreatedDictTypes().add(FormBundleImportReport.CreatedDictType.builder()
+                        .code(type.getCode()).name(type.getName()).itemCount(items.size()).build());
             }
         }
     }
@@ -1247,8 +1252,14 @@ public class FormAppBundleService {
             if (process.getCategoryName() != null && !process.getCategoryName().isBlank()) {
                 categoryId = findCategoryIdByName(process.getCategoryName()).orElse(null);
                 if (categoryId != null) {
-                    ctx.report.getMatchedCategories().add(reused(process.getCategoryName(),
-                            process.getCategoryName(), categoryId));
+                    // 同一分类被多条流程命中时按对象去重，报告只列一次（F2-G4）
+                    Long matchedCategoryId = categoryId;
+                    boolean categoryAlreadyMatched = ctx.report.getMatchedCategories().stream()
+                            .anyMatch(c -> matchedCategoryId.equals(c.getId()));
+                    if (!categoryAlreadyMatched) {
+                        ctx.report.getMatchedCategories().add(reused(process.getCategoryName(),
+                                process.getCategoryName(), categoryId));
+                    }
                 } else {
                     ctx.report.getClearedRefs().add(cleared("CATEGORY", process.getCategoryName(),
                             "流程 " + process.getName() + " · 分类"));
