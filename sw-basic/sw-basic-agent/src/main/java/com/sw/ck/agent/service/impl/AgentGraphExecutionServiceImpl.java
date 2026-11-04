@@ -330,6 +330,13 @@ public class AgentGraphExecutionServiceImpl
             if (trace.getToolCalls() != null && !trace.getToolCalls().isEmpty()) {
                 node.setToolCalls(toJson(trace.getToolCalls()));
             }
+            // F1S2-G1：节点真实输入/输出、时间与状态（执行详情节点卡片展示）
+            node.setInputText(trace.getInputText());
+            node.setOutputText(trace.getOutputText());
+            node.setStartTime(trace.getStartTime());
+            node.setEndTime(trace.getEndTime());
+            node.setStatus(trace.getStatus());
+            node.setErrorMessage(trace.getErrorMessage());
             // 汇总 token（只累加有数据的节点；每侧独立标记）
             if (trace.getInputTokens() != null) {
                 totalInputTokens += trace.getInputTokens();
@@ -433,6 +440,13 @@ public class AgentGraphExecutionServiceImpl
         dto.setInputTokens(node.getInputTokens());
         dto.setOutputTokens(node.getOutputTokens());
         dto.setToolCalls(node.getToolCalls());
+        // F1S2-G1：节点真实输入/输出与时间（历史行缺省值兜底为成功）
+        dto.setInput(node.getInputText());
+        dto.setOutput(node.getOutputText());
+        dto.setStartTime(node.getStartTime());
+        dto.setEndTime(node.getEndTime());
+        dto.setStatus(node.getStatus() != null ? node.getStatus() : "SUCCESS");
+        dto.setErrorMessage(node.getErrorMessage());
         return dto;
     }
 

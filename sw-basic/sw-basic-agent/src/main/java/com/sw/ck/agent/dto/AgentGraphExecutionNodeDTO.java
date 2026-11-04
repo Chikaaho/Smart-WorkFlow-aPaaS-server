@@ -38,4 +38,22 @@ public class AgentGraphExecutionNodeDTO {
 
     /** 该节点内工具调用轨迹（JSON 数组：tool/arguments/result，无工具调用时为 null） */
     private String toolCalls;
+
+    /** 该节点真实输入（LLM=实际发送的用户消息；TOOL=工具入参文本） */
+    private String input;
+
+    /** 该节点真实输出（LLM=模型最终回答；TOOL=工具返回文本） */
+    private String output;
+
+    /** 节点开始时间 */
+    private java.time.LocalDateTime startTime;
+
+    /** 节点结束时间 */
+    private java.time.LocalDateTime endTime;
+
+    /** 节点执行状态：SUCCESS / FAILED */
+    private String status;
+
+    /** 节点失败原因（成功时为 null） */
+    private String errorMessage;
 }

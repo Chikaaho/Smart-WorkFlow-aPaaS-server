@@ -10,6 +10,7 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -300,8 +301,14 @@ public class AgentGraphInterpreter {
                 switch (current.getType()) {
                     case NODE_TYPE_LLM -> writeOutput(current, variables,
                             callLlmNode(current, readInput(current, variables), variables));
-                    case NODE_TYPE_TOOL -> writeOutput(current, variables,
-                            callToolNode(current, readInput(current, variables)));
+                    case NODE_TYPE_TOOL -> {
+                        // F1S2-G1：工具节点真实入参/输出写入轨迹（节点卡片可见）
+                        String toolInput = readInput(current, variables);
+                        trace.setInputText(toolInput);
+                        String toolOutput = callToolNode(current, toolInput);
+                        trace.setOutputText(toolOutput);
+                        writeOutput(current, variables, toolOutput);
+                    }
                     // START/CONDITION 为纯路由点：START 不写变量（入参已在初始变量表），
                     // CONDITION 只读匹配文本（inputVar）不写变量
                     case NODE_TYPE_START, NODE_TYPE_CONDITION -> { }
@@ -342,6 +349,8 @@ public class AgentGraphInterpreter {
                 finishTrace(trace, stepStartNanos, variables);
             } catch (RuntimeException e) {
                 // 本步失败：节点轨迹仍完整留痕（耗时 + 失败时点变量快照），再上抛
+                trace.setStatus("FAILED");
+                trace.setErrorMessage(e.getMessage());
                 finishTrace(trace, stepStartNanos, variables);
                 throw e;
             }
@@ -368,6 +377,7 @@ public class AgentGraphInterpreter {
     private void finishTrace(NodeExecutionTrace trace, long stepStartNanos,
                              Map<String, String> variables) {
         trace.nodeLatencyMs = (System.nanoTime() - stepStartNanos) / 1_000_000;
+        trace.endTime = LocalDateTime.now();
         trace.variableSnapshot = new HashMap<>(variables);
     }
 
@@ -414,6 +424,8 @@ public class AgentGraphInterpreter {
             }
             messages.add(UserMessage.from(userText));
             NodeExecutionTrace currentTrace = traces.get(traces.size() - 1);
+            // F1S2-G1：节点真实输入（模板插值后的用户消息）
+            currentTrace.setInputText(userText);
             // 阶段 2：节点可挂工具，模型请求工具时在节点内完成工具调用循环
             return executeChatWithTools(modelRuntimeService, toolCallbackFactory, tenantId,
                     node, modelConfigId, messages, currentTrace);
@@ -497,6 +509,8 @@ public class AgentGraphInterpreter {
                 }
                 trace.setInputTokens(inputSeen ? inputTokens : null);
                 trace.setOutputTokens(outputSeen ? outputTokens : null);
+                // F1S2-G1：节点真实输出 = 模型最终回答（含工具循环后的收敛结果）
+                trace.setOutputText(output);
                 return output;
             }
             if (++rounds > maxRounds) {
@@ -946,6 +960,24 @@ public class AgentGraphInterpreter {
 
         private long nodeLatencyMs;
 
+        /** 节点开始时间（出队时点；F1S2-G1 节点卡片时间展示） */
+        private final LocalDateTime startTime;
+
+        /** 节点结束时间（本步执行/路由完成时点） */
+        private LocalDateTime endTime;
+
+        /** 该节点真实输入（LLM=实际发送的用户消息；TOOL=工具入参文本） */
+        private String inputText;
+
+        /** 该节点真实输出（LLM=模型最终回答；TOOL=工具返回文本） */
+        private String outputText;
+
+        /** 节点执行状态：SUCCESS / FAILED */
+        private String status = "SUCCESS";
+
+        /** 节点失败原因（成功时为 null） */
+        private String errorMessage;
+
         private Map<String, String> variableSnapshot;
 
         /** 该节点 LLM 调用的输入 Token（非 LLM 节点或供应商未返回时为 null） */
@@ -962,6 +994,7 @@ public class AgentGraphInterpreter {
             this.branchId = branchId;
             this.nodeId = nodeId;
             this.nodeType = nodeType;
+            this.startTime = LocalDateTime.now();
         }
 
         public long getNodeSeq() {
@@ -986,6 +1019,50 @@ public class AgentGraphInterpreter {
 
         public void setNodeLatencyMs(long nodeLatencyMs) {
             this.nodeLatencyMs = nodeLatencyMs;
+        }
+
+        public LocalDateTime getStartTime() {
+            return startTime;
+        }
+
+        public LocalDateTime getEndTime() {
+            return endTime;
+        }
+
+        public void setEndTime(LocalDateTime endTime) {
+            this.endTime = endTime;
+        }
+
+        public String getInputText() {
+            return inputText;
+        }
+
+        public void setInputText(String inputText) {
+            this.inputText = inputText;
+        }
+
+        public String getOutputText() {
+            return outputText;
+        }
+
+        public void setOutputText(String outputText) {
+            this.outputText = outputText;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public void setStatus(String status) {
+            this.status = status;
+        }
+
+        public String getErrorMessage() {
+            return errorMessage;
+        }
+
+        public void setErrorMessage(String errorMessage) {
+            this.errorMessage = errorMessage;
         }
 
         public Map<String, String> getVariableSnapshot() {

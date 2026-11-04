@@ -116,6 +116,13 @@ class AgentGraphInterpreterTest {
         assertThat(llmTrace.getToolCalls().get(0).getTool()).isEqualTo("echo_tool");
         assertThat(llmTrace.getToolCalls().get(0).getArguments()).contains("你好");
         assertThat(llmTrace.getToolCalls().get(0).getResult()).contains("echo:你好");
+        // F1S2-G1：节点卡片所需的真实输入/输出与时间
+        assertThat(llmTrace.getInputText()).isEqualTo("开始");
+        assertThat(llmTrace.getOutputText()).isEqualTo("最终答案");
+        assertThat(llmTrace.getStatus()).isEqualTo("SUCCESS");
+        assertThat(llmTrace.getStartTime()).isNotNull();
+        assertThat(llmTrace.getEndTime()).isNotNull();
+        assertThat(llmTrace.getEndTime()).isAfterOrEqualTo(llmTrace.getStartTime());
     }
 
     // ==================== 用例 2：TOOL 单跳覆盖 ====================
@@ -133,9 +140,15 @@ class AgentGraphInterpreterTest {
                 edge("e1", "node_start", "node_tool", Map.of()),
                 edge("e2", "node_tool", "node_end", Map.of()));
 
-        String output = interpreter(10).run(graph, "你好");
+        AgentGraphInterpreter interpreter = interpreter(10);
+        String output = interpreter.run(graph, "你好");
 
         assertThat(output).isEqualTo("echo:你好");
+        AgentGraphInterpreter.NodeExecutionTrace toolTrace = interpreter.getTraces().stream()
+                .filter(t -> "TOOL".equals(t.getNodeType()))
+                .findFirst().orElseThrow();
+        assertThat(toolTrace.getInputText()).isEqualTo("你好");
+        assertThat(toolTrace.getOutputText()).isEqualTo("echo:你好");
     }
 
     // ==================== 用例 3：条件分支命中关键词边 ====================

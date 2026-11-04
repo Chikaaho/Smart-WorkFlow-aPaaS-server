@@ -313,6 +313,12 @@ class AgentGraphExecutionServiceImplTest {
                     output_tokens     BIGINT,
                     variable_snapshot CLOB,
                     tool_calls CLOB,
+                    input_text        CLOB,
+                    output_text       CLOB,
+                    start_time        TIMESTAMP,
+                    end_time          TIMESTAMP,
+                    status            VARCHAR(20) NOT NULL DEFAULT 'SUCCESS',
+                    error_message     CLOB,
                     create_time       TIMESTAMP,
                     create_by         VARCHAR(64),
                     update_time       TIMESTAMP,
@@ -1141,8 +1147,24 @@ class AgentGraphExecutionServiceImplTest {
         assertThat(nodes.get(1).getNodeType()).isEqualTo("LLM");
         assertThat(nodes.get(1).getInputTokens()).isEqualTo(10L);
         assertThat(nodes.get(1).getOutputTokens()).isEqualTo(20L);
+        // F1S2-G1：节点真实输入/输出/时间/状态落库
+        assertThat(nodes.get(1).getInputText()).isEqualTo("入参");
+        assertThat(nodes.get(1).getOutputText()).isEqualTo("token回复");
+        assertThat(nodes.get(1).getStartTime()).isNotNull();
+        assertThat(nodes.get(1).getEndTime()).isNotNull();
+        assertThat(nodes.get(1).getStatus()).isEqualTo("SUCCESS");
         assertThat(nodes.get(2).getNodeType()).isEqualTo("END");
         assertThat(nodes.get(2).getOutputTokens()).isNull();
+
+        // ②b 生产查询端点：节点 DTO 带真实输入/输出与时间（执行详情节点卡片数据源）
+        List<AgentGraphExecutionNodeDTO> detailNodeDtos = service.listExecutionNodes(resp.getExecutionId());
+        assertThat(detailNodeDtos).hasSize(3);
+        AgentGraphExecutionNodeDTO llmNode = detailNodeDtos.get(1);
+        assertThat(llmNode.getInput()).isEqualTo("入参");
+        assertThat(llmNode.getOutput()).isEqualTo("token回复");
+        assertThat(llmNode.getStartTime()).isNotNull();
+        assertThat(llmNode.getEndTime()).isNotNull();
+        assertThat(llmNode.getStatus()).isEqualTo("SUCCESS");
 
         // ③ 生产查询端点：列表 DTO 含 token 汇总
         PageResult<AgentGraphExecutionDTO> page = service.pageExecutions(new PageParam(), id);
