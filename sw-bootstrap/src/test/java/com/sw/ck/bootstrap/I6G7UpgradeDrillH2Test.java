@@ -23,10 +23,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 关键列语义按真实 INSERT/SELECT 验证（同一 ID 回读、增量列可解释）。
  * 不通过重建/删数据/替换对象证明。
  * </p>
+ * <p>
+ * 另含 D022-03 升级演练：迁到 0.2.0 基线后写入旧 sw_agent_model_config 三行，
+ * 再迁满 V0.2.2，验证 ollama→OPENAI_CHAT 且地址补 /v1、other 供应商停用、旧 id 原样。
+ * </p>
  */
 class I6G7UpgradeDrillH2Test {
 
     private static final String DB = "jdbc:h2:file:./target/i6-g7-baseline-db;MODE=PostgreSQL;AUTO_SERVER=TRUE";
+    private static final String UPGRADE_DB = "jdbc:h2:file:./target/i6-g7-f1-upgrade-db;MODE=PostgreSQL;AUTO_SERVER=TRUE";
     private static final String USER = "sa";
     private static final String PASSWORD = "";
 
@@ -42,10 +47,10 @@ class I6G7UpgradeDrillH2Test {
                 .load();
         var result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(20, result.migrationsExecuted,
-                "全新库应执行 20 条（V0.2.0 基线种子 + 19 个 R__）");
-        assertEquals("0.2.0", flyway.info().current().getVersion().getVersion(),
-                "终点当前版本应为最后一个 versioned 迁移");
+        assertEquals(21, result.migrationsExecuted,
+                "全新库应执行 21 条（V0.2.0 基线种子 + V0.2.2 F1 + 19 个 R__）");
+        assertEquals("0.2.2", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移（V0.2.2）");
 
         // ---------- 2. 写入代表性数据（真实 INSERT，非 schema 构造） ----------
         try (Connection conn = DriverManager.getConnection(DB, USER, PASSWORD); Statement st = conn.createStatement()) {
@@ -92,6 +97,70 @@ class I6G7UpgradeDrillH2Test {
                 // started_at 增量列可为空（不强制回填时间），语义可解释
                 assertTrue(rs.getDate(4) == null);
             }
+        }
+    }
+
+    @Test
+    @DisplayName("D022-03 升级演练：旧三行搬迁为供应商+模型，ollama 补 /v1、other 停用、旧 id 原样")
+    void f1LegacyProviderConfigMigrated() throws Exception {
+        Files.deleteIfExists(new java.io.File("./target/i6-g7-f1-upgrade-db.mv.db").toPath());
+
+        String[] allLocations = "classpath:db/migration/h2,classpath:db/migration/bpm/h2,classpath:db/migration/notify/h2,classpath:db/migration/form/h2,classpath:db/migration/storage/h2,classpath:db/migration/job/h2,classpath:db/migration/agent/h2,classpath:db/migration/iot/h2,classpath:db/migration/openapi/h2,classpath:db/migration/system/h2".split(",");
+
+        // ---------- 1. 只迁到 0.2.0 基线，模拟升级前存量库 ----------
+        var phase1 = Flyway.configure().dataSource(UPGRADE_DB, USER, PASSWORD)
+                .locations(allLocations)
+                .target("0.2.0")
+                .load();
+        phase1.migrate();
+
+        // ---------- 2. 写入旧 sw_agent_model_config 三行（openai / ollama / other） ----------
+        try (Connection conn = DriverManager.getConnection(UPGRADE_DB, USER, PASSWORD);
+             Statement st = conn.createStatement()) {
+            st.executeUpdate("INSERT INTO sw_agent_model_config (id, name, protocol_type, base_url, model_name, "
+                    + "api_key_cipher, temperature, max_tokens, top_p, timeout_seconds, retry_count, enabled, "
+                    + "group_key, sort, quota_cooldown_seconds, tenant_id, deleted, version) VALUES "
+                    + "(101, '旧-openai', 'openai', 'https://gw.example.com/v1', 'gpt-x', 'CIPHER-A', "
+                    + "0.7, 1024, 0.9, 30, 1, 1, 'g1', 0, 60, 1, 0, 0), "
+                    + "(102, '旧-ollama', 'ollama', 'http://ollama-host:11434', 'llama3', NULL, "
+                    + "NULL, NULL, NULL, 30, 0, 1, NULL, 0, 60, 1, 0, 0), "
+                    + "(103, '旧-other', 'other', 'https://closed.example.com', 'm-unknown', 'CIPHER-C', "
+                    + "NULL, NULL, NULL, 30, 0, 1, NULL, 0, 60, 1, 0, 0)");
+        }
+
+        // ---------- 3. 放开 target 迁满 V0.2.2 ----------
+        var phase2 = Flyway.configure().dataSource(UPGRADE_DB, USER, PASSWORD)
+                .locations(allLocations)
+                .load();
+        var result = phase2.migrate();
+        assertTrue(result.success, "第二阶段迁移（含 V0.2.2）应成功");
+        assertEquals("0.2.2", phase2.info().current().getVersion().getVersion(),
+                "升级后终点应为 V0.2.2");
+
+        // ---------- 4. 断言 D022-03 搬运结果 ----------
+        try (Connection conn = DriverManager.getConnection(UPGRADE_DB, USER, PASSWORD);
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT p.api_format, p.base_url, p.enabled AS provider_enabled, m.model_name "
+                     + "FROM sw_agent_provider p JOIN sw_agent_model m ON m.id = p.id AND m.provider_id = p.id "
+                     + "WHERE p.id = ?")) {
+            // openai：格式统一为 OPENAI_CHAT，地址/旧 id 原样
+            assertLegacyRow(ps, 101, "OPENAI_CHAT", "https://gw.example.com/v1", true, "gpt-x");
+            // ollama：OPENAI_CHAT + 地址补 /v1（OpenAI 兼容口），旧 id 原样
+            assertLegacyRow(ps, 102, "OPENAI_CHAT", "http://ollama-host:11434/v1", true, "llama3");
+            // other：OPENAI_CHAT 且供应商停用，旧 id 原样
+            assertLegacyRow(ps, 103, "OPENAI_CHAT", "https://closed.example.com", false, "m-unknown");
+        }
+    }
+
+    private static void assertLegacyRow(PreparedStatement ps, long id, String apiFormat, String baseUrl,
+                                        boolean providerEnabled, String modelName) throws Exception {
+        ps.setLong(1, id);
+        try (ResultSet rs = ps.executeQuery()) {
+            assertTrue(rs.next(), "旧 id=" + id + " 应迁出供应商+模型且两表 id 一致");
+            assertEquals(apiFormat, rs.getString("api_format"));
+            assertEquals(baseUrl, rs.getString("base_url"));
+            assertEquals(providerEnabled, rs.getBoolean("provider_enabled"));
+            assertEquals(modelName, rs.getString("model_name"));
         }
     }
 }
