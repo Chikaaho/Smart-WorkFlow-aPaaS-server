@@ -146,6 +146,11 @@ sw:
     enabled: true
     cipher-key: ${SW_CIPHER_KEY:}                                        # AES-256-GCM 密钥（Base64），与 sw.external-datasource.cipher-key 同构共享
 
+  # ---------- 知识库 / RAG（F1 阶段 3，D022-07） ----------
+  knowledge:
+    enabled: true
+    vector-store: pgvector                                               # pgvector（生产）｜memory（H2 测试）
+
   # ---------- 站内信 / 消息模板（M05，P36 消息模板管理） ----------
   notify:
     enabled: true

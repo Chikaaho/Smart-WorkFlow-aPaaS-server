@@ -3,6 +3,8 @@ package com.sw.ck.agent.orchestration;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.model.chat.ChatModel;
@@ -117,6 +119,9 @@ public class AgentGraphInterpreter {
     /** 汇合节点（入边 ≥ 2，静态入边数全部到达后合成单个活跃点继续，出边唯一） */
     public static final String NODE_TYPE_JOIN = "JOIN";
 
+    /** 知识检索节点（F1 阶段 3：按知识库检索，结果写入变量供下游 LLM 使用） */
+    public static final String NODE_TYPE_KNOWLEDGE = "KNOWLEDGE";
+
     // ==================== 节点 config 键（本 Step 定义的执行契约） ====================
 
     /** LLM 节点 config 键：模型配置 id（Long） */
@@ -136,6 +141,18 @@ public class AgentGraphInterpreter {
 
     /** TOOL 节点 config 键：白名单工具名（String） */
     public static final String CONFIG_KEY_TOOL_NAME = "toolName";
+
+    /** KNOWLEDGE 节点 config 键：知识库 id（Long，必填） */
+    public static final String CONFIG_KEY_KNOWLEDGE_BASE_ID = "knowledgeBaseId";
+
+    /** KNOWLEDGE 节点 config 键：返回条数（Integer，缺省 {@value #DEFAULT_KNOWLEDGE_TOP_K}） */
+    public static final String CONFIG_KEY_TOP_K = "topK";
+
+    /** KNOWLEDGE 节点 config 键：相似度阈值（Double，0~1，缺省 0） */
+    public static final String CONFIG_KEY_SIMILARITY_THRESHOLD = "similarityThreshold";
+
+    /** KNOWLEDGE 节点默认 topK */
+    public static final int DEFAULT_KNOWLEDGE_TOP_K = 5;
 
     /** CONDITION 出边 config 键：关键词（String，空/null 的边为默认边） */
     public static final String CONFIG_KEY_KEYWORD = "keyword";
@@ -201,6 +218,9 @@ public class AgentGraphInterpreter {
     /** 工具调用失败（第三方异常/工具不存在/未返回文本） */
     public static final String ERROR_CATEGORY_TOOL_CALL_FAILED = "TOOL_CALL_FAILED";
 
+    /** 知识检索失败（知识库不存在/跨租户/Embedding 或向量检索异常） */
+    public static final String ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED = "KNOWLEDGE_RETRIEVAL_FAILED";
+
     /** 未分类兜底（理论不可达：全部抛出点均已带分类） */
     public static final String ERROR_CATEGORY_UNKNOWN = "UNKNOWN";
 
@@ -216,6 +236,9 @@ public class AgentGraphInterpreter {
     private final AgentModelRuntimeService modelRuntimeService;
 
     private final AgentToolCallbackFactory toolCallbackFactory;
+
+    /** 知识检索服务（阶段 3；null 时 KNOWLEDGE 节点显式报错，保持旧单测可构造） */
+    private final KnowledgeRetrievalService knowledgeRetrievalService;
 
     /** 工具白名单装载的租户过滤条件（null 时不显式过滤，由 MyBatis-Plus 租户拦截器隔离） */
     private final Long tenantId;
@@ -236,8 +259,20 @@ public class AgentGraphInterpreter {
                                  AgentToolCallbackFactory toolCallbackFactory,
                                  Long tenantId,
                                  int maxSteps) {
+        this(modelRuntimeService, toolCallbackFactory, null, tenantId, maxSteps);
+    }
+
+    /**
+     * 阶段 3 构造：额外注入知识检索服务（图执行/调试按租户检索知识库）。
+     */
+    public AgentGraphInterpreter(AgentModelRuntimeService modelRuntimeService,
+                                 AgentToolCallbackFactory toolCallbackFactory,
+                                 KnowledgeRetrievalService knowledgeRetrievalService,
+                                 Long tenantId,
+                                 int maxSteps) {
         this.modelRuntimeService = modelRuntimeService;
         this.toolCallbackFactory = toolCallbackFactory;
+        this.knowledgeRetrievalService = knowledgeRetrievalService;
         this.tenantId = tenantId;
         this.maxSteps = maxSteps;
     }
@@ -309,6 +344,9 @@ public class AgentGraphInterpreter {
                         trace.setOutputText(toolOutput);
                         writeOutput(current, variables, toolOutput);
                     }
+                    case NODE_TYPE_KNOWLEDGE -> writeOutput(current, variables,
+                            retrieveKnowledge(knowledgeRetrievalService, current,
+                                    readInput(current, variables), trace));
                     // START/CONDITION 为纯路由点：START 不写变量（入参已在初始变量表），
                     // CONDITION 只读匹配文本（inputVar）不写变量
                     case NODE_TYPE_START, NODE_TYPE_CONDITION -> { }
@@ -446,6 +484,80 @@ public class AgentGraphInterpreter {
     }
 
     /**
+     * 知识检索节点（阶段 3，图执行与单步调试共用）：读取 knowledgeBaseId/topK/
+     * similarityThreshold，检索结果按"文档 + 相似度 + 分片正文"拼成文本写入输出变量，
+     * 供下游 LLM 的 userPromptTemplate 直接引用。空结果写固定提示，避免下游模型把
+     * 空字符串误当上下文。
+     */
+    static String retrieveKnowledge(KnowledgeRetrievalService service, GraphElement node,
+                                    String query, NodeExecutionTrace trace) {
+        trace.setInputText(query);
+        if (service == null) {
+            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "知识检索服务未装配，无法执行 KNOWLEDGE 节点: " + node.getId());
+        }
+        Long kbId = parseConfigLong(node.getConfig() == null
+                ? null : node.getConfig().get(CONFIG_KEY_KNOWLEDGE_BASE_ID));
+        if (kbId == null) {
+            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "KNOWLEDGE 节点缺少知识库引用: " + node.getId());
+        }
+        int topK = configInt(node, CONFIG_KEY_TOP_K, DEFAULT_KNOWLEDGE_TOP_K);
+        double threshold = configDouble(node, CONFIG_KEY_SIMILARITY_THRESHOLD, 0.0);
+        java.util.List<KnowledgeHitDTO> hits;
+        try {
+            hits = service.retrieve(kbId, query, topK, threshold);
+        } catch (GraphExecutionException e) {
+            throw e;
+        } catch (BaseException e) {
+            throw new GraphExecutionException(ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED,
+                    e.getMessage(), e);
+        } catch (Exception e) {
+            throw new GraphExecutionException(ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED,
+                    e.getMessage(), e);
+        }
+        String output = formatKnowledgeHits(hits);
+        trace.setOutputText(output);
+        return output;
+    }
+
+    private static String formatKnowledgeHits(java.util.List<KnowledgeHitDTO> hits) {
+        if (hits == null || hits.isEmpty()) {
+            return "未检索到相关内容。";
+        }
+        StringBuilder sb = new StringBuilder();
+        int index = 1;
+        for (KnowledgeHitDTO hit : hits) {
+            if (sb.length() > 0) {
+                sb.append("\n\n---\n\n");
+            }
+            sb.append('[').append(index++).append("] 文档：")
+                    .append(hit.getDocumentName() == null ? "-" : hit.getDocumentName())
+                    .append("（相似度 ").append(String.format(java.util.Locale.ROOT, "%.3f",
+                            hit.getSimilarity() == null ? 0.0 : hit.getSimilarity()))
+                    .append("）\n").append(hit.getContent());
+        }
+        return sb.toString();
+    }
+
+    /** Double 配置读取（Number/数字字符串；null/非法 → 默认值）。 */
+    public static double configDouble(GraphElement node, String key, double defaultValue) {
+        Object value = node.getConfig() == null ? null : node.getConfig().get(key);
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Double.parseDouble(text.trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    }
+
+
+    /**
      * 模型调用 + 节点内工具循环（阶段 2，图执行与单步调试共用）：
      * 按 config.toolNames 取启用工具规格随请求下发；模型返回工具请求时逐个执行并把
      * 结果回喂模型，直到模型给出最终文本或轮次超限。每次工具调用的入参与输出写入
@@ -560,7 +672,7 @@ public class AgentGraphInterpreter {
     }
 
     /** config 读取正整数（缺失/非法用默认值；最小 1）。 */
-    static int configInt(GraphElement node, String key, int defaultValue) {
+    public static int configInt(GraphElement node, String key, int defaultValue) {
         Long parsed = parseConfigLong(node.getConfig() == null ? null : node.getConfig().get(key));
         return parsed == null ? defaultValue : (int) Math.max(1L, Math.min(parsed, 50L));
     }

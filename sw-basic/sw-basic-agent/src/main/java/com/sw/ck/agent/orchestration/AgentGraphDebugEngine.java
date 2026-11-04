@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -49,6 +50,7 @@ public class AgentGraphDebugEngine {
     private static final String NODE_TYPE_LOOP = AgentGraphInterpreter.NODE_TYPE_LOOP;
     private static final String NODE_TYPE_FORK = AgentGraphInterpreter.NODE_TYPE_FORK;
     private static final String NODE_TYPE_JOIN = AgentGraphInterpreter.NODE_TYPE_JOIN;
+    private static final String NODE_TYPE_KNOWLEDGE = AgentGraphInterpreter.NODE_TYPE_KNOWLEDGE;
 
     private static final String CONFIG_KEY_AGENT_MODEL_CONFIG_ID = AgentGraphInterpreter.CONFIG_KEY_AGENT_MODEL_CONFIG_ID;
     private static final String CONFIG_KEY_TOOL_NAME = AgentGraphInterpreter.CONFIG_KEY_TOOL_NAME;
@@ -79,6 +81,7 @@ public class AgentGraphDebugEngine {
 
     private final AgentModelRuntimeService modelRuntimeService;
     private final AgentToolCallbackFactory toolCallbackFactory;
+    private final KnowledgeRetrievalService knowledgeRetrievalService;
     private final Long tenantId;
 
     private Map<String, String> variables;
@@ -100,10 +103,21 @@ public class AgentGraphDebugEngine {
                                  AgentModelRuntimeService modelRuntimeService,
                                  AgentToolCallbackFactory toolCallbackFactory,
                                  Long tenantId) {
+        this(graph, input, maxSteps, modelRuntimeService, toolCallbackFactory, null, tenantId);
+    }
+
+    public AgentGraphDebugEngine(ProcessGraph graph,
+                                 String input,
+                                 int maxSteps,
+                                 AgentModelRuntimeService modelRuntimeService,
+                                 AgentToolCallbackFactory toolCallbackFactory,
+                                 KnowledgeRetrievalService knowledgeRetrievalService,
+                                 Long tenantId) {
         this.graph = graph;
         this.maxSteps = maxSteps;
         this.modelRuntimeService = modelRuntimeService;
         this.toolCallbackFactory = toolCallbackFactory;
+        this.knowledgeRetrievalService = knowledgeRetrievalService;
         this.tenantId = tenantId;
 
         this.variables = new HashMap<>();
@@ -123,6 +137,7 @@ public class AgentGraphDebugEngine {
                                   int maxSteps,
                                   AgentModelRuntimeService modelRuntimeService,
                                   AgentToolCallbackFactory toolCallbackFactory,
+                                  KnowledgeRetrievalService knowledgeRetrievalService,
                                   Long tenantId,
                                   Map<String, String> variables,
                                   List<ActivePoint> activePoints,
@@ -134,6 +149,7 @@ public class AgentGraphDebugEngine {
         this.maxSteps = maxSteps;
         this.modelRuntimeService = modelRuntimeService;
         this.toolCallbackFactory = toolCallbackFactory;
+        this.knowledgeRetrievalService = knowledgeRetrievalService;
         this.tenantId = tenantId;
         this.variables = variables;
         this.activePoints = activePoints;
@@ -179,6 +195,9 @@ public class AgentGraphDebugEngine {
                         callLlmNode(current, readInput(current, variables), variables, trace));
                 case NODE_TYPE_TOOL -> writeOutput(current, variables,
                         callToolNode(current, readInput(current, variables)));
+                case NODE_TYPE_KNOWLEDGE -> writeOutput(current, variables,
+                        AgentGraphInterpreter.retrieveKnowledge(knowledgeRetrievalService, current,
+                                readInput(current, variables), trace));
                 case NODE_TYPE_START, NODE_TYPE_CONDITION -> { }
                 case NODE_TYPE_LOOP -> {
                     int iteration = loopCounts.merge(current.getId(), 1, Integer::sum);
@@ -249,6 +268,18 @@ public class AgentGraphDebugEngine {
                                                         AgentModelRuntimeService modelRuntimeService,
                                                         AgentToolCallbackFactory toolCallbackFactory,
                                                         Long tenantId) throws JsonProcessingException {
+        return deserializeState(json, objectMapper, graph, maxSteps, modelRuntimeService,
+                toolCallbackFactory, null, tenantId);
+    }
+
+    public static AgentGraphDebugEngine deserializeState(String json,
+                                                        ObjectMapper objectMapper,
+                                                        ProcessGraph graph,
+                                                        int maxSteps,
+                                                        AgentModelRuntimeService modelRuntimeService,
+                                                        AgentToolCallbackFactory toolCallbackFactory,
+                                                        KnowledgeRetrievalService knowledgeRetrievalService,
+                                                        Long tenantId) throws JsonProcessingException {
         if (json == null || json.isBlank()) {
             throw new IllegalArgumentException("stateJson 不能为空");
         }
@@ -259,7 +290,7 @@ public class AgentGraphDebugEngine {
         Map<String, Integer> loopCounts = state.loopCounts != null ? state.loopCounts : new HashMap<>();
         Map<String, Integer> joinCounts = state.joinCounts != null ? state.joinCounts : new HashMap<>();
         return new AgentGraphDebugEngine(graph, maxSteps, modelRuntimeService, toolCallbackFactory,
-                tenantId,
+                knowledgeRetrievalService, tenantId,
                 variables, activePoints, loopCounts, joinCounts,
                 state.traceSeq, state.steps);
     }

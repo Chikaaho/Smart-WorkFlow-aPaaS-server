@@ -73,6 +73,10 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     @Autowired(required = false)
     private AgentToolCallbackFactory agentToolCallbackFactory;
 
+    /** 知识检索服务（阶段 3；缺失时 KNOWLEDGE 节点运行时显式报错） */
+    @Autowired(required = false)
+    private com.sw.ck.knowledge.service.KnowledgeRetrievalService knowledgeRetrievalService;
+
     public AgentGraphDebugServiceImpl(ObjectMapper objectMapper,
                                       AgentGraphDefMapper graphDefMapper,
                                       AgentGraphDebugSessionMapper sessionMapper,
@@ -118,7 +122,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
         int maxSteps = computeMaxSteps(graph);
         AgentGraphDebugEngine engine = new AgentGraphDebugEngine(graph, input, maxSteps,
-                modelRuntimeService, agentToolCallbackFactory,
+                modelRuntimeService, agentToolCallbackFactory, knowledgeRetrievalService,
                 loginContextProvider.getTenantId());
 
         AgentGraphDebugSession session = new AgentGraphDebugSession();
@@ -178,7 +182,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         try {
             engine = AgentGraphDebugEngine.deserializeState(session.getStateJson(), objectMapper,
                     graph, maxSteps, modelRuntimeService, agentToolCallbackFactory,
-                    loginContextProvider.getTenantId());
+                    knowledgeRetrievalService, loginContextProvider.getTenantId());
         } catch (Exception e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "调试状态反序列化失败: " + e.getMessage());
         }
@@ -282,7 +286,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         try {
             engine = AgentGraphDebugEngine.deserializeState(session.getStateJson(), objectMapper,
                     graph, maxSteps, modelRuntimeService, agentToolCallbackFactory,
-                    loginContextProvider.getTenantId());
+                    knowledgeRetrievalService, loginContextProvider.getTenantId());
         } catch (Exception e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "调试状态反序列化失败: " + e.getMessage());
         }
@@ -714,7 +718,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                     int maxSteps = computeMaxSteps(graph);
                     engine = AgentGraphDebugEngine.deserializeState(session.getStateJson(), objectMapper,
                             graph, maxSteps, modelRuntimeService, agentToolCallbackFactory,
-                            loginContextProvider.getTenantId());
+                            knowledgeRetrievalService, loginContextProvider.getTenantId());
                 }
             } catch (Exception e) {
                 // 忽略，反序列化失败则不提供 nextNodeId
@@ -808,6 +812,27 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                     if (!toolExists(toolName)) {
                         throw new BaseException(CommonErrorCode.PARAM_ERROR,
                                 "工具节点引用的工具不存在或未启用: " + toolName);
+                    }
+                }
+                case AgentGraphInterpreter.NODE_TYPE_KNOWLEDGE -> {
+                    Long kbId = AgentGraphInterpreter.parseConfigLong(
+                            configValue(node, AgentGraphInterpreter.CONFIG_KEY_KNOWLEDGE_BASE_ID));
+                    if (kbId == null) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "KNOWLEDGE 节点缺少知识库引用: " + node.getId());
+                    }
+                    int topK = AgentGraphInterpreter.configInt(node,
+                            AgentGraphInterpreter.CONFIG_KEY_TOP_K,
+                            AgentGraphInterpreter.DEFAULT_KNOWLEDGE_TOP_K);
+                    if (topK < 1 || topK > 20) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "KNOWLEDGE 节点 topK 必须在 1~20 之间: " + node.getId());
+                    }
+                    double threshold = AgentGraphInterpreter.configDouble(node,
+                            AgentGraphInterpreter.CONFIG_KEY_SIMILARITY_THRESHOLD, 0.0);
+                    if (threshold < 0.0 || threshold > 1.0) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "KNOWLEDGE 节点相似度阈值必须在 0~1 之间: " + node.getId());
                     }
                 }
                 case AgentGraphInterpreter.NODE_TYPE_CONDITION -> {

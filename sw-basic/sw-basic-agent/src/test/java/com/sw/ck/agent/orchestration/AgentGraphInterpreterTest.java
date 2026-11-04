@@ -5,6 +5,8 @@ import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
@@ -149,6 +151,62 @@ class AgentGraphInterpreterTest {
                 .findFirst().orElseThrow();
         assertThat(toolTrace.getInputText()).isEqualTo("你好");
         assertThat(toolTrace.getOutputText()).isEqualTo("echo:你好");
+    }
+
+    // ==================== 阶段 3：KNOWLEDGE 节点 ====================
+
+    @Test
+    @DisplayName("F1S3-K01: KNOWLEDGE 节点检索命中 → 输出含文档名/相似度/正文，轨迹记录输入输出")
+    void knowledgeNode_shouldRetrieveAndWriteContextToVariable() {
+        KnowledgeRetrievalService retrieval = mock(KnowledgeRetrievalService.class);
+        KnowledgeHitDTO hit = new KnowledgeHitDTO();
+        hit.setChunkId(11L);
+        hit.setDocumentId(22L);
+        hit.setDocumentName("项目说明.md");
+        hit.setChunkIndex(0);
+        hit.setContent("项目代号是蓝鲸七号。");
+        hit.setSimilarity(0.87);
+        when(retrieval.retrieve(eq(7L), eq("项目代号是什么"), eq(2), eq(0.5)))
+                .thenReturn(List.of(hit));
+
+        ProcessGraph graph = graphOf(
+                node("node_start", "START", Map.of()),
+                node("node_kb", "KNOWLEDGE", Map.of(
+                        "knowledgeBaseId", 7L,
+                        "topK", 2,
+                        "similarityThreshold", 0.5)),
+                node("node_end", "END", Map.of()),
+                edge("e1", "node_start", "node_kb", Map.of()),
+                edge("e2", "node_kb", "node_end", Map.of()));
+
+        AgentGraphInterpreter interpreter = new AgentGraphInterpreter(
+                modelRuntimeService, toolCallbackFactory, retrieval, 100L, 10);
+        String output = interpreter.run(graph, "项目代号是什么");
+
+        assertThat(output).contains("项目说明.md").contains("0.870").contains("蓝鲸七号");
+        AgentGraphInterpreter.NodeExecutionTrace trace = interpreter.getTraces().stream()
+                .filter(t -> "KNOWLEDGE".equals(t.getNodeType()))
+                .findFirst().orElseThrow();
+        assertThat(trace.getInputText()).isEqualTo("项目代号是什么");
+        assertThat(trace.getOutputText()).contains("蓝鲸七号");
+        assertThat(trace.getStatus()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    @DisplayName("F1S3-K02: KNOWLEDGE 节点未装配检索服务 → TOPOLOGY_INVALID")
+    void knowledgeNode_withoutService_shouldFailWithTopologyInvalid() {
+        ProcessGraph graph = graphOf(
+                node("node_start", "START", Map.of()),
+                node("node_kb", "KNOWLEDGE", Map.of("knowledgeBaseId", 7L)),
+                node("node_end", "END", Map.of()),
+                edge("e1", "node_start", "node_kb", Map.of()),
+                edge("e2", "node_kb", "node_end", Map.of()));
+
+        AgentGraphInterpreter interpreter = interpreter(10);
+        assertThatThrownBy(() -> interpreter.run(graph, "问题"))
+                .isInstanceOf(AgentGraphInterpreter.GraphExecutionException.class)
+                .extracting(e -> ((AgentGraphInterpreter.GraphExecutionException) e).getCategory())
+                .isEqualTo(AgentGraphInterpreter.ERROR_CATEGORY_TOPOLOGY_INVALID);
     }
 
     // ==================== 用例 3：条件分支命中关键词边 ====================

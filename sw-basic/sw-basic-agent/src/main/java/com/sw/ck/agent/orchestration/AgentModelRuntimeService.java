@@ -46,17 +46,31 @@ public class AgentModelRuntimeService {
                                 dev.langchain4j.model.chat.ChatModel chatModel) {
     }
 
+    /** Embedding 解析结果（F1 阶段 3）：模型 + 供应商 + 单例 EmbeddingModel */
+    public record EmbeddingInstance(AgentModel model, AgentProvider provider,
+                                    dev.langchain4j.model.embedding.EmbeddingModel embeddingModel) {
+    }
+
     /** 缓存条目：修订键 + 装配产物 */
     private record CachedEntry(String revisionKey, dev.langchain4j.model.chat.ChatModel chatModel) {
+    }
+
+    /** Embedding 缓存条目 */
+    private record CachedEmbeddingEntry(String revisionKey,
+                                        dev.langchain4j.model.embedding.EmbeddingModel embeddingModel) {
     }
 
     private final AgentModelMapper modelMapper;
     private final AgentProviderMapper providerMapper;
     private final AesGcmCipher cipher;
     private final AgentChatModelAssembler assembler = new AgentChatModelAssembler();
+    private final AgentEmbeddingModelAssembler embeddingAssembler = new AgentEmbeddingModelAssembler();
 
     /** 模型 id → 装配产物（单例复用，D022-04；修订键不匹配即重建覆盖） */
     private final Map<Long, CachedEntry> cache = new ConcurrentHashMap<>();
+
+    /** 模型 id → Embedding 装配产物（阶段 3，单例复用同 D022-04） */
+    private final Map<Long, CachedEmbeddingEntry> embeddingCache = new ConcurrentHashMap<>();
 
     public AgentModelRuntimeService(AgentModelMapper modelMapper,
                                     AgentProviderMapper providerMapper,
@@ -109,6 +123,74 @@ public class AgentModelRuntimeService {
         return new ModelInstance(model, provider, chatModel);
     }
 
+    /**
+     * 解析 EMBEDDING 模型并返回单例客户端（F1 阶段 3）：除启停校验外，要求模型
+     * capabilities 含 EMBEDDING；Anthropic 格式无 Embedding 接口，由装配模板显式拒绝。
+     */
+    public EmbeddingInstance acquireEmbedding(Long modelId) {
+        AgentModel model = requireEnabledModel(modelId);
+        AgentProvider provider = requireEnabledProvider(model);
+        if (model.getCapabilities() == null
+                || !model.getCapabilities().toUpperCase(java.util.Locale.ROOT).contains("EMBEDDING")) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    ERROR_KEY_MODEL_UNAVAILABLE, "模型不具备 EMBEDDING 能力: " + model.getName());
+        }
+        String revisionKey = revisionKey(model, provider);
+        dev.langchain4j.model.embedding.EmbeddingModel embeddingModel = embeddingCache.compute(modelId,
+                (id, cached) -> cached != null && cached.revisionKey().equals(revisionKey)
+                        ? cached
+                        : buildEmbeddingAndCache(provider, model, revisionKey)).embeddingModel();
+        return new EmbeddingInstance(model, provider, embeddingModel);
+    }
+
+    /** 校验 EMBEDDING 模型可用（知识库创建/上传前置检查）。 */
+    public void assertEmbeddingUsable(Long modelId) {
+        acquireEmbedding(modelId);
+    }
+
+    /**
+     * 批量向量化（知识库文档/检索查询共用）：返回顺序与入参一致。
+     */
+    public List<float[]> embedAll(Long modelId, List<String> texts) {
+        if (texts == null || texts.isEmpty()) {
+            return List.of();
+        }
+        EmbeddingInstance instance = acquireEmbedding(modelId);
+        List<dev.langchain4j.data.segment.TextSegment> segments = texts.stream()
+                .map(dev.langchain4j.data.segment.TextSegment::from)
+                .toList();
+        return instance.embeddingModel().embedAll(segments).content().stream()
+                .map(dev.langchain4j.data.embedding.Embedding::vector)
+                .toList();
+    }
+
+    private AgentModel requireEnabledModel(Long modelId) {
+        if (modelId == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "模型 id 不能为空");
+        }
+        AgentModel model = modelMapper.selectById(modelId);
+        if (model == null) {
+            throw new BaseException(CommonErrorCode.NOT_FOUND, "模型不存在或已删除: " + modelId);
+        }
+        if (model.getEnabled() == null || !model.getEnabled()) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    ERROR_KEY_MODEL_UNAVAILABLE, "模型已停用: " + model.getName());
+        }
+        return model;
+    }
+
+    private AgentProvider requireEnabledProvider(AgentModel model) {
+        AgentProvider provider = providerMapper.selectById(model.getProviderId());
+        if (provider == null) {
+            throw new BaseException(CommonErrorCode.NOT_FOUND, "供应商不存在或已删除: " + model.getProviderId());
+        }
+        if (provider.getEnabled() == null || !provider.getEnabled()) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    ERROR_KEY_MODEL_UNAVAILABLE, "供应商已停用: " + provider.getName());
+        }
+        return provider;
+    }
+
     /** 仅按需装配（密钥解密只发生在重建分支，明文不离开本方法） */
     private CachedEntry buildAndCache(AgentProvider provider, AgentModel model, String revisionKey) {
         String plainApiKey = null;
@@ -117,6 +199,21 @@ public class AgentModelRuntimeService {
                 plainApiKey = cipher.decrypt(provider.getApiKeyCipher());
             }
             return new CachedEntry(revisionKey, assembler.assemble(provider, model, plainApiKey));
+        } finally {
+            plainApiKey = null;
+        }
+    }
+
+    /** EMBEDDING 按需装配（密钥生命周期同聊天模型） */
+    private CachedEmbeddingEntry buildEmbeddingAndCache(AgentProvider provider, AgentModel model,
+                                                        String revisionKey) {
+        String plainApiKey = null;
+        try {
+            if (provider.getApiKeyCipher() != null && !provider.getApiKeyCipher().isEmpty()) {
+                plainApiKey = cipher.decrypt(provider.getApiKeyCipher());
+            }
+            return new CachedEmbeddingEntry(revisionKey,
+                    embeddingAssembler.assemble(provider, model, plainApiKey));
         } finally {
             plainApiKey = null;
         }
