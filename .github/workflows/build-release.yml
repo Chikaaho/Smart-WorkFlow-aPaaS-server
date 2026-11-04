@@ -11,6 +11,9 @@ jobs:
       contents: write
     # 登录挑战链（P45/I5）与通知工作台用例（I6）在测试期真实读写 Redis；
     # runner 镜像默认不提供该服务，缺失时相关 Boot 用例必然失败。
+    # PostgreSQL 服务容器（0.2.2 整版发布新增）：应用中心恢复演练
+    # ApplicationCenterRecoveryDrillPostgresTest 需要真实 PG（pg_dump/pg_restore + JDBC），
+    # 方向 direction-022-close-release 第 4 阶段要求该测试在 CI 实际跑通（不得跳过）。
     services:
       redis:
         image: redis:7
@@ -21,6 +24,21 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runner"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 恢复演练测试经 AC_G4_PG_URL 探测在役 PG（连接用户取 runner osUser，trust 免密）
+      AC_G4_PG_URL: 127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
 
