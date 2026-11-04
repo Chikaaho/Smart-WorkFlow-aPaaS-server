@@ -13,25 +13,32 @@ import com.sw.ck.agent.dto.AgentGraphDebugSessionDTO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDebugSession;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDebugNodeMapper;
 import com.sw.ck.agent.mapper.AgentGraphDebugSessionMapper;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import com.sw.ck.agent.service.AgentGraphDebugService;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.agent.service.impl.AgentGraphDebugServiceImpl;
 import com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl;
 import com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -50,12 +57,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -78,7 +79,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -86,7 +87,7 @@ import static org.mockito.Mockito.when;
  * 行为证据集成测试（D176 审查标准 2,3,4,5,8,9,11 补证）。
  * <p>
  * 使用与 {@link AgentGraphDebugServiceTest} 同款组合装配（TestConfig 手动装配
- * MyBatis-Plus + 租户拦截器 + ObjectMapper），ChatModelFactory/AgentToolCallbackFactory 为 mock。
+ * MyBatis-Plus + 租户拦截器 + ObjectMapper），AgentModelRuntimeService/AgentToolCallbackFactory 为 mock。
  * 每个用例精确断言会话状态、nodeSeq、branchId、variables、errorCategory 等证据字段。
  * </p>
  */
@@ -115,7 +116,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @Autowired
     private AgentGraphExecutionService executionService;
     @Autowired
-    private AgentModelConfigMapper modelConfigMapper;
+    private com.sw.ck.agent.mapper.AgentProviderMapper providerMapper;
+    @Autowired
+    private com.sw.ck.agent.mapper.AgentModelMapper modelMapper;
     @Autowired
     private AgentToolInternalConfigMapper internalToolMapper;
     @Autowired
@@ -127,7 +130,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
-    private ChatModelFactory chatModelFactory;
+    private AgentModelRuntimeService modelRuntimeService;
     @Autowired
     private AgentToolCallbackFactory toolCallbackFactory;
 
@@ -145,6 +148,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
                     def_version  INT NOT NULL DEFAULT 1,
                     status       VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
                     graph_json   CLOB,
+                    execution_timeout_seconds INT NOT NULL DEFAULT 300,
                     create_time  TIMESTAMP,
                     create_by    VARCHAR(64),
                     update_time  TIMESTAMP,
@@ -156,18 +160,30 @@ class AgentGraphDebugBehaviorIntegrationTest {
                 """);
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_key ON sw_agent_graph_def (tenant_id, graph_key)");
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
+                CREATE TABLE IF NOT EXISTS sw_agent_graph_snapshot (
+                    id            BIGINT NOT NULL PRIMARY KEY,
+                    graph_def_id  BIGINT NOT NULL,
+                    def_version   INT NOT NULL,
+                    graph_key     VARCHAR(100),
+                    name          VARCHAR(200),
+                    graph_json    CLOB NOT NULL,
+                    create_time   TIMESTAMP,
+                    create_by     VARCHAR(64),
+                    update_time   TIMESTAMP,
+                    update_by     VARCHAR(64),
+                    deleted       SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id     BIGINT NOT NULL DEFAULT 0,
+                    version       BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_snapshot_ver ON sw_agent_graph_snapshot (tenant_id, graph_def_id, def_version)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
+                    api_format      VARCHAR(32) NOT NULL,
                     name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
-                    base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
+                    base_url        VARCHAR(500),
                     api_key_cipher  CLOB,
-                    temperature     DECIMAL(4,2),
-                    max_tokens      INT,
-                    top_p           DECIMAL(4,2),
-                    timeout_seconds INT NOT NULL DEFAULT 30,
-                    retry_count     INT NOT NULL DEFAULT 0,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),
                     create_time     TIMESTAMP,
@@ -176,13 +192,38 @@ class AgentGraphDebugBehaviorIntegrationTest {
                     update_by       VARCHAR(64),
                     deleted         SMALLINT NOT NULL DEFAULT 0,
                     tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_provider_name ON sw_agent_provider (tenant_id, name)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_model (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    provider_id     BIGINT NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    model_name      VARCHAR(100) NOT NULL,
+                    capabilities    VARCHAR(50),
+                    temperature     DECIMAL(4,2),
+                    max_tokens      INT,
+                    top_p           DECIMAL(4,2),
+                    timeout_seconds INT NOT NULL DEFAULT 30,
+                    retry_count     INT NOT NULL DEFAULT 0,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
                     group_key       VARCHAR(100),
                     sort            INT NOT NULL DEFAULT 0,
                     locked_until    TIMESTAMP,
-                    quota_cooldown_seconds INT NOT NULL DEFAULT 60
+                    quota_cooldown_seconds INT NOT NULL DEFAULT 60,
+                    remark          VARCHAR(500),
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model (tenant_id, name)");
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_tool_internal (
                     id              BIGINT NOT NULL PRIMARY KEY,
@@ -258,6 +299,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
                     node_type         VARCHAR(20)  NOT NULL,
                     node_latency_ms   BIGINT,
                     variable_snapshot CLOB,
+                    tool_calls CLOB,
                     input_tokens      BIGINT,
                     output_tokens     BIGINT,
                     create_time       TIMESTAMP    NOT NULL,
@@ -307,6 +349,13 @@ class AgentGraphDebugBehaviorIntegrationTest {
                     input_tokens      BIGINT,
                     output_tokens     BIGINT,
                     variable_snapshot CLOB,
+                    tool_calls CLOB,
+                    input_text        CLOB,
+                    output_text       CLOB,
+                    start_time        TIMESTAMP,
+                    end_time          TIMESTAMP,
+                    status            VARCHAR(20) NOT NULL DEFAULT 'SUCCESS',
+                    error_message     CLOB,
                     create_time       TIMESTAMP,
                     create_by         VARCHAR(64),
                     update_time       TIMESTAMP,
@@ -325,8 +374,10 @@ class AgentGraphDebugBehaviorIntegrationTest {
         jdbcTemplate.update("DELETE FROM sw_agent_graph_debug_session");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution_node");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution");
+        jdbcTemplate.update("DELETE FROM sw_agent_graph_snapshot");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_def");
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
+        jdbcTemplate.update("DELETE FROM sw_agent_model");
+        jdbcTemplate.update("DELETE FROM sw_agent_provider");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_internal");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_external");
         setLoginUser(TENANT_100, USER_1);
@@ -358,8 +409,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
 
         // —— 同图同 graphKey 修改：fetch 当前图，保持 graphKey 不变，仅增一个 LLM 节点 ——
         Long modelId = insertModelConfig("g2-llm", "sk-g2");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("should-not-be-used"));
+                        stubAcquire(new StubChatModel("should-not-be-used"));
         ProcessGraph current = graphDefService.getGraph(graphId);
         String keptKey = current.getGraphKey();
         // 关键：entity 的 graphKey 存储在 AgentGraphDef 列，不在 ProcessGraph 内部；
@@ -471,8 +521,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
     void conditionBranch_shouldRouteByKeyword() {
         Long m1 = insertModelConfig("cond-m1", "sk-cond1");
         Long m2 = insertModelConfig("cond-m2", "sk-cond2");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("A-result"), new StubChatModel("B-result"));
+                        stubAcquire(
+                            new StubChatModel("A-result"),
+                            new StubChatModel("B-result"));
 
         Long graphId = createPublishedGraph(conditionGraph(m1, m2));
 
@@ -487,8 +538,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
         assertThat(nodesUrgent.stream().map(AgentGraphDebugNodeDTO::getNodeSeq).toList()).isSorted();
 
         // 重新 stub 第二次调用（新的 session 需要新的 mock 顺序）
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("B-result"));
+                        stubAcquire(new StubChatModel("B-result"));
         // 默认分支（不含 urgent）→ 走默认边 node_b
         AgentGraphDebugSessionDTO sNormal = debugService.createSession(graphId, "normal task");
         AgentGraphDebugSessionDTO rNormal = debugService.continueUntilBreakpoint(sNormal.getId());
@@ -503,8 +553,10 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @DisplayName("C2-标准4-LOOP: 3 次迭代产生同 nodeId 不同 nodeSeq 的独立 trace 行")
     void loop_shouldProduceDistinctNodeSeqPerIteration() {
         Long modelId = insertModelConfig("loop-m", "sk-loop");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("continue"), new StubChatModel("continue"), new StubChatModel("exit"));
+                        stubAcquire(
+                            new StubChatModel("continue"),
+                            new StubChatModel("continue"),
+                            new StubChatModel("exit"));
 
         Long graphId = createPublishedGraph(loopGraph(modelId));
         AgentGraphDebugSessionDTO session = debugService.createSession(graphId, "start");
@@ -535,8 +587,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
     void forkJoin_shouldFanOutWithDistinctBranchIdsAndJoin() {
         Long m1 = insertModelConfig("fork-m1", "sk-fork1");
         Long m2 = insertModelConfig("fork-m2", "sk-fork2");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("branch1"), new StubChatModel("branch2"));
+                        stubAcquire(
+                            new StubChatModel("branch1"),
+                            new StubChatModel("branch2"));
 
         Long graphId = createPublishedGraph(forkGraph(m1, m2));
         AgentGraphDebugSessionDTO session = debugService.createSession(graphId, "in");
@@ -578,8 +631,10 @@ class AgentGraphDebugBehaviorIntegrationTest {
     void parityLoopAndForkJoin_debugVsNormal_semanticsConsistent() {
         // ---- LOOP 对照（同图同输入：先调试后普通） ----
         Long loopModel = insertModelConfig("g4-loop-m", "sk-g4-loop");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("continue"), new StubChatModel("continue"), new StubChatModel("exit"));
+                        stubAcquire(
+                            new StubChatModel("continue"),
+                            new StubChatModel("continue"),
+                            new StubChatModel("exit"));
         Long loopGraphId = createPublishedGraph(loopGraph(loopModel));
         String loopInput = "start";
         AgentGraphDebugSessionDTO loopDebug = debugService.createSession(loopGraphId, loopInput);
@@ -587,8 +642,10 @@ class AgentGraphDebugBehaviorIntegrationTest {
         assertThat(loopDebugResult.getStatus()).isEqualTo("COMPLETED");
         List<AgentGraphDebugNodeDTO> loopDebugNodes = debugService.listNodes(loopDebug.getId());
 
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("continue"), new StubChatModel("continue"), new StubChatModel("exit"));
+                        stubAcquire(
+                            new StubChatModel("continue"),
+                            new StubChatModel("continue"),
+                            new StubChatModel("exit"));
         var loopExecResp = executionService.execute(loopGraphId, loopInput);
         assertThat(loopExecResp.isSuccess()).isTrue();
         List<com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO> loopExecNodes =
@@ -608,8 +665,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
         // ---- FORK/JOIN 对照（同图同输入：先调试后普通） ----
         Long fm1 = insertModelConfig("g4-fork-m1", "sk-g4-fork1");
         Long fm2 = insertModelConfig("g4-fork-m2", "sk-g4-fork2");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("branch1"), new StubChatModel("branch2"));
+                        stubAcquire(
+                            new StubChatModel("branch1"),
+                            new StubChatModel("branch2"));
         Long forkGraphId = createPublishedGraph(forkGraph(fm1, fm2));
         String forkInput = "in";
         AgentGraphDebugSessionDTO forkDebug = debugService.createSession(forkGraphId, forkInput);
@@ -617,8 +675,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
         assertThat(forkDebugResult.getStatus()).isEqualTo("COMPLETED");
         List<AgentGraphDebugNodeDTO> forkDebugNodes = debugService.listNodes(forkDebug.getId());
 
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("branch1"), new StubChatModel("branch2"));
+                        stubAcquire(
+                            new StubChatModel("branch1"),
+                            new StubChatModel("branch2"));
         var forkExecResp = executionService.execute(forkGraphId, forkInput);
         assertThat(forkExecResp.isSuccess()).isTrue();
         List<com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO> forkExecNodes =
@@ -643,8 +702,10 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @DisplayName("D-标准5: 断点 — LOOP 体断点每次迭代前暂停，取消后直达 COMPLETED")
     void breakpoints_shouldPauseBeforeNodeEachIterationAndResumedAfterCancel() {
         Long modelId = insertModelConfig("bp-m", "sk-bp");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("continue"), new StubChatModel("continue"), new StubChatModel("exit"));
+                        stubAcquire(
+                            new StubChatModel("continue"),
+                            new StubChatModel("continue"),
+                            new StubChatModel("exit"));
 
         Long graphId = createPublishedGraph(loopGraph(modelId));
         AgentGraphDebugSessionDTO session = debugService.createSession(graphId, "start");
@@ -678,8 +739,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
         // 取消断点后继续应直达完成
         debugService.updateBreakpoints(paused2.getId(), Set.of());
         // 需要重新 stub 剩余调用（上一次 step 已消耗 1 次 LLM）
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("continue"), new StubChatModel("exit"));
+                        stubAcquire(
+                            new StubChatModel("continue"),
+                            new StubChatModel("exit"));
         AgentGraphDebugSessionDTO completed = debugService.continueUntilBreakpoint(paused2.getId());
         assertThat(completed.getStatus()).isEqualTo("COMPLETED");
         assertThat(completed.getResultText()).isEqualTo("exit");
@@ -692,11 +754,17 @@ class AgentGraphDebugBehaviorIntegrationTest {
     void toolShouldNotBeReplayedOnStaleVersion() {
         insertInternalTool("echo_tool", 1);
         AtomicInteger toolCallCounter = new AtomicInteger(0);
-        var echo = FunctionToolCallback.builder("echo_tool", (String s) -> {
+        var echo = new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name("echo_tool").description("回声工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> {
                     toolCallCounter.incrementAndGet();
-                    return "echo:" + s;
-                })
-                .description("回声工具").inputType(String.class).build();
+                    try {
+                        String arg = new ObjectMapper().readValue(request.arguments(), String.class);
+                        return new ObjectMapper().writeValueAsString("echo:" + arg);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
         when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
 
         Long graphId = createPublishedGraph(toolGraph("echo_tool"));
@@ -742,8 +810,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @DisplayName("F1-标准9-COMPLETED: 正常运行直达 COMPLETED，resultText 与 variables 一致")
     void terminalCompleted_normalRun() {
         Long modelId = insertModelConfig("f1-m", "sk-f1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("final-output"));
+                        stubAcquire(new StubChatModel("final-output"));
         Long graphId = createPublishedGraph(llmGraph(modelId));
         AgentGraphDebugSessionDTO session = debugService.createSession(graphId, "hi");
         AgentGraphDebugSessionDTO result = debugService.continueUntilBreakpoint(session.getId());
@@ -758,8 +825,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @DisplayName("F2-标准9-FAILED: 未定义变量触发 FAILED + errorCategory=UNDEFINED_VARIABLE，次步拒接")
     void terminalFailed_undefinedVariable() {
         Long modelId = insertModelConfig("f2-m", "sk-f2");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("should-not-reach"));
+                        stubAcquire(new StubChatModel("should-not-reach"));
         Long graphId = createPublishedGraph(undefinedVarGraph(modelId));
         AgentGraphDebugSessionDTO session = debugService.createSession(graphId, "input-text");
 
@@ -830,8 +896,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @DisplayName("F5-标准9-STEP_LIMIT: 死循环超步数 -> FAILED + STEP_LIMIT，次步拒接")
     void terminalStepLimit_shouldFailWithStepLimitCategory() {
         Long modelId = insertModelConfig("f5-m", "sk-f5");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("continue"));
+                        stubAcquire(new StubChatModel("continue"));
         Long graphId = createPublishedGraph(stepLimitGraph(modelId));
         AgentGraphDebugSessionDTO session = debugService.createSession(graphId, "no-keyword");
 
@@ -871,8 +936,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @DisplayName("G-标准11: 调试与执行历史隔离 — debug 完成不入 execution 表，pageSessions/pageExecutions 无交叉")
     void debugAndExecutionHistorySeparation() {
         Long modelId = insertModelConfig("g-m", "sk-g");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("debug-out"), new StubChatModel("exec-out"));
+                        stubAcquire(
+                            new StubChatModel("debug-out"),
+                            new StubChatModel("exec-out"));
 
         Long debugGraphId = createPublishedGraph(llmGraph(modelId));
         AgentGraphDebugSessionDTO debugSession = debugService.createSession(debugGraphId, "debug-input");
@@ -915,8 +981,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @DisplayName("H-标准7: 并发 — 同 version 双步第一成功第二 409，trace 仅 +1")
     void concurrency_sameVersionDoubleStep_firstSucceedsSecond409() {
         Long modelId = insertModelConfig("h-m", "sk-h");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("out"));
+                        stubAcquire(new StubChatModel("out"));
         Long graphId = createPublishedGraph(llmGraph(modelId));
         AgentGraphDebugSessionDTO session = debugService.createSession(graphId, "hi");
         Long staleVersion = session.getVersion();
@@ -1063,15 +1128,47 @@ class AgentGraphDebugBehaviorIntegrationTest {
     }
 
     private Long insertModelConfig(String name, String plainKey) {
-        AgentModelConfig config = new AgentModelConfig();
-        config.setName(name);
-        config.setProtocolType("openai");
-        config.setBaseUrl("http://localhost:9999/v1");
-        config.setModelName("stub-model");
-        config.setApiKeyCipher(cipher.encrypt(plainKey));
-        config.setEnabled(true);
-        modelConfigMapper.insert(config);
-        return config.getId();
+        AgentProvider provider = new AgentProvider();
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setName("provider-" + name);
+        provider.setBaseUrl("http://localhost:9999/v1");
+        provider.setApiKeyCipher(cipher.encrypt(plainKey));
+        provider.setEnabled(true);
+        providerMapper.insert(provider);
+        AgentModel model = new AgentModel();
+        model.setProviderId(provider.getId());
+        model.setName(name);
+        model.setModelName("stub-model");
+        model.setCapabilities("CHAT");
+        model.setEnabled(true);
+        modelMapper.insert(model);
+        return model.getId();
+    }
+
+    /** 打桩运行时服务：acquire 任意模型 id 返回携带指定 ChatModel 的 ModelInstance（支持连续多次打桩按序消费） */
+    private void stubAcquire(ChatModel... chatModels) {
+        AgentModel model = new AgentModel();
+        model.setId(1L);
+        model.setName("stub-model");
+        model.setEnabled(true);
+        AgentProvider provider = new AgentProvider();
+        provider.setId(1L);
+        provider.setName("stub-provider");
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setEnabled(true);
+        var instances = java.util.Arrays.stream(chatModels)
+                .map(cm -> new AgentModelRuntimeService.ModelInstance(model, provider, cm))
+                .toArray(AgentModelRuntimeService.ModelInstance[]::new);
+        when(modelRuntimeService.acquire(any())).thenReturn(instances[0],
+                java.util.Arrays.copyOfRange(instances, 1, instances.length));
+        // D022-05 轮换入口：委托回 acquire 打桩（按序消费 ModelInstance，计数语义不变）
+        when(modelRuntimeService.chatWithRotation(any(), anyList(), any())).thenAnswer(inv -> {
+        java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
+        if (msgs == null || msgs.isEmpty()) { return null; }
+        return modelRuntimeService.acquire(1L).chatModel().chat(
+                                dev.langchain4j.model.chat.request.ChatRequest.builder()
+                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1)).build());
+        });
     }
 
     private void insertInternalTool(String toolName, int enabled) {
@@ -1087,8 +1184,8 @@ class AgentGraphDebugBehaviorIntegrationTest {
     static class StubChatModel implements ChatModel {
         private final String reply;
         StubChatModel(String reply) { this.reply = reply; }
-        @Override public ChatResponse call(Prompt prompt) {
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        @Override public ChatResponse chat(ChatRequest request) {
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
         }
     }
 
@@ -1200,12 +1297,21 @@ class AgentGraphDebugBehaviorIntegrationTest {
         public ObjectMapper objectMapper() { return new ObjectMapper(); }
 
         @Bean
-        public AgentGraphDefService agentGraphDefService(ObjectMapper objectMapper) {
-            return new AgentGraphDefServiceImpl(objectMapper);
+        public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                ObjectMapper objectMapper) {
+            return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
 
         @Bean
-        public ChatModelFactory chatModelFactory() { return mock(ChatModelFactory.class); }
+        public AgentGraphDefService agentGraphDefService(
+                ObjectMapper objectMapper,
+                AgentGraphSnapshotServiceImpl snapshotService) {
+            return new AgentGraphDefServiceImpl(objectMapper, snapshotService);
+        }
+
+        @Bean
+        public AgentModelRuntimeService agentModelRuntimeService() { return mock(AgentModelRuntimeService.class); }
 
         @Bean
         public AgentToolCallbackFactory agentToolCallbackFactory() { return mock(AgentToolCallbackFactory.class); }
@@ -1219,34 +1325,33 @@ class AgentGraphDebugBehaviorIntegrationTest {
                 AgentGraphDefMapper graphDefMapper,
                 AgentGraphDebugSessionMapper sessionMapper,
                 AgentGraphDebugNodeMapper debugNodeMapper,
-                AgentModelConfigMapper modelConfigMapper,
                 AgentToolInternalConfigMapper internalToolMapper,
                 AgentToolExternalConfigMapper externalToolMapper,
-                ChatModelFactory chatModelFactory,
-                AesGcmCipher aesGcmCipher,
+                AgentModelRuntimeService modelRuntimeService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+            // AgentToolCallbackFactory 为 @Autowired(required=false) 字段注入，mock bean 由 Spring 自动填充
             return new AgentGraphDebugServiceImpl(objectMapper, graphDefMapper, sessionMapper,
-                    debugNodeMapper, modelConfigMapper, internalToolMapper, externalToolMapper,
-                    chatModelFactory, aesGcmCipher, loginContextProvider, deptScopeProvider);
+                    debugNodeMapper, internalToolMapper, externalToolMapper,
+                    modelRuntimeService, snapshotService, loginContextProvider, deptScopeProvider);
         }
 
         @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                AgentModelConfigMapper modelConfigMapper,
                 AgentToolInternalConfigMapper internalToolMapper,
                 AgentToolExternalConfigMapper externalToolMapper,
                 AgentGraphExecutionMapper executionMapper,
                 AgentGraphExecutionNodeMapper executionNodeMapper,
-                ChatModelFactory chatModelFactory,
-                AesGcmCipher aesGcmCipher,
+                AgentModelRuntimeService modelRuntimeService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new AgentGraphExecutionServiceImpl(objectMapper, modelConfigMapper,
-                    internalToolMapper, externalToolMapper, executionMapper,
-                    executionNodeMapper, chatModelFactory, aesGcmCipher,
-                    loginContextProvider, deptScopeProvider);
+            AgentGraphExecutionServiceImpl service = new AgentGraphExecutionServiceImpl(objectMapper,
+                    modelRuntimeService, snapshotService, internalToolMapper, externalToolMapper,
+                    executionMapper, executionNodeMapper, loginContextProvider, deptScopeProvider);
+            return service;
         }
 
         @Bean

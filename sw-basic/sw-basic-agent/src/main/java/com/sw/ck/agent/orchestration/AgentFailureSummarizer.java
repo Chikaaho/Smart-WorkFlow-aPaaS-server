@@ -29,7 +29,8 @@ public final class AgentFailureSummarizer {
     private static final List<String> TRANSPORT_TYPE_HINTS = List.of(
             "IOException", "SocketException", "TimeoutException", "UnknownHostException",
             "RestClient", "WebClient", "ResourceAccess", "NonTransientAi", "TransientAi",
-            "HttpServerError", "HttpClientError", "ConnectException");
+            "HttpServerError", "HttpClientError", "ConnectException",
+            "HttpException", "LangChain4j", "AuthenticationException");
 
     private AgentFailureSummarizer() {
     }

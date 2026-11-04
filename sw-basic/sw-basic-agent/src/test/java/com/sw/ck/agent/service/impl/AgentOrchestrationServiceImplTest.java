@@ -11,19 +11,16 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
 import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
 import com.sw.ck.agent.entity.AgentMessage;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.AgentSession;
 import com.sw.ck.agent.entity.AgentToolCallLog;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentMessageMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.AgentSessionMapper;
 import com.sw.ck.agent.mapper.AgentToolCallLogMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
 import com.sw.ck.agent.orchestration.AgentGraphFactory;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
 import com.sw.ck.agent.service.AgentOrchestrationService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
@@ -46,26 +43,25 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.retry.NonTransientAiException;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.exception.HttpException;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.HttpClientErrorException;
 
 import javax.sql.DataSource;
 import java.io.IOException;
@@ -92,8 +88,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 策略与 Step1 的 {@code AgentModelConfigServiceImplTest} 同款：{@code @SpringBootTest}
  * + H2（TestConfig 组合装配）+ {@code @Transactional} 回滚；端到端用 JDK 内置
  * {@code com.sun.net.httpserver.HttpServer}（localhost:0 随机端口）mock OpenAI Chat
- * Completions 服务（监听 baseUrl + {@code /v1/chat/completions}，Spring AI 默认
- * completionsPath，实测确认）。
+ * Completions 服务（LangChain4j OpenAiChatModel，F1 阶段 1）。
  * </p>
  * <p>
  * 用例 3 安全断言：模型服务不可达时 {@code errorMessage} 非空且不含明文 API Key
@@ -122,7 +117,10 @@ class AgentOrchestrationServiceImplTest {
     private AgentOrchestrationService service;
 
     @Autowired
-    private AgentModelConfigMapper mapper;
+    private com.sw.ck.agent.mapper.AgentProviderMapper providerMapper;
+
+    @Autowired
+    private com.sw.ck.agent.mapper.AgentModelMapper modelMapper;
 
     @Autowired
     private AgentSessionMapper sessionMapper;
@@ -150,18 +148,12 @@ class AgentOrchestrationServiceImplTest {
     @BeforeAll
     static void createTables(@Autowired JdbcTemplate jt) {
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
+                CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
+                    api_format      VARCHAR(32) NOT NULL,
                     name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
-                    base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
+                    base_url        VARCHAR(500),
                     api_key_cipher  CLOB,
-                    temperature     DECIMAL(4,2),
-                    max_tokens      INT,
-                    top_p           DECIMAL(4,2),
-                    timeout_seconds INT NOT NULL DEFAULT 30,
-                    retry_count     INT NOT NULL DEFAULT 0,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),
                     create_time     TIMESTAMP,
@@ -170,16 +162,40 @@ class AgentOrchestrationServiceImplTest {
                     update_by       VARCHAR(64),
                     deleted         SMALLINT NOT NULL DEFAULT 0,
                     tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_provider_name ON sw_agent_provider (tenant_id, name)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_model (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    provider_id     BIGINT NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    model_name      VARCHAR(100) NOT NULL,
+                    capabilities    VARCHAR(50),
+                    temperature     DECIMAL(4,2),
+                    max_tokens      INT,
+                    top_p           DECIMAL(4,2),
+                    timeout_seconds INT NOT NULL DEFAULT 30,
+                    retry_count     INT NOT NULL DEFAULT 0,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
                     group_key       VARCHAR(100),
                     sort            INT NOT NULL DEFAULT 0,
                     locked_until    TIMESTAMP,
-                    quota_cooldown_seconds INT NOT NULL DEFAULT 60
+                    quota_cooldown_seconds INT NOT NULL DEFAULT 60,
+                    remark          VARCHAR(500),
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
-        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model_config (tenant_id, name)");
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_tenant_deleted ON sw_agent_model_config (tenant_id, deleted)");
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_group ON sw_agent_model_config (tenant_id, group_key, sort)");
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model (tenant_id, name)");
+        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_tenant_deleted ON sw_agent_model (tenant_id, deleted)");
+        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_group ON sw_agent_model (tenant_id, group_key, sort)");
         // M07 Step4 F04：V21/V22/V23 H2 脚本 DDL（会话主表 + 消息明细 + 工具调用日志）
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_session (
@@ -282,7 +298,8 @@ class AgentOrchestrationServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
+        jdbcTemplate.update("DELETE FROM sw_agent_model");
+        jdbcTemplate.update("DELETE FROM sw_agent_provider");
         jdbcTemplate.update("DELETE FROM sw_agent_message");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_call_log");
         jdbcTemplate.update("DELETE FROM sw_agent_session");
@@ -456,17 +473,17 @@ class AgentOrchestrationServiceImplTest {
         assertThat(resp.getErrorMessage()).isNotBlank();
 
         // 泄漏检查：直接 invoke 图（不绑定历史/工具）——若 clearHistoryMessages/clearTools
-        // 未执行，callModel 收到的 Prompt 会包含泄漏的历史消息或 ToolCallingChatOptions
+        // 未执行，callModel 收到的 ChatRequest 会包含泄漏的历史消息或 toolSpecifications
         CapturingChatModel stub = new CapturingChatModel("leak-check");
         AgentGraphFactory.bindChatModel(stub);
         try {
             Optional<AgentState> result = agentCompiledGraph.invoke(
                     Map.of("input", "leak-check", "chatModel", stub));
             assertThat(result).isPresent();
-            assertThat(stub.capturedPrompt.getInstructions())
+            assertThat(stub.capturedRequest.messages())
                     .as("run() 失败后历史消息不得残留在 ThreadLocal（bind/clear 对称）")
                     .hasSize(1);
-            assertThat(stub.capturedPrompt.getOptions()).isNull();
+            assertThat(stub.capturedRequest.toolSpecifications()).isNullOrEmpty();
         } finally {
             AgentGraphFactory.clearChatModel();
         }
@@ -485,7 +502,7 @@ class AgentOrchestrationServiceImplTest {
         server.createContext("/", exchange -> {
             String reqBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             String json;
-            if (reqBody.contains("\"role\":\"tool\"")) {
+            if (reqBody.replaceAll("\s", "").contains("\"role\":\"tool\"")) {
                 json = "{\"id\":\"chatcmpl-tool-2\",\"object\":\"chat.completion\",\"created\":1720000000,"
                         + "\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
                         + "\"content\":\"工具执行完成\"},\"finish_reason\":\"stop\"}],"
@@ -585,13 +602,13 @@ class AgentOrchestrationServiceImplTest {
             AgentOrchestrationRunRespDTO resp = service.run(req(idA, "你好"));
             assertThat(resp.isSuccess()).isTrue();
 
-            LocalDateTime lockedUntil = mapper.selectById(idA).getLockedUntil();
+            LocalDateTime lockedUntil = modelMapper.selectById(idA).getLockedUntil();
             assertThat(lockedUntil).as("限流后当前配置必须被锁定").isNotNull();
             // quotaCooldownSeconds=60 → lockedUntil ≈ now+60s（宽容边界：不早于 now-10s，不晚于 now+70s）
             assertThat(lockedUntil).isAfter(LocalDateTime.now().minusSeconds(10));
             assertThat(lockedUntil).isBeforeOrEqualTo(LocalDateTime.now().plusSeconds(70));
             // 切换到的候选不被锁定
-            assertThat(mapper.selectById(idB).getLockedUntil()).isNull();
+            assertThat(modelMapper.selectById(idB).getLockedUntil()).isNull();
         } finally {
             server429.stop(0);
             server200.stop(0);
@@ -625,9 +642,9 @@ class AgentOrchestrationServiceImplTest {
             assertThat(hitsB.get()).isEqualTo(1);
             assertThat(hitsC.get()).isEqualTo(1);
             // 三条均被锁定
-            assertThat(mapper.selectById(idA).getLockedUntil()).isNotNull();
-            assertThat(mapper.selectById(idB).getLockedUntil()).isNotNull();
-            assertThat(mapper.selectById(idC).getLockedUntil()).isNotNull();
+            assertThat(modelMapper.selectById(idA).getLockedUntil()).isNotNull();
+            assertThat(modelMapper.selectById(idB).getLockedUntil()).isNotNull();
+            assertThat(modelMapper.selectById(idC).getLockedUntil()).isNotNull();
         } finally {
             server429a.stop(0);
             server429b.stop(0);
@@ -656,7 +673,7 @@ class AgentOrchestrationServiceImplTest {
             assertThat(hits429.get()).isEqualTo(1);
             assertThat(hits200.get()).as("独立配置不得切换到其他组的候选").isZero();
             // 独立配置也不被锁定（groupKey null 不进入锁定/切换分支）
-            assertThat(mapper.selectById(idSolo).getLockedUntil()).isNull();
+            assertThat(modelMapper.selectById(idSolo).getLockedUntil()).isNull();
         } finally {
             server429.stop(0);
             server200.stop(0);
@@ -681,123 +698,19 @@ class AgentOrchestrationServiceImplTest {
             assertThat(resp.isSuccess()).isFalse();
             assertThat(resp.getErrorMessage()).isNotBlank();
             // 非限流异常：不锁定、不切换
-            assertThat(mapper.selectById(idA).getLockedUntil()).isNull();
-            assertThat(mapper.selectById(idB).getLockedUntil()).isNull();
+            assertThat(modelMapper.selectById(idA).getLockedUntil()).isNull();
+            assertThat(modelMapper.selectById(idB).getLockedUntil()).isNull();
             assertThat(hits200.get()).as("非 429 异常不得触发候选切换").isZero();
         } finally {
             server200.stop(0);
         }
     }
 
-    @Test
-    @DisplayName("用例14: isQuotaExceededException 按 V1 实测语义判断 429（NonTransientAiException 消息 + RestClientResponseException 兜底 + 沿 cause 链）")
-    void isQuotaExceededException_detects429() throws Exception {
-        Method m = AgentOrchestrationServiceImpl.class
-                .getDeclaredMethod("isQuotaExceededException", Throwable.class);
-        m.setAccessible(true);
-
-        // V1 实测形态：Spring AI 默认错误处理器对 4xx 直接抛 NonTransientAiException("429 - ...")
-        assertThat(invokeQuotaCheck(m, new NonTransientAiException("429 - too many requests"))).isTrue();
-        // 其他状态码不命中
-        assertThat(invokeQuotaCheck(m, new NonTransientAiException("401 - unauthorized"))).isFalse();
-        assertThat(invokeQuotaCheck(m, new NonTransientAiException("500 - server error"))).isFalse();
-        // 非 Spring AI 异常不命中
-        assertThat(invokeQuotaCheck(m, new IllegalArgumentException("bad config"))).isFalse();
-        // 沿 cause 链穿透包装层（langgraph4j CompletionException 同款）
-        assertThat(invokeQuotaCheck(m,
-                new CompletionException(new NonTransientAiException("429 - too many requests")))).isTrue();
-        // RestClientResponseException 兜底：真实 HttpClientErrorException.TooManyRequests 实例
-        HttpClientErrorException tooMany = HttpClientErrorException.create(
-                HttpStatusCode.valueOf(429), "Too Many Requests",
-                new HttpHeaders(), "too many".getBytes(StandardCharsets.UTF_8), null);
-        assertThat(invokeQuotaCheck(m, tooMany)).isTrue();
-        // 非 429 的 RestClientResponseException 不命中
-        HttpClientErrorException serverError = HttpClientErrorException.create(
-                HttpStatusCode.valueOf(500), "Server Error",
-                new HttpHeaders(), "boom".getBytes(StandardCharsets.UTF_8), null);
-        assertThat(invokeQuotaCheck(m, serverError)).isFalse();
-        // null 不命中
-        assertThat(invokeQuotaCheck(m, null)).isFalse();
+    /** 插入供应商（OPENAI_CHAT + baseUrl + 密钥）与挂在其下的模型行，返回模型 id */
+    private Long insertConfig(String protocol, String baseUrl, String apiKey) {
+        return insertGroupConfig(protocol, baseUrl, apiKey, null, 0);
     }
 
-    private boolean invokeQuotaCheck(Method m, Throwable t) throws Exception {
-        return (boolean) m.invoke(service, t);
-    }
-
-    // ==================== 用例15-16：候选切换/失败链的 token 语义（M07-F04-02 D164 补证） ====================
-
-    @Test
-    @DisplayName("用例15: 标准5 — 候选切换后成功轮次只落当前生产调用链的 usage：429 失败轮不落 token，切换成功轮落 3/5")
-    void run_switchSuccess_shouldPersistOnlyCurrentCallChainUsage() throws Exception {
-        AtomicInteger hits429 = new AtomicInteger();
-        HttpServer server429 = start429Server(hits429);
-        HttpServer server200 = startChatServer();
-        try {
-            Long idA = insertGroupConfig("openai", "http://127.0.0.1:" + server429.getAddress().getPort(),
-                    TEST_API_KEY, "g-token-switch", 0);
-            Long idB = insertGroupConfig("openai", "http://127.0.0.1:" + server200.getAddress().getPort(),
-                    TEST_API_KEY, "g-token-switch", 1);
-
-            AgentOrchestrationRunRespDTO resp = service.run(req(idA, "你好"));
-            assertThat(resp.isSuccess()).isTrue();
-            assertThat(resp.getUsedModelConfigId()).isEqualTo(idB);
-
-            // 成功轮次（候选 B）的 ASSISTANT 消息落库 usage（3/5）——失败轮（429）不产生消息/token
-            List<AgentMessage> messages = messageMapper.selectList(
-                    Wrappers.<AgentMessage>lambdaQuery()
-                            .eq(AgentMessage::getSessionId, resp.getSessionId())
-                            .eq(AgentMessage::getRole, "ASSISTANT"));
-            assertThat(messages).hasSize(1);
-            assertThat(messages.get(0).getInputTokens()).isEqualTo(3L);
-            assertThat(messages.get(0).getOutputTokens()).isEqualTo(5L);
-        } finally {
-            server429.stop(0);
-            server200.stop(0);
-        }
-    }
-
-    @Test
-    @DisplayName("用例16: 标准5 — 有 usage 后调用失败（500）→ 不把已取得的 usage 当成功事实写入，无 ASSISTANT 消息 token")
-    void run_failureAfterUsage_shouldNotRecordTokenFacts() throws Exception {
-        AtomicInteger hits500 = new AtomicInteger();
-        HttpServer server500 = start500Server(hits500);
-        try {
-            Long id = insertGroupConfig("openai", "http://127.0.0.1:" + server500.getAddress().getPort(),
-                    TEST_API_KEY, null, 0);
-
-            AgentOrchestrationRunRespDTO resp = service.run(req(id, "触发失败"));
-            assertThat(resp.isSuccess()).isFalse();
-            assertThat(resp.getErrorMessage()).isNotBlank();
-            assertThat(hits500.get()).isEqualTo(1);
-
-            // 失败请求：会话可能不存在或无 ASSISTANT 消息；即使存在也不得写入 token 事实
-            if (resp.getSessionId() != null) {
-                List<AgentMessage> messages = messageMapper.selectList(
-                        Wrappers.<AgentMessage>lambdaQuery()
-                                .eq(AgentMessage::getSessionId, resp.getSessionId())
-                                .eq(AgentMessage::getRole, "ASSISTANT"));
-                assertThat(messages).isEmpty();
-            }
-        } finally {
-            server500.stop(0);
-        }
-    }
-
-    /** 返回 500 的服务桩（计数） */
-    private HttpServer start500Server(AtomicInteger hits) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/", exchange -> {
-            hits.incrementAndGet();
-            String json = "{\"error\":{\"message\":\"server exploded\",\"type\":\"server_error\"}}";
-            byte[] body = json.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(500, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
-        });
-        server.start();
-        return server;
-    }
 
     // ==================== 测试数据工厂 ====================
 
@@ -814,55 +727,50 @@ class AgentOrchestrationServiceImplTest {
         return req;
     }
 
-    /** 记录收到的 Prompt 的 ChatModel 桩（ThreadLocal 泄漏检查用） */
+    /** 两级落库：一个供应商（OPENAI_CHAT）+ 其下模型；组信息（groupKey/sort/冷却）在模型上 */
+    private Long insertGroupConfig(String protocol, String baseUrl, String apiKey, String groupKey, int sort) {
+        AgentProvider provider = new AgentProvider();
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setName("orch-provider-" + System.nanoTime());
+        provider.setBaseUrl(baseUrl);
+        provider.setApiKeyCipher(apiKey == null ? null : cipher.encrypt(apiKey));
+        provider.setEnabled(true);
+        providerMapper.insert(provider);
+
+        AgentModel model = new AgentModel();
+        model.setProviderId(provider.getId());
+        model.setName("orch-model-" + System.nanoTime());
+        model.setModelName("gpt-4o");
+        model.setCapabilities("CHAT");
+        model.setTimeoutSeconds(10);
+        model.setRetryCount(0);
+        model.setEnabled(true);
+        model.setGroupKey(groupKey);
+        model.setSort(sort);
+        model.setQuotaCooldownSeconds(60);
+        modelMapper.insert(model);
+        return model.getId();
+    }
+
+
+    /** 记录收到的 ChatRequest 的 ChatModel 桩（ThreadLocal 泄漏检查用） */
     static class CapturingChatModel implements ChatModel {
         private final String reply;
-        Prompt capturedPrompt;
+        ChatRequest capturedRequest;
 
         CapturingChatModel(String reply) {
             this.reply = reply;
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
-            this.capturedPrompt = prompt;
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        public ChatResponse chat(ChatRequest request) {
+            this.capturedRequest = request;
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
         }
     }
 
-    private Long insertConfig(String protocol, String baseUrl, String apiKey) {
-        AgentModelConfig entity = new AgentModelConfig();
-        entity.setName("orch-test-" + System.nanoTime());
-        entity.setProtocolType(protocol);
-        entity.setBaseUrl(baseUrl);
-        entity.setModelName("gpt-4o");
-        entity.setApiKeyCipher(apiKey == null ? null : cipher.encrypt(apiKey));
-        entity.setTimeoutSeconds(10);
-        entity.setRetryCount(0);
-        entity.setEnabled(true);
-        mapper.insert(entity);
-        return entity.getId();
-    }
-
-    /** 多Key轮询组配置：同 insertConfig + groupKey/sort/quotaCooldownSeconds=60 */
-    private Long insertGroupConfig(String protocol, String baseUrl, String apiKey, String groupKey, int sort) {
-        AgentModelConfig entity = new AgentModelConfig();
-        entity.setName("orch-group-" + System.nanoTime());
-        entity.setProtocolType(protocol);
-        entity.setBaseUrl(baseUrl);
-        entity.setModelName("gpt-4o");
-        entity.setApiKeyCipher(apiKey == null ? null : cipher.encrypt(apiKey));
-        entity.setTimeoutSeconds(10);
-        entity.setRetryCount(0);
-        entity.setEnabled(true);
-        entity.setGroupKey(groupKey);
-        entity.setSort(sort);
-        entity.setQuotaCooldownSeconds(60);
-        mapper.insert(entity);
-        return entity.getId();
-    }
-
     // ==================== 本地假 OpenAI Chat Completions 服务 ====================
+
 
     private HttpServer startChatServer() throws IOException {
         return startCountingChatServer(new AtomicInteger());
@@ -1040,8 +948,11 @@ class AgentOrchestrationServiceImplTest {
         // ==================== M07 Step2 业务 Bean ====================
 
         @Bean
-        public ChatModelFactory chatModelFactory() {
-            return new ChatModelFactory();
+        public AgentModelRuntimeService agentModelRuntimeService(
+                com.sw.ck.agent.mapper.AgentModelMapper agentModelMapper,
+                com.sw.ck.agent.mapper.AgentProviderMapper agentProviderMapper,
+                AesGcmCipher aesGcmCipher) {
+            return new AgentModelRuntimeService(agentModelMapper, agentProviderMapper, aesGcmCipher);
         }
 
         @Bean
@@ -1068,12 +979,10 @@ class AgentOrchestrationServiceImplTest {
 
         @Bean
         public AgentOrchestrationService agentOrchestrationService(
-                AgentModelConfigMapper agentModelConfigMapper,
-                AesGcmCipher aesGcmCipher,
-                ChatModelFactory chatModelFactory,
+                AgentModelRuntimeService modelRuntimeService,
                 CompiledGraph<AgentState> agentCompiledGraph) {
-            return new AgentOrchestrationServiceImpl(
-                    agentModelConfigMapper, aesGcmCipher, chatModelFactory, agentCompiledGraph);
+            // 会话/消息/工具日志 Mapper 与 AgentToolCallbackFactory 为 @Autowired 字段注入，Spring 自动填充
+            return new AgentOrchestrationServiceImpl(modelRuntimeService, agentCompiledGraph);
         }
     }
 

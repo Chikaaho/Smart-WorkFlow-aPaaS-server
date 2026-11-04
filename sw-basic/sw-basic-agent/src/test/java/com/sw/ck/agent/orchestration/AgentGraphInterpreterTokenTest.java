@@ -2,37 +2,35 @@ package com.sw.ck.agent.orchestration;
 
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
-import com.sw.ck.agent.entity.AgentModelConfig;
-import com.sw.ck.common.crypto.AesGcmCipher;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.ChatResponseMetadata;
+import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
-import org.springframework.ai.chat.metadata.ChatResponseMetadata;
-import org.springframework.ai.chat.metadata.DefaultUsage;
-import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * F02 图执行路径 Token 聚合行为测试（M07-F04-02 验收标准 1/2）。
+ * F02 图执行路径 Token 聚合行为测试（M07-F04-02 验收标准 1/2；F1 阶段 1 LangChain4j 化翻新）。
  * <p>
  * 本测试类专注于验证 AgentGraphInterpreter 在多节点、LOOP、FORK/JOIN 场景下的 Token 累积行为。
- * 使用 TokenChatModel 桩注入 usage metadata，验证：
+ * 使用 TokenChatModel 桩注入 LC4j {@link TokenUsage} metadata，验证：
  * <ul>
  *   <li>标准1：F02 图执行路径 Token 读取与持久化</li>
  *   <li>标准2：多节点/LOOP/FORK/JOIN Token 聚合</li>
@@ -41,23 +39,20 @@ import static org.mockito.Mockito.when;
 @DisplayName("F02 图执行路径 Token 聚合行为测试（M07-F04-02）")
 class AgentGraphInterpreterTokenTest {
 
-    private ChatModelFactory chatModelFactory;
+    private AgentModelRuntimeService modelRuntimeService;
     private AgentToolCallbackFactory toolCallbackFactory;
-    private AesGcmCipher cipher;
 
     @BeforeEach
     void setUp() throws Exception {
-        chatModelFactory = mock(ChatModelFactory.class);
+        modelRuntimeService = mock(AgentModelRuntimeService.class);
         toolCallbackFactory = mock(AgentToolCallbackFactory.class);
-        // 使用与现有测试相同的测试密钥（32 字节 Base64 编码）
-        cipher = new AesGcmCipher("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
     }
 
     // ==================== TokenChatModel 桩 ====================
 
     /**
-     * 注入 usage metadata 的 ChatModel 桩。
-     * 每次 call() 返回固定的 reply，并在 ChatResponseMetadata 中注入 usage。
+     * 注入 TokenUsage metadata 的 ChatModel 桩。
+     * 每次 chat() 返回固定的 reply，并在 ChatResponseMetadata 中注入 usage。
      */
     static class TokenChatModel implements ChatModel {
         private final String reply;
@@ -72,16 +67,15 @@ class AgentGraphInterpreterTokenTest {
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
+        public ChatResponse chat(ChatRequest request) {
             callCount++;
-            AssistantMessage assistantMessage = new AssistantMessage(reply);
-            Generation generation = new Generation(assistantMessage);
-            // 在 ChatResponseMetadata 中注入 usage（与真实 Spring AI 一致）
-            DefaultUsage usage = new DefaultUsage((int) promptTokens, (int) completionTokens, (int) (promptTokens + completionTokens));
-            ChatResponseMetadata metadata = ChatResponseMetadata.builder()
-                    .usage(usage)
+            return ChatResponse.builder()
+                    .aiMessage(AiMessage.from(reply))
+                    .metadata(ChatResponseMetadata.builder()
+                            // LC4j TokenUsage（Integer 计数，可能为 null；此处固定注入）
+                            .tokenUsage(new TokenUsage((int) promptTokens, (int) completionTokens))
+                            .build())
                     .build();
-            return new ChatResponse(List.of(generation), metadata);
         }
 
         public int getCallCount() {
@@ -103,19 +97,17 @@ class AgentGraphInterpreterTokenTest {
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
+        public ChatResponse chat(ChatRequest request) {
             String reply = replies.get(Math.min(callIndex, replies.size() - 1));
             long[] tokens = tokenSequences.get(Math.min(callIndex, tokenSequences.size() - 1));
             callIndex++;
 
-            AssistantMessage assistantMessage = new AssistantMessage(reply);
-            Generation generation = new Generation(assistantMessage);
-            // 在 ChatResponseMetadata 中注入 usage（与真实 Spring AI 一致）
-            DefaultUsage usage = new DefaultUsage((int) tokens[0], (int) tokens[1], (int) (tokens[0] + tokens[1]));
-            ChatResponseMetadata metadata = ChatResponseMetadata.builder()
-                    .usage(usage)
+            return ChatResponse.builder()
+                    .aiMessage(AiMessage.from(reply))
+                    .metadata(ChatResponseMetadata.builder()
+                            .tokenUsage(new TokenUsage((int) tokens[0], (int) tokens[1]))
+                            .build())
                     .build();
-            return new ChatResponse(List.of(generation), metadata);
         }
 
         public int getCallCount() {
@@ -125,26 +117,28 @@ class AgentGraphInterpreterTokenTest {
 
     // ==================== 辅助方法 ====================
 
-    private AgentGraphInterpreter interpreter(Map<Long, AgentModelConfig> modelConfigs, int maxSteps) {
-        return new AgentGraphInterpreter(chatModelFactory, toolCallbackFactory, modelConfigs, cipher, null, maxSteps);
+    private AgentGraphInterpreter interpreter(int maxSteps) {
+        return new AgentGraphInterpreter(modelRuntimeService, toolCallbackFactory, null, maxSteps);
     }
 
-    private AgentModelConfig createConfig(Long id) throws Exception {
-        AgentModelConfig config = new AgentModelConfig();
-        config.setId(id);
-        config.setName("test-config-" + id);
-        config.setProtocolType("openai");
-        config.setBaseUrl("http://localhost:9999/v1");
-        config.setModelName("stub-model");
-        // 使用真实 AES 加密，验证解密→build 全链路
-        config.setApiKeyCipher(cipher.encrypt("sk-test-" + id));
-        return config;
-    }
-
-    private void stubChatModel(AgentModelConfig config, ChatModel chatModel) throws Exception {
-        // 解密 apiKeyCipher 得到明文 Key，用于 mock build 调用
-        String plainKey = cipher.decrypt(config.getApiKeyCipher());
-        when(chatModelFactory.build(config, plainKey)).thenReturn(chatModel);
+    private void stubChatModel(Long id, ChatModel chatModel) {
+        AgentModel model = new AgentModel();
+        model.setId(id);
+        model.setName("stub-model-" + id);
+        model.setEnabled(true);
+        AgentProvider provider = new AgentProvider();
+        provider.setId(100L);
+        provider.setName("stub-provider");
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setEnabled(true);
+        when(modelRuntimeService.acquire(id))
+                .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
+        // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）
+        when(modelRuntimeService.chatWithRotation(eq(id), anyList(), any())).thenAnswer(inv ->
+                modelRuntimeService.acquire(id).chatModel().chat(
+                        dev.langchain4j.model.chat.request.ChatRequest.builder()
+                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1))
+                                .build()));
     }
 
     // ==================== 标准1：F02 Token 读取 ====================
@@ -156,12 +150,10 @@ class AgentGraphInterpreterTokenTest {
         // 预期：nodeUsage.totalTokens = 30
         // 实际：通过 TokenChatModel 桩注入 usage，验证 AgentGraphInterpreter 返回的 usage
 
-        AgentModelConfig config = createConfig(1L);
         TokenChatModel chatModel = new TokenChatModel("reply", 10, 20);
-        stubChatModel(config, chatModel);
+        stubChatModel(1L, chatModel);
 
-        Map<Long, AgentModelConfig> modelConfigs = Map.of(1L, config);
-        AgentGraphInterpreter interp = interpreter(modelConfigs, 100);
+        AgentGraphInterpreter interp = interpreter(100);
 
         // 构建单 LLM 节点图
         List<GraphElement> elements = new ArrayList<>();
@@ -172,7 +164,7 @@ class AgentGraphInterpreterTokenTest {
         elements.add(edge("e2", "llm", "end"));
 
         ProcessGraph graph = new ProcessGraph("single-llm", "test", 1, elements, Map.of());
-        String result = interp.run(graph, "input");
+        interp.run(graph, "input");
 
         // 验证 token 聚合：通过 traces 获取节点级 token
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interp.getTraces();
@@ -192,14 +184,12 @@ class AgentGraphInterpreterTokenTest {
         // 输入：顺序 LLM 链，LLM1(prompt=10, completion=20) + LLM2(prompt=30, completion=40)
         // 预期：totalTokens = 10+20+30+40 = 100
 
-        AgentModelConfig config = createConfig(1L);
         SequencedTokenChatModel chatModel = new SequencedTokenChatModel(
                 List.of("reply1", "reply2"),
                 List.of(new long[]{10, 20}, new long[]{30, 40}));
-        stubChatModel(config, chatModel);
+        stubChatModel(1L, chatModel);
 
-        Map<Long, AgentModelConfig> modelConfigs = Map.of(1L, config);
-        AgentGraphInterpreter interp = interpreter(modelConfigs, 100);
+        AgentGraphInterpreter interp = interpreter(100);
 
         // 构建顺序两 LLM 节点图
         List<GraphElement> elements = new ArrayList<>();
@@ -212,7 +202,7 @@ class AgentGraphInterpreterTokenTest {
         elements.add(edge("e3", "llm2", "end"));
 
         ProcessGraph graph = new ProcessGraph("two-llm", "test", 1, elements, Map.of());
-        String result = interp.run(graph, "input");
+        interp.run(graph, "input");
 
         // 验证两个 LLM 节点的 token 数据
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interp.getTraces();
@@ -234,14 +224,12 @@ class AgentGraphInterpreterTokenTest {
         // 输入：三跳 LLM，每跳 prompt=5, completion=5
         // 预期：totalTokens = 3 × 10 = 30
 
-        AgentModelConfig config = createConfig(1L);
         SequencedTokenChatModel chatModel = new SequencedTokenChatModel(
                 List.of("r1", "r2", "r3"),
                 List.of(new long[]{5, 5}, new long[]{5, 5}, new long[]{5, 5}));
-        stubChatModel(config, chatModel);
+        stubChatModel(1L, chatModel);
 
-        Map<Long, AgentModelConfig> modelConfigs = Map.of(1L, config);
-        AgentGraphInterpreter interp = interpreter(modelConfigs, 100);
+        AgentGraphInterpreter interp = interpreter(100);
 
         List<GraphElement> elements = new ArrayList<>();
         elements.add(node("start", "START"));
@@ -255,7 +243,7 @@ class AgentGraphInterpreterTokenTest {
         elements.add(edge("e4", "llm3", "end"));
 
         ProcessGraph graph = new ProcessGraph("three-llm", "test", 1, elements, Map.of());
-        String result = interp.run(graph, "input");
+        interp.run(graph, "input");
 
         // 验证三个 LLM 节点的 token 数据
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interp.getTraces();
@@ -277,15 +265,13 @@ class AgentGraphInterpreterTokenTest {
         // 条件分支：每次返回"continue"回边，第3轮后返回空触发退出
         // 预期：3 轮 × 10 = 30
 
-        AgentModelConfig config = createConfig(1L);
-        // 前2轮返回"continue"，第3轮返回空（触发条件分支退出）
+        // 前2轮返回"continue"，第3轮返回"done"（触发条件分支退出）
         SequencedTokenChatModel chatModel = new SequencedTokenChatModel(
                 List.of("continue", "continue", "done"),
                 List.of(new long[]{5, 5}, new long[]{5, 5}, new long[]{5, 5}));
-        stubChatModel(config, chatModel);
+        stubChatModel(1L, chatModel);
 
-        Map<Long, AgentModelConfig> modelConfigs = Map.of(1L, config);
-        AgentGraphInterpreter interp = interpreter(modelConfigs, 100);
+        AgentGraphInterpreter interp = interpreter(100);
 
         // 构建 LOOP 图：start → loop → llm → cond → end(默认) / cond → loop(keyword="continue")
         List<GraphElement> elements = new ArrayList<>();
@@ -301,7 +287,7 @@ class AgentGraphInterpreterTokenTest {
         elements.add(edgeWithKeyword("e5", "cond", "loop", "continue"));
 
         ProcessGraph graph = new ProcessGraph("loop-graph", "test", 1, elements, Map.of());
-        String result = interp.run(graph, "input");
+        interp.run(graph, "input");
 
         // 验证 LOOP 迭代的 token 数据
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interp.getTraces();
@@ -329,15 +315,13 @@ class AgentGraphInterpreterTokenTest {
         // 预期：LLM1 input=10,output=20; LLM2 input=30,output=40
         // 执行汇总：总 input=40, 总 output=60
 
-        AgentModelConfig config = createConfig(1L);
         // FORK 两个分支各自执行一个 LLM 节点
         SequencedTokenChatModel chatModel = new SequencedTokenChatModel(
                 List.of("branch1-reply", "branch2-reply"),
                 List.of(new long[]{10, 20}, new long[]{30, 40}));
-        stubChatModel(config, chatModel);
+        stubChatModel(1L, chatModel);
 
-        Map<Long, AgentModelConfig> modelConfigs = Map.of(1L, config);
-        AgentGraphInterpreter interp = interpreter(modelConfigs, 100);
+        AgentGraphInterpreter interp = interpreter(100);
 
         // 构建 FORK/JOIN 图：START → FORK → [LLM1, LLM2] → JOIN → END
         List<GraphElement> elements = new ArrayList<>();
@@ -355,7 +339,7 @@ class AgentGraphInterpreterTokenTest {
         elements.add(edge("e6", "join", "end"));
 
         ProcessGraph graph = new ProcessGraph("fork-join", "test", 1, elements, Map.of());
-        String result = interp.run(graph, "input");
+        interp.run(graph, "input");
 
         // 验证两个 LLM 节点的 token 数据
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interp.getTraces();
@@ -384,14 +368,12 @@ class AgentGraphInterpreterTokenTest {
         // 预期：两次执行各记录 input=10,output=20（不去重）
         // 执行汇总：总 input=20, 总 output=40
 
-        AgentModelConfig config = createConfig(1L);
         SequencedTokenChatModel chatModel = new SequencedTokenChatModel(
                 List.of("continue", "done"),
                 List.of(new long[]{10, 20}, new long[]{10, 20}));
-        stubChatModel(config, chatModel);
+        stubChatModel(1L, chatModel);
 
-        Map<Long, AgentModelConfig> modelConfigs = Map.of(1L, config);
-        AgentGraphInterpreter interp = interpreter(modelConfigs, 100);
+        AgentGraphInterpreter interp = interpreter(100);
 
         // 构建 LOOP 图
         List<GraphElement> elements = new ArrayList<>();
@@ -407,7 +389,7 @@ class AgentGraphInterpreterTokenTest {
         elements.add(edgeWithKeyword("e5", "cond", "loop", "continue"));
 
         ProcessGraph graph = new ProcessGraph("same-node-loop", "test", 1, elements, Map.of());
-        String result = interp.run(graph, "input");
+        interp.run(graph, "input");
 
         // 验证同一 LLM 节点两次执行的 token 数据（不去重）
         List<AgentGraphInterpreter.NodeExecutionTrace> traces = interp.getTraces();

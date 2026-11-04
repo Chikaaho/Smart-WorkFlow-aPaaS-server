@@ -9,10 +9,15 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.entity.AgentModelConfig;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
-import com.sw.ck.agent.service.AgentModelConfigService;
-import com.sw.ck.agent.service.impl.AgentModelConfigServiceImpl;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
+import com.sw.ck.agent.service.AgentModelService;
+import com.sw.ck.agent.service.AgentProviderService;
+import com.sw.ck.agent.service.impl.AgentModelManageServiceImpl;
+import com.sw.ck.agent.service.impl.AgentProviderServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.datascope.DataScopeType;
@@ -112,7 +117,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 "spring.ai.openai.api-key=test-dummy"
         }
 )
-@DisplayName("大模型接入配置 Controller 测试（权限三分）")
+@DisplayName("供应商/模型管理 Controller 测试（权限三分，F1 两级模型）")
 class AgentModelControllerTest {
 
     private static final String TEST_BASE64_KEY =
@@ -131,25 +136,22 @@ class AgentModelControllerTest {
     private ObjectMapper objectMapper;
 
     @Autowired
-    private AgentModelConfigMapper mapper;
+    private AgentProviderMapper providerMapper;
+
+    @Autowired
+    private AgentModelMapper modelMapper;
 
     // ==================== 建表（V19 H2 脚本 DDL） ====================
 
     @BeforeAll
     static void createTables(@Autowired JdbcTemplate jt) {
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
+                CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
+                    api_format      VARCHAR(32) NOT NULL,
                     name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
                     base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
                     api_key_cipher  CLOB,
-                    temperature     DECIMAL(4,2),
-                    max_tokens      INT,
-                    top_p           DECIMAL(4,2),
-                    timeout_seconds INT NOT NULL DEFAULT 30,
-                    retry_count     INT NOT NULL DEFAULT 0,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),
                     create_time     TIMESTAMP,
@@ -158,21 +160,44 @@ class AgentModelControllerTest {
                     update_by       VARCHAR(64),
                     deleted         SMALLINT NOT NULL DEFAULT 0,
                     tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_provider_name ON sw_agent_provider (tenant_id, name)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_model (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    provider_id     BIGINT NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    model_name      VARCHAR(200) NOT NULL,
+                    capabilities    VARCHAR(100) NOT NULL DEFAULT 'CHAT',
+                    temperature     DECIMAL(4,2),
+                    max_tokens      INT,
+                    top_p           DECIMAL(4,2),
+                    timeout_seconds INT NOT NULL DEFAULT 30,
+                    retry_count     INT NOT NULL DEFAULT 0,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
                     group_key       VARCHAR(100),
                     sort            INT NOT NULL DEFAULT 0,
                     locked_until    TIMESTAMP,
-                    quota_cooldown_seconds INT NOT NULL DEFAULT 60
+                    quota_cooldown_seconds INT NOT NULL DEFAULT 60,
+                    remark          CLOB,
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
-        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model_config (tenant_id, name)");
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_tenant_deleted ON sw_agent_model_config (tenant_id, deleted)");
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_group ON sw_agent_model_config (tenant_id, group_key, sort)");
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model (tenant_id, name)");
     }
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
+        jdbcTemplate.update("DELETE FROM sw_agent_model");
+        jdbcTemplate.update("DELETE FROM sw_agent_provider");
         LoginUserHolder.clear();
     }
 
@@ -201,17 +226,28 @@ class AgentModelControllerTest {
         return "Bearer " + jwtTokenProvider.generateToken(userId);
     }
 
-    private String createModelJson(String name) {
-        return """
-                {"name":"%s","protocolType":"openai","baseUrl":"http://127.0.0.1:1","modelName":"gpt-4o","apiKey":"sk-test-123456","timeoutSeconds":30,"retryCount":0,"enabled":true}
-                """.formatted(name);
+    /** 创建供应商（OPENAI_CHAT，指向不可达端口）并返回 id */
+    private Long createProviderAs(String token, String name) throws Exception {
+        MvcResult result = mockMvc.perform(post("/agent/providers")
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"%s","apiFormat":"OPENAI_CHAT","baseUrl":"http://127.0.0.1:1","apiKey":"sk-test-123456","enabled":true}
+                                """.formatted(name)))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(body.get("code").asInt()).isZero();
+        return body.get("data").asLong();
     }
 
-    private Long createModelAs(String token, String name) throws Exception {
+    private Long createModelAs(String token, Long providerId, String name) throws Exception {
         MvcResult result = mockMvc.perform(post("/agent/models")
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(createModelJson(name)))
+                        .content("""
+                                {"providerId":%d,"name":"%s","modelName":"gpt-4o","capabilities":"CHAT","timeoutSeconds":3,"retryCount":0,"enabled":true}
+                                """.formatted(providerId, name)))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
@@ -238,21 +274,26 @@ class AgentModelControllerTest {
     @Test
     @DisplayName("用例2: 具备 agent:model:manage 权限调用 POST /agent/models → 创建成功返回 id")
     void create_withManagePermission_shouldSucceed() throws Exception {
+        Long providerId = createProviderAs(bearerToken(2L), "controller-provider");
         MvcResult result = mockMvc.perform(post("/agent/models")
                         .header("Authorization", bearerToken(2L))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(createModelJson("controller-model")))
+                        .content("""
+                                {"providerId":%d,"name":"controller-model","modelName":"gpt-4o","capabilities":"CHAT","timeoutSeconds":3,"retryCount":0,"enabled":true}
+                                """.formatted(providerId)))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
         assertThat(body.get("code").asInt()).isZero();
         long id = body.get("data").asLong();
         assertThat(id).isPositive();
-        // 落库验证（密文存储，非明文）
+        // 落库验证：模型挂在供应商下；供应商密钥密文存储（非明文）
         setDbLoginContext();
-        AgentModelConfig saved = mapper.selectById(id);
-        assertThat(saved).isNotNull();
-        assertThat(saved.getApiKeyCipher()).isNotEqualTo("sk-test-123456");
+        AgentModel savedModel = modelMapper.selectById(id);
+        assertThat(savedModel).isNotNull();
+        assertThat(savedModel.getProviderId()).isEqualTo(providerId);
+        AgentProvider savedProvider = providerMapper.selectById(providerId);
+        assertThat(savedProvider.getApiKeyCipher()).isNotEqualTo("sk-test-123456");
     }
 
     // ==================== 用例 3：manage 无 test → test-connection 仍 403 ====================
@@ -261,7 +302,8 @@ class AgentModelControllerTest {
     @DisplayName("用例3: 仅具 manage 权限调 test-connection → 403（三权限码互不越权）")
     void testConnection_withoutTestPermission_shouldReturn403() throws Exception {
         // 先以 manage 权限创建一条
-        Long id = createModelAs(bearerToken(2L), "no-test-perm");
+        Long providerIdA = createProviderAs(bearerToken(2L), "no-test-perm-provider");
+        Long id = createModelAs(bearerToken(2L), providerIdA, "no-test-perm");
 
         MvcResult result = mockMvc.perform(post("/agent/models/" + id + "/test-connection")
                         .header("Authorization", bearerToken(2L)))
@@ -281,8 +323,9 @@ class AgentModelControllerTest {
                         .header("Authorization", bearerToken(3L)))
                 .andExpect(status().isOk());
 
-        // POST 创建
-        Long id = createModelAs(bearerToken(3L), "super-admin-model");
+        // POST 创建（superAdmin：供应商 + 模型两级）
+        Long providerId = createProviderAs(bearerToken(3L), "super-admin-provider");
+        Long id = createModelAs(bearerToken(3L), providerId, "super-admin-model");
 
         // GET 详情
         mockMvc.perform(get("/agent/models/" + id)
@@ -303,7 +346,7 @@ class AgentModelControllerTest {
                         .header("Authorization", bearerToken(3L)))
                 .andExpect(status().isOk());
         setDbLoginContext();
-        assertThat(mapper.selectById(id)).isNull();
+        assertThat(modelMapper.selectById(id)).isNull();
     }
 
     // ==================== 用例 5：未认证 → 401 ====================
@@ -467,10 +510,22 @@ class AgentModelControllerTest {
         }
 
         @Bean
-        public AgentModelConfigService agentModelConfigService(AesGcmCipher agentAesGcmCipher,
-                                                               com.sw.ck.common.security.LoginContextProvider loginContextProvider,
-                                                               com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new AgentModelConfigServiceImpl(agentAesGcmCipher, loginContextProvider, deptScopeProvider);
+        public AgentProviderService agentProviderService(AesGcmCipher agentAesGcmCipher) {
+            return new AgentProviderServiceImpl(agentAesGcmCipher);
+        }
+
+        @Bean
+        public AgentModelRuntimeService agentModelRuntimeService(
+                AgentModelMapper agentModelMapper,
+                AgentProviderMapper agentProviderMapper,
+                AesGcmCipher agentAesGcmCipher) {
+            return new AgentModelRuntimeService(agentModelMapper, agentProviderMapper, agentAesGcmCipher);
+        }
+
+        @Bean
+        public AgentModelService agentModelService(AgentProviderMapper agentProviderMapper,
+                                                   AgentModelRuntimeService modelRuntimeService) {
+            return new AgentModelManageServiceImpl(agentProviderMapper, modelRuntimeService);
         }
 
         @Bean
@@ -480,8 +535,13 @@ class AgentModelControllerTest {
         }
 
         @Bean
-        public AgentModelController agentModelController(AgentModelConfigService agentModelConfigService) {
-            return new AgentModelController(agentModelConfigService);
+        public AgentModelController agentModelController(AgentModelService agentModelService) {
+            return new AgentModelController(agentModelService);
+        }
+
+        @Bean
+        public AgentProviderController agentProviderController(AgentProviderService agentProviderService) {
+            return new AgentProviderController(agentProviderService);
         }
 
         // ==================== JSON ====================

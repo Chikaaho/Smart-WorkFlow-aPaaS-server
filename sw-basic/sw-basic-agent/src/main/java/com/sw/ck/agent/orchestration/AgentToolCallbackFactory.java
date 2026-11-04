@@ -5,8 +5,12 @@ import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.function.FunctionToolCallback;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.service.tool.ToolExecutor;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationContext;
@@ -25,31 +29,20 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * 工具回调工厂（M07 Step3 工具沙箱）：从 DB 白名单表加载启用工具，构造
- * {@link ToolCallback} 列表。两类工具统一走 {@link FunctionToolCallback} lambda 路径
- * （不使用注解式工具声明、不用 MethodToolCallback），工具名/描述/inputSchema 三字段
- * 均来自 DB 配置，不在代码硬编。
+ * 工具工厂（M07 Step3 → F1 阶段 1 LangChain4j 化）：从 DB 白名单表加载启用工具，
+ * 构造 {@link ToolHandle}（{@link ToolSpecification} + {@link ToolExecutor}）列表。
  * <p>
- * <b>安全边界</b>：{@code beanName}/{@code methodName}（内部工具）与
- * {@code url}/{@code httpMethod}（外部工具）均来自 DB 白名单表，不接受运行时外部
- * 传入——LLM 的 tool_calls 只携带工具名与参数，名称 → 目标 的映射在本类内部完成。
+ * <b>参数约定</b>：工具入参统一为单个字符串（沿用 M07 现场实测约定，内部工具签名
+ * {@code String execute(String)}），LLM 侧 schema 固定为单字符串属性 {@code input}
+ * （等价于旧 Spring AI inputType(String) 生成的 {"type":"string"}）；DB 的
+ * input_schema 仅作为描述性配置保留，不再拼进请求 schema。
+ * 工具执行循环（tool_calls → 执行 → 回喂）由调用方（AgentGraphFactory / 图 LLM 节点）
+ * 基于低层 ChatModel 手工完成。
  * </p>
  * <p>
- * <b>fail-fast</b>：beanName 不在 ApplicationContext（{@link NoSuchBeanDefinitionException}）
- * 或 methodName 不存在（{@link IllegalStateException}）在工厂构造阶段即抛出，不等到
- * LLM 调用时才暴露；外部工具 HTTP 方法仅支持 GET/POST/PUT。
- * </p>
- * <p>
- * <b>入参约定（现场 spike 实测，见回执 §3）</b>：{@code inputType(String.class)} 时
- * Spring AI 会把 tool_calls 的 arguments 反序列化为 String——LLM 按生成的
- * {@code {"type":"string"}} schema 发送 JSON 字符串字面量，lambda 收到原始参数字符串；
- * {@code inputSchema(null)} 安全（回退由 inputType 生成 schema）。若某配置的
- * input_schema 诱导 LLM 发送 JSON 对象，{@code call()} 抛 Jackson 反序列化异常，由
- * Spring AI 默认 ToolExecutionExceptionProcessor 转为错误消息回喂 LLM，不中断调用。
- * </p>
- * <p>
- * 非启动缓存：每次 orchestration 调用时加载（MyBatis-Plus 层有缓存支持），保证工具
- * 配置变更即时生效（方案 §8.1）。
+ * <b>安全边界不变</b>：beanName/methodName（内部）与 url/httpMethod（外部）均来自 DB
+ * 白名单表，LLM 只能携带工具名与参数；名称 → 目标的映射在本类内部完成。
+ * fail-fast：bean/方法不存在在构造阶段即抛；外部工具仅 GET/POST/PUT。
  * </p>
  */
 @Component
@@ -61,6 +54,13 @@ public class AgentToolCallbackFactory {
 
     /** 外部工具支持的 HTTP 方法白名单 */
     private static final Set<String> SUPPORTED_HTTP_METHODS = Set.of("GET", "POST", "PUT");
+
+    /** arguments JSON 解析（字符串字面量反序列化）；静态无状态可复用 */
+    private static final ObjectMapper ARGUMENTS_JSON = new ObjectMapper();
+
+    /** LangChain4j 工具句柄：规格（发给 LLM）+ 执行器（本地执行 tool_calls） */
+    public record ToolHandle(ToolSpecification specification, ToolExecutor executor) {
+    }
 
     private final AgentToolInternalConfigMapper internalMapper;
     private final AgentToolExternalConfigMapper externalMapper;
@@ -75,41 +75,62 @@ public class AgentToolCallbackFactory {
     }
 
     /**
-     * 加载启用工具并构造回调列表（内部 + 外部）。
+     * 加载启用工具并构造句柄列表（内部 + 外部）。
      *
      * @param tenantId 租户过滤条件；null 时不显式过滤（生产环境由 MyBatis-Plus
-     *                 租户拦截器按当前登录租户自动隔离，同 Step2 先例）
-     * @return 工具回调列表（可能为空）
+     *                 租户拦截器按当前登录租户自动隔离）
+     * @return 工具句柄列表（可能为空）
      */
-    public List<ToolCallback> buildToolCallbacks(Long tenantId) {
+    public List<ToolHandle> buildToolCallbacks(Long tenantId) {
         // enabled 条件用数字字面量 1（非 Boolean 参数）：H2/PG 下 Boolean 参数与
-        // SMALLINT 列比较不稳定（H2 实测 90110 "SMALLINT and BOOLEAN are not comparable"，
-        // PG 报 operator does not exist: smallint = boolean），M07 Step4 现场实证，见回执 §7
+        // SMALLINT 列比较不稳定（M07 Step4 现场实证，见回执 §7）
         List<AgentToolInternalConfig> internals = internalMapper.selectList(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
-                        .eq(AgentToolInternalConfig::getEnabled, 1)
+                        .eq(AgentToolInternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolInternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolInternalConfig::getId));
         List<AgentToolExternalConfig> externals = externalMapper.selectList(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
-                        .eq(AgentToolExternalConfig::getEnabled, 1)
+                        .eq(AgentToolExternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolExternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolExternalConfig::getId));
-        List<ToolCallback> callbacks = new ArrayList<>(internals.size() + externals.size());
+        List<ToolHandle> handles = new ArrayList<>(internals.size() + externals.size());
         for (AgentToolInternalConfig config : internals) {
-            callbacks.add(buildInternalCallback(config));
+            handles.add(buildInternalTool(config));
         }
         for (AgentToolExternalConfig config : externals) {
-            callbacks.add(buildExternalCallback(config));
+            handles.add(buildExternalTool(config));
         }
-        return callbacks;
+        return handles;
+    }
+
+    /** 按工具名解析执行器（工具循环回喂时使用；未知名返回 null，由调用方判空） */
+    public static ToolExecutor executorOf(List<ToolHandle> handles, String toolName) {
+        for (ToolHandle handle : handles) {
+            if (handle.specification().name().equals(toolName)) {
+                return handle.executor();
+            }
+        }
+        return null;
+    }
+
+    /** 构造工具规格（单字符串入参 schema） */
+    private ToolSpecification specOf(String name, String description) {
+        return ToolSpecification.builder()
+                .name(name)
+                .description(description)
+                .parameters(JsonObjectSchema.builder()
+                        .addStringProperty("input", "工具入参（JSON 字符串）")
+                        .required("input")
+                        .build())
+                .build();
     }
 
     /**
-     * 构造内部工具回调：运行时反射调用白名单 bean 的约定方法
+     * 构造内部工具：运行时反射调用白名单 bean 的约定方法
      * {@code String execute(String params)}（构造阶段完成 bean 解析与签名校验，fail-fast）。
      */
-    private ToolCallback buildInternalCallback(AgentToolInternalConfig config) {
+    private ToolHandle buildInternalTool(AgentToolInternalConfig config) {
         // beanName 来自 DB 白名单，不存在时 getBean 抛 NoSuchBeanDefinitionException（fail-fast）
         Object bean = applicationContext.getBean(config.getBeanName());
         Method method;
@@ -128,26 +149,22 @@ public class AgentToolCallbackFactory {
                             + config.getBeanName() + "." + config.getMethodName()
                             + " 实际返回 " + method.getReturnType().getSimpleName());
         }
-        return FunctionToolCallback.builder(config.getName(), (String jsonArgs) -> {
-                    // M07 Step4 F04：lambda 包装计时 + 调用摘要写入 ThreadLocal 载体
-                    // （未绑定记录列表时跳过，行为与 Step3 完全一致）
-                    long start = System.currentTimeMillis();
-                    String result = invokeInternal(bean, method, config.getName(), jsonArgs);
-                    recordToolCall(config.getName(), jsonArgs, result, System.currentTimeMillis() - start);
-                    return result;
-                })
-                .description(config.getDescription())
-                // 实测（回执 §3.4）：inputSchema(null) 不 NPE，回退由 inputType 生成 {"type":"string"}
-                .inputSchema(config.getInputSchema())
-                .inputType(String.class)
-                .build();
+        ToolExecutor executor = (request, memoryId) -> {
+            // F04：lambda 包装计时 + 调用摘要写入 ThreadLocal 载体（未绑定记录列表时跳过）
+            long start = System.currentTimeMillis();
+            String args = unwrapArguments(request);
+            String result = invokeInternal(bean, method, config.getName(), args);
+            recordToolCall(config.getName(), args, result, System.currentTimeMillis() - start);
+            return result;
+        };
+        return new ToolHandle(specOf(config.getName(), config.getDescription()), executor);
     }
 
     /**
-     * 构造外部工具回调：按白名单 URL + HTTP 方法发起 RestClient 请求，超时从
-     * {@code timeoutSeconds} 字段读（参照 {@link ChatModelFactory#buildRestClientBuilder} 模式）。
+     * 构造外部工具：按白名单 URL + HTTP 方法发起 RestClient 请求，超时从
+     * {@code timeoutSeconds} 字段读。
      */
-    private ToolCallback buildExternalCallback(AgentToolExternalConfig config) {
+    private ToolHandle buildExternalTool(AgentToolExternalConfig config) {
         String httpMethodName = config.getHttpMethod() == null
                 ? "POST"
                 : config.getHttpMethod().toUpperCase(Locale.ROOT);
@@ -164,28 +181,26 @@ public class AgentToolCallbackFactory {
         RestClient restClient = RestClient.builder().requestFactory(requestFactory).build();
         HttpMethod httpMethod = HttpMethod.valueOf(httpMethodName);
         String url = config.getUrl();
-        return FunctionToolCallback.builder(config.getName(), (String jsonArgs) -> {
-                    // 实测（回执 §3.5）：GET 携带 body 不报错（SimpleClientHttpRequestFactory 忽略），
-                    // 因此统一携带 body，无需按方法分支；M07 Step4 F04：lambda 包装计时 + 记录
-                    long start = System.currentTimeMillis();
-                    String result = restClient.method(httpMethod)
-                            .uri(url)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(jsonArgs)
-                            .retrieve()
-                            .body(String.class);
-                    recordToolCall(config.getName(), jsonArgs, result, System.currentTimeMillis() - start);
-                    return result;
-                })
-                .description(config.getDescription())
-                .inputSchema(config.getInputSchema())
-                .inputType(String.class)
-                .build();
+        ToolExecutor executor = (request, memoryId) -> {
+            // 实测（回执 §3.5）：GET 携带 body 不报错（SimpleClientHttpRequestFactory 忽略），
+            // 因此统一携带 body；F04：计时 + ThreadLocal 记录
+            long start = System.currentTimeMillis();
+            String args = unwrapArguments(request);
+            String result = restClient.method(httpMethod)
+                    .uri(url)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(args)
+                    .retrieve()
+                    .body(String.class);
+            recordToolCall(config.getName(), args, result, System.currentTimeMillis() - start);
+            return result;
+        };
+        return new ToolHandle(specOf(config.getName(), config.getDescription()), executor);
     }
 
     /**
      * 反射调用内部工具方法（异常语义与 Step3 一致：目标方法异常经原因链展开为
-     * IllegalStateException，由框架 ToolExecutionExceptionProcessor 转为错误消息回喂 LLM）。
+     * IllegalStateException，由工具循环转为错误消息回喂 LLM）。
      */
     private String invokeInternal(Object bean, Method method, String toolName, String jsonArgs) {
         try {
@@ -200,9 +215,29 @@ public class AgentToolCallbackFactory {
     }
 
     /**
-     * 将一次成功的工具调用摘要写入 {@link AgentGraphFactory#TOOL_CALL_RECORDS_BINDING}
-     * （M07 Step4 F04）。未绑定记录列表（编排未走 ServiceImpl 绑定路径）时跳过——不抛异常、
-     * 不记录，保持 Step3 行为完全一致。
+     * 反序列化工具入参：LLM 产出的 arguments 是 schema {@code input} 属性的 JSON 值；
+     * 单字符串入参约定下为 JSON 字符串字面量（如 {@code "\"你好\""}）——解出原始字符串
+     * 后再传给白名单方法 / 外部工具。非字面量（对象、非法 JSON）原样透传。
+     */
+    private static String unwrapArguments(ToolExecutionRequest request) {
+        String raw = request.arguments();
+        if (raw == null || raw.isEmpty()) {
+            return raw;
+        }
+        try {
+            JsonNode node = ARGUMENTS_JSON.readTree(raw);
+            if (node.isTextual()) {
+                return node.asText();
+            }
+        } catch (Exception ignored) {
+            // 非法 JSON：原样透传（由白名单方法/外部服务自行处理）
+        }
+        return raw;
+    }
+
+    /**
+     * 将一次成功的工具调用摘要写入 {@link AgentGraphFactory#TOOL_CALL_RECORDS_BINDING}。
+     * 未绑定记录列表时跳过——不抛异常、不记录。
      */
     private void recordToolCall(String toolName, String args, String result, long latencyMs) {
         List<ToolCallRecord> records = AgentGraphFactory.TOOL_CALL_RECORDS_BINDING.get();

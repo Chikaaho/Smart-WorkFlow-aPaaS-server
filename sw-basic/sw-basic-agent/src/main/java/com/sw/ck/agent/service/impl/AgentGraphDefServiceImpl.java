@@ -54,10 +54,17 @@ public class AgentGraphDefServiceImpl
     /** graphKey 前缀（对齐 sw-bpm "bpm_" 前缀先例） */
     private static final String GRAPH_KEY_PREFIX = "agent_";
 
-    private final ObjectMapper objectMapper;
+    /** 图级执行超时默认值（与 V0.2.3 DDL 默认一致） */
+    private static final int DEFAULT_EXECUTION_TIMEOUT_SECONDS = 300;
+    private static final int MAX_EXECUTION_TIMEOUT_SECONDS = 3600;
 
-    public AgentGraphDefServiceImpl(ObjectMapper objectMapper) {
+    private final ObjectMapper objectMapper;
+    private final AgentGraphSnapshotServiceImpl snapshotService;
+
+    public AgentGraphDefServiceImpl(ObjectMapper objectMapper,
+                                    AgentGraphSnapshotServiceImpl snapshotService) {
         this.objectMapper = objectMapper;
+        this.snapshotService = snapshotService;
     }
 
     // ==================== 创建 ====================
@@ -79,6 +86,7 @@ public class AgentGraphDefServiceImpl
         entity.setDefVersion(1);
         entity.setStatus(STATUS_DRAFT);
         entity.setGraphJson(toJson(initialGraph));
+        entity.setExecutionTimeoutSeconds(DEFAULT_EXECUTION_TIMEOUT_SECONDS);
         try {
             save(entity);
         } catch (DuplicateKeyException e) {
@@ -151,6 +159,30 @@ public class AgentGraphDefServiceImpl
         entity.setStatus(STATUS_PUBLISHED);
         updateById(entity);
 
+        // —— ④ D022-06：固化不可变版本快照（执行/调试按此绑定，后续草稿编辑不影响） ——
+        snapshotService.createSnapshot(entity);
+
+        return toDTO(entity);
+    }
+
+    @Override
+    public java.util.List<com.sw.ck.agent.dto.AgentGraphSnapshotDTO> listVersions(Long id) {
+        requireEntity(id);
+        return snapshotService.listVersions(id);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public AgentGraphDefDTO updateSettings(Long id, Integer executionTimeoutSecs) {
+        if (executionTimeoutSecs == null
+                || executionTimeoutSecs < 1
+                || executionTimeoutSecs > MAX_EXECUTION_TIMEOUT_SECONDS) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                    "执行超时必须在 1–" + MAX_EXECUTION_TIMEOUT_SECONDS + " 秒之间");
+        }
+        AgentGraphDef entity = requireEntity(id);
+        entity.setExecutionTimeoutSeconds(executionTimeoutSecs);
+        updateById(entity);
         return toDTO(entity);
     }
 
@@ -251,6 +283,7 @@ public class AgentGraphDefServiceImpl
         dto.setName(entity.getName());
         dto.setDefVersion(entity.getDefVersion());
         dto.setStatus(entity.getStatus());
+        dto.setExecutionTimeoutSeconds(entity.getExecutionTimeoutSeconds());
         dto.setCreateTime(entity.getCreateTime());
         dto.setUpdateTime(entity.getUpdateTime());
         return dto;

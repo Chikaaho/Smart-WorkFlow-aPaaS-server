@@ -11,13 +11,15 @@ import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
 import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
 import com.sw.ck.agent.entity.AgentMessage;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.AgentSession;
 import com.sw.ck.agent.mapper.AgentMessageMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.AgentSessionMapper;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
 import com.sw.ck.agent.orchestration.AgentGraphFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -96,7 +98,10 @@ class AgentTokenUsageBehaviorTest {
     private AgentOrchestrationServiceImpl service;
 
     @Autowired
-    private AgentModelConfigMapper modelConfigMapper;
+    private AgentProviderMapper providerMapper;
+
+    @Autowired
+    private AgentModelMapper modelMapper;
 
     @Autowired
     private AgentSessionMapper sessionMapper;
@@ -244,8 +249,11 @@ class AgentTokenUsageBehaviorTest {
         // ==================== M07 Step2 业务 Bean ====================
 
         @Bean
-        public ChatModelFactory chatModelFactory() {
-            return new ChatModelFactory();
+        public AgentModelRuntimeService agentModelRuntimeService(
+                AgentModelMapper agentModelMapper,
+                AgentProviderMapper agentProviderMapper,
+                AesGcmCipher aesGcmCipher) {
+            return new AgentModelRuntimeService(agentModelMapper, agentProviderMapper, aesGcmCipher);
         }
 
         @Bean
@@ -255,12 +263,10 @@ class AgentTokenUsageBehaviorTest {
 
         @Bean
         public AgentOrchestrationServiceImpl agentOrchestrationService(
-                AgentModelConfigMapper agentModelConfigMapper,
-                AesGcmCipher aesGcmCipher,
-                ChatModelFactory chatModelFactory,
+                AgentModelRuntimeService modelRuntimeService,
                 CompiledGraph<AgentState> agentCompiledGraph) {
-            return new AgentOrchestrationServiceImpl(
-                    agentModelConfigMapper, aesGcmCipher, chatModelFactory, agentCompiledGraph);
+            // 会话/消息/工具日志 Mapper 与 AgentToolCallbackFactory 为 @Autowired 字段注入，Spring 自动填充
+            return new AgentOrchestrationServiceImpl(modelRuntimeService, agentCompiledGraph);
         }
     }
 
@@ -290,35 +296,54 @@ class AgentTokenUsageBehaviorTest {
                 """);
         jt.execute("CREATE INDEX IF NOT EXISTS idx_agent_msg_session ON sw_agent_message (session_id, msg_order, deleted)");
 
-        // agent_model_config 表
+        // agent_provider / agent_model 表（F1 阶段 1 拆分为供应商 + 模型）
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
-                    id                BIGINT NOT NULL PRIMARY KEY,
-                    name              VARCHAR(100) NOT NULL,
-                    protocol_type     VARCHAR(20) NOT NULL,
-                    base_url          VARCHAR(500) NOT NULL,
-                    model_name        VARCHAR(100) NOT NULL,
-                    api_key_cipher    VARCHAR(500),
-                    temperature       DOUBLE,
-                    max_tokens        INT,
-                    top_p             DOUBLE,
-                    timeout_seconds   INT DEFAULT 30,
-                    retry_count       INT DEFAULT 3,
-                    enabled           SMALLINT NOT NULL DEFAULT 1,
-                    group_key         VARCHAR(100),
-                    sort              INT DEFAULT 0,
-                    locked_until      TIMESTAMP,
-                    quota_cooldown_seconds INT DEFAULT 60,
-                    remark            VARCHAR(500),
-                    create_time       TIMESTAMP NOT NULL,
-                    create_by         VARCHAR(64),
-                    update_time       TIMESTAMP,
-                    update_by         VARCHAR(64),
-                    deleted           SMALLINT NOT NULL DEFAULT 0,
-                    tenant_id         BIGINT NOT NULL DEFAULT 0,
-                    version           BIGINT NOT NULL DEFAULT 0
+                CREATE TABLE IF NOT EXISTS sw_agent_provider (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    api_format      VARCHAR(32) NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    base_url        VARCHAR(500),
+                    api_key_cipher  CLOB,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
+                    remark          VARCHAR(500),
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_provider_name ON sw_agent_provider (tenant_id, name)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_model (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    provider_id     BIGINT NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    model_name      VARCHAR(100) NOT NULL,
+                    capabilities    VARCHAR(50),
+                    temperature     DECIMAL(4,2),
+                    max_tokens      INT,
+                    top_p           DECIMAL(4,2),
+                    timeout_seconds INT NOT NULL DEFAULT 30,
+                    retry_count     INT NOT NULL DEFAULT 0,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
+                    group_key       VARCHAR(100),
+                    sort            INT NOT NULL DEFAULT 0,
+                    locked_until    TIMESTAMP,
+                    quota_cooldown_seconds INT NOT NULL DEFAULT 60,
+                    remark          VARCHAR(500),
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model (tenant_id, name)");
 
         // agent_session 表
         jt.execute("""
@@ -363,7 +388,8 @@ class AgentTokenUsageBehaviorTest {
         jdbcTemplate.update("DELETE FROM sw_agent_tool_call_log");
         jdbcTemplate.update("DELETE FROM sw_agent_message");
         jdbcTemplate.update("DELETE FROM sw_agent_session");
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
+        jdbcTemplate.update("DELETE FROM sw_agent_model");
+        jdbcTemplate.update("DELETE FROM sw_agent_provider");
 
         // 设置登录用户
         LoginUser loginUser = new LoginUser();
@@ -909,17 +935,23 @@ class AgentTokenUsageBehaviorTest {
     }
 
     private Long insertModelConfig(String protocol, String baseUrl, String apiKey) {
-        AgentModelConfig config = new AgentModelConfig();
-        config.setName("Token-Behavior-Test-" + System.nanoTime());
-        config.setProtocolType(protocol);
-        config.setBaseUrl(baseUrl);
-        config.setModelName("gpt-4o");
-        config.setApiKeyCipher(apiKey == null ? null : cipher.encrypt(apiKey));
-        config.setEnabled(true);
-        config.setTimeoutSeconds(30);
-        config.setRetryCount(0);
-        modelConfigMapper.insert(config);
-        return config.getId();
+        AgentProvider provider = new AgentProvider();
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setName("Token-Provider-" + System.nanoTime());
+        provider.setBaseUrl(baseUrl + "/v1");
+        provider.setApiKeyCipher(apiKey == null ? null : cipher.encrypt(apiKey));
+        provider.setEnabled(true);
+        providerMapper.insert(provider);
+        AgentModel model = new AgentModel();
+        model.setProviderId(provider.getId());
+        model.setName("Token-Behavior-Test-" + System.nanoTime());
+        model.setModelName("gpt-4o");
+        model.setCapabilities("CHAT");
+        model.setEnabled(true);
+        model.setTimeoutSeconds(30);
+        model.setRetryCount(0);
+        modelMapper.insert(model);
+        return model.getId();
     }
 
     /**

@@ -100,18 +100,8 @@ spring:
     async-executor-activate: false
     database-schema-update: true
 
-  # ======================== Spring AI ========================
-  ai:
-    openai:
-      api-key: ${OPENAI_API_KEY:}
-      chat:
-        options:
-          model: gpt-4o
-    ollama:
-      base-url: http://localhost:11434
-      chat:
-        options:
-          model: llama3
+  # F1 阶段 1（D022-01）：Agent 模型接入已切换 LangChain4j，模型地址/密钥经
+  # sw_agent_provider / sw_agent_model 配置，全局 spring.ai 默认配置移除。
 
   # ======================== MQTT ========================
   mqtt:
@@ -155,6 +145,11 @@ sw:
   agent:
     enabled: true
     cipher-key: ${SW_CIPHER_KEY:}                                        # AES-256-GCM 密钥（Base64），与 sw.external-datasource.cipher-key 同构共享
+
+  # ---------- 知识库 / RAG（F1 阶段 3，D022-07） ----------
+  knowledge:
+    enabled: true
+    vector-store: pgvector                                               # pgvector（生产）｜memory（H2 测试）
 
   # ---------- 站内信 / 消息模板（M05，P36 消息模板管理） ----------
   notify:

@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（200 常量 / 195 个唯一数值码 / 5 枚举）
+## 2. 全量登记（206 常量 / 201 个唯一数值码 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -119,6 +119,12 @@
 | form | `INTEGRATION_RECORD_DENIED` | 1807 | `form.integration_record_denied` | 当前身份无权对该记录执行此集成调用 |
 | form | `INTEGRATION_NOT_CONFIGURED` | 1808 | `form.integration_not_configured` | 表单未配置可调用的集成能力 |
 | form | `INTEGRATION_IDEMPOTENCY_CONFLICT` | 1809 | `form.integration_idempotency_conflict` | 相同提交标识的集成请求内容不一致，已拒绝 |
+| form | `BUNDLE_FORMAT_UNSUPPORTED` | 1900 | `form.bundle_format_unsupported` | 导入包格式版本不兼容，无法导入 |
+| form | `BUNDLE_INVALID` | 1901 | `form.bundle_invalid` | 导入包内容无效或已损坏 |
+| form | `BUNDLE_OPINION_KEY_CONFLICT` | 1902 | `form.bundle_opinion_key_conflict` | 审批意见表单新标识在目标租户已存在，请修改后重试 |
+| form | `BUNDLE_OPINION_KEY_REQUIRED` | 1903 | `form.bundle_opinion_key_required` | 存在冲突的审批意见表单未提供新标识，不能确认导入 |
+| form | `BUNDLE_IMPORT_FAILED` | 1904 | `form.bundle_import_failed` | 应用导入失败 |
+| form | `BUNDLE_RECORD_NOT_FOUND` | 1905 | `form.bundle_record_not_found` | 导入记录不存在 |
 | bpm | `GRAPH_MISSING_START` | 2000 | `bpm.graph_missing_start` | 图缺少开始节点 |
 | bpm | `GRAPH_MULTIPLE_START` | 2001 | `bpm.graph_multiple_start` | 图存在多个开始节点 |
 | bpm | `GRAPH_MISSING_END` | 2002 | `bpm.graph_missing_end` | 图缺少结束节点 |

@@ -102,10 +102,27 @@
             取较高档 3.48.3，与装配制品现解析值一致，且不改变任何运行期行为（注解保留级别）。
         -->
         <checker-qual.version>3.48.3</checker-qual.version>
+        <!--
+            ===================== Agent 模型接入（D022-01/F1 阶段 1） =====================
+            LangChain4j 1.23.x 稳定线。Jackson：LC4j 1.23.0 编译基线为 2.22.4，而
+            spring-boot-dependencies 3.4.4 管理 2.18.3；直接共存会有 NoSuchMethodError 风险。
+            解法：在 Boot BOM 之前导入 jackson-bom 2.22.4，全反应堆统一到 2.22.4
+            （Jackson 2.x 向后兼容，Boot 3.4.4 可运行）。不升级/降级 Spring Boot 主版本。
+        -->
+        <langchain4j.version>1.23.0</langchain4j.version>
+        <jackson.version>2.22.4</jackson.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- Jackson BOM 必须先于 Spring Boot BOM 导入，才能覆盖 Boot 3.4.4 的 2.18.3（D022-01）。 -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <!-- =================== Spring Boot BOM =================== -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
@@ -183,6 +200,21 @@
                 <groupId>org.bsc.langgraph4j</groupId>
                 <artifactId>langgraph4j-core</artifactId>
                 <version>${langgraph4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-open-ai</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-anthropic</artifactId>
+                <version>${langchain4j.version}</version>
             </dependency>
 
             <!-- =================== MQTT =================== -->

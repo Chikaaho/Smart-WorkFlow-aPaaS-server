@@ -46,4 +46,25 @@ public class AgentGraphExecutionNode extends BaseEntity {
 
     /** 该节点 LLM 调用的输出 Token（非 LLM 节点或供应商未返回时为 NULL） */
     private Long outputTokens;
+
+    /** 该节点内工具调用轨迹（JSON 数组，阶段 2；无工具调用时为 NULL） */
+    private String toolCalls;
+
+    /** 该节点真实输入（LLM=实际发送的用户消息；TOOL=工具入参文本；缺省为 NULL） */
+    private String inputText;
+
+    /** 该节点真实输出（LLM=模型最终回答；TOOL=工具返回文本；缺省为 NULL） */
+    private String outputText;
+
+    /** 节点开始时间（出队时点） */
+    private java.time.LocalDateTime startTime;
+
+    /** 节点结束时间（本步执行/路由完成时点） */
+    private java.time.LocalDateTime endTime;
+
+    /** 节点执行状态：SUCCESS / FAILED */
+    private String status;
+
+    /** 节点失败原因（成功时为 NULL） */
+    private String errorMessage;
 }

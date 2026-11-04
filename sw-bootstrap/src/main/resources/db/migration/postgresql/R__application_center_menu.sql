@@ -55,3 +55,39 @@ set parent_id = 0, sort = 15
 where id = 9130
   and deleted = 0
   and (parent_id <> 0 or sort <> 15);
+
+-- 0.2.2 F2（D022-10～15）：应用导出/导入按钮权限（菜单 9132/9133，由 V0.2.6 建行）
+-- 默认授予所有已持有应用管理（9130）的角色（幂等对账）。全新库上 V0.2.6 的随行授权
+-- 先于本脚本执行时 9330/9331 尚未插入而空转，故此处按同一语义补授；存量库由
+-- V0.2.6 即时授予，本脚本 NOT EXISTS 兜底不再变化。授权 id 按 MAX(id)+ROW_NUMBER
+-- 顺延（同 V0.2.6 口径），租户沿用被授角色的 role_menu 行。
+
+INSERT INTO sys_role_menu (id, create_time, update_time, deleted, version, tenant_id, role_id, menu_id)
+SELECT (SELECT COALESCE(MAX(id), 0) FROM sys_role_menu) + ROW_NUMBER() OVER (ORDER BY rm.tenant_id, rm.role_id),
+       current_timestamp, current_timestamp, 0, 0, rm.tenant_id, rm.role_id, 9132
+FROM sys_role_menu rm
+JOIN sys_role r ON r.id = rm.role_id AND r.deleted = 0
+WHERE rm.menu_id = 9130
+  AND rm.deleted = 0
+  AND NOT EXISTS (
+    SELECT 1 FROM sys_role_menu x
+    WHERE x.tenant_id = rm.tenant_id
+      AND x.role_id = rm.role_id
+      AND x.menu_id = 9132
+      AND x.deleted = 0
+  );
+
+INSERT INTO sys_role_menu (id, create_time, update_time, deleted, version, tenant_id, role_id, menu_id)
+SELECT (SELECT COALESCE(MAX(id), 0) FROM sys_role_menu) + ROW_NUMBER() OVER (ORDER BY rm.tenant_id, rm.role_id),
+       current_timestamp, current_timestamp, 0, 0, rm.tenant_id, rm.role_id, 9133
+FROM sys_role_menu rm
+JOIN sys_role r ON r.id = rm.role_id AND r.deleted = 0
+WHERE rm.menu_id = 9130
+  AND rm.deleted = 0
+  AND NOT EXISTS (
+    SELECT 1 FROM sys_role_menu x
+    WHERE x.tenant_id = rm.tenant_id
+      AND x.role_id = rm.role_id
+      AND x.menu_id = 9133
+      AND x.deleted = 0
+  );

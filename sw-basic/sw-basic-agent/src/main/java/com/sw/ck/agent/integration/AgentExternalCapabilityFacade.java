@@ -50,7 +50,7 @@ public class AgentExternalCapabilityFacade implements ExternalCapabilityFacade {
         List<AgentToolExternalConfig> rows = externalMapper.selectList(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
                         .eq(AgentToolExternalConfig::getTenantId, tenantId)
-                        .eq(AgentToolExternalConfig::getEnabled, 1)
+                        .eq(AgentToolExternalConfig::getEnabled, true)
                         .orderByDesc(AgentToolExternalConfig::getId));
         List<ExternalCapability> result = new ArrayList<>(rows.size());
         for (AgentToolExternalConfig row : rows) {
@@ -133,7 +133,7 @@ public class AgentExternalCapabilityFacade implements ExternalCapabilityFacade {
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
                         .eq(AgentToolExternalConfig::getTenantId, tenantId)
                         .eq(AgentToolExternalConfig::getName, name)
-                        .eq(AgentToolExternalConfig::getEnabled, 1)
+                        .eq(AgentToolExternalConfig::getEnabled, true)
                         .orderByDesc(AgentToolExternalConfig::getId));
         if (rows.isEmpty()) return null;
         AgentToolExternalConfig row = rows.get(0);

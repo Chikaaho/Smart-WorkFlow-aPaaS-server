@@ -18,16 +18,24 @@ import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecution;
 import com.sw.ck.agent.entity.AgentGraphExecutionNode;
-import com.sw.ck.agent.entity.AgentModelConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
-import com.sw.ck.agent.mapper.AgentModelConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import com.sw.ck.agent.entity.AgentModel;
+import com.sw.ck.agent.entity.AgentProvider;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
-import com.sw.ck.agent.orchestration.ChatModelFactory;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.ChatResponseMetadata;
+import dev.langchain4j.model.output.TokenUsage;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
@@ -48,18 +56,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.metadata.ChatResponseMetadata;
-import org.springframework.ai.chat.metadata.DefaultUsage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.tool.ToolCallback;
-import org.mockito.ArgumentCaptor;
-import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -80,7 +76,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -90,9 +86,9 @@ import static org.mockito.Mockito.when;
  * {@link AgentGraphExecutionServiceImpl} 测试（M07-F02 Step8 §7，@SpringBootTest + H2）。
  * <p>
  * 策略与 {@code AgentGraphDefServiceImplTest} 同款组合装配（TestConfig 手动装配
- * MyBatis-Plus + 租户拦截器 + ObjectMapper），另装配 {@code ChatModelFactory}/
- * {@code AgentToolCallbackFactory} 两个 mock 与真实 {@code AesGcmCipher}（final 类不
- * mock，用测试密钥验证解密→build 全链路）。建表 DDL 与 V25/V19/V20/V21 H2 脚本对齐。
+ * MyBatis-Plus + 租户拦截器 + ObjectMapper），另装配 {@code AgentModelRuntimeService}/
+ * {@code AgentToolCallbackFactory} 两个 mock（LC4j ChatModel 桩经 ModelInstance 注入，
+ * F1 阶段 1）与真实 {@code AesGcmCipher}。建表 DDL 与 V25/V19/V20/V21 H2 脚本对齐。
  * </p>
  */
 @SpringBootTest(
@@ -123,7 +119,10 @@ class AgentGraphExecutionServiceImplTest {
     private AgentGraphDefService graphDefService;
 
     @Autowired
-    private AgentModelConfigMapper modelConfigMapper;
+    private com.sw.ck.agent.mapper.AgentProviderMapper providerMapper;
+
+    @Autowired
+    private com.sw.ck.agent.mapper.AgentModelMapper modelMapper;
 
     @Autowired
     private AgentToolInternalConfigMapper internalToolMapper;
@@ -138,7 +137,7 @@ class AgentGraphExecutionServiceImplTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private ChatModelFactory chatModelFactory;
+    private AgentModelRuntimeService modelRuntimeService;
 
     @Autowired
     private AgentToolCallbackFactory toolCallbackFactory;
@@ -157,6 +156,7 @@ class AgentGraphExecutionServiceImplTest {
                     def_version  INT NOT NULL DEFAULT 1,
                     status       VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
                     graph_json   CLOB,
+                    execution_timeout_seconds INT NOT NULL DEFAULT 300,
                     create_time  TIMESTAMP,
                     create_by    VARCHAR(64),
                     update_time  TIMESTAMP,
@@ -169,18 +169,30 @@ class AgentGraphExecutionServiceImplTest {
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_key ON sw_agent_graph_def (tenant_id, graph_key)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_graph_tenant_deleted ON sw_agent_graph_def (tenant_id, deleted)");
         jt.execute("""
-                CREATE TABLE IF NOT EXISTS sw_agent_model_config (
+                CREATE TABLE IF NOT EXISTS sw_agent_graph_snapshot (
+                    id            BIGINT NOT NULL PRIMARY KEY,
+                    graph_def_id  BIGINT NOT NULL,
+                    def_version   INT NOT NULL,
+                    graph_key     VARCHAR(100),
+                    name          VARCHAR(200),
+                    graph_json    CLOB NOT NULL,
+                    create_time   TIMESTAMP,
+                    create_by     VARCHAR(64),
+                    update_time   TIMESTAMP,
+                    update_by     VARCHAR(64),
+                    deleted       SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id     BIGINT NOT NULL DEFAULT 0,
+                    version       BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_snapshot_ver ON sw_agent_graph_snapshot (tenant_id, graph_def_id, def_version)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
+                    api_format      VARCHAR(32) NOT NULL,
                     name            VARCHAR(100) NOT NULL,
-                    protocol_type   VARCHAR(32) NOT NULL,
-                    base_url        VARCHAR(500) NOT NULL,
-                    model_name      VARCHAR(100) NOT NULL,
+                    base_url        VARCHAR(500),
                     api_key_cipher  CLOB,
-                    temperature     DECIMAL(4,2),
-                    max_tokens      INT,
-                    top_p           DECIMAL(4,2),
-                    timeout_seconds INT NOT NULL DEFAULT 30,
-                    retry_count     INT NOT NULL DEFAULT 0,
                     enabled         SMALLINT NOT NULL DEFAULT 1,
                     remark          VARCHAR(500),
                     create_time     TIMESTAMP,
@@ -189,13 +201,38 @@ class AgentGraphExecutionServiceImplTest {
                     update_by       VARCHAR(64),
                     deleted         SMALLINT NOT NULL DEFAULT 0,
                     tenant_id       BIGINT NOT NULL DEFAULT 0,
-                    version         BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_provider_name ON sw_agent_provider (tenant_id, name)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_model (
+                    id              BIGINT NOT NULL PRIMARY KEY,
+                    provider_id     BIGINT NOT NULL,
+                    name            VARCHAR(100) NOT NULL,
+                    model_name      VARCHAR(100) NOT NULL,
+                    capabilities    VARCHAR(50),
+                    temperature     DECIMAL(4,2),
+                    max_tokens      INT,
+                    top_p           DECIMAL(4,2),
+                    timeout_seconds INT NOT NULL DEFAULT 30,
+                    retry_count     INT NOT NULL DEFAULT 0,
+                    enabled         SMALLINT NOT NULL DEFAULT 1,
                     group_key       VARCHAR(100),
                     sort            INT NOT NULL DEFAULT 0,
                     locked_until    TIMESTAMP,
-                    quota_cooldown_seconds INT NOT NULL DEFAULT 60
+                    quota_cooldown_seconds INT NOT NULL DEFAULT 60,
+                    remark          VARCHAR(500),
+                    create_time     TIMESTAMP,
+                    create_by       VARCHAR(64),
+                    update_time     TIMESTAMP,
+                    update_by       VARCHAR(64),
+                    deleted         SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id       BIGINT NOT NULL DEFAULT 0,
+                    version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_model_name ON sw_agent_model (tenant_id, name)");
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_tool_internal (
                     id              BIGINT NOT NULL PRIMARY KEY,
@@ -235,7 +272,7 @@ class AgentGraphExecutionServiceImplTest {
                     version         BIGINT NOT NULL DEFAULT 0
                 )
                 """);
-        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_tenant_deleted ON sw_agent_model_config (tenant_id, deleted)");
+        jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_model_tenant_deleted ON sw_agent_model (tenant_id, deleted)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_tool_internal_tenant_deleted ON sw_agent_tool_internal (tenant_id, deleted)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_tool_external_tenant_deleted ON sw_agent_tool_external (tenant_id, deleted)");
         // Step12 执行历史两表（对齐 V27/V28 H2 脚本 DDL）
@@ -275,6 +312,13 @@ class AgentGraphExecutionServiceImplTest {
                     input_tokens      BIGINT,
                     output_tokens     BIGINT,
                     variable_snapshot CLOB,
+                    tool_calls CLOB,
+                    input_text        CLOB,
+                    output_text       CLOB,
+                    start_time        TIMESTAMP,
+                    end_time          TIMESTAMP,
+                    status            VARCHAR(20) NOT NULL DEFAULT 'SUCCESS',
+                    error_message     CLOB,
                     create_time       TIMESTAMP,
                     create_by         VARCHAR(64),
                     update_time       TIMESTAMP,
@@ -291,8 +335,10 @@ class AgentGraphExecutionServiceImplTest {
     void setUp() {
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution_node");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution");
+        jdbcTemplate.update("DELETE FROM sw_agent_graph_snapshot");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_def");
-        jdbcTemplate.update("DELETE FROM sw_agent_model_config");
+        jdbcTemplate.update("DELETE FROM sw_agent_model");
+        jdbcTemplate.update("DELETE FROM sw_agent_provider");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_internal");
         jdbcTemplate.update("DELETE FROM sw_agent_tool_external");
         setLoginUser(TENANT_100, USER_1);
@@ -317,8 +363,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例1: 执行已发布图（START→LLM→END）→ success=true + 模型输出；latencyMs 非负")
     void execute_publishedLlmGraph_shouldSucceed() {
         Long modelId = insertModelConfig("openai-1", "sk-llm-1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("图执行输出"));
+                        stubAcquire(new StubChatModel("图执行输出"));
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参文本");
@@ -327,6 +372,56 @@ class AgentGraphExecutionServiceImplTest {
         assertThat(resp.getOutput()).isEqualTo("图执行输出");
         assertThat(resp.getErrorMessage()).isNull();
         assertThat(resp.getLatencyMs()).isNotNegative();
+    }
+
+    @Test
+    @DisplayName("阶段2: 图级超时——模型调用阻塞超过配置时限 → success=false + FAILED + GRAPH_TIMEOUT")
+    void execute_graphTimeout_shouldFailWithTimeoutCategory() {
+        Long modelId = insertModelConfig("openai-timeout", "sk-timeout");
+        stubAcquire(new SlowChatModel(2000L));
+        Long id = createPublishedGraph(llmGraph(modelId));
+        graphDefService.updateSettings(id, 1);
+
+        AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
+
+        assertThat(resp.isSuccess()).isFalse();
+        assertThat(resp.getErrorMessage()).contains("超时");
+        AgentGraphExecution exec = executionMapper.selectById(resp.getExecutionId());
+        assertThat(exec.getStatus()).isEqualTo("FAILED");
+        assertThat(exec.getErrorCategory()).isEqualTo("GRAPH_TIMEOUT");
+        assertThat(exec.getLatencyMs()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("阶段2: 执行工作线程复制认证上下文（模型调用线程可读取租户）")
+    void execute_shouldPropagateLoginContextToWorkerThread() {
+        Long modelId = insertModelConfig("openai-ctx", "sk-ctx");
+        stubAcquire(new ContextCheckingChatModel());
+        Long id = createPublishedGraph(llmGraph(modelId));
+
+        AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
+
+        assertThat(resp.isSuccess()).isTrue();
+        assertThat(resp.getOutput()).isEqualTo("CTX-OK");
+    }
+
+    @Test
+    @DisplayName("D022-06: 执行读取发布快照——发布后草稿改成无 LLM 图，执行仍使用快照内容")
+    void execute_shouldUsePublishedSnapshot_evenIfDraftChanged() {
+        Long modelId = insertModelConfig("openai-snap", "sk-llm-snap");
+        stubAcquire(new StubChatModel("快照输出"));
+        Long id = createPublishedGraph(llmGraph(modelId));
+
+        // 发布后覆盖草稿（defVersion 不变）：若执行误读 graph_json，会得到入参原文而非模型输出
+        graphDefService.saveDraftGraph(id, graphOf(
+                node("node_start", "START", Map.of()),
+                node("node_end", "END", Map.of()),
+                edge("e1", "node_start", "node_end", Map.of())));
+
+        AgentGraphExecuteRespDTO resp = service.execute(id, "入参文本");
+
+        assertThat(resp.isSuccess()).isTrue();
+        assertThat(resp.getOutput()).isEqualTo("快照输出");
     }
 
     // ==================== 用例 2：DRAFT 图 → PARAM_ERROR ====================
@@ -360,13 +455,16 @@ class AgentGraphExecutionServiceImplTest {
     @Test
     @DisplayName("用例4: LLM 节点引用不存在的模型配置 → 执行前 PARAM_ERROR（不做部分执行）")
     void execute_llmRefMissingModelConfig_shouldThrowParamError() {
-        Long id = createPublishedGraph(llmGraph(888888L));   // 该 id 无对应配置行
+        // 该 id 无对应配置行：执行前校验 assertUsable 抛业务异常（模型不存在或已删除）
+        org.mockito.Mockito.doThrow(new BaseException(CommonErrorCode.NOT_FOUND, "模型不存在或已删除: 888888"))
+                .when(modelRuntimeService).assertUsable(888888L);
+        Long id = createPublishedGraph(llmGraph(888888L));
 
         assertThatThrownBy(() -> service.execute(id, "文本"))
                 .isInstanceOf(BaseException.class)
-                .hasMessageContaining("LLM 节点引用的模型配置不存在")
+                .hasMessageContaining("模型不存在")
                 .satisfies(ex -> assertThat(((BaseException) ex).getCode())
-                        .isEqualTo(CommonErrorCode.PARAM_ERROR.getCode()));
+                        .isEqualTo(CommonErrorCode.NOT_FOUND.getCode()));
     }
 
     // ==================== 用例 5：TOOL 引用不存在/未启用工具 → 执行前 PARAM_ERROR ====================
@@ -470,10 +568,16 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例10: 执行含 TOOL 节点的已发布图（白名单 enabled=1 + 按名定位回调）→ success=true")
     void execute_toolNode_shouldSucceed() {
         insertInternalTool("echo_tool", 1);
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "echo:" + s)
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
+        AgentToolCallbackFactory.ToolHandle echo = new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name("echo_tool").description("回声工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> {
+                    try {
+                        String arg = new ObjectMapper().readValue(request.arguments(), String.class);
+                        return new ObjectMapper().writeValueAsString("echo:" + arg);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
         when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
         Long id = createPublishedGraph(toolGraph("echo_tool"));
 
@@ -490,8 +594,7 @@ class AgentGraphExecutionServiceImplTest {
     void execute_conditionNoMatchNoDefault_shouldReturnFailure() {
         // LLM 分支节点引用的模型配置须通过执行前校验（否则提前 PARAM_ERROR 拦截）
         Long modelId = insertModelConfig("openai-3", "sk-llm-3");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("不应到达"));
+                        stubAcquire(new StubChatModel("不应到达"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_cond", "CONDITION", Map.of()),
@@ -515,8 +618,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例12: LLM 模型调用抛异常 → success=false + 异常摘要（不抛 500）")
     void execute_llmCallThrows_shouldReturnFailure() {
         Long modelId = insertModelConfig("openai-2", "sk-llm-2");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new ThrowingChatModel());
+                        stubAcquire(new ThrowingChatModel());
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "文本");
@@ -531,8 +633,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例13: LLM outputVar 写命名变量 + END inputVar 读回 → success=true + 命名变量值（全链路）")
     void execute_namedVariableGraph_shouldSucceed() {
         Long modelId = insertModelConfig("openai-4", "sk-llm-4");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("汇总输出"));
+                        stubAcquire(new StubChatModel("汇总输出"));
         // LLM 写 summary 变量；END inputVar=summary 取最终输出（默认变量保持入参原值）
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -555,8 +656,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例14: LLM inputVar 引用未定义变量 → 运行时 success=false + errorMessage（不上抛）")
     void execute_undefinedVariable_shouldReturnFailure() {
         Long modelId = insertModelConfig("openai-5", "sk-llm-5");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("不应到达"));
+                        stubAcquire(new StubChatModel("不应到达"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_llm", "LLM", Map.of("agentModelConfigId", modelId, "inputVar", "missing")),
@@ -579,8 +679,10 @@ class AgentGraphExecutionServiceImplTest {
     void execute_loopGraph_shouldSucceed() {
         Long modelId = insertModelConfig("openai-6", "sk-loop");
         // 三次 build 依次返回：前两轮无退出关键词 → 默认边回 LOOP；第三轮"退出" → 走 END
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("结果1"), new StubChatModel("结果2"), new StubChatModel("退出"));
+                        stubAcquire(
+                    new StubChatModel("结果1"),
+                    new StubChatModel("结果2"),
+                    new StubChatModel("退出"));
         // 与解释器单测同构的循环图（经 graph_json 序列化往返，验证不透明 config 键 maxIterations 零迁移）
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -609,12 +711,10 @@ class AgentGraphExecutionServiceImplTest {
     void execute_forkJoinGraph_shouldSucceed() {
         Long modelId = insertModelConfig("openai-7", "sk-b1");
         insertInternalTool("echo_tool", 1);
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("分支1输出"));
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "分支2输出")
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
+                        stubAcquire(new StubChatModel("分支1输出"));
+        AgentToolCallbackFactory.ToolHandle echo = new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name("echo_tool").description("回声工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> "\"分支2输出\"");
         when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
 
         // B1: LLM 写 v1；B2: TOOL 写 v2；JOIN 汇合后 END 从 v1 取最终输出
@@ -706,8 +806,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例20: 执行成功 → 落库 status=SUCCESS + output/input/graphDefId/version + 节点明细 3 行（START/LLM/END）+ 响应 executionId")
     void execute_success_shouldPersistHistory() {
         Long modelId = insertModelConfig("openai-8", "sk-persist");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("持久化输出"));
+                        stubAcquire(new StubChatModel("持久化输出"));
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参文本");
@@ -745,8 +844,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例21: 条件无匹配且无默认边 → 落库 status=FAILED + errorCategory=CONDITION_NO_MATCH + 节点明细含失败节点行")
     void execute_runtimeFailure_shouldPersistFailure() {
         Long modelId = insertModelConfig("openai-9", "sk-fail");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("不应到达"));
+                        stubAcquire(new StubChatModel("不应到达"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_cond", "CONDITION", Map.of()),
@@ -783,8 +881,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例22: LLM 第三方异常 → 落库 errorCategory=MODEL_CALL_FAILED")
     void execute_llmThirdPartyFailure_shouldPersistModelCallFailed() {
         Long modelId = insertModelConfig("openai-10", "sk-throw");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new ThrowingChatModel());
+                        stubAcquire(new ThrowingChatModel());
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "文本");
@@ -799,8 +896,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例23: 步数超限（预算耗尽仍死循环）→ 落库 errorCategory=STEP_LIMIT")
     void execute_stepLimit_shouldPersistStepLimit() {
         Long modelId = insertModelConfig("openai-11", "sk-loop-limit");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("死循环"));
+                        stubAcquire(new StubChatModel("死循环"));
         // START→CONDITION（keyword 边→END / 默认边→LLM）→LLM→CONDITION：输入与 LLM
         // 输出永不含关键词 → 死循环，靠全局步数兜底（END 可达，执行前校验放行）
         ProcessGraph graph = graphOf(
@@ -826,8 +922,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例24: 循环迭代超限 → 落库 errorCategory=LOOP_LIMIT")
     void execute_loopLimit_shouldPersistLoopLimit() {
         Long modelId = insertModelConfig("openai-12", "sk-loop-over");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("永不退出"));
+                        stubAcquire(new StubChatModel("永不退出"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_loop", "LOOP", Map.of("maxIterations", 1)),
@@ -853,8 +948,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例25: 未定义变量引用 → 落库 errorCategory=UNDEFINED_VARIABLE")
     void execute_undefinedVariable_shouldPersistUndefinedVariable() {
         Long modelId = insertModelConfig("openai-13", "sk-undef");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("不应到达"));
+                        stubAcquire(new StubChatModel("不应到达"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_llm", "LLM", Map.of("agentModelConfigId", modelId, "inputVar", "missing")),
@@ -874,12 +968,11 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例26: 工具回调运行时异常 → 落库 errorCategory=TOOL_CALL_FAILED")
     void execute_toolRuntimeFailure_shouldPersistToolCallFailed() {
         insertInternalTool("boom_tool", 1);
-        ToolCallback boom = FunctionToolCallback.builder("boom_tool", (String s) -> {
-            throw new IllegalStateException("tool exploded");
-        })
-                .description("抛错工具")
-                .inputType(String.class)
-                .build();
+        AgentToolCallbackFactory.ToolHandle boom = new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name("boom_tool").description("抛错工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> {
+                    throw new IllegalStateException("tool exploded");
+                });
         when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(boom));
         Long id = createPublishedGraph(toolGraph("boom_tool"));
 
@@ -897,8 +990,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例27: 执行历史列表 — 分页 + graphDefId 过滤；无过滤 = 全部")
     void pageExecutions_shouldReturnPagedAndFiltered() {
         Long modelId = insertModelConfig("openai-14", "sk-list");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("列表输出"));
+                        stubAcquire(new StubChatModel("列表输出"));
         Long id1 = createPublishedGraph(llmGraph(modelId));
         Long id2 = createPublishedGraph(llmGraph(modelId));
 
@@ -925,8 +1017,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例28: 执行详情 — input/output/latency/version 回显；不存在的 id → NOT_FOUND")
     void getExecution_shouldReturnDetailOrNotFound() {
         Long modelId = insertModelConfig("openai-15", "sk-detail");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("详情输出"));
+                        stubAcquire(new StubChatModel("详情输出"));
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "详情入参");
@@ -952,8 +1043,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例29: 节点明细 — nodeSeq 升序返回；执行记录不存在 → NOT_FOUND")
     void listExecutionNodes_shouldReturnOrderedOrNotFound() {
         Long modelId = insertModelConfig("openai-16", "sk-nodes");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("节点输出"));
+                        stubAcquire(new StubChatModel("节点输出"));
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
@@ -980,8 +1070,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例30: 跨租户隔离 — 租户 B 查执行历史列表为空、详情/节点 → NOT_FOUND")
     void executionHistory_crossTenant_shouldBeIsolated() {
         Long modelId = insertModelConfig("openai-17", "sk-tenant");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("租户输出"));
+                        stubAcquire(new StubChatModel("租户输出"));
         Long id = createPublishedGraph(llmGraph(modelId));
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
 
@@ -999,7 +1088,7 @@ class AgentGraphExecutionServiceImplTest {
 
     // ==================== 用例36-41：F02 Token 落库查询 + 会话/租户隔离 + 部分 usage（M07-F04-02 D164 补证） ====================
 
-    /** 带 usage metadata 的 ChatModel 桩：每次 call 返回固定 reply + 固定 token；token 序列化输入输出独立可控 */
+    /** 带 TokenUsage 的 ChatModel 桩：每次 chat 返回固定 reply + 固定 token；token 序列化输入输出独立可控 */
     static class TokenStubChatModel implements ChatModel {
         private final String reply;
         private final Long promptTokens;
@@ -1013,23 +1102,18 @@ class AgentGraphExecutionServiceImplTest {
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
+        public ChatResponse chat(ChatRequest request) {
             callCount++;
-            AssistantMessage assistantMessage = new AssistantMessage(reply);
-            Generation generation = new Generation(assistantMessage);
+            ChatResponseMetadata.Builder metadataBuilder = ChatResponseMetadata.builder();
             // promptTokens/completionTokens 为 null 时模拟供应商未返回 usage
-            // （Spring AI 以 EmptyUsage 占位，恒返回 0 → 必须被采集层排除为未知）
-            if (promptTokens == null || completionTokens == null) {
-                ChatResponseMetadata emptyMetadata = ChatResponseMetadata.builder()
-                        .usage(new org.springframework.ai.chat.metadata.EmptyUsage())
-                        .build();
-                return new ChatResponse(List.of(generation), emptyMetadata);
+            // （metadata 不携带 tokenUsage → 采集层保持 null 未知语义，不写零）
+            if (promptTokens != null && completionTokens != null) {
+                metadataBuilder.tokenUsage(new TokenUsage(promptTokens.intValue(), completionTokens.intValue()));
             }
-            DefaultUsage usage = new DefaultUsage(
-                    promptTokens.intValue(), completionTokens.intValue(),
-                    (int) (promptTokens + completionTokens));
-            ChatResponseMetadata metadata = ChatResponseMetadata.builder().usage(usage).build();
-            return new ChatResponse(List.of(generation), metadata);
+            return ChatResponse.builder()
+                    .aiMessage(AiMessage.from(reply))
+                    .metadata(metadataBuilder.build())
+                    .build();
         }
 
         int getCallCount() {
@@ -1041,8 +1125,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例36: 标准1/2-F02 — 单 LLM 节点 token 经生产 Service 落库：执行记录汇总列 + 节点明细列 + 列表/详情/nodes 查询全部返回（DB 实际值可复算）")
     void execute_tokenUsage_shouldPersistToExecutionAndNodeRecordsAndBeQueryable() {
         Long modelId = insertModelConfig("openai-token1", "sk-token1");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new TokenStubChatModel("token回复", 10L, 20L));
+                        stubAcquire(new TokenStubChatModel("token回复", 10L, 20L));
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
@@ -1064,8 +1147,24 @@ class AgentGraphExecutionServiceImplTest {
         assertThat(nodes.get(1).getNodeType()).isEqualTo("LLM");
         assertThat(nodes.get(1).getInputTokens()).isEqualTo(10L);
         assertThat(nodes.get(1).getOutputTokens()).isEqualTo(20L);
+        // F1S2-G1：节点真实输入/输出/时间/状态落库
+        assertThat(nodes.get(1).getInputText()).isEqualTo("入参");
+        assertThat(nodes.get(1).getOutputText()).isEqualTo("token回复");
+        assertThat(nodes.get(1).getStartTime()).isNotNull();
+        assertThat(nodes.get(1).getEndTime()).isNotNull();
+        assertThat(nodes.get(1).getStatus()).isEqualTo("SUCCESS");
         assertThat(nodes.get(2).getNodeType()).isEqualTo("END");
         assertThat(nodes.get(2).getOutputTokens()).isNull();
+
+        // ②b 生产查询端点：节点 DTO 带真实输入/输出与时间（执行详情节点卡片数据源）
+        List<AgentGraphExecutionNodeDTO> detailNodeDtos = service.listExecutionNodes(resp.getExecutionId());
+        assertThat(detailNodeDtos).hasSize(3);
+        AgentGraphExecutionNodeDTO llmNode = detailNodeDtos.get(1);
+        assertThat(llmNode.getInput()).isEqualTo("入参");
+        assertThat(llmNode.getOutput()).isEqualTo("token回复");
+        assertThat(llmNode.getStartTime()).isNotNull();
+        assertThat(llmNode.getEndTime()).isNotNull();
+        assertThat(llmNode.getStatus()).isEqualTo("SUCCESS");
 
         // ③ 生产查询端点：列表 DTO 含 token 汇总
         PageResult<AgentGraphExecutionDTO> page = service.pageExecutions(new PageParam(), id);
@@ -1088,9 +1187,9 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例37: 标准2-F02 — 两 LLM 节点链经生产 Service 落库：执行汇总=两节点和，查询结果与调用事实复算一致")
     void execute_twoLlmChain_shouldAggregateTokensInExecutionRecord() {
         Long modelId = insertModelConfig("openai-token2", "sk-token2");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new TokenStubChatModel("回复1", 10L, 20L),
-                        new TokenStubChatModel("回复2", 30L, 40L));
+                        stubAcquire(
+                    new TokenStubChatModel("回复1", 10L, 20L),
+                    new TokenStubChatModel("回复2", 30L, 40L));
         // 两 LLM 节点链
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -1136,10 +1235,10 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例38: 标准2-F02 — LOOP 同节点重复执行 token 不去重：3 轮调用分别落 3 行节点明细，执行汇总=3 倍")
     void execute_loopRepeatedNode_shouldRecordTokensPerExecutionNotDeduped() {
         Long modelId = insertModelConfig("openai-token3", "sk-token3");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new TokenStubChatModel("继续", 5L, 5L),
-                        new TokenStubChatModel("继续", 5L, 5L),
-                        new TokenStubChatModel("退出", 5L, 5L));
+                        stubAcquire(
+                    new TokenStubChatModel("继续", 5L, 5L),
+                    new TokenStubChatModel("继续", 5L, 5L),
+                    new TokenStubChatModel("退出", 5L, 5L));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_loop", "LOOP", Map.of("maxIterations", 3)),
@@ -1181,8 +1280,7 @@ class AgentGraphExecutionServiceImplTest {
     void execute_noUsage_shouldStoreNullNotZeroInExecutionAndNodes() {
         Long modelId = insertModelConfig("openai-token4", "sk-token4");
         // 不带 usage 的响应（null 语义）
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new TokenStubChatModel("无usage回复", null, null));
+                        stubAcquire(new TokenStubChatModel("无usage回复", null, null));
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
@@ -1209,8 +1307,7 @@ class AgentGraphExecutionServiceImplTest {
     void execute_partialUsage_shouldKeepIndependentNullPerSide() {
         Long modelId = insertModelConfig("openai-token5", "sk-token5");
         // 部分 usage：输入侧有 10，输出侧缺失（DefaultUsage 仅注入 promptTokens）
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new TokenPartialStubChatModel());
+                        stubAcquire(new TokenPartialStubChatModel());
         Long id = createPublishedGraph(llmGraph(modelId));
 
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
@@ -1234,42 +1331,17 @@ class AgentGraphExecutionServiceImplTest {
         assertThat(detail.getOutputTokens()).isNull();
     }
 
-    /** 部分 usage 桩：仅 promptTokens=10，completionTokens 缺失（nativeUsage 原始 record 模拟 OpenAI 响应） */
+    /** 部分 usage 桩：仅 inputTokenCount=10，outputTokenCount 缺失（LC4j TokenUsage 原始 null 语义） */
     static class TokenPartialStubChatModel implements ChatModel {
         @Override
-        public ChatResponse call(Prompt prompt) {
-            AssistantMessage assistantMessage = new AssistantMessage("部分usage回复");
-            Generation generation = new Generation(assistantMessage);
-            // 模拟真实 OpenAI 响应：nativeUsage=OpenAiApi.Usage(10, null, null)——
-            // DefaultUsage 会 0 归一，但 TokenUsageResolver 优先读 nativeUsage 原始 null
-            DefaultUsage usage = new DefaultUsage(10, 0, 10, new UsageRecord(10, null, null));
-            ChatResponseMetadata metadata = ChatResponseMetadata.builder().usage(usage).build();
-            return new ChatResponse(List.of(generation), metadata);
-        }
-    }
-
-    /** 模拟 OpenAiApi.Usage record 形状：缺失字段为 null（供 nativeUsage 反射读取） */
-    static class UsageRecord {
-        private final Integer promptTokens;
-        private final Integer completionTokens;
-        private final Integer totalTokens;
-
-        UsageRecord(Integer promptTokens, Integer completionTokens, Integer totalTokens) {
-            this.promptTokens = promptTokens;
-            this.completionTokens = completionTokens;
-            this.totalTokens = totalTokens;
-        }
-
-        public Integer promptTokens() {
-            return promptTokens;
-        }
-
-        public Integer completionTokens() {
-            return completionTokens;
-        }
-
-        public Integer totalTokens() {
-            return totalTokens;
+        public ChatResponse chat(ChatRequest request) {
+            // LC4j TokenUsage 各计数独立 Integer，缺失侧保持 null（不 0 归一）
+            return ChatResponse.builder()
+                    .aiMessage(AiMessage.from("部分usage回复"))
+                    .metadata(ChatResponseMetadata.builder()
+                            .tokenUsage(new TokenUsage(10, null))
+                            .build())
+                    .build();
         }
     }
 
@@ -1277,8 +1349,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例41: 标准3-F02 — 图执行历史跨租户不串计：租户 B 列表为空 + 详情/节点 NOT_FOUND（token 数据随记录隔离）")
     void executionTokenRecords_crossTenant_shouldBeIsolated() {
         Long modelId = insertModelConfig("openai-token6", "sk-token6");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new TokenStubChatModel("租户回复", 10L, 20L));
+                        stubAcquire(new TokenStubChatModel("租户回复", 10L, 20L));
         Long id = createPublishedGraph(llmGraph(modelId));
         AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
         assertThat(resp.isSuccess()).isTrue();
@@ -1302,8 +1373,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例42: 标准7-历史兼容 — 迁移前 token 列 NULL 的执行记录经列表/详情/节点查询正常返回，token 显示未知（null）而非 0")
     void preMigrationRecords_withNullTokens_shouldBeReadableViaAllQueryEndpoints() {
         Long modelId = insertModelConfig("openai-token7", "sk-token7");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("历史回复"));
+                        stubAcquire(new StubChatModel("历史回复"));
         Long id = createPublishedGraph(llmGraph(modelId));
 
         // 执行一次（当前列已 nullable），再手工把 token 列清成 NULL 模拟迁移前记录
@@ -1414,8 +1484,7 @@ class AgentGraphExecutionServiceImplTest {
     void execute_promptTemplateUndefinedVariable_shouldPersistFailedAndNeverCallModel() {
         Long modelId = insertModelConfig("openai-prompt3", "sk-p3");
         ChatModel mockModel = mock(ChatModel.class);
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(mockModel);
+        stubAcquire(mockModel);
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_llm", "LLM", Map.of(
@@ -1440,15 +1509,14 @@ class AgentGraphExecutionServiceImplTest {
         assertThat(exec.getErrorMessage()).contains("missing");
 
         // ③ 模型未被调用
-        verify(mockModel, never()).call(any(Prompt.class));
+        verify(mockModel, never()).chat(any(ChatRequest.class));
     }
 
     @Test
     @DisplayName("用例34: 未定义变量失败执行记录可通过列表/详情端点查询（标准5 — 可查询性）")
     void execute_promptTemplateUndefined_shouldBeQueryable() {
         Long modelId = insertModelConfig("openai-prompt4", "sk-p4");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("不应到达"));
+                        stubAcquire(new StubChatModel("不应到达"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_llm", "LLM", Map.of(
@@ -1482,8 +1550,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例35: 未发布图执行被门控 → PARAM_ERROR（标准1 — 授权行为）；已发布图可执行且 prompt 配置生效")
     void execute_draftGraphShouldFail_publishedGraphShouldSucceedWithPrompt() {
         Long modelId = insertModelConfig("openai-prompt5", "sk-p5");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("模型回复"));
+                        stubAcquire(new StubChatModel("模型回复"));
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
                 node("node_llm", "LLM", Map.of(
@@ -1505,12 +1572,8 @@ class AgentGraphExecutionServiceImplTest {
         AgentGraphExecuteRespDTO resp = service.execute(draftId, "hello");
         assertThat(resp.isSuccess()).isTrue();
 
-        // 验证模型调用时 Prompt 含系统消息 + 用户消息（prompt 配置生效）
-        ArgumentCaptor<Prompt> promptCaptor = ArgumentCaptor.forClass(Prompt.class);
-        ChatModel mockModel = mock(ChatModel.class);
-        // 注意：chatModelFactory.build 在 execute 中已被调用过一次（上面已 stub 返回 StubChatModel）
-        // 此处用新 mock 重新验证消息构造：通过 InterpreterTest 用例 26/35 已精确断言消息列表
-        // 此处仅验证执行成功 + 输出非空 = prompt 配置经 Service 全链生效
+        // 验证执行成功 + 输出非空 = prompt 配置经 Service 全链生效
+        // （消息列表构造已由 InterpreterTest 用例 26/35 精确断言，此处不重复）
         assertThat(resp.getOutput()).isNotBlank();
     }
 
@@ -1520,14 +1583,19 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("D165-标准5-工具：TOOL 节点执行成功后，图执行落库 status=SUCCESS 且 token 字段不受工具调用污染（工具递归语义仅当前供应商 usage）")
     void execute_toolNode_tokenFieldsShouldRemainNull_notPollutedByToolCall() {
         insertInternalTool("echo_tool", 1);
-        ToolCallback echo = FunctionToolCallback.builder("echo_tool", (String s) -> "echo:" + s)
-                .description("回声工具")
-                .inputType(String.class)
-                .build();
+        AgentToolCallbackFactory.ToolHandle echo = new AgentToolCallbackFactory.ToolHandle(
+                ToolSpecification.builder().name("echo_tool").description("回声工具").build(),
+                (ToolExecutionRequest request, Object memoryId) -> {
+                    try {
+                        String arg = new ObjectMapper().readValue(request.arguments(), String.class);
+                        return new ObjectMapper().writeValueAsString("echo:" + arg);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
         when(toolCallbackFactory.buildToolCallbacks(any())).thenReturn(List.of(echo));
         Long modelId = insertModelConfig("openai-tool-token", "sk-tool-token");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new TokenStubChatModel("工具后LLM回复", 12L, 34L));
+                        stubAcquire(new TokenStubChatModel("工具后LLM回复", 12L, 34L));
         // TOOL -> LLM 链：工具执行不产生 token，执行汇总应仅统计 LLM 节点
         ProcessGraph graph = graphOf(
                 node("node_start", "START", Map.of()),
@@ -1559,8 +1627,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("D165-标准7-历史FAILED：迁移前 FAILED 记录（model/token 列 NULL）经列表/详情/节点查询正常读取，不丢错误分类")
     void preMigrationFailedRecord_shouldBeReadableWithErrorCategoryIntact() {
         Long modelId = insertModelConfig("openai-hist-failed", "sk-hist-failed");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new ThrowingChatModel());
+                        stubAcquire(new ThrowingChatModel());
         Long id = createPublishedGraph(llmGraph(modelId));
         AgentGraphExecuteRespDTO resp = service.execute(id, "触发失败");
         assertThat(resp.isSuccess()).isFalse();
@@ -1592,8 +1659,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("D165-标准8-逻辑删除：sw_agent_graph_execution 逻辑删除后，列表/详情/节点查询不可见（@TableLogic）")
     void logicallyDeletedExecution_shouldBeInvisibleViaQueries() {
         Long modelId = insertModelConfig("openai-delete", "sk-delete");
-        when(chatModelFactory.build(any(AgentModelConfig.class), anyString()))
-                .thenReturn(new StubChatModel("待删除执行输出"));
+                        stubAcquire(new StubChatModel("待删除执行输出"));
         Long id = createPublishedGraph(llmGraph(modelId));
         AgentGraphExecuteRespDTO resp = service.execute(id, "待删除入参");
         assertThat(resp.isSuccess()).isTrue();
@@ -1667,17 +1733,52 @@ class AgentGraphExecutionServiceImplTest {
                 .build();
     }
 
-    /** 插入租户内模型配置行（返回 id） */
+    /** 插入租户内供应商 + 模型行（返回模型 id） */
     private Long insertModelConfig(String name, String plainKey) {
-        AgentModelConfig config = new AgentModelConfig();
-        config.setName(name);
-        config.setProtocolType("openai");
-        config.setBaseUrl("http://localhost:9999/v1");
-        config.setModelName("stub-model");
-        config.setApiKeyCipher(cipher.encrypt(plainKey));
-        config.setEnabled(true);
-        modelConfigMapper.insert(config);
-        return config.getId();
+        AgentProvider provider = new AgentProvider();
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setName("provider-" + name);
+        provider.setBaseUrl("http://localhost:9999/v1");
+        provider.setApiKeyCipher(cipher.encrypt(plainKey));
+        provider.setEnabled(true);
+        providerMapper.insert(provider);
+        AgentModel model = new AgentModel();
+        model.setProviderId(provider.getId());
+        model.setName(name);
+        model.setModelName("stub-model");
+        model.setCapabilities("CHAT");
+        model.setEnabled(true);
+        modelMapper.insert(model);
+        return model.getId();
+    }
+
+    /** 打桩运行时服务：acquire 任意模型 id 返回携带指定 ChatModel 的 ModelInstance（支持连续多次打桩按序消费） */
+    private void stubAcquire(ChatModel... chatModels) {
+        AgentModel model = new AgentModel();
+        model.setId(1L);
+        model.setName("stub-model");
+        model.setEnabled(true);
+        AgentProvider provider = new AgentProvider();
+        provider.setId(1L);
+        provider.setName("stub-provider");
+        provider.setApiFormat("OPENAI_CHAT");
+        provider.setEnabled(true);
+        var instances = java.util.Arrays.stream(chatModels)
+                .map(cm -> new AgentModelRuntimeService.ModelInstance(model, provider, cm))
+                .toArray(AgentModelRuntimeService.ModelInstance[]::new);
+        when(modelRuntimeService.acquire(any())).thenReturn(instances[0],
+                java.util.Arrays.copyOfRange(instances, 1, instances.length));
+        // D022-05 轮换入口：委托回 acquire 打桩（按序消费 ModelInstance，计数语义不变）
+        when(modelRuntimeService.chatWithRotation(any(), anyList(), any())).thenAnswer(inv -> {
+            java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
+            if (msgs == null || msgs.isEmpty()) {
+                return null; // 注册期占位调用防御
+            }
+            return modelRuntimeService.acquire(1L).chatModel().chat(
+                    dev.langchain4j.model.chat.request.ChatRequest.builder()
+                            .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1))
+                            .build());
+        });
     }
 
     /** 插入内部工具白名单行（enabled=1 启用 / 0 禁用） */
@@ -1702,15 +1803,46 @@ class AgentGraphExecutionServiceImplTest {
         }
 
         @Override
-        public ChatResponse call(Prompt prompt) {
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+        public ChatResponse chat(ChatRequest request) {
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
+        }
+    }
+
+    /** 校验工作线程认证上下文可读的 ChatModel 桩 */
+    static class ContextCheckingChatModel implements ChatModel {
+        @Override
+        public ChatResponse chat(ChatRequest request) {
+            if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+                throw new IllegalStateException("tenant-context-missing");
+            }
+            return ChatResponse.builder().aiMessage(AiMessage.from("CTX-OK")).build();
+        }
+    }
+
+    /** 阻塞指定时长的 ChatModel 桩（图级超时测试） */
+    static class SlowChatModel implements ChatModel {
+        private final long sleepMs;
+
+        SlowChatModel(long sleepMs) {
+            this.sleepMs = sleepMs;
+        }
+
+        @Override
+        public ChatResponse chat(ChatRequest request) {
+            try {
+                Thread.sleep(sleepMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted", e);
+            }
+            return ChatResponse.builder().aiMessage(AiMessage.from("迟到回复")).build();
         }
     }
 
     /** 调用即抛异常的 ChatModel 桩 */
     static class ThrowingChatModel implements ChatModel {
         @Override
-        public ChatResponse call(Prompt prompt) {
+        public ChatResponse chat(ChatRequest request) {
             throw new IllegalStateException("model exploded");
         }
     }
@@ -1842,13 +1974,22 @@ class AgentGraphExecutionServiceImplTest {
         // ==================== 业务 Bean ====================
 
         @Bean
-        public AgentGraphDefService agentGraphDefService(ObjectMapper objectMapper) {
-            return new AgentGraphDefServiceImpl(objectMapper);
+        public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                ObjectMapper objectMapper) {
+            return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
 
         @Bean
-        public ChatModelFactory chatModelFactory() {
-            return mock(ChatModelFactory.class);
+        public AgentGraphDefService agentGraphDefService(
+                ObjectMapper objectMapper,
+                AgentGraphSnapshotServiceImpl snapshotService) {
+            return new AgentGraphDefServiceImpl(objectMapper, snapshotService);
+        }
+
+        @Bean
+        public AgentModelRuntimeService agentModelRuntimeService() {
+            return mock(AgentModelRuntimeService.class);
         }
 
         @Bean
@@ -1864,19 +2005,18 @@ class AgentGraphExecutionServiceImplTest {
         @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                AgentModelConfigMapper modelConfigMapper,
                 AgentToolInternalConfigMapper internalToolMapper,
                 AgentToolExternalConfigMapper externalToolMapper,
                 AgentGraphExecutionMapper executionMapper,
                 AgentGraphExecutionNodeMapper executionNodeMapper,
-                ChatModelFactory chatModelFactory,
-                AesGcmCipher aesGcmCipher,
+                AgentModelRuntimeService modelRuntimeService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new AgentGraphExecutionServiceImpl(objectMapper, modelConfigMapper,
+            // AgentToolCallbackFactory 为 @Autowired(required=false) 字段注入，mock bean 由 Spring 自动填充
+            return new AgentGraphExecutionServiceImpl(objectMapper, modelRuntimeService, snapshotService,
                     internalToolMapper, externalToolMapper, executionMapper,
-                    executionNodeMapper, chatModelFactory, aesGcmCipher,
-                    loginContextProvider, deptScopeProvider);
+                    executionNodeMapper, loginContextProvider, deptScopeProvider);
         }
 
         @Bean

@@ -84,11 +84,12 @@ class P64AppendMigrationUpgradePostgresTest {
             stmt.executeUpdate("CREATE DATABASE " + DB_NAME);
         }
 
-        // 1) 迁移到最新链（V0.1.7 种子）
+        // 1) 迁移到类路径最新链
         var baselineResult = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(baselineResult.success, "种子迁移应成功");
-        assertEquals("0.2.0", currentVersion(conn()), "基线终点应为最新迁移");
+        assertEquals(latestClasspathVersion(), currentVersion(conn()),
+                "基线终点应为类路径上实际最新的版本化迁移");
 
         // 2) 非空存量：旧流程定义 + 运行实例 + 任务级审批动作行（追加前真实业务行）
         String legacyGraphJson = "{\"processKey\":\"legacy_def_p64\",\"elements\":["
@@ -170,7 +171,7 @@ class P64AppendMigrationUpgradePostgresTest {
                 assertEquals("APPROVE", rs.getString(3));
             }
 
-            // 迁移历史：收敛基线 0.2.0 与演练时间戳各一条成功记录
+            // 迁移历史：收敛基线 0.2.0、其后的主链版本化迁移与演练时间戳各恰一条成功记录
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT version, COUNT(*) FROM flyway_schema_history "
                             + "WHERE version IS NOT NULL AND success = TRUE GROUP BY version");
@@ -179,11 +180,13 @@ class P64AppendMigrationUpgradePostgresTest {
                 while (rs.next()) {
                     String version = rs.getString(1);
                     assertEquals(1, rs.getInt(2), version + " 应恰有一条成功迁移记录");
-                    assertTrue(java.util.Set.of("0.2.0", ts).contains(version),
-                            "versioned 历史应仅含 V0.2.0 收敛基线与演练时间戳，实际: " + version);
+                    assertTrue(expectedHistoryVersions(ts).contains(version),
+                            "versioned 历史应仅含 0.2.0 收敛基线、其后的主链版本化迁移与演练时间戳，"
+                                    + "实际: " + version);
                     seen++;
                 }
-                assertEquals(2, seen, "versioned 历史应为 V0.2.0 收敛基线与演练时间戳共两条");
+                assertEquals(expectedHistoryVersions(ts).size(), seen,
+                        "versioned 历史行数应等于预期集合大小");
             }
         }
 
@@ -197,6 +200,75 @@ class P64AppendMigrationUpgradePostgresTest {
 
     private Connection conn() throws SQLException {
         return DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+    }
+
+    // ==================== 类路径最新版本化迁移（终点口径随链自动更新） ====================
+
+    /** 期望的 versioned 历史：0.2.0 收敛基线 + 类路径上其后的版本化迁移 + 演练时间戳。 */
+    static java.util.Set<String> expectedHistoryVersions(String drillTimestamp) throws Exception {
+        java.util.Set<String> expected = new java.util.HashSet<>();
+        expected.add("0.2.0");
+        expected.add(drillTimestamp);
+        expected.addAll(classpathVersions());
+        return expected;
+    }
+
+    /** 主链各位置的版本化迁移版本（V&lt;version&gt;__*.sql），按 Flyway 版本序升序。 */
+    static java.util.List<String> classpathVersions() throws Exception {
+        java.util.List<String> versions = new java.util.ArrayList<>();
+        var loader = P64AppendMigrationUpgradePostgresTest.class.getClassLoader();
+        for (String dir : appDirs()) {
+            var resources = loader.getResources(dir);
+            while (resources.hasMoreElements()) {
+                var resource = resources.nextElement();
+                if (!"file".equals(resource.getProtocol())) {
+                    continue;
+                }
+                try (var files = Files.list(Path.of(resource.toURI()))) {
+                    for (Path file : files.toList()) {
+                        String name = file.getFileName().toString();
+                        if (name.startsWith("V") && name.contains("__") && name.endsWith(".sql")) {
+                            versions.add(name.substring(1, name.indexOf("__")));
+                        }
+                    }
+                }
+            }
+        }
+        if (versions.isEmpty()) {
+            throw new IllegalStateException("类路径上未发现版本化迁移（db/migration/**）");
+        }
+        versions.sort(P64AppendMigrationUpgradePostgresTest::compareVersions);
+        return versions;
+    }
+
+    /** 主链位置（与 {@link #appLocations()} 同源，去掉 classpath: 前缀）。 */
+    private static String[] appDirs() {
+        String[] locations = appLocations();
+        String[] dirs = new String[locations.length];
+        for (int i = 0; i < locations.length; i++) {
+            dirs[i] = locations[i].replace("classpath:", "");
+        }
+        return dirs;
+    }
+
+    /** Flyway 版本序：'.' 分段数值比较（兼容 0.2.6 与时间戳版本）。 */
+    static int compareVersions(String left, String right) {
+        String[] a = left.split("\\.");
+        String[] b = right.split("\\.");
+        for (int i = 0; i < Math.max(a.length, b.length); i++) {
+            long x = i < a.length ? Long.parseLong(a[i]) : 0L;
+            long y = i < b.length ? Long.parseLong(b[i]) : 0L;
+            if (x != y) {
+                return Long.compare(x, y);
+            }
+        }
+        return 0;
+    }
+
+    /** 类路径上实际最新的版本化迁移版本。 */
+    static String latestClasspathVersion() throws Exception {
+        java.util.List<String> versions = classpathVersions();
+        return versions.get(versions.size() - 1);
     }
 
     private static String[] concat(String[] left, String right) {
