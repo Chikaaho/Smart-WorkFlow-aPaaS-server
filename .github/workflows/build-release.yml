@@ -90,7 +90,7 @@ jobs:
           F=sw-bootstrap/target/surefire-reports/com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.txt
           X=sw-bootstrap/target/surefire-reports/TEST-com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.xml
           if [ -f "${F}" ]; then cat "${F}"; else echo "::warning::drill surefire txt 缺失"; fi
-          if [ -f "${X}" ]; then cat "${X}"; else echo "::warning::drill surefire xml 缺失"; fi
+          if [ -f "${X}" ]; then grep -oE '<skipped[^>]*' "${X}" | head -2; fi
           echo "AC_G4_PG_URL=[${AC_G4_PG_URL}]"
           echo "user.name=$(java -XshowSettings:properties -version 2>&1 | grep user.name | head -1)"
           which pg_dump pg_restore psql 2>&1
@@ -99,30 +99,11 @@ jobs:
           DRIVER=$(find /home/runner/.m2/repository/org/postgresql -name "postgresql-42*.jar" ! -name "*sources*" 2>/dev/null | head -1)
           echo "driver=${DRIVER}"
           if [ -n "${DRIVER}" ]; then
-            cat > /tmp/Probe.java <<'EOF'
-import java.sql.*;
-public class Probe {
-  public static void main(String[] args) {
-    String url = System.getenv().getOrDefault("AC_G4_PG_URL", "jdbc:postgresql://127.0.0.1:55432/postgres");
-    if (!url.startsWith("jdbc:")) { url = "jdbc:postgresql://" + url; }
-    String osUser = System.getProperty("user.name", "postgres");
-    try (Connection c = DriverManager.getConnection(url, osUser, "")) {
-      System.out.println("JDBC_OK as " + osUser + " via " + url);
-    } catch (Exception e) {
-      System.out.println("JDBC_FAIL as " + osUser + " via " + url + " -> " + e);
-    }
-    try (Connection c = DriverManager.getConnection(url, "postgres", "123456")) {
-      System.out.println("JDBC_OK as postgres/123456 via " + url);
-    } catch (Exception e) {
-      System.out.println("JDBC_FAIL as postgres/123456 via " + url + " -> " + e.getMessage());
-    }
-  }
-}
-EOF
-            java -Duser.name=runner -cp "${DRIVER}" /tmp/Probe.java 2>&1 | grep -E "JDBC_OK|JDBC_FAIL" | head -4
+            printf '%s\n' 'import java.sql.*;' 'public class Probe {' '  public static void main(String[] args) {' '    String url = System.getenv().getOrDefault("AC_G4_PG_URL", "jdbc:postgresql://127.0.0.1:55432/postgres");' '    if (!url.startsWith("jdbc:")) { url = "jdbc:postgresql://" + url; }' '    String osUser = System.getProperty("user.name", "postgres");' '    try (Connection c = DriverManager.getConnection(url, osUser, "")) {' '      System.out.println("JDBC_OK as " + osUser + " via " + url);' '    } catch (Exception e) {' '      System.out.println("JDBC_FAIL as " + osUser + " via " + url + " -> " + e);' '    }' '  }' '}' > /tmp/Probe.java
+            java -Duser.name=runner -cp "${DRIVER}" /tmp/Probe.java 2>&1 | grep -E "JDBC_OK|JDBC_FAIL" | head -2
           fi
           echo "=== in-step drill rerun ==="
-          MAVEN_OPTS="-Xmx2g" mvn -B -pl sw-bootstrap -am test -Dtest='ApplicationCenterRecoveryDrillPostgresTest' -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -DskipTests=false 2>&1 | grep -E "Tests run|Running com.sw.ck.bootstrap.Application|JDBC" | head -8
+          MAVEN_OPTS="-Xmx2g" mvn -B -pl sw-bootstrap -am test -Dtest='ApplicationCenterRecoveryDrillPostgresTest' -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false 2>&1 | grep -E "Tests run:|Running com.sw.ck.bootstrap.Application|skipped message" | head -8
 
       - name: Locate executable JAR
         id: locate
