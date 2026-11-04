@@ -94,8 +94,8 @@ class FlywayFullChainPostgresTest {
                 .load()
                 .migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(24, result.migrationsExecuted,
-                "全新库应执行 24 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5 + 19 个 R__ 可重复对账），实际: "
+        assertEquals(25, result.migrationsExecuted,
+                "全新库应执行 25 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.6 + 19 个 R__ 可重复对账），实际: "
                         + result.migrationsExecuted);
     }
 
@@ -107,10 +107,10 @@ class FlywayFullChainPostgresTest {
     }
 
     @Test
-    @DisplayName("种子迁移后：info().applied() 共 24 条（0.2.0 基线 + V0.2.2/V0.2.3/V0.2.4/V0.2.5 + 19 个可重复对账），终点 0.2.5")
+    @DisplayName("种子迁移后：info().applied() 共 25 条（0.2.0 基线 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.6 + 19 个可重复对账），终点 0.2.6")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
         org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
-        assertEquals(24, applied.length, "已应用迁移数应为 24（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5 + 19 个 R__）");
+        assertEquals(25, applied.length, "已应用迁移数应为 25（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.6 + 19 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
         for (org.flywaydb.core.api.MigrationInfo info : applied) {
@@ -122,8 +122,8 @@ class FlywayFullChainPostgresTest {
         }
         assertTrue(seedSeen, "V0.2.0 种子应已应用");
         assertEquals(19, repeatableCount, "19 个 R__ 可重复对账应已应用");
-        assertEquals("0.2.5", flyway().info().current().getVersion().getVersion(),
-                "终点当前版本应为最后一个 versioned 迁移（V0.2.5）");
+        assertEquals("0.2.6", flyway().info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移（V0.2.6）");
     }
 
     @Test
@@ -137,8 +137,8 @@ class FlywayFullChainPostgresTest {
     void reMigrate_shouldBeIdempotent() {
         MigrateResult again = flyway().migrate();
         assertEquals(0, again.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.2.5", flyway().info().current().getVersion().getVersion(),
-                "版本应保持最后一个 versioned 迁移（0.2.5）");
+        assertEquals("0.2.6", flyway().info().current().getVersion().getVersion(),
+                "版本应保持最后一个 versioned 迁移（0.2.6）");
     }
 
     @Test
@@ -156,7 +156,7 @@ class FlywayFullChainPostgresTest {
                 .load();
         MigrateResult first = migrate.migrate();
         assertTrue(first.success, "建立基线库应成功");
-        assertEquals(24, first.migrationsExecuted, "种子库应含 24 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5 + 19 R__），实际: " + first.migrationsExecuted);
+        assertEquals(25, first.migrationsExecuted, "种子库应含 25 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.6 + 19 R__），实际: " + first.migrationsExecuted);
 
         try (Connection conn = DriverManager.getConnection(tamperedUrl, USER, PASSWORD);
              Statement stmt = conn.createStatement()) {
@@ -342,6 +342,46 @@ class FlywayFullChainPostgresTest {
                 assertTrue(rs.next());
                 assertEquals(1, rs.getInt(1), "sw_agent_graph_debug_node 表应存在");
             }
+        }
+    }
+
+    @Test
+    @DisplayName("F2：form:app:export/import 菜单存在，且所有持 9130 的角色均被授予 9132/9133")
+    void f2AppBundlePermissions_shouldFollowManageGrant() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(url, USER, PASSWORD);
+             Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT permission, parent_id, menu_type FROM sys_menu WHERE id IN (9132, 9133) ORDER BY id")) {
+                assertTrue(rs.next(), "导出按钮菜单 id=9132 应存在");
+                assertEquals("form:app:export", rs.getString("permission"));
+                assertEquals(9130, rs.getInt("parent_id"));
+                assertEquals(2, rs.getInt("menu_type"));
+                assertTrue(rs.next(), "导入按钮菜单 id=9133 应存在");
+                assertEquals("form:app:import", rs.getString("permission"));
+                assertEquals(9130, rs.getInt("parent_id"));
+                assertEquals(2, rs.getInt("menu_type"));
+                assertFalse(rs.next(), "不应有第三行");
+            }
+            // 全新库链路：R__application_center_menu 后置插入 9330/9331（V0.2.6 随行授权空转），
+            // R__ 对账补授后「持 9130 必持 9132/9133」，两条数逐角色相等。
+            assertEquals(countRows(
+                    "SELECT COUNT(*) FROM sys_role_menu WHERE menu_id = 9130 AND deleted = 0"),
+                    countRows(
+                    "SELECT COUNT(*) FROM sys_role_menu rm WHERE rm.menu_id = 9132 AND rm.deleted = 0 "
+                            + "AND EXISTS (SELECT 1 FROM sys_role_menu y WHERE y.tenant_id = rm.tenant_id "
+                            + "AND y.role_id = rm.role_id AND y.menu_id = 9130 AND y.deleted = 0)"),
+                    "每个持 9130 的角色都应持有 9132（导出）");
+            assertEquals(countRows(
+                    "SELECT COUNT(*) FROM sys_role_menu WHERE menu_id = 9130 AND deleted = 0"),
+                    countRows(
+                    "SELECT COUNT(*) FROM sys_role_menu rm WHERE rm.menu_id = 9133 AND rm.deleted = 0 "
+                            + "AND EXISTS (SELECT 1 FROM sys_role_menu y WHERE y.tenant_id = rm.tenant_id "
+                            + "AND y.role_id = rm.role_id AND y.menu_id = 9130 AND y.deleted = 0)"),
+                    "每个持 9130 的角色都应持有 9133（导入）");
+            assertTrue(countRows(
+                    "SELECT COUNT(*) FROM sys_role_menu WHERE menu_id = 9130 AND deleted = 0 "
+                            + "AND role_id IN (1, 2)") >= 2,
+                    "全新库链上角色 1/2 应持有 9130（授权行由 R__ 后置插入）");
         }
     }
 

@@ -99,15 +99,15 @@ class I6G7bOldBaselineUpgradePostgresTest {
         var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(24, result.migrationsExecuted,
-                "全新库应执行 24 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5 + 19 个 R__，"
+        assertEquals(25, result.migrationsExecuted,
+                "全新库应执行 25 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.6 + 19 个 R__，"
                         + "含 0.2.0 用户组菜单 R__u020_user_group_menu）");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
                      "SELECT version FROM flyway_schema_history WHERE success = true AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")) {
             assertTrue(rs.next());
-            assertEquals("0.2.5", rs.getString(1), "升级终点应为最后一个 versioned 迁移");
+            assertEquals("0.2.6", rs.getString(1), "升级终点应为最后一个 versioned 迁移");
         }
     }
 
@@ -122,7 +122,7 @@ class I6G7bOldBaselineUpgradePostgresTest {
         } catch (SQLException e) {
             throw new IllegalStateException("清理临时库失败", e);
         }
-        System.out.println("[G7b] identity: " + DB_NAME + " (本机真实 PG 临时库，基线终态 0.2.5，已清理)");
+        System.out.println("[G7b] identity: " + DB_NAME + " (本机真实 PG 临时库，基线终态 0.2.6，已清理)");
     }
 
     @Test
@@ -184,8 +184,8 @@ class I6G7bOldBaselineUpgradePostgresTest {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT COUNT(*) FROM flyway_schema_history WHERE success = true")) {
                 assertTrue(rs.next());
-                assertEquals(24, rs.getInt(1),
-                        "历史表应恰有 24 条成功记录（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5 + 19 个 R__，"
+                assertEquals(25, rs.getInt(1),
+                        "历史表应恰有 25 条成功记录（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.6 + 19 个 R__，"
                                 + "含 0.2.0 用户组菜单）");
             }
         }

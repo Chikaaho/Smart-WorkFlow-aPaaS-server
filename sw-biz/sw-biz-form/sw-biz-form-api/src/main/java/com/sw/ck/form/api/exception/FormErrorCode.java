@@ -121,7 +121,15 @@ public enum FormErrorCode implements ErrorCode {
     INTEGRATION_IN_PROGRESS(1806, "form.integration_in_progress", "相同提交标识的集成调用正在处理中，请稍后重试"),
     INTEGRATION_RECORD_DENIED(1807, "form.integration_record_denied", "当前身份无权对该记录执行此集成调用"),
     INTEGRATION_NOT_CONFIGURED(1808, "form.integration_not_configured", "表单未配置可调用的集成能力"),
-    INTEGRATION_IDEMPOTENCY_CONFLICT(1809, "form.integration_idempotency_conflict", "相同提交标识的集成请求内容不一致，已拒绝");
+    INTEGRATION_IDEMPOTENCY_CONFLICT(1809, "form.integration_idempotency_conflict", "相同提交标识的集成请求内容不一致，已拒绝"),
+
+    // ==================== 应用导入导出（1900-1999，0.2.2 F2） ====================
+    BUNDLE_FORMAT_UNSUPPORTED(1900, "form.bundle_format_unsupported", "导入包格式版本不兼容，无法导入"),
+    BUNDLE_INVALID(1901, "form.bundle_invalid", "导入包内容无效或已损坏"),
+    BUNDLE_OPINION_KEY_CONFLICT(1902, "form.bundle_opinion_key_conflict", "审批意见表单新标识在目标租户已存在，请修改后重试"),
+    BUNDLE_OPINION_KEY_REQUIRED(1903, "form.bundle_opinion_key_required", "存在冲突的审批意见表单未提供新标识，不能确认导入"),
+    BUNDLE_IMPORT_FAILED(1904, "form.bundle_import_failed", "应用导入失败"),
+    BUNDLE_RECORD_NOT_FOUND(1905, "form.bundle_record_not_found", "导入记录不存在");
 
     private final int code;
     private final String errorKey;

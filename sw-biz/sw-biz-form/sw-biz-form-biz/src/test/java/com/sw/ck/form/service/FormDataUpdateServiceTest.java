@@ -470,6 +470,25 @@ class FormDataUpdateServiceTest {
                     }
                     return Optional.of(List.of());
                 }
+
+                @Override
+                public Optional<Map<String, com.sw.ck.system.api.dict.DictTypeDetailDTO>> findDictTypeDetails(
+                        java.util.Collection<String> codes) {
+                    return codes == null || codes.isEmpty()
+                            ? Optional.empty() : Optional.of(java.util.Map.of());
+                }
+
+                @Override
+                public Optional<String> inspectDictTypeForImport(String code) {
+                    return code == null || code.isBlank() ? Optional.empty() : Optional.of("MISSING");
+                }
+
+                @Override
+                public Optional<Boolean> createDictTypeForImport(String code, String name,
+                                                                 Integer status, String description,
+                                                                 java.util.List<com.sw.ck.system.api.dict.DictItemDTO> items) {
+                    return Optional.of(false);
+                }
             };
         }
         @Bean public DomainEventPublisher dep(org.springframework.context.ApplicationEventPublisher d) {
