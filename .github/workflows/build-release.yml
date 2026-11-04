@@ -81,13 +81,21 @@ jobs:
       - name: "Production build (in-repo entry: tests + prod package + artifact gate)"
         run: REVISION="${{ steps.version.outputs.release_version }}" bash scripts/build-prod.sh
 
-      # 恢复演练测试诊断（always）：surefire 报告给出 drill 测试的实跑/跳过原因，
-      # 供 direction-022-close-release 第 4 阶段「CI 实跑」验收取证；只读报告，不影响门禁。
+      # 恢复演练测试诊断（always）：surefire 报告 + XML 跳过消息 + 环境因子探测
+      # （AC_G4_PG_URL 可见性 / psql 连通 / pg_dump·pg_restore 工具链），
+      # 供 direction-022-close-release 第 4 阶段「CI 实跑」验收取证；只读，不影响门禁。
       - name: "Drill test diagnostics (always)"
         if: always()
         run: |
           F=sw-bootstrap/target/surefire-reports/com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.txt
-          if [ -f "${F}" ]; then cat "${F}"; else echo "::warning::drill surefire 报告缺失"; fi
+          X=$(ls sw-bootstrap/target/surefire-reports/TEST-com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.xml 2>/dev/null)
+          if [ -f "${F}" ]; then cat "${F}"; else echo "::warning::drill surefire txt 缺失"; fi
+          if [ -n "${X}" ]; then grep -oE '<skipped message="[^"]*"' "${X}" | head -1; fi
+          echo "AC_G4_PG_URL=[${AC_G4_PG_URL}]"
+          echo "user.name=$(java -XshowSettings:properties -version 2>&1 | grep user.name | head -1)"
+          which pg_dump pg_restore psql 2>&1
+          pg_dump --version 2>&1 | head -1
+          PGPASSWORD="" psql -w -h 127.0.0.1 -p 55432 -U runner -d postgres -c "select 1" 2>&1 | head -2
 
       - name: Locate executable JAR
         id: locate
