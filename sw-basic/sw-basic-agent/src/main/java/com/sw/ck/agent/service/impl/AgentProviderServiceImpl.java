@@ -54,7 +54,7 @@ public class AgentProviderServiceImpl
     public List<AgentProviderDTO> listEnabled() {
         return baseMapper.selectList(
                         Wrappers.<AgentProvider>lambdaQuery()
-                                .eq(AgentProvider::getEnabled, 1)
+                                .eq(AgentProvider::getEnabled, true)
                                 .orderByAsc(AgentProvider::getId))
                 .stream().map(this::toDTO).toList();
     }

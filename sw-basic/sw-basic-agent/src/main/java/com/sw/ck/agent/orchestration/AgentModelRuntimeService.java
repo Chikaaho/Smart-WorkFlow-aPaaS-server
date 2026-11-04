@@ -74,6 +74,10 @@ public class AgentModelRuntimeService {
         acquire(modelId);
     }
 
+    /** 模型/供应商不可用的专用 errorKey：不在消息目录中，全局异常处理器按缺省文案
+     * 原样透出可读原因（F1S1-G4：执行/调试拒绝必须可读，不能落通用 param_error 文案） */
+    public static final String ERROR_KEY_MODEL_UNAVAILABLE = "agent.model_unavailable";
+
     /**
      * 解析模型并返回单例客户端（模型/供应商任一停用或不存在 → 业务异常）。
      */
@@ -86,14 +90,16 @@ public class AgentModelRuntimeService {
             throw new BaseException(CommonErrorCode.NOT_FOUND, "模型不存在或已删除: " + modelId);
         }
         if (model.getEnabled() == null || !model.getEnabled()) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR, "模型已停用: " + model.getName());
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    ERROR_KEY_MODEL_UNAVAILABLE, "模型已停用: " + model.getName());
         }
         AgentProvider provider = providerMapper.selectById(model.getProviderId());
         if (provider == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND, "供应商不存在或已删除: " + model.getProviderId());
         }
         if (provider.getEnabled() == null || !provider.getEnabled()) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR, "供应商已停用: " + provider.getName());
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
+                    ERROR_KEY_MODEL_UNAVAILABLE, "供应商已停用: " + provider.getName());
         }
         String revisionKey = revisionKey(model, provider);
         dev.langchain4j.model.chat.ChatModel chatModel = cache.compute(modelId, (id, cached) ->
@@ -138,7 +144,8 @@ public class AgentModelRuntimeService {
         List<AgentModel> candidates = modelMapper.selectList(
                 Wrappers.<AgentModel>lambdaQuery()
                         .eq(AgentModel::getGroupKey, groupKey)
-                        .eq(AgentModel::getEnabled, 1)
+                        // 列为 BOOLEAN（V0.2.2 DDL），须传布尔字面量（整数在 PG 上类型不匹配）
+                        .eq(AgentModel::getEnabled, true)
                         .notIn(!excludeIds.isEmpty(), AgentModel::getId, excludeIds)
                         .and(w -> w.isNull(AgentModel::getLockedUntil)
                                 .or().le(AgentModel::getLockedUntil, now))
@@ -152,5 +159,50 @@ public class AgentModelRuntimeService {
         return model.getQuotaCooldownSeconds() == null
                 ? DEFAULT_QUOTA_COOLDOWN_SECONDS
                 : model.getQuotaCooldownSeconds();
+    }
+
+    /**
+     * 限流异常识别：沿 cause 链逐层检查 {@link dev.langchain4j.exception.HttpException}
+     * 的 {@code statusCode() == 429}（穿透包装层，与编排入口同语义）。
+     */
+    public static boolean isRateLimited(Throwable t) {
+        Throwable cur = t;
+        while (cur != null) {
+            if (cur instanceof dev.langchain4j.exception.HttpException http && http.statusCode() == 429) {
+                return true;
+            }
+            cur = cur.getCause();
+        }
+        return false;
+    }
+
+    /**
+     * 带 429 密钥轮换的单跳聊天调用（D022-05，图执行 / 单步调试共用）：先 acquire 当前
+     * 模型调用；遇 429 且模型配置了 groupKey 时锁定当前模型（冷却）并切换组内下一候选
+     * 重试；无候选或非限流异常原样上抛（由调用方按既有分类包装）。消息组装与 usage
+     * 提取仍归调用方，本方法只负责"选模型 → 调用 → 限流换把"。
+     */
+    public dev.langchain4j.model.chat.response.ChatResponse chatWithRotation(
+            Long modelId, List<dev.langchain4j.data.message.ChatMessage> messages) {
+        java.util.Set<Long> tried = new java.util.HashSet<>();
+        Long current = modelId;
+        while (true) {
+            ModelInstance instance = acquire(current);
+            tried.add(current);
+            try {
+                return instance.chatModel().chat(dev.langchain4j.model.chat.request.ChatRequest
+                        .builder().messages(messages).build());
+            } catch (Exception e) {
+                if (!isRateLimited(e) || instance.model().getGroupKey() == null) {
+                    throw e;
+                }
+                lock(current, cooldownSeconds(instance.model()));
+                AgentModel next = nextCandidate(instance.model().getGroupKey(), tried, LocalDateTime.now());
+                if (next == null) {
+                    throw e;
+                }
+                current = next.getId();
+            }
+        }
     }
 }

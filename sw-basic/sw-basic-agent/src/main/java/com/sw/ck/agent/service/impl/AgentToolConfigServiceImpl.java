@@ -115,7 +115,7 @@ public class AgentToolConfigServiceImpl
     public List<AgentToolInternalConfig> listEnabledInternalTools(Long tenantId) {
         return baseMapper.selectList(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
-                        .eq(AgentToolInternalConfig::getEnabled, 1)
+                        .eq(AgentToolInternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolInternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolInternalConfig::getId));
     }
@@ -181,7 +181,7 @@ public class AgentToolConfigServiceImpl
     public List<AgentToolExternalConfig> listEnabledExternalTools(Long tenantId) {
         return externalMapper.selectList(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
-                        .eq(AgentToolExternalConfig::getEnabled, 1)
+                        .eq(AgentToolExternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolExternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolExternalConfig::getId));
     }

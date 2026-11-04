@@ -568,14 +568,14 @@ public class AgentGraphExecutionServiceImpl
         Long internal = internalToolMapper.selectCount(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
                         .eq(AgentToolInternalConfig::getName, toolName)
-                        .eq(AgentToolInternalConfig::getEnabled, 1));
+                        .eq(AgentToolInternalConfig::getEnabled, true));
         if (internal != null && internal > 0) {
             return true;
         }
         Long external = externalToolMapper.selectCount(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
                         .eq(AgentToolExternalConfig::getName, toolName)
-                        .eq(AgentToolExternalConfig::getEnabled, 1));
+                        .eq(AgentToolExternalConfig::getEnabled, true));
         return external != null && external > 0;
     }
 

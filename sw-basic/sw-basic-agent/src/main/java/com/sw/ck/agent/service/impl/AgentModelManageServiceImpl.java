@@ -67,7 +67,7 @@ public class AgentModelManageServiceImpl
     public List<AgentModelDTO> listEnabled(String capability) {
         List<AgentModel> models = baseMapper.selectList(
                 Wrappers.<AgentModel>lambdaQuery()
-                        .eq(AgentModel::getEnabled, 1)
+                        .eq(AgentModel::getEnabled, true)
                         .orderByAsc(AgentModel::getId));
         return models.stream()
                 .filter(m -> capability == null

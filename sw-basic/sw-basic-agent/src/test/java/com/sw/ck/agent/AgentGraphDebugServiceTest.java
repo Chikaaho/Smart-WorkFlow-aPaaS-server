@@ -70,6 +70,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -695,6 +696,14 @@ class AgentGraphDebugServiceTest {
         provider.setEnabled(true);
         when(modelRuntimeService.acquire(any()))
                 .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
+        // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）
+        when(modelRuntimeService.chatWithRotation(any(), anyList())).thenAnswer(inv -> {
+        java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
+        if (msgs == null || msgs.isEmpty()) { return null; }
+        return modelRuntimeService.acquire(1L).chatModel().chat(
+                                dev.langchain4j.model.chat.request.ChatRequest.builder()
+                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1)).build());
+        });
     }
 
     private void insertInternalTool(String toolName, int enabled) {

@@ -21,6 +21,8 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -131,6 +133,12 @@ class AgentGraphInterpreterTokenTest {
         provider.setEnabled(true);
         when(modelRuntimeService.acquire(id))
                 .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
+        // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）
+        when(modelRuntimeService.chatWithRotation(eq(id), anyList())).thenAnswer(inv ->
+                modelRuntimeService.acquire(id).chatModel().chat(
+                        dev.langchain4j.model.chat.request.ChatRequest.builder()
+                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1))
+                                .build()));
     }
 
     // ==================== 标准1：F02 Token 读取 ====================

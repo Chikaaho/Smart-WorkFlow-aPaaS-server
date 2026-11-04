@@ -86,12 +86,12 @@ public class AgentToolCallbackFactory {
         // SMALLINT 列比较不稳定（M07 Step4 现场实证，见回执 §7）
         List<AgentToolInternalConfig> internals = internalMapper.selectList(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
-                        .eq(AgentToolInternalConfig::getEnabled, 1)
+                        .eq(AgentToolInternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolInternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolInternalConfig::getId));
         List<AgentToolExternalConfig> externals = externalMapper.selectList(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
-                        .eq(AgentToolExternalConfig::getEnabled, 1)
+                        .eq(AgentToolExternalConfig::getEnabled, true)
                         .eq(tenantId != null, AgentToolExternalConfig::getTenantId, tenantId)
                         .orderByDesc(AgentToolExternalConfig::getId));
         List<ToolHandle> handles = new ArrayList<>(internals.size() + externals.size());

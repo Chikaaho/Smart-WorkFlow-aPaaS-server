@@ -379,8 +379,8 @@ public class AgentGraphInterpreter {
     private String callLlmNode(GraphElement node, String text, Map<String, String> variables) {
         Long modelConfigId = requireConfigId(node, CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
         try {
-            // F1 阶段 1：经运行时服务解析（启停校验 + LangChain4j 单例复用 + 模板装配）
-            ChatModel chatModel = modelRuntimeService.acquire(modelConfigId).chatModel();
+            // F1 阶段 1：经运行时服务解析（启停校验 + LangChain4j 单例复用 + 模板装配；
+            // D022-05：429 时组内密钥轮换，与编排入口同语义）
             // === Prompt 契约组装 ===
             String systemPrompt = configString(node, CONFIG_KEY_SYSTEM_PROMPT);
             String userPromptTemplate = configString(node, CONFIG_KEY_USER_PROMPT_TEMPLATE);
@@ -396,8 +396,7 @@ public class AgentGraphInterpreter {
                 userText = interpolateTemplate(userPromptTemplate, node, variables);
             }
             messages.add(UserMessage.from(userText));
-            ChatResponse response = chatModel.chat(dev.langchain4j.model.chat.request.ChatRequest
-                    .builder().messages(messages).build());
+            ChatResponse response = modelRuntimeService.chatWithRotation(modelConfigId, messages);
             String output = response.aiMessage().text();
             if (output == null) {
                 throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
