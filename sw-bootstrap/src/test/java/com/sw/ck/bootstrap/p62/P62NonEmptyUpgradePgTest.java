@@ -114,7 +114,7 @@ class P62NonEmptyUpgradePgTest {
         execScript(db, classpathResource(UPGRADE_FROM_0_1_6_SCRIPT));
         execScript(db, classpathResource(UPGRADE_TO_020_SCRIPT));
 
-        // 4) 衔接后：主链继续到最新 + validate 通过 + 重复 migrate 零执行 + 终点=0.2.0
+        // 4) 衔接后：主链继续到类路径最新 + validate 通过 + 重复 migrate 零执行 + 终点=最新版本化迁移
         Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
                 .locations(appLocations()).load();
         MigrateResult upgrade = after.migrate();
@@ -122,7 +122,8 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接并升级后终点应为 0.2.0").isEqualTo("0.2.0");
+        assertThat(currentVersion(db)).as("衔接并升级后终点应为类路径最新版本化迁移")
+                .isEqualTo(latestClasspathVersion());
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
@@ -134,11 +135,12 @@ class P62NonEmptyUpgradePgTest {
         assertThat(catalogOf(db)).as("衔接后目录应与全新种子库一致")
                 .isEqualTo(catalogOf(fresh));
         System.out.println("[P62-EV] r017.transition fullchain rows=" + legacyCount(db)
-                + " digest_sha256=" + sha256(preDigest) + " history=0.2.0 rerun=0 validate=pass");
+                + " digest_sha256=" + sha256(preDigest) + " endpoint=" + latestClasspathVersion()
+                + " rerun=0 validate=pass");
     }
 
     @Test
-    @DisplayName("通道B：legacy 0.1.1 库（业务数据）→ 0.1.5 增量升级 → 0.1.6 存量升级脚本 → validate 通过/终点 0.1.6/数据无损/目录=全新种子")
+    @DisplayName("通道B：legacy 0.1.1 库（业务数据）→ 0.1.5 增量升级 → 0.1.6 存量升级脚本 → validate 通过/终点=类路径最新/数据无损/目录=全新种子")
     void legacy011UpgradesToSeedWithoutDataLoss() throws Exception {
         String db = createDatabase("lt05a_up_011");
 
@@ -159,7 +161,7 @@ class P62NonEmptyUpgradePgTest {
         execScript(db, classpathResource(UPGRADE_FROM_0_1_6_SCRIPT));
         execScript(db, classpathResource(UPGRADE_TO_020_SCRIPT));
 
-        // 4) 升级后：主链继续到最新 + validate 通过 + 重复 migrate 零执行 + 终点=0.2.0
+        // 4) 升级后：主链继续到类路径最新 + validate 通过 + 重复 migrate 零执行 + 终点=最新版本化迁移
         Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
                 .locations(appLocations()).load();
         MigrateResult upgrade = after.migrate();
@@ -167,7 +169,8 @@ class P62NonEmptyUpgradePgTest {
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "升级后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("升级后终点应为 0.2.0").isEqualTo("0.2.0");
+        assertThat(currentVersion(db)).as("升级后终点应为类路径最新版本化迁移")
+                .isEqualTo(latestClasspathVersion());
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("升级后行数不减").isEqualTo(preCount);
@@ -179,7 +182,8 @@ class P62NonEmptyUpgradePgTest {
         assertThat(catalogOf(db)).as("升级后目录应与全新种子库一致")
                 .isEqualTo(catalogOf(fresh));
         System.out.println("[P62-EV] r017.upgrade-from-0.1.1 rows=" + legacyCount(db)
-                + " digest_sha256=" + sha256(preDigest) + " history=0.2.0 rerun=0 validate=pass");
+                + " digest_sha256=" + sha256(preDigest) + " endpoint=" + latestClasspathVersion()
+                + " rerun=0 validate=pass");
     }
 
     @Test
@@ -203,14 +207,15 @@ class P62NonEmptyUpgradePgTest {
         execScript(db, classpathResource(UPGRADE_FROM_0_1_6_SCRIPT));
         execScript(db, classpathResource(UPGRADE_TO_020_SCRIPT));
 
-        // 4) 衔接后：主链零重放 + validate 通过 + 重复 migrate 零执行 + 终点=0.2.0
+        // 4) 衔接后：主链零重放 + validate 通过 + 重复 migrate 零执行 + 终点=类路径最新版本化迁移
         Flyway after = Flyway.configure().dataSource(dbUrl(db), PG_USER, PG_PASSWORD)
                 .locations(appLocations()).load();
         assertThat(after.migrate().success).isTrue();
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后重复 migrate 不应执行任何迁移");
-        assertThat(currentVersion(db)).as("衔接后终点应为 0.2.0").isEqualTo("0.2.0");
+        assertThat(currentVersion(db)).as("衔接后终点应为类路径最新版本化迁移")
+                .isEqualTo(latestClasspathVersion());
 
         // 5) 数据无损 + 目录与全新种子库一致
         assertThat(legacyCount(db)).as("衔接后行数不减").isEqualTo(preCount);
@@ -222,7 +227,8 @@ class P62NonEmptyUpgradePgTest {
         assertThat(catalogOf(db)).as("衔接后目录应与全新种子库一致")
                 .isEqualTo(catalogOf(fresh));
         System.out.println("[P62-EV] r017.transition applied-increment rows=" + legacyCount(db)
-                + " digest_sha256=" + sha256(preDigest) + " history=0.2.0 rerun=0 validate=pass");
+                + " digest_sha256=" + sha256(preDigest) + " endpoint=" + latestClasspathVersion()
+                + " rerun=0 validate=pass");
     }
 
     /** 0.1.5+增量形态位置 = 临时目录（0.1.6 通道 legacy 版本化文件 + 现行 12 个 R__ 副本）。 */
@@ -333,12 +339,20 @@ class P62NonEmptyUpgradePgTest {
         return Integer.parseInt(queryString(db, "SELECT count(*)::text FROM \"" + LEGACY_TABLE + "\""));
     }
 
-    /** 保留历史种子及其校验和，并验证主链追加的两条租户迁移。 */
+    /** 校验历史：0.2.0 基线种子登记（原校验和）保留，且其后的主链版本化迁移按序衔接到位。 */
     private static void assertHistorySeedAndTenantMigrations(String db) throws Exception {
+        List<String> versions = classpathVersions();
+        List<String> newer = new ArrayList<>();
+        for (String v : versions) {
+            if (compareVersions(v, "0.2.0") > 0) {
+                newer.add(v);
+            }
+        }
         int versioned = Integer.parseInt(queryString(db,
                 "SELECT count(*)::text FROM \"flyway_schema_history\" WHERE \"version\" IS NOT NULL"));
-        assertEquals(1, versioned, "versioned 历史应收敛为单条 V0.2.0 基线种子登记");
-        assertEquals("0.2.0", queryString(db,
+        assertEquals(1 + newer.size(), versioned,
+                "versioned 历史应为 0.2.0 基线登记 + 主链其后的版本化迁移");
+        assertEquals("0.2.0," + String.join(",", newer), queryString(db,
                 "SELECT string_agg(version, ',' ORDER BY installed_rank) FROM flyway_schema_history"
                         + " WHERE version IS NOT NULL AND success = true"));
         String seed = queryString(db, "SELECT \"version\" || '|' || \"success\"::text || '|' || \"checksum\""
@@ -383,6 +397,66 @@ class P62NonEmptyUpgradePgTest {
             }
         }
         return out.toString();
+    }
+
+    // ==================== 类路径最新版本化迁移（终点口径随链自动更新） ====================
+
+    /** 主链各位置的版本化迁移版本（V&lt;version&gt;__*.sql），按 Flyway 版本序升序。 */
+    private static List<String> classpathVersions() throws Exception {
+        List<String> versions = new ArrayList<>();
+        var loader = P62NonEmptyUpgradePgTest.class.getClassLoader();
+        for (String dir : appDirs()) {
+            var resources = loader.getResources(dir);
+            while (resources.hasMoreElements()) {
+                var resource = resources.nextElement();
+                if (!"file".equals(resource.getProtocol())) {
+                    continue;
+                }
+                try (var files = Files.list(Path.of(resource.toURI()))) {
+                    for (Path file : files.toList()) {
+                        String name = file.getFileName().toString();
+                        if (name.startsWith("V") && name.contains("__") && name.endsWith(".sql")) {
+                            versions.add(name.substring(1, name.indexOf("__")));
+                        }
+                    }
+                }
+            }
+        }
+        if (versions.isEmpty()) {
+            throw new IllegalStateException("类路径上未发现版本化迁移（db/migration/**）");
+        }
+        versions.sort(P62NonEmptyUpgradePgTest::compareVersions);
+        return versions;
+    }
+
+    /** 主链位置（与 {@link #appLocations()} 同源，去掉 classpath: 前缀）。 */
+    private static String[] appDirs() {
+        String[] locations = appLocations();
+        String[] dirs = new String[locations.length];
+        for (int i = 0; i < locations.length; i++) {
+            dirs[i] = locations[i].replace("classpath:", "");
+        }
+        return dirs;
+    }
+
+    /** Flyway 版本序：'.' 分段数值比较（兼容 0.2.6 与时间戳版本）。 */
+    private static int compareVersions(String left, String right) {
+        String[] a = left.split("\\.");
+        String[] b = right.split("\\.");
+        for (int i = 0; i < Math.max(a.length, b.length); i++) {
+            long x = i < a.length ? Long.parseLong(a[i]) : 0L;
+            long y = i < b.length ? Long.parseLong(b[i]) : 0L;
+            if (x != y) {
+                return Long.compare(x, y);
+            }
+        }
+        return 0;
+    }
+
+    /** 类路径上实际最新的版本化迁移版本。 */
+    private static String latestClasspathVersion() throws Exception {
+        List<String> versions = classpathVersions();
+        return versions.get(versions.size() - 1);
     }
 
     private static String createDatabase(String name) throws Exception {

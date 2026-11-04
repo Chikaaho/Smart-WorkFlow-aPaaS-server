@@ -9,7 +9,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -17,6 +16,7 @@ import java.sql.Statement;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -114,12 +114,12 @@ class F1ProviderModelMigrationPostgresTest {
                 assertEquals("OPENAI_CHAT", rs.getString("api_format"));
                 assertEquals("https://gw.example.com/v1", rs.getString("base_url"));
                 assertEquals("CIPHER-A", rs.getString("api_key_cipher"));
-                assertEquals(1, rs.getInt("enabled"));
+                assertTrue(rs.getBoolean("enabled"), "openai 供应商应启用");
                 assertEquals("gpt-x", rs.getString("model_name"));
                 assertEquals(0.7d, rs.getDouble("temperature"), 1e-9);
                 assertEquals(1024, rs.getInt("max_tokens"));
                 assertEquals("g1", rs.getString("group_key"));
-                assertEquals(1, rs.getInt("model_enabled"));
+                assertTrue(rs.getBoolean("model_enabled"), "模型行应启用");
             }
         }
     }
@@ -152,7 +152,7 @@ class F1ProviderModelMigrationPostgresTest {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT enabled, api_format FROM sw_agent_provider WHERE id = 103")) {
                 assertTrue(rs.next(), "旧 id=103 应迁出供应商");
-                assertEquals(0, rs.getInt("enabled"), "other 供应商应停用");
+                assertFalse(rs.getBoolean("enabled"), "other 供应商应停用");
                 assertEquals("OPENAI_CHAT", rs.getString("api_format"));
             }
         }
