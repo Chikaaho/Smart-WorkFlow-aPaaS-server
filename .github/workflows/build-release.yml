@@ -40,8 +40,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      # 恢复演练测试经 AC_G4_PG_URL 探测在役 PG（连接用户取 runner osUser，trust 免密）
-      AC_G4_PG_URL: 127.0.0.1:55432/postgres
+      # 恢复演练测试经 AC_G4_PG_URL 取完整 JDBC URL（测试侧不再拼接前缀；
+      # 连接用户取 runner osUser，trust 免密；db 由测试自建 ac_g4_recovery_drill）
+      AC_G4_PG_URL: jdbc:postgresql://127.0.0.1:55432/postgres
     steps:
       - uses: actions/checkout@v4
 
