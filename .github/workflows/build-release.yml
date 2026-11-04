@@ -88,14 +88,16 @@ jobs:
         if: always()
         run: |
           F=sw-bootstrap/target/surefire-reports/com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.txt
-          X=$(ls sw-bootstrap/target/surefire-reports/TEST-com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.xml 2>/dev/null)
+          X=sw-bootstrap/target/surefire-reports/TEST-com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.xml
           if [ -f "${F}" ]; then cat "${F}"; else echo "::warning::drill surefire txt 缺失"; fi
-          if [ -n "${X}" ]; then grep -oE '<skipped message="[^"]*"' "${X}" | head -1; fi
+          if [ -f "${X}" ]; then cat "${X}"; else echo "::warning::drill surefire xml 缺失"; fi
           echo "AC_G4_PG_URL=[${AC_G4_PG_URL}]"
           echo "user.name=$(java -XshowSettings:properties -version 2>&1 | grep user.name | head -1)"
           which pg_dump pg_restore psql 2>&1
           pg_dump --version 2>&1 | head -1
           PGPASSWORD="" psql -w -h 127.0.0.1 -p 55432 -U runner -d postgres -c "select 1" 2>&1 | head -2
+          echo "=== in-step drill rerun ==="
+          MAVEN_OPTS="-Xmx2g" mvn -B -pl sw-bootstrap test -Dtest='ApplicationCenterRecoveryDrillPostgresTest' -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false 2>&1 | tail -25
 
       - name: Locate executable JAR
         id: locate
