@@ -69,6 +69,55 @@ class AgentGraphInterpreterTest {
         verify(modelRuntimeService).acquire(1L);
     }
 
+    @Test
+    @DisplayName("阶段2: LLM 节点工具循环——模型请求工具→执行回喂→最终文本，轨迹记录工具入参与输出")
+    void llmNode_withTools_shouldExecuteLoopAndRecordTrace() {
+        Long modelId = 77L;
+        stubModel(modelId, new ChatModel() {
+            private int calls = 0;
+
+            @Override
+            public ChatResponse chat(ChatRequest request) {
+                if (calls++ == 0) {
+                    return ChatResponse.builder()
+                            .aiMessage(AiMessage.from(ToolExecutionRequest.builder()
+                                    .id("tool-req-1")
+                                    .name("echo_tool")
+                                    .arguments("\"你好\"")
+                                    .build()))
+                            .build();
+                }
+                boolean hasToolResult = request.messages().stream()
+                        .anyMatch(m -> m instanceof dev.langchain4j.data.message.ToolExecutionResultMessage);
+                return ChatResponse.builder()
+                        .aiMessage(AiMessage.from(hasToolResult ? "最终答案" : "缺少工具结果"))
+                        .build();
+            }
+        });
+        when(toolCallbackFactory.buildToolCallbacks(any()))
+                .thenReturn(List.of(echoTool("echo_tool", "echo:")));
+
+        ProcessGraph graph = graphOf(
+                node("start", "START", Map.of()),
+                node("llm", "LLM", Map.of(
+                        "agentModelConfigId", modelId,
+                        "toolNames", List.of("echo_tool"))),
+                node("end", "END", Map.of()),
+                edge("e1", "start", "llm", Map.of()),
+                edge("e2", "llm", "end", Map.of()));
+
+        AgentGraphInterpreter interpreter = interpreter(10);
+        assertThat(interpreter.run(graph, "开始")).isEqualTo("最终答案");
+
+        AgentGraphInterpreter.NodeExecutionTrace llmTrace = interpreter.getTraces().stream()
+                .filter(t -> "LLM".equals(t.getNodeType()))
+                .findFirst().orElseThrow();
+        assertThat(llmTrace.getToolCalls()).hasSize(1);
+        assertThat(llmTrace.getToolCalls().get(0).getTool()).isEqualTo("echo_tool");
+        assertThat(llmTrace.getToolCalls().get(0).getArguments()).contains("你好");
+        assertThat(llmTrace.getToolCalls().get(0).getResult()).contains("echo:你好");
+    }
+
     // ==================== 用例 2：TOOL 单跳覆盖 ====================
 
     @Test
@@ -1063,11 +1112,17 @@ class AgentGraphInterpreterTest {
         provider.setEnabled(true);
         when(modelRuntimeService.acquire(id))
                 .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
-        // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）
-        when(modelRuntimeService.chatWithRotation(eq(id), anyList())).thenAnswer(inv ->
-                modelRuntimeService.acquire(id).chatModel().chat(
-                        dev.langchain4j.model.chat.request.ChatRequest.builder()
-                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1)).build()));
+        // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）；
+        // 阶段 2：工具规格透传，供 LLM 节点工具循环测试使用
+        when(modelRuntimeService.chatWithRotation(eq(id), anyList(), any())).thenAnswer(inv -> {
+            ChatRequest.Builder builder = ChatRequest.builder()
+                    .messages((java.util.List<ChatMessage>) inv.getArgument(1));
+            List<ToolSpecification> specs = inv.getArgument(2);
+            if (specs != null && !specs.isEmpty()) {
+                builder.toolSpecifications(specs);
+            }
+            return modelRuntimeService.acquire(id).chatModel().chat(builder.build());
+        });
     }
 
     /** 消息文本（SystemMessage.text() / UserMessage.singleText()） */

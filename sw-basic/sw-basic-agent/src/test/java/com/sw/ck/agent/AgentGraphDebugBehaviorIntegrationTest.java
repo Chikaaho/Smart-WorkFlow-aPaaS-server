@@ -38,6 +38,7 @@ import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.agent.service.impl.AgentGraphDebugServiceImpl;
 import com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl;
 import com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -147,6 +148,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
                     def_version  INT NOT NULL DEFAULT 1,
                     status       VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
                     graph_json   CLOB,
+                    execution_timeout_seconds INT NOT NULL DEFAULT 300,
                     create_time  TIMESTAMP,
                     create_by    VARCHAR(64),
                     update_time  TIMESTAMP,
@@ -157,6 +159,24 @@ class AgentGraphDebugBehaviorIntegrationTest {
                 )
                 """);
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_key ON sw_agent_graph_def (tenant_id, graph_key)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_graph_snapshot (
+                    id            BIGINT NOT NULL PRIMARY KEY,
+                    graph_def_id  BIGINT NOT NULL,
+                    def_version   INT NOT NULL,
+                    graph_key     VARCHAR(100),
+                    name          VARCHAR(200),
+                    graph_json    CLOB NOT NULL,
+                    create_time   TIMESTAMP,
+                    create_by     VARCHAR(64),
+                    update_time   TIMESTAMP,
+                    update_by     VARCHAR(64),
+                    deleted       SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id     BIGINT NOT NULL DEFAULT 0,
+                    version       BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_snapshot_ver ON sw_agent_graph_snapshot (tenant_id, graph_def_id, def_version)");
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
@@ -279,6 +299,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
                     node_type         VARCHAR(20)  NOT NULL,
                     node_latency_ms   BIGINT,
                     variable_snapshot CLOB,
+                    tool_calls CLOB,
                     input_tokens      BIGINT,
                     output_tokens     BIGINT,
                     create_time       TIMESTAMP    NOT NULL,
@@ -328,6 +349,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
                     input_tokens      BIGINT,
                     output_tokens     BIGINT,
                     variable_snapshot CLOB,
+                    tool_calls CLOB,
                     create_time       TIMESTAMP,
                     create_by         VARCHAR(64),
                     update_time       TIMESTAMP,
@@ -346,6 +368,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
         jdbcTemplate.update("DELETE FROM sw_agent_graph_debug_session");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution_node");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution");
+        jdbcTemplate.update("DELETE FROM sw_agent_graph_snapshot");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_def");
         jdbcTemplate.update("DELETE FROM sw_agent_model");
         jdbcTemplate.update("DELETE FROM sw_agent_provider");
@@ -1133,7 +1156,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
         when(modelRuntimeService.acquire(any())).thenReturn(instances[0],
                 java.util.Arrays.copyOfRange(instances, 1, instances.length));
         // D022-05 轮换入口：委托回 acquire 打桩（按序消费 ModelInstance，计数语义不变）
-        when(modelRuntimeService.chatWithRotation(any(), anyList())).thenAnswer(inv -> {
+        when(modelRuntimeService.chatWithRotation(any(), anyList(), any())).thenAnswer(inv -> {
         java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
         if (msgs == null || msgs.isEmpty()) { return null; }
         return modelRuntimeService.acquire(1L).chatModel().chat(
@@ -1268,8 +1291,17 @@ class AgentGraphDebugBehaviorIntegrationTest {
         public ObjectMapper objectMapper() { return new ObjectMapper(); }
 
         @Bean
-        public AgentGraphDefService agentGraphDefService(ObjectMapper objectMapper) {
-            return new AgentGraphDefServiceImpl(objectMapper);
+        public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                ObjectMapper objectMapper) {
+            return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
+        }
+
+        @Bean
+        public AgentGraphDefService agentGraphDefService(
+                ObjectMapper objectMapper,
+                AgentGraphSnapshotServiceImpl snapshotService) {
+            return new AgentGraphDefServiceImpl(objectMapper, snapshotService);
         }
 
         @Bean
@@ -1290,12 +1322,13 @@ class AgentGraphDebugBehaviorIntegrationTest {
                 AgentToolInternalConfigMapper internalToolMapper,
                 AgentToolExternalConfigMapper externalToolMapper,
                 AgentModelRuntimeService modelRuntimeService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
             // AgentToolCallbackFactory 为 @Autowired(required=false) 字段注入，mock bean 由 Spring 自动填充
             return new AgentGraphDebugServiceImpl(objectMapper, graphDefMapper, sessionMapper,
                     debugNodeMapper, internalToolMapper, externalToolMapper,
-                    modelRuntimeService, loginContextProvider, deptScopeProvider);
+                    modelRuntimeService, snapshotService, loginContextProvider, deptScopeProvider);
         }
 
         @Bean
@@ -1306,11 +1339,12 @@ class AgentGraphDebugBehaviorIntegrationTest {
                 AgentGraphExecutionMapper executionMapper,
                 AgentGraphExecutionNodeMapper executionNodeMapper,
                 AgentModelRuntimeService modelRuntimeService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
             AgentGraphExecutionServiceImpl service = new AgentGraphExecutionServiceImpl(objectMapper,
-                    modelRuntimeService, internalToolMapper, externalToolMapper, executionMapper,
-                    executionNodeMapper, loginContextProvider, deptScopeProvider);
+                    modelRuntimeService, snapshotService, internalToolMapper, externalToolMapper,
+                    executionMapper, executionNodeMapper, loginContextProvider, deptScopeProvider);
             return service;
         }
 

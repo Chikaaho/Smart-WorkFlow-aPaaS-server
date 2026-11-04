@@ -156,6 +156,7 @@ class AgentGraphExecutionServiceImplTest {
                     def_version  INT NOT NULL DEFAULT 1,
                     status       VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
                     graph_json   CLOB,
+                    execution_timeout_seconds INT NOT NULL DEFAULT 300,
                     create_time  TIMESTAMP,
                     create_by    VARCHAR(64),
                     update_time  TIMESTAMP,
@@ -167,6 +168,24 @@ class AgentGraphExecutionServiceImplTest {
                 """);
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_key ON sw_agent_graph_def (tenant_id, graph_key)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_graph_tenant_deleted ON sw_agent_graph_def (tenant_id, deleted)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_graph_snapshot (
+                    id            BIGINT NOT NULL PRIMARY KEY,
+                    graph_def_id  BIGINT NOT NULL,
+                    def_version   INT NOT NULL,
+                    graph_key     VARCHAR(100),
+                    name          VARCHAR(200),
+                    graph_json    CLOB NOT NULL,
+                    create_time   TIMESTAMP,
+                    create_by     VARCHAR(64),
+                    update_time   TIMESTAMP,
+                    update_by     VARCHAR(64),
+                    deleted       SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id     BIGINT NOT NULL DEFAULT 0,
+                    version       BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_snapshot_ver ON sw_agent_graph_snapshot (tenant_id, graph_def_id, def_version)");
         jt.execute("""
                 CREATE TABLE IF NOT EXISTS sw_agent_provider (
                     id              BIGINT NOT NULL PRIMARY KEY,
@@ -293,6 +312,7 @@ class AgentGraphExecutionServiceImplTest {
                     input_tokens      BIGINT,
                     output_tokens     BIGINT,
                     variable_snapshot CLOB,
+                    tool_calls CLOB,
                     create_time       TIMESTAMP,
                     create_by         VARCHAR(64),
                     update_time       TIMESTAMP,
@@ -309,6 +329,7 @@ class AgentGraphExecutionServiceImplTest {
     void setUp() {
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution_node");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_execution");
+        jdbcTemplate.update("DELETE FROM sw_agent_graph_snapshot");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_def");
         jdbcTemplate.update("DELETE FROM sw_agent_model");
         jdbcTemplate.update("DELETE FROM sw_agent_provider");
@@ -345,6 +366,56 @@ class AgentGraphExecutionServiceImplTest {
         assertThat(resp.getOutput()).isEqualTo("图执行输出");
         assertThat(resp.getErrorMessage()).isNull();
         assertThat(resp.getLatencyMs()).isNotNegative();
+    }
+
+    @Test
+    @DisplayName("阶段2: 图级超时——模型调用阻塞超过配置时限 → success=false + FAILED + GRAPH_TIMEOUT")
+    void execute_graphTimeout_shouldFailWithTimeoutCategory() {
+        Long modelId = insertModelConfig("openai-timeout", "sk-timeout");
+        stubAcquire(new SlowChatModel(2000L));
+        Long id = createPublishedGraph(llmGraph(modelId));
+        graphDefService.updateSettings(id, 1);
+
+        AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
+
+        assertThat(resp.isSuccess()).isFalse();
+        assertThat(resp.getErrorMessage()).contains("超时");
+        AgentGraphExecution exec = executionMapper.selectById(resp.getExecutionId());
+        assertThat(exec.getStatus()).isEqualTo("FAILED");
+        assertThat(exec.getErrorCategory()).isEqualTo("GRAPH_TIMEOUT");
+        assertThat(exec.getLatencyMs()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("阶段2: 执行工作线程复制认证上下文（模型调用线程可读取租户）")
+    void execute_shouldPropagateLoginContextToWorkerThread() {
+        Long modelId = insertModelConfig("openai-ctx", "sk-ctx");
+        stubAcquire(new ContextCheckingChatModel());
+        Long id = createPublishedGraph(llmGraph(modelId));
+
+        AgentGraphExecuteRespDTO resp = service.execute(id, "入参");
+
+        assertThat(resp.isSuccess()).isTrue();
+        assertThat(resp.getOutput()).isEqualTo("CTX-OK");
+    }
+
+    @Test
+    @DisplayName("D022-06: 执行读取发布快照——发布后草稿改成无 LLM 图，执行仍使用快照内容")
+    void execute_shouldUsePublishedSnapshot_evenIfDraftChanged() {
+        Long modelId = insertModelConfig("openai-snap", "sk-llm-snap");
+        stubAcquire(new StubChatModel("快照输出"));
+        Long id = createPublishedGraph(llmGraph(modelId));
+
+        // 发布后覆盖草稿（defVersion 不变）：若执行误读 graph_json，会得到入参原文而非模型输出
+        graphDefService.saveDraftGraph(id, graphOf(
+                node("node_start", "START", Map.of()),
+                node("node_end", "END", Map.of()),
+                edge("e1", "node_start", "node_end", Map.of())));
+
+        AgentGraphExecuteRespDTO resp = service.execute(id, "入参文本");
+
+        assertThat(resp.isSuccess()).isTrue();
+        assertThat(resp.getOutput()).isEqualTo("快照输出");
     }
 
     // ==================== 用例 2：DRAFT 图 → PARAM_ERROR ====================
@@ -1676,7 +1747,7 @@ class AgentGraphExecutionServiceImplTest {
         when(modelRuntimeService.acquire(any())).thenReturn(instances[0],
                 java.util.Arrays.copyOfRange(instances, 1, instances.length));
         // D022-05 轮换入口：委托回 acquire 打桩（按序消费 ModelInstance，计数语义不变）
-        when(modelRuntimeService.chatWithRotation(any(), anyList())).thenAnswer(inv -> {
+        when(modelRuntimeService.chatWithRotation(any(), anyList(), any())).thenAnswer(inv -> {
             java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
             if (msgs == null || msgs.isEmpty()) {
                 return null; // 注册期占位调用防御
@@ -1712,6 +1783,37 @@ class AgentGraphExecutionServiceImplTest {
         @Override
         public ChatResponse chat(ChatRequest request) {
             return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
+        }
+    }
+
+    /** 校验工作线程认证上下文可读的 ChatModel 桩 */
+    static class ContextCheckingChatModel implements ChatModel {
+        @Override
+        public ChatResponse chat(ChatRequest request) {
+            if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+                throw new IllegalStateException("tenant-context-missing");
+            }
+            return ChatResponse.builder().aiMessage(AiMessage.from("CTX-OK")).build();
+        }
+    }
+
+    /** 阻塞指定时长的 ChatModel 桩（图级超时测试） */
+    static class SlowChatModel implements ChatModel {
+        private final long sleepMs;
+
+        SlowChatModel(long sleepMs) {
+            this.sleepMs = sleepMs;
+        }
+
+        @Override
+        public ChatResponse chat(ChatRequest request) {
+            try {
+                Thread.sleep(sleepMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted", e);
+            }
+            return ChatResponse.builder().aiMessage(AiMessage.from("迟到回复")).build();
         }
     }
 
@@ -1850,8 +1952,17 @@ class AgentGraphExecutionServiceImplTest {
         // ==================== 业务 Bean ====================
 
         @Bean
-        public AgentGraphDefService agentGraphDefService(ObjectMapper objectMapper) {
-            return new AgentGraphDefServiceImpl(objectMapper);
+        public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                ObjectMapper objectMapper) {
+            return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
+        }
+
+        @Bean
+        public AgentGraphDefService agentGraphDefService(
+                ObjectMapper objectMapper,
+                AgentGraphSnapshotServiceImpl snapshotService) {
+            return new AgentGraphDefServiceImpl(objectMapper, snapshotService);
         }
 
         @Bean
@@ -1877,10 +1988,11 @@ class AgentGraphExecutionServiceImplTest {
                 AgentGraphExecutionMapper executionMapper,
                 AgentGraphExecutionNodeMapper executionNodeMapper,
                 AgentModelRuntimeService modelRuntimeService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
             // AgentToolCallbackFactory 为 @Autowired(required=false) 字段注入，mock bean 由 Spring 自动填充
-            return new AgentGraphExecutionServiceImpl(objectMapper, modelRuntimeService,
+            return new AgentGraphExecutionServiceImpl(objectMapper, modelRuntimeService, snapshotService,
                     internalToolMapper, externalToolMapper, executionMapper,
                     executionNodeMapper, loginContextProvider, deptScopeProvider);
         }

@@ -47,10 +47,10 @@ class I6G7UpgradeDrillH2Test {
                 .load();
         var result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(21, result.migrationsExecuted,
-                "全新库应执行 21 条（V0.2.0 基线种子 + V0.2.2 F1 + 19 个 R__）");
-        assertEquals("0.2.2", flyway.info().current().getVersion().getVersion(),
-                "终点当前版本应为最后一个 versioned 迁移（V0.2.2）");
+        assertEquals(22, result.migrationsExecuted,
+                "全新库应执行 22 条（V0.2.0 基线种子 + V0.2.2/V0.2.3 + 19 个 R__）");
+        assertEquals("0.2.3", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移（V0.2.3）");
 
         // ---------- 2. 写入代表性数据（真实 INSERT，非 schema 构造） ----------
         try (Connection conn = DriverManager.getConnection(DB, USER, PASSWORD); Statement st = conn.createStatement()) {
@@ -126,16 +126,22 @@ class I6G7UpgradeDrillH2Test {
                     + "NULL, NULL, NULL, 30, 0, 1, NULL, 0, 60, 1, 0, 0), "
                     + "(103, '旧-other', 'other', 'https://closed.example.com', 'm-unknown', 'CIPHER-C', "
                     + "NULL, NULL, NULL, 30, 0, 1, NULL, 0, 60, 1, 0, 0)");
+            // 已发布的旧图：V0.2.3 迁移应按当前版本回填一条快照
+            st.executeUpdate("INSERT INTO sw_agent_graph_def (id, graph_key, name, def_version, status, graph_json, "
+                    + "tenant_id, deleted, version, create_time, update_time) VALUES "
+                    + "(901, 'agent_legacy', '旧图', 4, 'PUBLISHED', "
+                    + "'{\"graphKey\":\"agent_legacy\",\"name\":\"旧图\",\"version\":4,\"elements\":[]}', "
+                    + "1, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
         }
 
-        // ---------- 3. 放开 target 迁满 V0.2.2 ----------
+        // ---------- 3. 放开 target 迁满（V0.2.2/V0.2.3） ----------
         var phase2 = Flyway.configure().dataSource(UPGRADE_DB, USER, PASSWORD)
                 .locations(allLocations)
                 .load();
         var result = phase2.migrate();
-        assertTrue(result.success, "第二阶段迁移（含 V0.2.2）应成功");
-        assertEquals("0.2.2", phase2.info().current().getVersion().getVersion(),
-                "升级后终点应为 V0.2.2");
+        assertTrue(result.success, "第二阶段迁移（含 V0.2.2/V0.2.3）应成功");
+        assertEquals("0.2.3", phase2.info().current().getVersion().getVersion(),
+                "升级后终点应为 V0.2.3");
 
         // ---------- 4. 断言 D022-03 搬运结果 ----------
         try (Connection conn = DriverManager.getConnection(UPGRADE_DB, USER, PASSWORD);
@@ -149,6 +155,20 @@ class I6G7UpgradeDrillH2Test {
             assertLegacyRow(ps, 102, "OPENAI_CHAT", "http://ollama-host:11434/v1", true, "llama3");
             // other：OPENAI_CHAT 且供应商停用，旧 id 原样
             assertLegacyRow(ps, 103, "OPENAI_CHAT", "https://closed.example.com", false, "m-unknown");
+        }
+
+        // ---------- 5. D022-06：已发布旧图在 V0.2.3 回填快照 ----------
+        try (Connection conn = DriverManager.getConnection(UPGRADE_DB, USER, PASSWORD);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT graph_def_id, def_version, graph_key, name, graph_json "
+                             + "FROM sw_agent_graph_snapshot WHERE graph_def_id = 901")) {
+            assertTrue(rs.next(), "已发布旧图应回填一条版本快照");
+            assertEquals(901L, rs.getLong("graph_def_id"));
+            assertEquals(4, rs.getInt("def_version"), "快照版本应等于图当前 defVersion");
+            assertEquals("agent_legacy", rs.getString("graph_key"));
+            assertEquals("旧图", rs.getString("name"));
+            assertTrue(rs.getString("graph_json").contains("agent_legacy"));
         }
     }
 

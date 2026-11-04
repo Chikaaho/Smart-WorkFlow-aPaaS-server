@@ -66,6 +66,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     private final AgentToolInternalConfigMapper internalToolMapper;
     private final AgentToolExternalConfigMapper externalToolMapper;
     private final AgentModelRuntimeService modelRuntimeService;
+    private final AgentGraphSnapshotServiceImpl snapshotService;
     private final LoginContextProvider loginContextProvider;
     private final DeptScopeProvider deptScopeProvider;
 
@@ -79,6 +80,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                                       AgentToolInternalConfigMapper internalToolMapper,
                                       AgentToolExternalConfigMapper externalToolMapper,
                                       AgentModelRuntimeService modelRuntimeService,
+                                      AgentGraphSnapshotServiceImpl snapshotService,
                                       LoginContextProvider loginContextProvider,
                                       DeptScopeProvider deptScopeProvider) {
         this.objectMapper = objectMapper;
@@ -88,6 +90,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         this.internalToolMapper = internalToolMapper;
         this.externalToolMapper = externalToolMapper;
         this.modelRuntimeService = modelRuntimeService;
+        this.snapshotService = snapshotService;
         this.loginContextProvider = loginContextProvider;
         this.deptScopeProvider = deptScopeProvider;
     }
@@ -104,7 +107,10 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         if (!STATUS_PUBLISHED.equals(def.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图未发布，无法调试");
         }
-        ProcessGraph graph = parseGraph(def.getGraphJson());
+        // D022-06：调试会话同样按发布快照绑定（后续草稿编辑不影响已开始的会话）
+        com.sw.ck.agent.entity.AgentGraphSnapshot snapshot =
+                snapshotService.requireSnapshot(def, def.getDefVersion());
+        ProcessGraph graph = parseGraph(snapshot.getGraphJson());
         if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图数据为空，无法调试");
         }
@@ -118,7 +124,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         AgentGraphDebugSession session = new AgentGraphDebugSession();
         session.setGraphDefId(def.getId());
         session.setGraphDefVersion(def.getDefVersion());
-        session.setGraphJson(def.getGraphJson());
+        session.setGraphJson(snapshot.getGraphJson());
         session.setStatus(STATUS_PAUSED);
         session.setInput(input);
         session.setBreakpoints("[]");

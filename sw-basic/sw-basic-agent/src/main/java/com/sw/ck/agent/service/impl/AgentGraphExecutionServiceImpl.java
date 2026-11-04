@@ -91,8 +91,16 @@ public class AgentGraphExecutionServiceImpl
     /** 执行记录状态：执行失败（运行时错误，含第三方异常） */
     private static final String STATUS_FAILED = "FAILED";
 
+    /** 图级执行超时默认值（秒，与 V0.2.3 列默认一致） */
+    private static final int DEFAULT_EXECUTION_TIMEOUT_SECONDS = 300;
+
+    /** 执行线程池（虚拟线程：超时取消后不占用平台线程；执行记录仍由主线程收尾） */
+    private final java.util.concurrent.ExecutorService timeoutExecutor =
+            java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+
     private final ObjectMapper objectMapper;
     private final AgentModelRuntimeService modelRuntimeService;
+    private final AgentGraphSnapshotServiceImpl snapshotService;
     private final AgentToolInternalConfigMapper internalToolMapper;
     private final AgentToolExternalConfigMapper externalToolMapper;
     private final AgentGraphExecutionMapper executionMapper;
@@ -109,6 +117,7 @@ public class AgentGraphExecutionServiceImpl
 
     public AgentGraphExecutionServiceImpl(ObjectMapper objectMapper,
                                           AgentModelRuntimeService modelRuntimeService,
+                                          AgentGraphSnapshotServiceImpl snapshotService,
                                           AgentToolInternalConfigMapper internalToolMapper,
                                           AgentToolExternalConfigMapper externalToolMapper,
                                           AgentGraphExecutionMapper executionMapper,
@@ -117,6 +126,7 @@ public class AgentGraphExecutionServiceImpl
                                           DeptScopeProvider deptScopeProvider) {
         this.objectMapper = objectMapper;
         this.modelRuntimeService = modelRuntimeService;
+        this.snapshotService = snapshotService;
         this.internalToolMapper = internalToolMapper;
         this.externalToolMapper = externalToolMapper;
         this.executionMapper = executionMapper;
@@ -138,7 +148,8 @@ public class AgentGraphExecutionServiceImpl
         if (!STATUS_PUBLISHED.equals(entity.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图未发布，无法执行");
         }
-        ProcessGraph graph = parseGraph(entity.getGraphJson());
+        // D022-06：执行读取发布快照（按 defVersion 绑定），不读可被草稿编辑覆盖的 graph_json
+        ProcessGraph graph = snapshotService.loadPublishedGraph(entity);
         if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图数据为空，无法执行");
         }
@@ -181,18 +192,50 @@ public class AgentGraphExecutionServiceImpl
         AgentGraphExecuteRespDTO resp = new AgentGraphExecuteRespDTO();
         List<AgentGraphInterpreter.NodeExecutionTrace> traces;
         Throwable failure = null;
+        int timeoutSeconds = entity.getExecutionTimeoutSeconds() == null
+                ? DEFAULT_EXECUTION_TIMEOUT_SECONDS : entity.getExecutionTimeoutSeconds();
+        // 执行转移到工作线程后必须复制认证上下文：模型/工具运行时查询依赖租户拦截器
+        com.sw.ck.security.holder.LoginUser loginUser =
+                com.sw.ck.security.holder.LoginUserHolder.get();
+        java.util.concurrent.Future<String> future =
+                timeoutExecutor.submit(() -> {
+                    if (loginUser != null) {
+                        com.sw.ck.security.holder.LoginUserHolder.set(loginUser);
+                    }
+                    try {
+                        return interpreter.run(graph, input);
+                    } finally {
+                        com.sw.ck.security.holder.LoginUserHolder.clear();
+                    }
+                });
         try {
-            String output = interpreter.run(graph, input);
+            // 阶段 2：图级执行超时。超时后取消工作线程，主线程仍完成 RUNNING→FAILED 收尾
+            String output = future.get(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
             resp.setSuccess(true);
             resp.setOutput(output);
             traces = interpreter.getTraces();
-        } catch (Exception e) {
+        } catch (java.util.concurrent.TimeoutException timeout) {
+            future.cancel(true);
+            failure = new AgentGraphInterpreter.GraphExecutionException(
+                    AgentGraphInterpreter.ERROR_CATEGORY_GRAPH_TIMEOUT,
+                    "图执行超时（超过 " + timeoutSeconds + " 秒）");
+            resp.setSuccess(false);
+            resp.setErrorMessage(failure.getMessage());
+            traces = interpreter.getTraces();
+        } catch (java.util.concurrent.ExecutionException e) {
             // 运行时错误（GraphExecutionException / 模型或工具调用异常）：不上抛，
             // success=false + 异常摘要（与 F01 run() success=false 语义一致）；
             // 节点轨迹在解释器 catch 中已完整留痕，此处读取
+            failure = e.getCause() != null ? e.getCause() : e;
+            resp.setSuccess(false);
+            resp.setErrorMessage(summarizeError(failure));
+            traces = interpreter.getTraces();
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
             failure = e;
             resp.setSuccess(false);
-            resp.setErrorMessage(summarizeError(e));
+            resp.setErrorMessage("执行被中断");
             traces = interpreter.getTraces();
         }
         long latency = System.currentTimeMillis() - start;
@@ -283,6 +326,10 @@ public class AgentGraphExecutionServiceImpl
             // M07-F04-02: 设置 token 字段
             node.setInputTokens(trace.getInputTokens());
             node.setOutputTokens(trace.getOutputTokens());
+            // 阶段 2：工具调用轨迹（空列表不落库）
+            if (trace.getToolCalls() != null && !trace.getToolCalls().isEmpty()) {
+                node.setToolCalls(toJson(trace.getToolCalls()));
+            }
             // 汇总 token（只累加有数据的节点；每侧独立标记）
             if (trace.getInputTokens() != null) {
                 totalInputTokens += trace.getInputTokens();
@@ -326,7 +373,7 @@ public class AgentGraphExecutionServiceImpl
     }
 
     /** 变量表快照序列化（Map<String,String> → JSON；失败理论不可达，兜底 null） */
-    private String toJson(Map<String, String> variables) {
+    private String toJson(Object variables) {
         if (variables == null) {
             return null;
         }
@@ -385,6 +432,7 @@ public class AgentGraphExecutionServiceImpl
         // M07-F04-02: 添加 token 字段
         dto.setInputTokens(node.getInputTokens());
         dto.setOutputTokens(node.getOutputTokens());
+        dto.setToolCalls(node.getToolCalls());
         return dto;
     }
 
@@ -436,6 +484,32 @@ public class AgentGraphExecutionServiceImpl
                     }
                     // F1 阶段 1：经运行时服务校验（存在性 + 模型/供应商启停），并预热单例
                     modelRuntimeService.assertUsable(modelConfigId);
+                    // 阶段 2：节点两级选择（供应商 + 模型）时校验归属一致
+                    Long providerId = AgentGraphInterpreter.parseConfigLong(
+                            configValue(node, AgentGraphInterpreter.CONFIG_KEY_PROVIDER_ID));
+                    if (providerId != null) {
+                        AgentModelRuntimeService.ModelInstance instance =
+                                modelRuntimeService.acquire(modelConfigId);
+                        if (instance != null && !providerId.equals(instance.provider().getId())) {
+                            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                    "LLM 节点所选供应商与模型不匹配: " + node.getId());
+                        }
+                    }
+                    // 阶段 2：节点挂载的工具必须存在且启用
+                    List<String> toolNames = AgentGraphInterpreter.configStringList(
+                            node, AgentGraphInterpreter.CONFIG_KEY_TOOL_NAMES);
+                    if (!toolNames.isEmpty()) {
+                        if (agentToolCallbackFactory == null) {
+                            throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                    "工具工厂未装配，无法执行 LLM 节点工具: " + node.getId());
+                        }
+                        for (String toolName : toolNames) {
+                            if (!toolExists(toolName)) {
+                                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                        "LLM 节点引用的工具不存在或未启用: " + toolName);
+                            }
+                        }
+                    }
                 }
                 case AgentGraphInterpreter.NODE_TYPE_TOOL -> {
                     Object nameObj = configValue(node, AgentGraphInterpreter.CONFIG_KEY_TOOL_NAME);

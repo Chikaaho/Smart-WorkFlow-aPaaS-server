@@ -134,7 +134,7 @@ class AgentGraphInterpreterTokenTest {
         when(modelRuntimeService.acquire(id))
                 .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
         // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）
-        when(modelRuntimeService.chatWithRotation(eq(id), anyList())).thenAnswer(inv ->
+        when(modelRuntimeService.chatWithRotation(eq(id), anyList(), any())).thenAnswer(inv ->
                 modelRuntimeService.acquire(id).chatModel().chat(
                         dev.langchain4j.model.chat.request.ChatRequest.builder()
                                 .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1))

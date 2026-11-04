@@ -121,6 +121,18 @@ public class AgentGraphInterpreter {
     /** LLM 节点 config 键：模型配置 id（Long） */
     public static final String CONFIG_KEY_AGENT_MODEL_CONFIG_ID = "agentModelConfigId";
 
+    /** LLM 节点 config 键：所选供应商 id（Long，可选；存在时校验模型归属该供应商） */
+    public static final String CONFIG_KEY_PROVIDER_ID = "providerId";
+
+    /** LLM 节点 config 键：挂载的工具名列表（List&lt;String&gt; 或逗号分隔字符串，可选） */
+    public static final String CONFIG_KEY_TOOL_NAMES = "toolNames";
+
+    /** LLM 节点 config 键：工具调用最大轮次（Integer，可选，缺省 {@value #DEFAULT_MAX_TOOL_ROUNDS}） */
+    public static final String CONFIG_KEY_MAX_TOOL_ROUNDS = "maxToolRounds";
+
+    /** LLM 节点工具调用默认最大轮次 */
+    public static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
+
     /** TOOL 节点 config 键：白名单工具名（String） */
     public static final String CONFIG_KEY_TOOL_NAME = "toolName";
 
@@ -166,6 +178,9 @@ public class AgentGraphInterpreter {
 
     /** 执行步数超限（疑似环路） */
     public static final String ERROR_CATEGORY_STEP_LIMIT = "STEP_LIMIT";
+
+    /** 图级执行超时（阶段 2：执行服务按图配置的总时限终止并落失败记录） */
+    public static final String ERROR_CATEGORY_GRAPH_TIMEOUT = "GRAPH_TIMEOUT";
 
     /** 循环迭代超限（LOOP maxIterations 耗尽） */
     public static final String ERROR_CATEGORY_LOOP_LIMIT = "LOOP_LIMIT";
@@ -258,7 +273,8 @@ public class AgentGraphInterpreter {
         // 节点级耗时与变量快照；成功/失败路径都完整留痕（失败节点在 catch 中补录后
         // 上抛）。轨迹由调用方（执行 Service）经 getTraces() 读取落库——解释器只采集
         // 不持久化，保持纯 Java 无 Mapper 依赖（方向文档 §5.4）。
-        traces = new ArrayList<>();
+        // CopyOnWriteArrayList：执行超时取消时主线程可安全读取已产生的轨迹
+        traces = new java.util.concurrent.CopyOnWriteArrayList<>();
         long traceSeq = 0;
         int steps = 0;
         while (!activePoints.isEmpty()) {
@@ -344,7 +360,8 @@ public class AgentGraphInterpreter {
      * 读取落库——解释器只采集不持久化，保持纯 Java 可独立单测定位。
      */
     public List<NodeExecutionTrace> getTraces() {
-        return traces == null ? List.of() : traces;
+        // 阶段 2：执行超时后主线程在取消工作线程的同时读取轨迹，返回稳定快照
+        return traces == null ? List.of() : List.copyOf(traces);
     }
 
     /** 完成一条节点轨迹：节点级耗时（出队到本步结束）+ 该时点变量表快照 */
@@ -396,22 +413,10 @@ public class AgentGraphInterpreter {
                 userText = interpolateTemplate(userPromptTemplate, node, variables);
             }
             messages.add(UserMessage.from(userText));
-            ChatResponse response = modelRuntimeService.chatWithRotation(modelConfigId, messages);
-            String output = response.aiMessage().text();
-            if (output == null) {
-                throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                        "LLM 节点未返回文本: " + node.getId());
-            }
-            // M07-F04-02（F1 LangChain4j 化）: 提取 usage 并设置到当前 trace；
-            // 供应商缺失/部分缺失 usage 保持 null（不写零、不估算）
-            dev.langchain4j.model.output.TokenUsage usage =
-                    response.metadata() != null ? response.metadata().tokenUsage() : null;
             NodeExecutionTrace currentTrace = traces.get(traces.size() - 1);
-            currentTrace.inputTokens = usage != null && usage.inputTokenCount() != null
-                    ? usage.inputTokenCount().longValue() : null;
-            currentTrace.outputTokens = usage != null && usage.outputTokenCount() != null
-                    ? usage.outputTokenCount().longValue() : null;
-            return output;
+            // 阶段 2：节点可挂工具，模型请求工具时在节点内完成工具调用循环
+            return executeChatWithTools(modelRuntimeService, toolCallbackFactory, tenantId,
+                    node, modelConfigId, messages, currentTrace);
         } catch (GraphExecutionException e) {
             // 自有异常（未返回文本等）已带分类，原样上抛
             throw e;
@@ -426,6 +431,124 @@ public class AgentGraphInterpreter {
             throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
                     e.getMessage(), e);
         }
+    }
+
+    /**
+     * 模型调用 + 节点内工具循环（阶段 2，图执行与单步调试共用）：
+     * 按 config.toolNames 取启用工具规格随请求下发；模型返回工具请求时逐个执行并把
+     * 结果回喂模型，直到模型给出最终文本或轮次超限。每次工具调用的入参与输出写入
+     * 当前节点轨迹。
+     */
+    static String executeChatWithTools(AgentModelRuntimeService runtime,
+                                       AgentToolCallbackFactory factory,
+                                       Long tenantId,
+                                       GraphElement node,
+                                       Long modelConfigId,
+                                       List<dev.langchain4j.data.message.ChatMessage> messages,
+                                       NodeExecutionTrace trace) {
+        List<String> toolNames = configStringList(node, CONFIG_KEY_TOOL_NAMES);
+        List<AgentToolCallbackFactory.ToolHandle> handles = new ArrayList<>();
+        if (!toolNames.isEmpty()) {
+            if (factory == null) {
+                throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                        "工具工厂未装配，无法执行 LLM 节点工具: " + node.getId());
+            }
+            List<AgentToolCallbackFactory.ToolHandle> available = factory.buildToolCallbacks(tenantId);
+            for (String toolName : toolNames) {
+                AgentToolCallbackFactory.ToolHandle handle = available.stream()
+                        .filter(h -> toolName.equals(h.specification().name()))
+                        .findFirst()
+                        .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                                "LLM 节点引用的工具不存在或未启用: " + toolName));
+                handles.add(handle);
+            }
+        }
+        List<dev.langchain4j.agent.tool.ToolSpecification> specs = handles.stream()
+                .map(AgentToolCallbackFactory.ToolHandle::specification)
+                .toList();
+        int maxRounds = configInt(node, CONFIG_KEY_MAX_TOOL_ROUNDS, DEFAULT_MAX_TOOL_ROUNDS);
+        long inputTokens = 0L;
+        long outputTokens = 0L;
+        boolean inputSeen = false;
+        boolean outputSeen = false;
+        int rounds = 0;
+        while (true) {
+            ChatResponse response = runtime.chatWithRotation(modelConfigId, messages, specs);
+            dev.langchain4j.model.output.TokenUsage usage =
+                    response.metadata() != null ? response.metadata().tokenUsage() : null;
+            if (usage != null && usage.inputTokenCount() != null) {
+                inputTokens += usage.inputTokenCount();
+                inputSeen = true;
+            }
+            if (usage != null && usage.outputTokenCount() != null) {
+                outputTokens += usage.outputTokenCount();
+                outputSeen = true;
+            }
+            var ai = response.aiMessage();
+            if (ai == null) {
+                throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
+                        "LLM 节点未返回消息: " + node.getId());
+            }
+            if (!ai.hasToolExecutionRequests()) {
+                String output = ai.text();
+                if (output == null) {
+                    throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
+                            "LLM 节点未返回文本: " + node.getId());
+                }
+                trace.setInputTokens(inputSeen ? inputTokens : null);
+                trace.setOutputTokens(outputSeen ? outputTokens : null);
+                return output;
+            }
+            if (++rounds > maxRounds) {
+                throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                        "工具调用轮次超过上限 " + maxRounds + ": " + node.getId());
+            }
+            messages.add(ai);
+            for (ToolExecutionRequest request : ai.toolExecutionRequests()) {
+                AgentToolCallbackFactory.ToolHandle handle = handles.stream()
+                        .filter(h -> request.name().equals(h.specification().name()))
+                        .findFirst()
+                        .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
+                                "模型请求了未挂载的工具: " + request.name()));
+                String result;
+                try {
+                    result = handle.executor().execute(request, null);
+                } catch (Exception e) {
+                    // 工具执行失败回喂错误文本，让模型自行收敛；不中断整个节点
+                    result = "工具执行失败: " + e.getMessage();
+                }
+                String decoded = decodeIfJsonString(result);
+                trace.addToolCall(new ToolCallTrace(request.name(), request.arguments(), decoded));
+                messages.add(dev.langchain4j.data.message.ToolExecutionResultMessage
+                        .from(request, decoded));
+            }
+        }
+    }
+
+    /** config 读取字符串列表（支持 List&lt;String&gt; 与逗号分隔字符串；空/缺失返回空列表）。 */
+    public static List<String> configStringList(GraphElement node, String key) {
+        Object value = node.getConfig() == null ? null : node.getConfig().get(key);
+        List<String> result = new ArrayList<>();
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof String s && !s.isBlank()) {
+                    result.add(s.trim());
+                }
+            }
+        } else if (value instanceof String s && !s.isBlank()) {
+            for (String part : s.split(",")) {
+                if (!part.isBlank()) {
+                    result.add(part.trim());
+                }
+            }
+        }
+        return result;
+    }
+
+    /** config 读取正整数（缺失/非法用默认值；最小 1）。 */
+    static int configInt(GraphElement node, String key, int defaultValue) {
+        Long parsed = parseConfigLong(node.getConfig() == null ? null : node.getConfig().get(key));
+        return parsed == null ? defaultValue : (int) Math.max(1L, Math.min(parsed, 50L));
     }
 
     // ==================== TOOL 节点 ====================
@@ -698,7 +821,7 @@ public class AgentGraphInterpreter {
      * 工具返回解码：JSON 字符串字面量（如 {@code "hello"}）解码还原为纯文本；
      * 非 JSON 字符串（如外部工具返回的裸文本/JSON 对象）原样保留，不做转换。
      */
-    private String decodeIfJsonString(String result) {
+    static String decodeIfJsonString(String result) {
         if (result == null) {
             return null;
         }
@@ -831,6 +954,9 @@ public class AgentGraphInterpreter {
         /** 该节点 LLM 调用的输出 Token（非 LLM 节点或供应商未返回时为 null） */
         private Long outputTokens;
 
+        /** 该节点内 LLM 工具调用轨迹（阶段 2；非工具调用节点为空列表） */
+        private final java.util.List<ToolCallTrace> toolCalls = new java.util.ArrayList<>();
+
         public NodeExecutionTrace(long nodeSeq, String branchId, String nodeId, String nodeType) {
             this.nodeSeq = nodeSeq;
             this.branchId = branchId;
@@ -884,6 +1010,42 @@ public class AgentGraphInterpreter {
 
         public void setOutputTokens(Long outputTokens) {
             this.outputTokens = outputTokens;
+        }
+
+        public java.util.List<ToolCallTrace> getToolCalls() {
+            return toolCalls;
+        }
+
+        public void addToolCall(ToolCallTrace toolCall) {
+            this.toolCalls.add(toolCall);
+        }
+    }
+
+    /** LLM 节点工具调用轨迹（阶段 2：执行轨迹里可看到工具输入与输出） */
+    public static class ToolCallTrace {
+
+        private final String tool;
+
+        private final String arguments;
+
+        private final String result;
+
+        public ToolCallTrace(String tool, String arguments, String result) {
+            this.tool = tool;
+            this.arguments = arguments;
+            this.result = result;
+        }
+
+        public String getTool() {
+            return tool;
+        }
+
+        public String getArguments() {
+            return arguments;
+        }
+
+        public String getResult() {
+            return result;
         }
     }
 

@@ -61,11 +61,29 @@ public interface AgentGraphDefService {
      * 发布图定义（DRAFT → PUBLISHED，允许重复发布迭代版本）。
      * <p>
      * 发布门：①图可解析且 elements 非空 ②已 PUBLISHED 后 graphKey 冻结检查
-     * （图内携带的 key 必须与实体一致）。通过后 defVersion + 1、status 置 PUBLISHED。
+     * （图内携带的 key 必须与实体一致）。通过后 defVersion + 1、status 置 PUBLISHED，
+     * 并固化一份不可变版本快照（D022-06）。
      * </p>
      *
      * @param id 图定义 ID
      * @return 发布后的元数据 DTO（含新版本号与状态）
      */
     AgentGraphDefDTO publish(Long id);
+
+    /**
+     * 历史发布版本列表（新版本在前，不含 graph_json）。
+     *
+     * @param id 图定义 ID
+     * @return 版本快照摘要列表
+     */
+    java.util.List<com.sw.ck.agent.dto.AgentGraphSnapshotDTO> listVersions(Long id);
+
+    /**
+     * 更新图级设置（当前支持执行超时秒数）。
+     *
+     * @param id                   图定义 ID
+     * @param executionTimeoutSecs 执行超时（秒，1–3600）
+     * @return 更新后的图元数据
+     */
+    AgentGraphDefDTO updateSettings(Long id, Integer executionTimeoutSecs);
 }

@@ -74,6 +74,8 @@ public class AgentModelManageServiceImpl
                         || m.getCapabilities() == null
                         || m.getCapabilities().contains(capability))
                 .map(this::toDTO)
+                // 阶段 2：LLM 节点只列出真正可用的模型——供应商停用的模型不可选
+                .filter(dto -> Boolean.TRUE.equals(dto.getProviderEnabled()))
                 .toList();
     }
 
@@ -253,6 +255,7 @@ public class AgentModelManageServiceImpl
             if (provider != null) {
                 dto.setProviderName(provider.getName());
                 dto.setProviderApiFormat(provider.getApiFormat());
+                dto.setProviderEnabled(provider.getEnabled());
             }
         }
         return dto;

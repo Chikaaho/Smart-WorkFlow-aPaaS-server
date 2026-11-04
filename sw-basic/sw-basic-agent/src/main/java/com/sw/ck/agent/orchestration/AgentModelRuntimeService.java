@@ -184,14 +184,31 @@ public class AgentModelRuntimeService {
      */
     public dev.langchain4j.model.chat.response.ChatResponse chatWithRotation(
             Long modelId, List<dev.langchain4j.data.message.ChatMessage> messages) {
+        return chatWithRotation(modelId, messages, null);
+    }
+
+    /**
+     * 带工具规格与 429 轮换的聊天调用（阶段 2：LLM 节点工具循环）。
+     * <p>
+     * 工具规格由节点配置的启用工具构造；空/null 表示不绑定工具（与单跳语义一致）。
+     * 轮换仍只切换模型实例，消息与工具规格由调用方维护并跨轮复用。
+     * </p>
+     */
+    public dev.langchain4j.model.chat.response.ChatResponse chatWithRotation(
+            Long modelId, List<dev.langchain4j.data.message.ChatMessage> messages,
+            List<dev.langchain4j.agent.tool.ToolSpecification> toolSpecifications) {
         java.util.Set<Long> tried = new java.util.HashSet<>();
         Long current = modelId;
         while (true) {
             ModelInstance instance = acquire(current);
             tried.add(current);
             try {
-                return instance.chatModel().chat(dev.langchain4j.model.chat.request.ChatRequest
-                        .builder().messages(messages).build());
+                dev.langchain4j.model.chat.request.ChatRequest.Builder builder =
+                        dev.langchain4j.model.chat.request.ChatRequest.builder().messages(messages);
+                if (toolSpecifications != null && !toolSpecifications.isEmpty()) {
+                    builder.toolSpecifications(toolSpecifications);
+                }
+                return instance.chatModel().chat(builder.build());
             } catch (Exception e) {
                 if (!isRateLimited(e) || instance.model().getGroupKey() == null) {
                     throw e;

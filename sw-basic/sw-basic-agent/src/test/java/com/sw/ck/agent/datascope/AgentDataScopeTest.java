@@ -447,7 +447,9 @@ class AgentDataScopeTest {
                 LoginContextProvider loginContextProvider,
                 DeptScopeProvider deptScopeProvider) {
             return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
-                    objectMapper, modelRuntimeService, internalToolMapper, externalToolMapper,
+                    objectMapper, modelRuntimeService,
+                    org.mockito.Mockito.mock(com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl.class),
+                    internalToolMapper, externalToolMapper,
                     executionMapper, executionNodeMapper,
                     loginContextProvider, deptScopeProvider);
         }

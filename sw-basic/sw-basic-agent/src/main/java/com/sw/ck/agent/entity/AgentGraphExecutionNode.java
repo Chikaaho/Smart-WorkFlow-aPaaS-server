@@ -46,4 +46,7 @@ public class AgentGraphExecutionNode extends BaseEntity {
 
     /** 该节点 LLM 调用的输出 Token（非 LLM 节点或供应商未返回时为 NULL） */
     private Long outputTokens;
+
+    /** 该节点内工具调用轨迹（JSON 数组，阶段 2；无工具调用时为 NULL） */
+    private String toolCalls;
 }

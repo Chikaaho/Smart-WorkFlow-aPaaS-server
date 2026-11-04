@@ -21,6 +21,9 @@ public class AgentModelDTO {
     /** 供应商 API 格式（联表展示） */
     private String providerApiFormat;
 
+    /** 供应商是否启用（列表据此标注"因供应商停用不可用"） */
+    private Boolean providerEnabled;
+
     private String name;
 
     private String modelName;

@@ -332,6 +332,25 @@ class AgentModelManageServiceImplTest {
         assertThat(service.listEnabled("EMBEDDING")).isEmpty();
     }
 
+    @Test
+    @DisplayName("阶段2: listEnabled 排除供应商停用的模型；DTO 标注 providerEnabled=false")
+    void listEnabled_shouldExcludeProviderDisabledModels() {
+        Long enabledProvider = insertProvider("p-enabled");
+        Long disabledProvider = insertProvider("p-disabled");
+        service.create(createReq(enabledProvider, "usable-model"));
+        Long blockedId = service.create(createReq(disabledProvider, "blocked-model"));
+
+        AgentProvider provider = providerMapper.selectById(disabledProvider);
+        provider.setEnabled(false);
+        providerMapper.updateById(provider);
+
+        assertThat(service.listEnabled(null))
+                .extracting(AgentModelDTO::getName)
+                .contains("usable-model")
+                .doesNotContain("blocked-model");
+        assertThat(service.getById(blockedId).getProviderEnabled()).isFalse();
+    }
+
     // ==================== 用例 6：删除 ====================
 
     @Test

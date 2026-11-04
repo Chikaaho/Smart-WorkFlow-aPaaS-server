@@ -2,7 +2,6 @@ package com.sw.ck.agent.entity.tool;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.sw.ck.agent.typehandler.BooleanSmallintTypeHandler;
 import com.sw.ck.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -36,7 +35,6 @@ public class AgentToolInternalConfig extends BaseEntity {
     private String methodName;
 
     /** 1=启用 0=禁用（PG smallint 列，按 0/1 写入） */
-    @TableField(value = "enabled", typeHandler = BooleanSmallintTypeHandler.class)
     private Boolean enabled;
 
     private String remark;

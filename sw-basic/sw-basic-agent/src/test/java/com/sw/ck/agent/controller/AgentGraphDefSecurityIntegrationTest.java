@@ -149,6 +149,7 @@ class AgentGraphDefSecurityIntegrationTest {
                     def_version  INT NOT NULL DEFAULT 1,
                     status       VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
                     graph_json   CLOB,
+                    execution_timeout_seconds INT NOT NULL DEFAULT 300,
                     create_time  TIMESTAMP,
                     create_by    VARCHAR(64),
                     update_time  TIMESTAMP,
@@ -160,12 +161,31 @@ class AgentGraphDefSecurityIntegrationTest {
                 """);
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_key ON sw_agent_graph_def (tenant_id, graph_key)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_graph_tenant_deleted ON sw_agent_graph_def (tenant_id, deleted)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_graph_snapshot (
+                    id            BIGINT NOT NULL PRIMARY KEY,
+                    graph_def_id  BIGINT NOT NULL,
+                    def_version   INT NOT NULL,
+                    graph_key     VARCHAR(100),
+                    name          VARCHAR(200),
+                    graph_json    CLOB NOT NULL,
+                    create_time   TIMESTAMP,
+                    create_by     VARCHAR(64),
+                    update_time   TIMESTAMP,
+                    update_by     VARCHAR(64),
+                    deleted       SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id     BIGINT NOT NULL DEFAULT 0,
+                    version       BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_snapshot_ver ON sw_agent_graph_snapshot (tenant_id, graph_def_id, def_version)");
     }
 
     // ==================== 前置/后置 ====================
 
     @BeforeEach
     void setUp() {
+        jdbcTemplate.update("DELETE FROM sw_agent_graph_snapshot");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_def");
         LoginUserHolder.clear();
     }
@@ -590,9 +610,17 @@ class AgentGraphDefSecurityIntegrationTest {
         // ==================== 业务 Bean ====================
 
         @Bean
-        public com.sw.ck.agent.service.AgentGraphDefService agentGraphDefService(
+        public com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
-            return new com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl(objectMapper);
+            return new com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
+        }
+
+        @Bean
+        public com.sw.ck.agent.service.AgentGraphDefService agentGraphDefService(
+                ObjectMapper objectMapper,
+                com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl snapshotService) {
+            return new com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl(objectMapper, snapshotService);
         }
 
         @Bean
@@ -621,10 +649,12 @@ class AgentGraphDefSecurityIntegrationTest {
                 com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
                 com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
                 AgentModelRuntimeService modelRuntimeService,
+                com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
                 com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
             return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
-                    objectMapper, modelRuntimeService, internalToolMapper, externalToolMapper,
+                    objectMapper, modelRuntimeService, snapshotService,
+                    internalToolMapper, externalToolMapper,
                     executionMapper, executionNodeMapper,
                     loginContextProvider, deptScopeProvider);
         }

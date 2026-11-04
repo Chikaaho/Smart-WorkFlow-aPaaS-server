@@ -335,19 +335,9 @@ public class AgentGraphDebugEngine {
                 userText = interpolateTemplate(userPromptTemplate, node, variables);
             }
             messages.add(UserMessage.from(userText));
-            ChatResponse response = modelRuntimeService.chatWithRotation(modelConfigId, messages);
-            String output = response.aiMessage().text();
-            if (output == null) {
-                throw new AgentGraphInterpreter.GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                        "LLM 节点未返回文本: " + node.getId());
-            }
-            dev.langchain4j.model.output.TokenUsage usage =
-                    response.metadata() != null ? response.metadata().tokenUsage() : null;
-            currentTrace.setInputTokens(usage != null && usage.inputTokenCount() != null
-                    ? usage.inputTokenCount().longValue() : null);
-            currentTrace.setOutputTokens(usage != null && usage.outputTokenCount() != null
-                    ? usage.outputTokenCount().longValue() : null);
-            return output;
+            // 阶段 2：调试与图执行共用节点内工具调用循环
+            return AgentGraphInterpreter.executeChatWithTools(modelRuntimeService,
+                    toolCallbackFactory, tenantId, node, modelConfigId, messages, currentTrace);
         } catch (AgentGraphInterpreter.GraphExecutionException e) {
             throw e;
         } catch (BaseException e) {

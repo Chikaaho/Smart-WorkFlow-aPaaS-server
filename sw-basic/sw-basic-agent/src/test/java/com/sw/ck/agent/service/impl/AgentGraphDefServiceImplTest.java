@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.dto.AgentGraphDefDTO;
+import com.sw.ck.agent.dto.AgentGraphSnapshotDTO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
@@ -104,6 +105,7 @@ class AgentGraphDefServiceImplTest {
                     def_version  INT NOT NULL DEFAULT 1,
                     status       VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
                     graph_json   CLOB,
+                    execution_timeout_seconds INT NOT NULL DEFAULT 300,
                     create_time  TIMESTAMP,
                     create_by    VARCHAR(64),
                     update_time  TIMESTAMP,
@@ -115,10 +117,29 @@ class AgentGraphDefServiceImplTest {
                 """);
         jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_key ON sw_agent_graph_def (tenant_id, graph_key)");
         jt.execute("CREATE INDEX IF NOT EXISTS idx_sw_agent_graph_tenant_deleted ON sw_agent_graph_def (tenant_id, deleted)");
+        jt.execute("""
+                CREATE TABLE IF NOT EXISTS sw_agent_graph_snapshot (
+                    id            BIGINT NOT NULL PRIMARY KEY,
+                    graph_def_id  BIGINT NOT NULL,
+                    def_version   INT NOT NULL,
+                    graph_key     VARCHAR(100),
+                    name          VARCHAR(200),
+                    graph_json    CLOB NOT NULL,
+                    create_time   TIMESTAMP,
+                    create_by     VARCHAR(64),
+                    update_time   TIMESTAMP,
+                    update_by     VARCHAR(64),
+                    deleted       SMALLINT NOT NULL DEFAULT 0,
+                    tenant_id     BIGINT NOT NULL DEFAULT 0,
+                    version       BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+        jt.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_sw_agent_graph_snapshot_ver ON sw_agent_graph_snapshot (tenant_id, graph_def_id, def_version)");
     }
 
     @BeforeEach
     void setUp() {
+        jdbcTemplate.update("DELETE FROM sw_agent_graph_snapshot");
         jdbcTemplate.update("DELETE FROM sw_agent_graph_def");
         setLoginUser(TENANT_100, USER_1);
     }
@@ -379,6 +400,54 @@ class AgentGraphDefServiceImplTest {
                         .isEqualTo(CommonErrorCode.NOT_FOUND.getCode()));
     }
 
+    // ==================== D022-06：发布版本快照 ====================
+
+    @Test
+    @DisplayName("发布固化版本快照：每次发布一条、版本列表新到旧、快照内容为该次发布内容")
+    void publish_shouldCreateImmutableVersionSnapshots() {
+        Long id = service.create("快照-测试");
+        ProcessGraph first = service.getGraph(id);
+        assertThat(first.getName()).isEqualTo("快照-测试");
+        service.publish(id); // v2
+
+        ProcessGraph draft = service.getGraph(id);
+        draft.setName("快照-测试-第二版");
+        service.saveDraftGraph(id, draft);
+        service.publish(id); // v3
+
+        java.util.List<AgentGraphSnapshotDTO> versions = service.listVersions(id);
+        assertThat(versions).extracting(AgentGraphSnapshotDTO::getDefVersion).containsExactly(3, 2);
+
+        Integer snapshotCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sw_agent_graph_snapshot WHERE graph_def_id = ?", Integer.class, id);
+        assertThat(snapshotCount).isEqualTo(2);
+
+        String v2Json = jdbcTemplate.queryForObject(
+                "SELECT graph_json FROM sw_agent_graph_snapshot WHERE graph_def_id = ? AND def_version = 2",
+                String.class, id);
+        String v3Json = jdbcTemplate.queryForObject(
+                "SELECT graph_json FROM sw_agent_graph_snapshot WHERE graph_def_id = ? AND def_version = 3",
+                String.class, id);
+        assertThat(v2Json).contains("快照-测试");
+        assertThat(v2Json).doesNotContain("第二版");
+        assertThat(v3Json).contains("快照-测试-第二版");
+    }
+
+    @Test
+    @DisplayName("图设置：执行超时 1–3600 秒，越界拒绝，合法值持久化")
+    void updateSettings_shouldValidateAndPersistTimeout() {
+        Long id = service.create("超时-测试");
+        AgentGraphDefDTO updated = service.updateSettings(id, 30);
+        assertThat(updated.getExecutionTimeoutSeconds()).isEqualTo(30);
+
+        assertThatThrownBy(() -> service.updateSettings(id, 0))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("1–3600");
+        assertThatThrownBy(() -> service.updateSettings(id, 3601))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("1–3600");
+    }
+
     // ==================== 用例 13：跨租户隔离 ====================
 
     @Test
@@ -546,8 +615,17 @@ class AgentGraphDefServiceImplTest {
         }
 
         @Bean
-        public AgentGraphDefService agentGraphDefService(ObjectMapper objectMapper) {
-            return new AgentGraphDefServiceImpl(objectMapper);
+        public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                ObjectMapper objectMapper) {
+            return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
+        }
+
+        @Bean
+        public AgentGraphDefService agentGraphDefService(
+                ObjectMapper objectMapper,
+                AgentGraphSnapshotServiceImpl snapshotService) {
+            return new AgentGraphDefServiceImpl(objectMapper, snapshotService);
         }
     }
 }
