@@ -314,6 +314,9 @@ public class AgentGraphInterpreter {
         long traceSeq = 0;
         int steps = 0;
         while (!activePoints.isEmpty()) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new GraphExecutionException(ERROR_CATEGORY_UNKNOWN, "执行已取消");
+            }
             ActiveExecutionPoint point = activePoints.remove(0);
             String currentId = point.nodeId;
             long stepStartNanos = System.nanoTime();
@@ -597,7 +600,14 @@ public class AgentGraphInterpreter {
         boolean outputSeen = false;
         int rounds = 0;
         while (true) {
-            ChatResponse response = runtime.chatWithRotation(modelConfigId, messages, specs);
+            // 增量回调在 langchain4j 传输线程触发，读取线程绑定上下文取不到生命周期监听器；
+            // 在解释器线程先捕获监听器，增量到达时直接投递，避免线程本地查找静默丢失。
+            final java.util.function.BiConsumer<String, String> lifecycleListener =
+                    AgentExecutionEventContext.get();
+            ChatResponse response = lifecycleListener == null
+                    ? runtime.chatWithRotation(modelConfigId, messages, specs)
+                    : runtime.chatStreamingWithRotation(modelConfigId, messages, specs,
+                            delta -> lifecycleListener.accept("MODEL_DELTA", delta));
             dev.langchain4j.model.output.TokenUsage usage =
                     response.metadata() != null ? response.metadata().tokenUsage() : null;
             if (usage != null && usage.inputTokenCount() != null) {

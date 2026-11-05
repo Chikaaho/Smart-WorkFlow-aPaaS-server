@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -69,6 +70,58 @@ class AgentGraphInterpreterTest {
         // 输出被模型回复整体覆盖；模型收到的 UserMessage 文本 = 累积文本（input）
         assertThat(output).isEqualTo("模型回复-1");
         verify(modelRuntimeService).acquire(1L);
+    }
+
+    /** 复现 langchain4j HTTP 客户端长驻传输线程：类加载时即建立线程（此时无线程本地监听器），后续提交复用同一线程。 */
+    private static final java.util.concurrent.ExecutorService TRANSPORT_POOL =
+            java.util.concurrent.Executors.newSingleThreadExecutor(
+                    Thread.ofPlatform().name("lc023-transport-thread").daemon(true).factory());
+
+    static {
+        TRANSPORT_POOL.submit(() -> { });
+    }
+
+    @Test
+    @DisplayName("生命周期增量: onDelta 在传输线程触发时仍经解释器线程捕获的监听器投递 MODEL_DELTA")
+    void llmNode_streamingDeltaOnTransportThread_shouldDeliverToCapturedLifecycleListener() throws Exception {
+        // 真实链路回归：langchain4j 的长驻 HTTP 传输线程早于监听器设置创建，其线程本地
+        // 监听器恒为空；解释器必须在调用线程先捕获监听器，增量到达时直接投递，
+        // 否则增量事件在真实运行中静默丢失。
+        stubModel(9L, new StubChatModel("流式最终回答"));
+        doAnswer(inv -> {
+            java.util.function.Consumer<String> onDelta = inv.getArgument(3);
+            java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(2);
+            java.util.concurrent.atomic.AtomicBoolean transportListenerAbsent =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+            TRANSPORT_POOL.submit(() -> {
+                // 长驻传输线程自身的线程本地监听器为空（回归触发条件）
+                transportListenerAbsent.set(AgentExecutionEventContext.get() == null);
+                onDelta.accept("增量-A ");
+                done.countDown();
+                onDelta.accept("增量-B ");
+                done.countDown();
+            });
+            assertThat(done.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(transportListenerAbsent.get()).isTrue();
+            return ChatResponse.builder().aiMessage(AiMessage.from("流式最终回答")).build();
+        }).when(modelRuntimeService).chatStreamingWithRotation(eq(9L), anyList(), any(), any());
+
+        List<String> delivered = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AgentExecutionEventContext.set((type, payload) -> delivered.add(type + ":" + payload));
+        try {
+            String output = interpreter(10).run(graphOf(
+                    node("node_start", "START", Map.of()),
+                    node("node_llm", "LLM", Map.of("agentModelConfigId", 9L)),
+                    node("node_end", "END", Map.of()),
+                    edge("e1", "node_start", "node_llm", Map.of()),
+                    edge("e2", "node_llm", "node_end", Map.of())), "原始输入");
+
+            assertThat(output).isEqualTo("流式最终回答");
+            assertThat(delivered).containsExactly("MODEL_DELTA:增量-A ", "MODEL_DELTA:增量-B ");
+            verify(modelRuntimeService).chatStreamingWithRotation(eq(9L), anyList(), any(), any());
+        } finally {
+            AgentExecutionEventContext.clear();
+        }
     }
 
     @Test

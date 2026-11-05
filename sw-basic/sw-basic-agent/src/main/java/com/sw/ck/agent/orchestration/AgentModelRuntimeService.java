@@ -46,6 +46,11 @@ public class AgentModelRuntimeService {
                                 dev.langchain4j.model.chat.ChatModel chatModel) {
     }
 
+    /** 流式解析结果：与同步模型共用配置、启停和多 Key 候选语义。 */
+    public record StreamingModelInstance(AgentModel model, AgentProvider provider,
+                                         dev.langchain4j.model.chat.StreamingChatModel chatModel) {
+    }
+
     /** Embedding 解析结果（F1 阶段 3）：模型 + 供应商 + 单例 EmbeddingModel */
     public record EmbeddingInstance(AgentModel model, AgentProvider provider,
                                     dev.langchain4j.model.embedding.EmbeddingModel embeddingModel) {
@@ -53,6 +58,10 @@ public class AgentModelRuntimeService {
 
     /** 缓存条目：修订键 + 装配产物 */
     private record CachedEntry(String revisionKey, dev.langchain4j.model.chat.ChatModel chatModel) {
+    }
+
+    private record CachedStreamingEntry(
+            String revisionKey, dev.langchain4j.model.chat.StreamingChatModel chatModel) {
     }
 
     /** Embedding 缓存条目 */
@@ -68,6 +77,9 @@ public class AgentModelRuntimeService {
 
     /** 模型 id → 装配产物（单例复用，D022-04；修订键不匹配即重建覆盖） */
     private final Map<Long, CachedEntry> cache = new ConcurrentHashMap<>();
+
+    /** 模型 id → 真实流式客户端；修订键规则与同步客户端一致。 */
+    private final Map<Long, CachedStreamingEntry> streamingCache = new ConcurrentHashMap<>();
 
     /** 模型 id → Embedding 装配产物（阶段 3，单例复用同 D022-04） */
     private final Map<Long, CachedEmbeddingEntry> embeddingCache = new ConcurrentHashMap<>();
@@ -121,6 +133,17 @@ public class AgentModelRuntimeService {
                         ? cached
                         : buildAndCache(provider, model, revisionKey)).chatModel();
         return new ModelInstance(model, provider, chatModel);
+    }
+
+    /** 解析并复用真实流式客户端。 */
+    public StreamingModelInstance acquireStreaming(Long modelId) {
+        AgentModel model = requireEnabledModel(modelId);
+        AgentProvider provider = requireEnabledProvider(model);
+        String revisionKey = revisionKey(model, provider);
+        dev.langchain4j.model.chat.StreamingChatModel chatModel = streamingCache.compute(modelId,
+                (id, cached) -> cached != null && cached.revisionKey().equals(revisionKey)
+                        ? cached : buildStreamingAndCache(provider, model, revisionKey)).chatModel();
+        return new StreamingModelInstance(model, provider, chatModel);
     }
 
     /**
@@ -199,6 +222,21 @@ public class AgentModelRuntimeService {
                 plainApiKey = cipher.decrypt(provider.getApiKeyCipher());
             }
             return new CachedEntry(revisionKey, assembler.assemble(provider, model, plainApiKey));
+        } finally {
+            plainApiKey = null;
+        }
+    }
+
+    /** 流式客户端按需装配；明文密钥不进入缓存键、日志或异常消息。 */
+    private CachedStreamingEntry buildStreamingAndCache(
+            AgentProvider provider, AgentModel model, String revisionKey) {
+        String plainApiKey = null;
+        try {
+            if (provider.getApiKeyCipher() != null && !provider.getApiKeyCipher().isEmpty()) {
+                plainApiKey = cipher.decrypt(provider.getApiKeyCipher());
+            }
+            return new CachedStreamingEntry(revisionKey,
+                    assembler.assembleStreaming(provider, model, plainApiKey));
         } finally {
             plainApiKey = null;
         }
@@ -314,6 +352,67 @@ public class AgentModelRuntimeService {
                 AgentModel next = nextCandidate(instance.model().getGroupKey(), tried, LocalDateTime.now());
                 if (next == null) {
                     throw e;
+                }
+                current = next.getId();
+            }
+        }
+    }
+
+    /**
+     * 真实增量调用。首个可见 delta 到达后不再轮换，避免重放已展示文本或工具副作用；
+     * 仅在尚未产生任何可见输出且收到 429 时切换同组候选。
+     */
+    public dev.langchain4j.model.chat.response.ChatResponse chatStreamingWithRotation(
+            Long modelId, List<dev.langchain4j.data.message.ChatMessage> messages,
+            List<dev.langchain4j.agent.tool.ToolSpecification> toolSpecifications,
+            java.util.function.Consumer<String> onDelta) {
+        java.util.Set<Long> tried = new java.util.HashSet<>();
+        Long current = modelId;
+        while (true) {
+            StreamingModelInstance instance = acquireStreaming(current);
+            tried.add(current);
+            java.util.concurrent.CompletableFuture<dev.langchain4j.model.chat.response.ChatResponse> result =
+                    new java.util.concurrent.CompletableFuture<>();
+            java.util.concurrent.atomic.AtomicBoolean visible = new java.util.concurrent.atomic.AtomicBoolean();
+            dev.langchain4j.model.chat.request.ChatRequest.Builder builder =
+                    dev.langchain4j.model.chat.request.ChatRequest.builder().messages(messages);
+            if (toolSpecifications != null && !toolSpecifications.isEmpty()) {
+                builder.toolSpecifications(toolSpecifications);
+            }
+            instance.chatModel().chat(builder.build(),
+                    new dev.langchain4j.model.chat.response.StreamingChatResponseHandler() {
+                        @Override
+                        public void onPartialResponse(String partialResponse) {
+                            if (partialResponse != null && !partialResponse.isEmpty()) {
+                                visible.set(true);
+                                onDelta.accept(partialResponse);
+                            }
+                        }
+
+                        @Override
+                        public void onCompleteResponse(
+                                dev.langchain4j.model.chat.response.ChatResponse response) {
+                            result.complete(response);
+                        }
+
+                        @Override
+                        public void onError(Throwable error) {
+                            result.completeExceptionally(error);
+                        }
+                    });
+            try {
+                return result.join();
+            } catch (java.util.concurrent.CompletionException wrapped) {
+                Throwable error = wrapped.getCause() == null ? wrapped : wrapped.getCause();
+                if (visible.get() || !isRateLimited(error) || instance.model().getGroupKey() == null) {
+                    if (error instanceof RuntimeException runtimeException) throw runtimeException;
+                    throw new RuntimeException(error);
+                }
+                lock(current, cooldownSeconds(instance.model()));
+                AgentModel next = nextCandidate(instance.model().getGroupKey(), tried, LocalDateTime.now());
+                if (next == null) {
+                    if (error instanceof RuntimeException runtimeException) throw runtimeException;
+                    throw new RuntimeException(error);
                 }
                 current = next.getId();
             }
