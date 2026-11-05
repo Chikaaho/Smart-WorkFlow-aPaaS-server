@@ -600,10 +600,14 @@ public class AgentGraphInterpreter {
         boolean outputSeen = false;
         int rounds = 0;
         while (true) {
-            ChatResponse response = AgentExecutionEventContext.get() == null
+            // 增量回调在 langchain4j 传输线程触发，读取线程绑定上下文取不到生命周期监听器；
+            // 在解释器线程先捕获监听器，增量到达时直接投递，避免线程本地查找静默丢失。
+            final java.util.function.BiConsumer<String, String> lifecycleListener =
+                    AgentExecutionEventContext.get();
+            ChatResponse response = lifecycleListener == null
                     ? runtime.chatWithRotation(modelConfigId, messages, specs)
                     : runtime.chatStreamingWithRotation(modelConfigId, messages, specs,
-                            delta -> AgentExecutionEventContext.emit("MODEL_DELTA", delta));
+                            delta -> lifecycleListener.accept("MODEL_DELTA", delta));
             dev.langchain4j.model.output.TokenUsage usage =
                     response.metadata() != null ? response.metadata().tokenUsage() : null;
             if (usage != null && usage.inputTokenCount() != null) {
