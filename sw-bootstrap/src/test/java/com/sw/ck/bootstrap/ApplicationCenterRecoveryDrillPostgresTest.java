@@ -111,6 +111,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
 
         long formsBefore = count("SELECT COUNT(*) FROM sw_form_def");
         long menusBefore = count("SELECT COUNT(*) FROM sys_menu");
+        List<Long> menuIdsBefore = queryLongs("SELECT id FROM sys_menu");
         System.out.println("[G4-drill] 升级前：forms=" + formsBefore + ", menus=" + menusBefore
                 + ", record=" + count("SELECT COUNT(*) FROM \"" + RECORD_TABLE + "\" WHERE \"deleted\" = 0"));
 
@@ -139,10 +140,15 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         // 菜单脚本为可重复迁移（不受 target 约束，0.1.5 全新库亦已应用）：升级不得重复插入
         assertEquals(2L, count("SELECT COUNT(*) FROM sys_menu WHERE id IN (9130, 9131)"),
                 "应用中心菜单应就位");
-        // 「不重复插入」的判据是同一 id 只有一行；升级脚本按设计可能一次补入其版本的
-        // 增量菜单（非重复行），故以 count==distinct 校验，而非要求总行数不变。
-        assertEquals(count("SELECT COUNT(DISTINCT id) FROM sys_menu"), count("SELECT COUNT(*) FROM sys_menu"),
-                "升级不得重复插入菜单行（无重复 id）");
+        // 三条同时成立（规划口径）：升级脚本按设计可补入其版本增量菜单，但
+        //   ①升级前每个菜单 id 都还在（一条不少）；②无重复 id；③总数=升级前+新增数（动态）。
+        List<Long> menuIdsAfter = queryLongs("SELECT id FROM sys_menu");
+        assertTrue(menuIdsAfter.containsAll(menuIdsBefore), "升级后升级前的每个菜单 id 都应保留");
+        assertEquals(menuIdsAfter.size(), new java.util.HashSet<>(menuIdsAfter).size(),
+                "升级后菜单 id 不得重复");
+        long menuIdsAdded = menuIdsAfter.stream().filter(id -> !menuIdsBefore.contains(id)).count();
+        assertEquals(menusBefore + menuIdsAdded, menuIdsAfter.size(),
+                "升级后菜单总数应等于升级前数量加升级脚本新增数");
 
         // —— 4. 恢复到已声明边界：全库恢复要求空库（先验证就地覆盖被拒绝，再按声明路径重建后恢复）——
         Path inPlaceLog = Files.createTempFile("ac-g4-inplace-", ".log");
@@ -399,6 +405,19 @@ class ApplicationCenterRecoveryDrillPostgresTest {
              ResultSet rs = stmt.executeQuery(sql)) {
             assertTrue(rs.next(), "计数查询应返回一行: " + sql);
             return rs.getLong(1);
+        }
+    }
+
+    /** 单列 long 结果集（菜单 id 集合校验用）。 */
+    private List<Long> queryLongs(String sql) throws SQLException {
+        try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            List<Long> values = new java.util.ArrayList<>();
+            while (rs.next()) {
+                values.add(rs.getLong(1));
+            }
+            return values;
         }
     }
 

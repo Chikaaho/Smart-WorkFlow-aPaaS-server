@@ -122,8 +122,11 @@ jobs:
             echo "::error::制品版本标记 ${MARKER_VERSION:-<空>} 与发布版本 ${{ steps.version.outputs.release_version }} 不一致"; exit 1
           fi
           ASSET_NAME="bootstrap-${{ steps.version.outputs.release_version }}.jar"
+          # 版本化命名直接落盘副本（gh 的 file#label 标签语法在 runner 上不生效，
+          # 曾导致资产退化为 bootstrap.jar；以实体文件名承载版本，命名唯一来源不变）。
+          cp "${JAR}" "${ASSET_NAME}"
           echo "jar=${JAR}" >> "$GITHUB_OUTPUT"
-          echo "jar_name=${ASSET_NAME}" >> "$GITHUB_OUTPUT"
+          echo "asset=${ASSET_NAME}" >> "$GITHUB_OUTPUT"
           echo "sha_short=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
           echo "version=${{ steps.version.outputs.release_version }}" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "${JAR}" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
@@ -150,7 +153,7 @@ jobs:
             --target "${GITHUB_SHA}" \
             --title "CH-aPaaS-Server ${{ steps.version.outputs.release_version }} build ${GITHUB_SHA}" \
             --notes "自动构建产物（提交 ${GITHUB_SHA}，分支 main，版本 ${{ steps.version.outputs.release_version }}）" \
-            "${{ steps.locate.outputs.jar }}#${{ steps.locate.outputs.jar_name }}"
+            "${{ steps.locate.outputs.asset }}"
 
       # 失败诊断：把各模块 surefire 的失败摘要以 ::error:: 注解输出。
       # 目的=发布门禁失败时可从 check-run 注解（无需仓库管理员权限）直接读到失败测试类与计数，
