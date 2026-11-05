@@ -30,7 +30,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       postgres:
-        image: postgres:14
+        # 镜像版本对齐 runner 预装的客户端（pg_dump/pg_restore 18.x）：跨版本 dump→restore
+        # （如 18 转储恢复进 14 服务）会因新 GUC（transaction_timeout 等）失败，属工具链配对问题。
+        image: postgres:18
         env:
           POSTGRES_USER: runner
           POSTGRES_HOST_AUTH_METHOD: trust
