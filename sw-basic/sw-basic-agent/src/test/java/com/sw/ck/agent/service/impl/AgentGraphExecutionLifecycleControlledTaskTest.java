@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
+import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionEventMapper;
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -84,6 +86,49 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
     }
 
     @Test
+    void capacityRejectsBeforePersistingAnotherRequest() throws Exception {
+        Fixture f = fixture(1, 1);
+        AgentGraphDef graph = new AgentGraphDef();
+        graph.setId(21L); graph.setDefVersion(1); graph.setStatus("PUBLISHED");
+        when(f.graphMapper.selectById(21L)).thenReturn(graph);
+        when(f.requestMapper.insert(any(AgentGraphExecutionRequest.class))).thenAnswer(inv -> {
+            AgentGraphExecutionRequest request = inv.getArgument(0);
+            request.setId(30L);
+            return 1;
+        });
+        when(f.requestMapper.transition(anyLong(), eq("QUEUED"), eq("RUNNING"))).thenReturn(1);
+        when(f.requestMapper.selectById(anyLong())).thenReturn(request(30L, "RUNNING"));
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(f.executionService.execute(anyLong(), any())).thenAnswer(inv -> {
+            entered.countDown(); release.await(5, TimeUnit.SECONDS);
+            return new AgentGraphExecuteRespDTO();
+        });
+
+        service.submit(21L, "first", "capacity-1");
+        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+        service.submit(21L, "queued", "capacity-2");
+        assertThatThrownBy(() -> service.submit(21L, "rejected", "capacity-3"))
+                .hasMessageContaining("执行容量已满");
+        verify(f.requestMapper, times(2)).insert(any(AgentGraphExecutionRequest.class));
+        release.countDown();
+    }
+
+    @Test
+    void ownershipProtectsStateEventsAndCancellation() {
+        Fixture f = fixture();
+        AgentGraphExecutionRequest ownedByAnotherUser = request(31L, "RUNNING");
+        ownedByAnotherUser.setCreateBy(2L);
+        when(f.requestMapper.selectById(31L)).thenReturn(ownedByAnotherUser);
+
+        assertThatThrownBy(() -> service.get(31L)).hasMessageContaining("执行记录不存在");
+        assertThatThrownBy(() -> service.listEvents(31L, 0)).hasMessageContaining("执行记录不存在");
+        assertThatThrownBy(() -> service.cancel(31L)).hasMessageContaining("执行记录不存在");
+        verify(f.eventMapper, never()).selectList(any());
+        verify(f.requestMapper, never()).requestRunningCancellation(anyLong());
+    }
+
+    @Test
     void restartMarksUncertainRunningAndReplaysQueuedExactlyOnce() throws Exception {
         Fixture f = fixture();
         AgentGraphExecutionRequest queued = request(13L, "QUEUED");
@@ -109,6 +154,10 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
     }
 
     private Fixture fixture() {
+        return fixture(1, 2);
+    }
+
+    private Fixture fixture(int workers, int queueCapacity) {
         MybatisConfiguration configuration = new MybatisConfiguration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, "controlled-task-test"),
                 AgentGraphExecutionRequest.class);
@@ -119,8 +168,9 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         LoginContextProvider login = mock(LoginContextProvider.class);
         when(login.getUserId()).thenReturn(1L);
         PlatformTransactionManager tx = mock(PlatformTransactionManager.class);
-        service = new AgentGraphExecutionLifecycleServiceImpl(requests, events, graphs, executions, login, tx, 1, 2);
-        return new Fixture(requests, events, executions);
+        service = new AgentGraphExecutionLifecycleServiceImpl(
+                requests, events, graphs, executions, login, tx, workers, queueCapacity);
+        return new Fixture(requests, events, graphs, executions);
     }
 
     private AgentGraphExecutionRequest request(long id, String status) {
@@ -141,5 +191,6 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
 
     private record Fixture(AgentGraphExecutionRequestMapper requestMapper,
                            AgentGraphExecutionEventMapper eventMapper,
+                           AgentGraphDefMapper graphMapper,
                            AgentGraphExecutionService executionService) {}
 }
