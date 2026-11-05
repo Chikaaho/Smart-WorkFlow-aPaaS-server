@@ -79,6 +79,10 @@ public class IotProcessTriggerListener {
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onIotTrigger(IotProcessTriggerEvent event) {
+        // AGENT 动作由 IoT 模块内 Agent 图触发监听器承接；本监听器只处理流程发起（缺省视为 FLOW）
+        if (event != null && "AGENT".equals(event.getActionType())) {
+            return;
+        }
         if (event == null || event.getTenantId() == null
                 || tenantWorkAdmission.claim(event.getTenantId(), () -> 1) == 0) {
             log.info("IoT 触发暂停：租户未启用、已过期或缺失: tenantId={}, idempotentKey={}",

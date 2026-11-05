@@ -76,4 +76,20 @@ public class IotEventRule extends BaseEntity {
     @TableField("last_fired_time")
     private LocalDateTime lastFiredTime;
 
+    /** Agent 图联动启用：1/0 */
+    @TableField("agent_enabled")
+    private Integer agentEnabled;
+
+    /** 目标已发布 Agent 图 key */
+    @TableField("agent_graph_key")
+    private String agentGraphKey;
+
+    /** Agent 执行输入映射 JSON（source 词汇表同 form_mapping_json，另支持 RECENT_SERIES） */
+    @TableField("agent_input_mapping_json")
+    private String agentInputMappingJson;
+
+    /** 研判执行失败升级的流程模板 key（空 = 不升级） */
+    @TableField("agent_failure_template_key")
+    private String agentFailureTemplateKey;
+
 }

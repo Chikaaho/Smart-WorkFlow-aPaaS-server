@@ -8,9 +8,11 @@ import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotEventRule;
 import com.sw.ck.iot.entity.IotProcessTrigger;
+import com.sw.ck.iot.entity.IotPropertyRecord;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
 import com.sw.ck.iot.mapper.IotEventRuleMapper;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
+import com.sw.ck.iot.mapper.IotPropertyRecordMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +45,7 @@ public class RuleEngineService {
 
     private final IotEventRuleMapper ruleMapper;
     private final IotProcessTriggerMapper triggerMapper;
+    private final IotPropertyRecordMapper propertyRecordMapper;
     private final DomainEventPublisher eventPublisher;
     private IotAuditService auditService;
 
@@ -50,9 +54,11 @@ public class RuleEngineService {
 
     public RuleEngineService(IotEventRuleMapper ruleMapper,
                              IotProcessTriggerMapper triggerMapper,
+                             IotPropertyRecordMapper propertyRecordMapper,
                              DomainEventPublisher eventPublisher) {
         this.ruleMapper = ruleMapper;
         this.triggerMapper = triggerMapper;
+        this.propertyRecordMapper = propertyRecordMapper;
         this.eventPublisher = eventPublisher;
     }
 
@@ -209,13 +215,28 @@ public class RuleEngineService {
         }
         continuousCounters.remove(rule.getId());
 
-        if (rule.getProcessEnabled() == null || rule.getProcessEnabled() != 1
-                || rule.getProcessTemplateKey() == null || rule.getProcessTemplateKey().isBlank()) {
-            // 无流程联动则只更新触发时间
+        boolean flowAction = rule.getProcessEnabled() != null && rule.getProcessEnabled() == 1
+                && rule.getProcessTemplateKey() != null && !rule.getProcessTemplateKey().isBlank();
+        boolean agentAction = rule.getAgentEnabled() != null && rule.getAgentEnabled() == 1
+                && rule.getAgentGraphKey() != null && !rule.getAgentGraphKey().isBlank();
+        if (!flowAction && !agentAction) {
+            // 无任何联动动作则只更新触发时间
             touchFired(rule, now);
             return;
         }
 
+        if (flowAction) {
+            fireFlow(device, rule, eventFacts, dedupKey, now);
+        }
+        if (agentAction) {
+            fireAgent(device, rule, eventFacts, dedupKey, now);
+        }
+        touchFired(rule, now);
+    }
+
+    /** FLOW 动作：按既有链路生成流程触发记录并发布流程发起事件。 */
+    private void fireFlow(IotDevice device, IotEventRule rule, Map<String, Object> eventFacts,
+                          String dedupKey, LocalDateTime now) {
         Map<String, Object> formData = buildFormData(rule, device, eventFacts);
         String idempotentKey = "r" + rule.getId() + "-v" + rule.getRuleVersion() + "-"
                 + device.getId() + "-" + (dedupKey == null
@@ -228,33 +249,77 @@ public class RuleEngineService {
         trigger.setStatus("PENDING");
         trigger.setFormSnapshot(JSON.toJSONString(formData));
         trigger.setTriggerTime(now);
+        trigger.setActionType("FLOW");
         // Phase 4：触发行必须携带恢复身份（发起目标/来源/发起人），否则提交后进程退出时
         // 恢复调度无法续跑该触发（findDue 要求 process_template_key 非空），事件静默消失。
         trigger.setProcessTemplateKey(rule.getProcessTemplateKey());
         trigger.setTriggerSource("RULE");
         trigger.setConfiguredBy(rule.getCreateBy());
         trigger.setRetryCount(0);
+        if (!insertTriggerIdempotent(trigger)) {
+            return;
+        }
+        publishTriggerEvent(device, rule, trigger, formData, null, null, eventFacts);
+    }
+
+    /** AGENT 动作：按输入映射构建执行输入，生成 AGENT 触发记录并发布图执行事件。 */
+    private void fireAgent(IotDevice device, IotEventRule rule, Map<String, Object> eventFacts,
+                           String dedupKey, LocalDateTime now) {
+        Map<String, Object> agentInput = buildAgentInput(rule, device, eventFacts);
+        String idempotentKey = "r" + rule.getId() + "-v" + rule.getRuleVersion() + "-"
+                + device.getId() + "-agent-" + (dedupKey == null
+                ? java.util.UUID.randomUUID() : dedupKey);
+
+        IotProcessTrigger trigger = new IotProcessTrigger();
+        trigger.setRuleId(rule.getId());
+        trigger.setDeviceId(device.getId());
+        trigger.setIdempotentKey(idempotentKey);
+        trigger.setStatus("PENDING");
+        trigger.setFormSnapshot(JSON.toJSONString(agentInput));
+        trigger.setTriggerTime(now);
+        trigger.setActionType("AGENT");
+        // 恢复调度 findDue 要求发起目标非空：AGENT 行以目标图 key 承担恢复身份
+        trigger.setProcessTemplateKey(rule.getAgentGraphKey());
+        trigger.setAgentGraphKey(rule.getAgentGraphKey());
+        trigger.setTriggerSource("RULE");
+        trigger.setConfiguredBy(rule.getCreateBy());
+        trigger.setRetryCount(0);
+        if (!insertTriggerIdempotent(trigger)) {
+            return;
+        }
+        publishTriggerEvent(device, rule, trigger, null, rule.getAgentGraphKey(), agentInput, eventFacts);
+    }
+
+    /** 幂等插入触发记录；命中幂等键（重复消息/重投）时返回 false 且不发布事件。 */
+    private boolean insertTriggerIdempotent(IotProcessTrigger trigger) {
         try {
             // PostgreSQL 上唯一键冲突会中止整个事务，故在保存点内插入，
             // 命中幂等键后仍能执行下面的降级写回（否则 ingest 事务整体失败）。
             com.sw.ck.common.persistence.IdempotentInsert.execute(transactionManager,
                     () -> triggerMapper.insert(trigger));
+            return true;
         } catch (org.springframework.dao.DuplicateKeyException e) {
-            // 同一 tenant+device+event+ruleVersion 已触发过：重复消息/重投不重复发起
-            log.info("幂等键命中，跳过重复流程触发: key={}", idempotentKey);
-            touchFired(rule, now);
-            return;
+            log.info("幂等键命中，跳过重复触发: key={}", trigger.getIdempotentKey());
+            return false;
         }
+    }
 
+    /** 发布触发事件并记录审计（FLOW 与 AGENT 共用同一事件类型，消费方按 actionType 路由）。 */
+    private void publishTriggerEvent(IotDevice device, IotEventRule rule, IotProcessTrigger trigger,
+                                     Map<String, Object> formData, String agentGraphKey,
+                                     Map<String, Object> agentInput, Map<String, Object> eventFacts) {
         IotProcessTriggerEvent event = new IotProcessTriggerEvent();
         event.setTenantId(device.getTenantId());
         event.setTriggerId(trigger.getId());
         event.setRuleId(rule.getId());
         event.setDeviceId(device.getId());
-        event.setProcessTemplateKey(rule.getProcessTemplateKey());
-        event.setIdempotentKey(idempotentKey);
+        event.setProcessTemplateKey(trigger.getProcessTemplateKey());
+        event.setIdempotentKey(trigger.getIdempotentKey());
         event.setTriggerSource("RULE");
         event.setConfiguredBy(rule.getCreateBy());
+        event.setActionType(trigger.getActionType());
+        event.setAgentGraphKey(agentGraphKey);
+        event.setAgentInput(agentInput);
         event.setFormData(formData);
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("ruleName", rule.getName());
@@ -266,14 +331,82 @@ public class RuleEngineService {
         eventPublisher.publish(event);
 
         if (auditService != null) {
+            String action = "AGENT".equals(trigger.getActionType()) ? "AGENT_TRIGGER" : "FLOW_TRIGGER";
             auditService.recordAction(device.getTenantId(), rule.getCreateBy(),
-                    "system:iot-rule-engine", "FLOW_TRIGGER", "RULE_TRIGGER",
-                    String.valueOf(trigger.getId()), "PENDING", idempotentKey,
+                    "system:iot-rule-engine", action, "RULE_TRIGGER",
+                    String.valueOf(trigger.getId()), "PENDING", trigger.getIdempotentKey(),
                     "ruleId=" + rule.getId() + ", deviceId=" + device.getId());
         }
 
-        touchFired(rule, now);
-        log.info("规则触发流程事件: ruleId={}, device={}, key={}", rule.getId(), device.getDeviceKey(), idempotentKey);
+        log.info("规则触发{}事件: ruleId={}, device={}, key={}",
+                "AGENT".equals(trigger.getActionType()) ? "Agent" : "流程",
+                rule.getId(), device.getDeviceKey(), trigger.getIdempotentKey());
+    }
+
+    /**
+     * 构建 Agent 执行输入：source 词汇表与 form_mapping_json 一致，
+     * 另支持 RECENT_SERIES（按设备/属性/时间窗回查近期属性记录序列）。
+     */
+    private Map<String, Object> buildAgentInput(IotEventRule rule, IotDevice device,
+                                                Map<String, Object> eventFacts) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        if (rule.getAgentInputMappingJson() != null && !rule.getAgentInputMappingJson().isBlank()) {
+            JSONArray mappings = JSON.parseArray(rule.getAgentInputMappingJson());
+            if (mappings != null) {
+                for (int i = 0; i < mappings.size(); i++) {
+                    JSONObject mapping = mappings.getJSONObject(i);
+                    String field = mapping.getString("field");
+                    String source = mapping.getString("source");
+                    Object value;
+                    if ("RECENT_SERIES".equals(source)) {
+                        value = recentSeries(device, mapping);
+                    } else {
+                        value = resolveSource(source, device, eventFacts, mapping);
+                    }
+                    if (value != null || mapping.getBooleanValue("required")) {
+                        input.put(field, value);
+                    }
+                }
+            }
+        }
+        return input;
+    }
+
+    /** RECENT_SERIES：时间窗内该设备属性记录升序序列（[{time,value}]），上限 limit（默认 30）。 */
+    private List<Map<String, Object>> recentSeries(IotDevice device, JSONObject mapping) {
+        String propertyId = mapping.getString("propertyId");
+        int windowSeconds = mapping.getIntValue("windowSeconds") > 0
+                ? mapping.getIntValue("windowSeconds") : 300;
+        int limit = mapping.getIntValue("limit") > 0 ? Math.min(mapping.getIntValue("limit"), 200) : 30;
+        LocalDateTime since = LocalDateTime.now().minusSeconds(windowSeconds);
+        List<IotPropertyRecord> records = propertyRecordMapper.selectList(
+                new LambdaQueryWrapper<IotPropertyRecord>()
+                        .eq(IotPropertyRecord::getDeviceId, device.getId())
+                        .eq(propertyId != null && !propertyId.isBlank(),
+                                IotPropertyRecord::getPropertyId, propertyId)
+                        .ge(IotPropertyRecord::getReportTime, since)
+                        .orderByAsc(IotPropertyRecord::getReportTime)
+                        .last("LIMIT " + limit));
+        List<Map<String, Object>> series = new ArrayList<>();
+        for (IotPropertyRecord record : records) {
+            Map<String, Object> point = new LinkedHashMap<>();
+            point.put("time", record.getReportTime() == null ? null : record.getReportTime().toString());
+            point.put("value", toPlainValue(record.getValueJson()));
+            series.add(point);
+        }
+        return series;
+    }
+
+    private Object toPlainValue(String valueJson) {
+        if (valueJson == null) {
+            return null;
+        }
+        try {
+            Object parsed = JSON.parse(valueJson);
+            return parsed instanceof Number ? parsed : valueJson;
+        } catch (Exception ignore) {
+            return valueJson;
+        }
     }
 
     private Map<String, Object> buildFormData(IotEventRule rule, IotDevice device,

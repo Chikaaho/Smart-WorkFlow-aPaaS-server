@@ -171,7 +171,9 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(login.getUserId()).thenReturn(1L);
         PlatformTransactionManager tx = mock(PlatformTransactionManager.class);
         service = new AgentGraphExecutionLifecycleServiceImpl(
-                requests, events, graphs, executions, login, tx, workers, queueCapacity);
+                requests, events, graphs, executions, login, tx,
+                org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class),
+                workers, queueCapacity);
         return new Fixture(requests, events, graphs, executions);
     }
 

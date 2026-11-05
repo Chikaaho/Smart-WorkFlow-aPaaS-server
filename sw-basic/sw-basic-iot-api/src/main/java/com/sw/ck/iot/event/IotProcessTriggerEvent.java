@@ -25,6 +25,15 @@ public class IotProcessTriggerEvent implements Serializable {
     private Map<String, Object> formData;
     private Map<String, Object> context;
 
+    /** 动作类型：FLOW（默认，流程发起消费）/ AGENT（Agent 图执行消费） */
+    private String actionType;
+
+    /** AGENT 动作的目标已发布图 key */
+    private String agentGraphKey;
+
+    /** AGENT 动作的执行输入（映射结果对象，序列化为初始输入文本） */
+    private Map<String, Object> agentInput;
+
     public Long getTenantId() {
         return tenantId;
     }
@@ -111,5 +120,29 @@ public class IotProcessTriggerEvent implements Serializable {
 
     public void setContext(Map<String, Object> context) {
         this.context = context;
+    }
+
+    public String getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(String actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getAgentGraphKey() {
+        return agentGraphKey;
+    }
+
+    public void setAgentGraphKey(String agentGraphKey) {
+        this.agentGraphKey = agentGraphKey;
+    }
+
+    public Map<String, Object> getAgentInput() {
+        return agentInput;
+    }
+
+    public void setAgentInput(Map<String, Object> agentInput) {
+        this.agentInput = agentInput;
     }
 }

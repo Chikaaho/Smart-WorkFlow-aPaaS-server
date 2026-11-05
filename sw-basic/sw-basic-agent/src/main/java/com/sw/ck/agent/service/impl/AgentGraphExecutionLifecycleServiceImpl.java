@@ -39,6 +39,9 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecutionLifecycleService {
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(AgentGraphExecutionLifecycleServiceImpl.class);
+
     static final String QUEUED = "QUEUED";
     static final String RUNNING = "RUNNING";
     static final String CANCEL_REQUESTED = "CANCEL_REQUESTED";
@@ -55,6 +58,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     private final TransactionTemplate transactionTemplate;
     private final ThreadPoolExecutor executor;
     private final ConcurrentHashMap<Long, Thread> runningThreads = new ConcurrentHashMap<>();
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     public AgentGraphExecutionLifecycleServiceImpl(
             AgentGraphExecutionRequestMapper requestMapper,
@@ -63,6 +67,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             AgentGraphExecutionService executionService,
             LoginContextProvider loginContext,
             PlatformTransactionManager transactionManager,
+            org.springframework.context.ApplicationEventPublisher eventPublisher,
             @Value("${sw.agent.execution.workers:4}") int workers,
             @Value("${sw.agent.execution.queue-capacity:64}") int queueCapacity) {
         this.requestMapper = requestMapper;
@@ -71,6 +76,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         this.executionService = executionService;
         this.loginContext = loginContext;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.eventPublisher = eventPublisher;
         int boundedWorkers = Math.max(1, Math.min(workers, 16));
         int boundedCapacity = Math.max(1, Math.min(queueCapacity, 1000));
         this.executor = new ThreadPoolExecutor(boundedWorkers, boundedWorkers, 0L, TimeUnit.MILLISECONDS,
@@ -253,6 +259,24 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 System.currentTimeMillis() - started) == 1) {
             AgentGraphExecutionRequest terminal = requestMapper.selectById(id);
             appendEvent(terminal, "STATE", null, status);
+            publishTerminalEvent(terminal);
+        }
+    }
+
+    /** 终态落库成功后发布进程内事件（普通事件，无事务上下文；消费方自行幂等）。 */
+    private void publishTerminalEvent(AgentGraphExecutionRequest terminal) {
+        if (terminal == null || eventPublisher == null) {
+            return;
+        }
+        try {
+            eventPublisher.publishEvent(new com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent(
+                    terminal.getId(), terminal.getGraphDefId(), terminal.getTenantId(),
+                    terminal.getCreateBy() == null ? null : String.valueOf(terminal.getCreateBy()),
+                    terminal.getStatus(), terminal.getErrorCategory(), terminal.getErrorMessage()));
+        } catch (Exception publishFailure) {
+            // 终态已落库；联动方消费失败不影响执行结果本身
+            log.warn("Agent 执行终态事件发布失败: executionId={}, error={}",
+                    terminal.getId(), publishFailure.getMessage());
         }
     }
 

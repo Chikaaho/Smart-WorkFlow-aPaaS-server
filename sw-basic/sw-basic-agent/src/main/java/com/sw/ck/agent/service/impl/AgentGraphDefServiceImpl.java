@@ -188,6 +188,19 @@ public class AgentGraphDefServiceImpl
 
     // ==================== 内部辅助 ====================
 
+    @Override
+    public java.util.Optional<Long> resolvePublishedGraphId(String graphKey) {
+        if (graphKey == null || graphKey.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        AgentGraphDef entity = baseMapper.selectOne(
+                Wrappers.<AgentGraphDef>lambdaQuery()
+                        .eq(AgentGraphDef::getGraphKey, graphKey)
+                        .eq(AgentGraphDef::getStatus, "PUBLISHED")
+                        .last("LIMIT 1"));
+        return entity == null ? java.util.Optional.empty() : java.util.Optional.of(entity.getId());
+    }
+
     /**
      * 按 id + 租户加载（baseMapper.selectById 经租户拦截器自动过滤 tenant_id），
      * 不存在抛 NOT_FOUND。

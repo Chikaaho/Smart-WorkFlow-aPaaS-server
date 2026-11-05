@@ -67,4 +67,16 @@ public class IotProcessTrigger extends BaseEntity {
     @TableField("trigger_time")
     private LocalDateTime triggerTime;
 
+    /** 动作类型：FLOW（默认，发起流程）/ AGENT（启动已发布 Agent 图执行） */
+    @TableField("action_type")
+    private String actionType;
+
+    /** AGENT 动作的目标图 key */
+    @TableField("agent_graph_key")
+    private String agentGraphKey;
+
+    /** AGENT 动作回写的执行记录 id（事件↔研判实例互查） */
+    @TableField("agent_execution_id")
+    private Long agentExecutionId;
+
 }
