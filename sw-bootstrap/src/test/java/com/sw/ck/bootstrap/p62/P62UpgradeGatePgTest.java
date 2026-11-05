@@ -107,6 +107,10 @@ class P62UpgradeGatePgTest {
         batchService = app.getBean(TxnBatchService.class);
         commandMapper = app.getBean(BpmCommandMapper.class);
         queue = app.getBean(PersistentBpmCommandQueue.class);
+        // 测试隔离（P62 领取竞态，todo/p62-upgrade-gate-test-claim-race.md）：本类显式领取
+        // 并直调消费指定命令（dispatchOneForTest），上下文的后台调度器会并发 claimDue 夺走
+        // 受测命令；停掉它即可消除装置间竞争，业务规则与断言强度不变（仅测试生命周期控制）。
+        app.getBean(com.sw.ck.bpm.process.queue.CommandDispatcher.class).stop();
 
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'gate-operator', 'seed-not-a-login-secret', '门禁演练员', ?, 0) "
@@ -251,9 +255,28 @@ class P62UpgradeGatePgTest {
     }
 
     private CommandEnvelope claimBy(Long commandId) {
-        List<CommandEnvelope> claimed = queue.claimDue(List.of(CommandChannelEnum.NORMAL), 100);
-        return claimed.stream().filter(e -> e.getCommandId().equals(commandId)).findFirst()
-                .orElseThrow(() -> new AssertionError("命令未被领取: " + commandId));
+        // 有界重试：嵌入 PG 上 enqueue 的可见性与 claimDue 截断可能存在毫秒级时序差；
+        // 若命令在两轮之间已不再 PENDING，则如实报告其被其他消费者夺走（不与调度器争抢）。
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (System.currentTimeMillis() < deadline) {
+            List<CommandEnvelope> claimed = queue.claimDue(List.of(CommandChannelEnum.NORMAL), 100);
+            CommandEnvelope hit = claimed.stream().filter(e -> e.getCommandId().equals(commandId))
+                    .findFirst().orElse(null);
+            if (hit != null) {
+                return hit;
+            }
+            String status = asOperator(() -> commandMapper.selectById(commandId)).getStatus();
+            if (!"PENDING".equals(status)) {
+                throw new AssertionError("命令已被后台消费者领取（状态=" + status + "）: " + commandId);
+            }
+            try {
+                Thread.sleep(50L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new AssertionError("命令未被领取: " + commandId);
     }
 
     private TxnBatchSubmitRequest requestOf(String batchKey, String actionId,

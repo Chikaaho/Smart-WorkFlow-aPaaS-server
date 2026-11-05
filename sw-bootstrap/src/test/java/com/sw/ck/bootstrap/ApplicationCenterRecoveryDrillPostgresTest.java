@@ -75,6 +75,11 @@ class ApplicationCenterRecoveryDrillPostgresTest {
     /** 0.1.7 存量升级脚本（发布资产原文，classpath 读取）。 */
     private static final String UPGRADE_017_SCRIPT = "db/upgrade/0.1.7/upgrade-to-0.1.7-from-0.1.6.postgresql.sql";
 
+    /** 0.2.0 存量升级脚本（发布资产原文）：0.2.0 种子压缩后，0.1.7 衔接态须先过此脚本收敛为
+     *  单条 V0.2.0 基线登记，当前主链（V0.2.2 起）才能继续升级——演练脚本链随版本形态补齐。 */
+    private static final String UPGRADE_TO_020_SCRIPT =
+            "db/upgrade/0.2.0/upgrade-to-0.2.0-from-0.1.7.postgresql.sql";
+
     private static final String RECORD_TABLE = "sw_form_g4_drill";
     private static final String RECORD_ID = "rec-g4-1";
 
@@ -106,6 +111,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
 
         long formsBefore = count("SELECT COUNT(*) FROM sw_form_def");
         long menusBefore = count("SELECT COUNT(*) FROM sys_menu");
+        List<Long> menuIdsBefore = queryLongs("SELECT id FROM sys_menu");
         System.out.println("[G4-drill] 升级前：forms=" + formsBefore + ", menus=" + menusBefore
                 + ", record=" + count("SELECT COUNT(*) FROM \"" + RECORD_TABLE + "\" WHERE \"deleted\" = 0"));
 
@@ -117,22 +123,32 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         assertTrue(dumpBytes > 0, "备份文件不应为空");
         System.out.println("[G4-drill] 备份完成：" + dumpFile + " (" + dumpBytes + " bytes)");
 
-        // —— 3. 执行 0.1.6/0.1.7 存量升级脚本（增量 + 历史衔接，发布资产原文）→ 主链零重放 ——
+        // —— 3. 执行 0.1.6/0.1.7/0.2.0 存量升级脚本（增量 + 历史衔接，发布资产原文）→ 主链零重放 ——
         execScript(classpathResource(UPGRADE_SCRIPT));
         execScript(classpathResource(UPGRADE_017_SCRIPT));
+        execScript(classpathResource(UPGRADE_TO_020_SCRIPT));
         MigrateResult upgrade = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(pgLocations())
                 .load().migrate();
         assertTrue(upgrade.success, "主链衔接验证应成功");
-        assertEquals(3, upgrade.migrationsExecuted, "升级脚本后只应执行 V0.1.8、V0.1.9 与 V0.1.10 增量，不重放历史 R__");
-        assertEquals("0.1.10", currentVersion(), "升级后版本应为最新 versioned 迁移");
+        assertEquals(newerThan020Count(), upgrade.migrationsExecuted,
+                "升级脚本后只应执行 0.2.0 基线之后的版本化迁移，不重放历史 R__");
+        assertEquals(latestClasspathVersion(), currentVersion(), "升级后版本应为类路径最新版本化迁移");
         assertTrue(incrementalTablesPresent(), "升级后应存在应用中心增量表");
         assertTrue(count("SELECT COUNT(*) FROM sw_form_app WHERE id = 'lc201'") == 1L,
                 "升级后应有承接应用");
         // 菜单脚本为可重复迁移（不受 target 约束，0.1.5 全新库亦已应用）：升级不得重复插入
         assertEquals(2L, count("SELECT COUNT(*) FROM sys_menu WHERE id IN (9130, 9131)"),
                 "应用中心菜单应就位");
-        assertEquals(menusBefore, count("SELECT COUNT(*) FROM sys_menu"), "升级不得重复插入菜单行");
+        // 三条同时成立（规划口径）：升级脚本按设计可补入其版本增量菜单，但
+        //   ①升级前每个菜单 id 都还在（一条不少）；②无重复 id；③总数=升级前+新增数（动态）。
+        List<Long> menuIdsAfter = queryLongs("SELECT id FROM sys_menu");
+        assertTrue(menuIdsAfter.containsAll(menuIdsBefore), "升级后升级前的每个菜单 id 都应保留");
+        assertEquals(menuIdsAfter.size(), new java.util.HashSet<>(menuIdsAfter).size(),
+                "升级后菜单 id 不得重复");
+        long menuIdsAdded = menuIdsAfter.stream().filter(id -> !menuIdsBefore.contains(id)).count();
+        assertEquals(menusBefore + menuIdsAdded, menuIdsAfter.size(),
+                "升级后菜单总数应等于升级前数量加升级脚本新增数");
 
         // —— 4. 恢复到已声明边界：全库恢复要求空库（先验证就地覆盖被拒绝，再按声明路径重建后恢复）——
         Path inPlaceLog = Files.createTempFile("ac-g4-inplace-", ".log");
@@ -170,14 +186,19 @@ class ApplicationCenterRecoveryDrillPostgresTest {
                 + "\"version\", \"title\") VALUES ('rec-g4-2', 0, 0, 11, 0, '恢复后新增')");
         assertEquals(2L, count("SELECT COUNT(*) FROM \"" + RECORD_TABLE + "\" WHERE \"deleted\" = 0"),
                 "恢复后新增记录应成功");
-        // 恢复后仍可继续升级（再次执行 0.1.6 与 0.1.7 存量升级脚本）
+        // 恢复后仍可继续升级（再次执行 0.1.6/0.1.7/0.2.0 存量升级脚本后走当前主链）
         execScript(classpathResource(UPGRADE_SCRIPT));
         execScript(classpathResource(UPGRADE_017_SCRIPT));
+        execScript(classpathResource(UPGRADE_TO_020_SCRIPT));
         MigrateResult reUpgrade = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(pgLocations()).load().migrate();
         assertTrue(reUpgrade.success, "恢复后再次升级应成功");
-        assertEquals(0, reUpgrade.migrationsExecuted, "恢复后再次升级不应重复执行主链迁移");
-        assertEquals("0.1.7", currentVersion(), "恢复后再次升级应到达 0.1.7");
+        assertEquals(newerThan020Count(), reUpgrade.migrationsExecuted,
+                "恢复后再次升级应执行与首次相同的 0.2.0 基线之后版本化迁移");
+        assertEquals(latestClasspathVersion(), currentVersion(), "恢复后再次升级应到达类路径最新版本化迁移");
+        MigrateResult reUpgradeAgain = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
+                .locations(pgLocations()).load().migrate();
+        assertEquals(0, reUpgradeAgain.migrationsExecuted, "再次升级后重复 migrate 不应执行任何迁移");
         assertTrue(incrementalTablesPresent(), "再次升级后增量表应重新就位");
         System.out.println("[G4-drill] 恢复后读写可用且可再次升级到 " + currentVersion());
 
@@ -185,6 +206,67 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         dropDatabase();
         Files.deleteIfExists(dumpFile);
         System.out.println("[G4-drill] 演练库与备份文件已清理");
+    }
+
+    // ==================== 类路径最新版本化迁移（终点口径随链自动更新） ====================
+
+    /** 主链各位置版本化迁移（V&lt;version&gt;__*.sql）版本，按 Flyway 版本序升序。 */
+    private static List<String> classpathVersions() throws Exception {
+        List<String> versions = new java.util.ArrayList<>();
+        var loader = ApplicationCenterRecoveryDrillPostgresTest.class.getClassLoader();
+        for (String location : pgLocations()) {
+            var resources = loader.getResources(location.replace("classpath:", ""));
+            while (resources.hasMoreElements()) {
+                var resource = resources.nextElement();
+                if (!"file".equals(resource.getProtocol())) {
+                    continue;
+                }
+                try (var files = Files.list(Path.of(resource.toURI()))) {
+                    for (Path file : files.toList()) {
+                        String name = file.getFileName().toString();
+                        if (name.startsWith("V") && name.contains("__") && name.endsWith(".sql")) {
+                            versions.add(name.substring(1, name.indexOf("__")));
+                        }
+                    }
+                }
+            }
+        }
+        if (versions.isEmpty()) {
+            throw new IllegalStateException("类路径上未发现版本化迁移（db/migration/**）");
+        }
+        versions.sort(ApplicationCenterRecoveryDrillPostgresTest::compareVersions);
+        return versions;
+    }
+
+    /** Flyway 版本序：'.' 分段数值比较。 */
+    private static int compareVersions(String left, String right) {
+        String[] a = left.split("\\.");
+        String[] b = right.split("\\.");
+        for (int i = 0; i < Math.max(a.length, b.length); i++) {
+            long x = i < a.length ? Long.parseLong(a[i]) : 0L;
+            long y = i < b.length ? Long.parseLong(b[i]) : 0L;
+            if (x != y) {
+                return Long.compare(x, y);
+            }
+        }
+        return 0;
+    }
+
+    /** 0.2.0 基线之后的版本化迁移数（升级脚本衔接后主链应执行的增量）。 */
+    private static int newerThan020Count() throws Exception {
+        int count = 0;
+        for (String version : classpathVersions()) {
+            if (compareVersions(version, "0.2.0") > 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** 类路径上实际最新的版本化迁移版本。 */
+    private static String latestClasspathVersion() throws Exception {
+        List<String> versions = classpathVersions();
+        return versions.get(versions.size() - 1);
     }
 
     // ==================== 基础设施 ====================
@@ -323,6 +405,19 @@ class ApplicationCenterRecoveryDrillPostgresTest {
              ResultSet rs = stmt.executeQuery(sql)) {
             assertTrue(rs.next(), "计数查询应返回一行: " + sql);
             return rs.getLong(1);
+        }
+    }
+
+    /** 单列 long 结果集（菜单 id 集合校验用）。 */
+    private List<Long> queryLongs(String sql) throws SQLException {
+        try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            List<Long> values = new java.util.ArrayList<>();
+            while (rs.next()) {
+                values.add(rs.getLong(1));
+            }
+            return values;
         }
     }
 
