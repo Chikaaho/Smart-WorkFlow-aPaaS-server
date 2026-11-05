@@ -13,6 +13,12 @@ jobs:
       contents: write
     # 登录挑战链（P45/I5）与通知工作台用例（I6）在测试期真实读写 Redis；
     # runner 镜像默认不提供该服务，缺失时相关 Boot 用例必然失败。
+    # PostgreSQL 服务容器（0.2.2 整版发布新增）：应用中心恢复演练
+    # ApplicationCenterRecoveryDrillPostgresTest 需要真实 PG（pg_dump/pg_restore + JDBC），
+    # 方向 direction-022-close-release 第 4 阶段要求该测试在 CI 实际跑通（不得跳过）。
+    # 端口用 55432 而非 5432：H7TenantIsolationIntegrationTest 以裸 socket 探测
+    # localhost:5432 判定「本机常驻在役库」存在与否（在役库语义=全量 schema），
+    # 5432 上出现空容器会令其误判后失败；演练测试走 AC_G4_PG_URL 与端口解耦。
     services:
       redis:
         image: redis:7
@@ -23,6 +29,22 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U runner"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 恢复演练测试经 AC_G4_PG_URL 取完整 JDBC URL（测试侧不再拼接前缀；
+      # 连接用户取 runner osUser，trust 免密；db 由测试自建 ac_g4_recovery_drill）
+      AC_G4_PG_URL: jdbc:postgresql://127.0.0.1:55432/postgres
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +56,8 @@ jobs:
           cache: maven
 
       # Phase 6C · CI-friendly 版本身份：开发默认 effective version 必须经 Maven 求值
-      # （禁止 XML grep 得到字面 ${revision}），并断言为 0.2.1-SNAPSHOT；正式值 0.2.1
-      # 由该有效值剥掉 -SNAPSHOT 解析而来，随后以 -Drevision=0.2.1 驱动唯一生产构建入口
+      # （禁止 XML grep 得到字面 ${revision}），并断言为 0.2.2-SNAPSHOT；正式值 0.2.2
+      # 由该有效值剥掉 -SNAPSHOT 解析而来，随后以 -Drevision=0.2.2 驱动唯一生产构建入口
       # （测试、打包与制品门禁同版本），Release 标题与上传制品名取自同一版本变量。
       - name: Resolve CI-friendly version (Maven effective)
         id: version
@@ -45,8 +67,8 @@ jobs:
           if [ -z "${DEV_VERSION}" ] || [ "${DEV_VERSION}" = '${revision}' ]; then
             echo "::error::Maven effective version 为空或未解析: ${DEV_VERSION}"; exit 1
           fi
-          if [ "${DEV_VERSION}" != '0.2.1-SNAPSHOT' ]; then
-            echo "::error::develop 默认版本必须为 0.2.1-SNAPSHOT，实际 ${DEV_VERSION}"; exit 1
+          if [ "${DEV_VERSION}" != '0.2.2-SNAPSHOT' ]; then
+            echo "::error::develop 默认版本必须为 0.2.2-SNAPSHOT，实际 ${DEV_VERSION}"; exit 1
           fi
           RELEASE_VERSION="${DEV_VERSION%-SNAPSHOT}"
           if [ -z "${RELEASE_VERSION}" ] || [ "${RELEASE_VERSION}" = "${DEV_VERSION}" ] || [ "${RELEASE_VERSION}" = '${revision}' ]; then
@@ -61,6 +83,30 @@ jobs:
       # 不会产出 Release。
       - name: "Production build (in-repo entry: tests + prod package + artifact gate)"
         run: REVISION="${{ steps.version.outputs.release_version }}" bash scripts/build-prod.sh
+
+      # 恢复演练测试诊断（always）：surefire 报告 + XML 跳过消息 + 环境因子探测
+      # （AC_G4_PG_URL 可见性 / psql 连通 / pg_dump·pg_restore 工具链），
+      # 供 direction-022-close-release 第 4 阶段「CI 实跑」验收取证；只读，不影响门禁。
+      - name: "Drill test diagnostics (always)"
+        if: always()
+        run: |
+          F=sw-bootstrap/target/surefire-reports/com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.txt
+          X=sw-bootstrap/target/surefire-reports/TEST-com.sw.ck.bootstrap.ApplicationCenterRecoveryDrillPostgresTest.xml
+          if [ -f "${F}" ]; then cat "${F}"; else echo "::warning::drill surefire txt 缺失"; fi
+          if [ -f "${X}" ]; then grep -oE '<skipped[^>]*' "${X}" | head -2; fi
+          echo "AC_G4_PG_URL=[${AC_G4_PG_URL}]"
+          echo "user.name=$(java -XshowSettings:properties -version 2>&1 | grep user.name | head -1)"
+          which pg_dump pg_restore psql 2>&1
+          pg_dump --version 2>&1 | head -1
+          PGPASSWORD="" psql -w -h 127.0.0.1 -p 55432 -U runner -d postgres -c "select 1" 2>&1 | head -2
+          DRIVER=$(find /home/runner/.m2/repository/org/postgresql -name "postgresql-42*.jar" ! -name "*sources*" 2>/dev/null | head -1)
+          echo "driver=${DRIVER}"
+          if [ -n "${DRIVER}" ]; then
+            printf '%s\n' 'import java.sql.*;' 'public class Probe {' '  public static void main(String[] args) {' '    String url = System.getenv().getOrDefault("AC_G4_PG_URL", "jdbc:postgresql://127.0.0.1:55432/postgres");' '    if (!url.startsWith("jdbc:")) { url = "jdbc:postgresql://" + url; }' '    String osUser = System.getProperty("user.name", "postgres");' '    try (Connection c = DriverManager.getConnection(url, osUser, "")) {' '      System.out.println("JDBC_OK as " + osUser + " via " + url);' '    } catch (Exception e) {' '      System.out.println("JDBC_FAIL as " + osUser + " via " + url + " -> " + e);' '    }' '  }' '}' > /tmp/Probe.java
+            java -Duser.name=runner -cp "${DRIVER}" /tmp/Probe.java 2>&1 | grep -E "JDBC_OK|JDBC_FAIL" | head -2
+          fi
+          echo "=== in-step drill rerun ==="
+          MAVEN_OPTS="-Xmx2g" mvn -B -pl sw-bootstrap -am test -Dtest='ApplicationCenterRecoveryDrillPostgresTest' -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false 2>&1 | grep -E "Tests run:|Running com.sw.ck.bootstrap.Application|skipped message" | head -8
 
       - name: Locate executable JAR
         id: locate
