@@ -76,7 +76,9 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
 
         Thread worker = Thread.ofVirtual().start(() -> invokeRun(12L));
         assertThat(entered.await(30, TimeUnit.SECONDS)).isTrue();
-        assertThat(service.cancel(12L).getStatus()).isEqualTo("CANCEL_REQUESTED");
+        // cancel 受理后返回 CANCEL_REQUESTED；若运行线程在 cancel 返回前已被中断并完成 finish(CANCELLED)，
+        // 返回 CANCELLED 同样合法（终态竞争只产生一个合法终态，见下方 finish 恰一次与副作用精确 1 次的严格验证）。
+        assertThat(service.cancel(12L).getStatus()).isIn("CANCEL_REQUESTED", "CANCELLED");
         release.countDown();
         worker.join(30000);
 
