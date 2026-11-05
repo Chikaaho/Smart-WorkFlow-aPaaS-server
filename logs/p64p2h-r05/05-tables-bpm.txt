@@ -1,5 +1,0 @@
-table_name
-----------
-sw_bpm_instance
-sw_bpm_instance_intervention
-(2 rows)

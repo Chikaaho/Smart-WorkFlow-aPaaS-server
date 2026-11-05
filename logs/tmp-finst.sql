@@ -1,1 +1,0 @@
-SELECT status, count(*) FROM sw_bpm_instance WHERE deleted=0 GROUP BY status;
