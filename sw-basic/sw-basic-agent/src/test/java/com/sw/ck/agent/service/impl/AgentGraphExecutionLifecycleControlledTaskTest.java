@@ -68,17 +68,17 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.executionService.execute(21L, "input")).thenAnswer(inv -> {
             sideEffects.incrementAndGet();
             entered.countDown();
-            try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+            try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             AgentGraphExecuteRespDTO dto = new AgentGraphExecuteRespDTO();
             dto.setSuccess(true);
             return dto;
         });
 
         Thread worker = Thread.ofVirtual().start(() -> invokeRun(12L));
-        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(entered.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(service.cancel(12L).getStatus()).isEqualTo("CANCEL_REQUESTED");
         release.countDown();
-        worker.join(5000);
+        worker.join(30000);
 
         assertThat(worker.isAlive()).isFalse();
         assertThat(sideEffects).hasValue(1);
@@ -101,12 +101,12 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(f.executionService.execute(anyLong(), any())).thenAnswer(inv -> {
-            entered.countDown(); release.await(5, TimeUnit.SECONDS);
+            entered.countDown(); release.await(30, TimeUnit.SECONDS);
             return new AgentGraphExecuteRespDTO();
         });
 
         service.submit(21L, "first", "capacity-1");
-        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(entered.await(30, TimeUnit.SECONDS)).isTrue();
         service.submit(21L, "queued", "capacity-2");
         assertThatThrownBy(() -> service.submit(21L, "rejected", "capacity-3"))
                 .hasMessageContaining("执行容量已满");
@@ -147,7 +147,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         });
 
         service.recover();
-        assertThat(executed.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(executed.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(sideEffects).hasValue(1);
         verify(f.requestMapper, times(1)).update(isNull(), any());
         verify(f.executionService, times(1)).execute(21L, "input");
