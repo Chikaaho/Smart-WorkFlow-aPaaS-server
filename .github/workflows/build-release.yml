@@ -2,7 +2,9 @@ name: Build & Release (main)
 
 on:
   push:
-    branches: [main]
+    # 测试验证在 feature/develop 上触发即可（不再为跑测试推 main）；正式 Release 制品
+    # 仅由 main 推送创建（见下方 Create GitHub Release 的 ref 门控）。
+    branches: [main, develop, 'feature/**']
 
 jobs:
   build:
@@ -79,6 +81,8 @@ jobs:
           echo "sha256=$(sha256sum "${JAR}" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
+        # 分支触发只做测试/制品构建验证；tag+Release 制品仅由 main 发布。
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
