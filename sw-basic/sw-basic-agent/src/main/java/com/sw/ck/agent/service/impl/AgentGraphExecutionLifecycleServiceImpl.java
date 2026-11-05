@@ -133,7 +133,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             if (key != null) {
                 AgentGraphExecutionRequest existing = requestMapper.selectOne(
                         Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
-                                .eq(AgentGraphExecutionRequest::getCreateBy, userId)
+                                .eq(AgentGraphExecutionRequest::getCreateBy, String.valueOf(userId))
                                 .eq(AgentGraphExecutionRequest::getIdempotencyKey, key)
                                 .last("LIMIT 1"));
                 if (existing != null) {
