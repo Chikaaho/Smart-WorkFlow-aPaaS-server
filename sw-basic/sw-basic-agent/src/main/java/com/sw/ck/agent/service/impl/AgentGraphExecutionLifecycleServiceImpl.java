@@ -80,6 +80,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
 
     @PostConstruct
     void recover() {
+        if (!lifecycleTableAvailable()) return;
         requestMapper.update(null, Wrappers.<AgentGraphExecutionRequest>lambdaUpdate()
                 .in(AgentGraphExecutionRequest::getStatus, RUNNING, CANCEL_REQUESTED)
                 .set(AgentGraphExecutionRequest::getStatus, INTERRUPTED)
@@ -96,6 +97,16 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             recovered.setUserId(request.getCreateBy());
             recovered.setTenantId(request.getTenantId());
             dispatch(request.getId(), recovered);
+        }
+    }
+
+    private boolean lifecycleTableAvailable() {
+        try {
+            requestMapper.selectCount(Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
+                    .eq(AgentGraphExecutionRequest::getId, -1L));
+            return true;
+        } catch (org.springframework.dao.DataAccessException missingInReducedTestContext) {
+            return false;
         }
     }
 
