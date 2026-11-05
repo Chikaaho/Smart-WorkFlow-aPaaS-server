@@ -3,6 +3,7 @@ package com.sw.ck.agent.controller;
 import com.sw.ck.agent.dto.AgentGraphExecuteReqDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
+import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
 import com.sw.ck.common.response.R;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -13,6 +14,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/agent/graph-execution-lifecycle")
@@ -36,6 +40,14 @@ public class AgentGraphExecutionLifecycleController {
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
     public R<AgentGraphExecutionLifecycleDTO> get(@PathVariable Long executionId) {
         return R.ok(service.get(executionId));
+    }
+
+    @GetMapping("/executions/{executionId}/events")
+    @PreAuthorize("@ss.hasPermi('agent:model:view')")
+    public R<List<AgentGraphExecutionEventDTO>> events(
+            @PathVariable Long executionId,
+            @RequestParam(defaultValue = "0") long afterSequence) {
+        return R.ok(service.listEvents(executionId, afterSequence));
     }
 
     @PostMapping("/executions/{executionId}/cancel")

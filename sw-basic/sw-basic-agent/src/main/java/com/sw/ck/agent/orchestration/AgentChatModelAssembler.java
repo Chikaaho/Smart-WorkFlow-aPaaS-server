@@ -3,9 +3,13 @@ package com.sw.ck.agent.orchestration;
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
+import dev.langchain4j.model.anthropic.AnthropicStreamingChatModel;
 import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiResponsesChatModel;
+import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -42,16 +46,32 @@ public class AgentChatModelAssembler {
     private static final int ANTHROPIC_DEFAULT_MAX_TOKENS = 1024;
 
     public ChatModel assemble(AgentProvider provider, AgentModel model, String plainApiKey) {
-        String format = provider.getApiFormat();
-        if (format == null || !SUPPORTED_FORMATS.contains(format)) {
-            throw new IllegalArgumentException("不支持的 API 格式，无法构造模型客户端: " + format);
-        }
+        String format = requireFormat(provider);
         return switch (format) {
             case "OPENAI_CHAT" -> assembleOpenAiChat(provider, model, plainApiKey);
             case "OPENAI_RESPONSES" -> assembleOpenAiResponses(provider, model, plainApiKey);
             case "ANTHROPIC" -> assembleAnthropic(provider, model, plainApiKey);
             default -> throw new IllegalStateException("不应到达: " + format);
         };
+    }
+
+    /** 与同步客户端共享同一配置语义，返回供应商协议对应的真实流式客户端。 */
+    public StreamingChatModel assembleStreaming(AgentProvider provider, AgentModel model, String plainApiKey) {
+        String format = requireFormat(provider);
+        return switch (format) {
+            case "OPENAI_CHAT" -> assembleOpenAiStreaming(provider, model, plainApiKey);
+            case "OPENAI_RESPONSES" -> assembleOpenAiResponsesStreaming(provider, model, plainApiKey);
+            case "ANTHROPIC" -> assembleAnthropicStreaming(provider, model, plainApiKey);
+            default -> throw new IllegalStateException("不应到达: " + format);
+        };
+    }
+
+    private String requireFormat(AgentProvider provider) {
+        String format = provider.getApiFormat();
+        if (format == null || !SUPPORTED_FORMATS.contains(format)) {
+            throw new IllegalArgumentException("不支持的 API 格式，无法构造模型客户端: " + format);
+        }
+        return format;
     }
 
     private ChatModel assembleOpenAiChat(AgentProvider provider, AgentModel model, String plainApiKey) {
@@ -109,6 +129,46 @@ public class AgentChatModelAssembler {
         if (model.getTopP() != null) {
             builder.topP(toDouble(model.getTopP()));
         }
+        return builder.build();
+    }
+
+    private StreamingChatModel assembleOpenAiStreaming(
+            AgentProvider provider, AgentModel model, String plainApiKey) {
+        OpenAiStreamingChatModel.OpenAiStreamingChatModelBuilder builder = OpenAiStreamingChatModel.builder()
+                .baseUrl(provider.getBaseUrl())
+                .apiKey(orEmpty(plainApiKey))
+                .modelName(model.getModelName())
+                .timeout(timeout(model));
+        if (model.getTemperature() != null) builder.temperature(toDouble(model.getTemperature()));
+        if (model.getTopP() != null) builder.topP(toDouble(model.getTopP()));
+        if (model.getMaxTokens() != null) builder.maxTokens(model.getMaxTokens());
+        return builder.build();
+    }
+
+    private StreamingChatModel assembleOpenAiResponsesStreaming(
+            AgentProvider provider, AgentModel model, String plainApiKey) {
+        OpenAiResponsesStreamingChatModel.Builder builder = OpenAiResponsesStreamingChatModel.builder()
+                .baseUrl(provider.getBaseUrl())
+                .apiKey(orEmpty(plainApiKey))
+                .modelName(model.getModelName());
+        if (model.getTemperature() != null) builder.temperature(toDouble(model.getTemperature()));
+        if (model.getTopP() != null) builder.topP(toDouble(model.getTopP()));
+        if (model.getMaxTokens() != null) builder.maxOutputTokens(model.getMaxTokens());
+        return builder.build();
+    }
+
+    private StreamingChatModel assembleAnthropicStreaming(
+            AgentProvider provider, AgentModel model, String plainApiKey) {
+        AnthropicStreamingChatModel.AnthropicStreamingChatModelBuilder builder =
+                AnthropicStreamingChatModel.builder()
+                        .baseUrl(provider.getBaseUrl())
+                        .apiKey(orEmpty(plainApiKey))
+                        .modelName(model.getModelName())
+                        .maxTokens(model.getMaxTokens() != null
+                                ? model.getMaxTokens() : ANTHROPIC_DEFAULT_MAX_TOKENS)
+                        .timeout(timeout(model));
+        if (model.getTemperature() != null) builder.temperature(toDouble(model.getTemperature()));
+        if (model.getTopP() != null) builder.topP(toDouble(model.getTopP()));
         return builder.build();
     }
 

@@ -314,6 +314,9 @@ public class AgentGraphInterpreter {
         long traceSeq = 0;
         int steps = 0;
         while (!activePoints.isEmpty()) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new GraphExecutionException(ERROR_CATEGORY_UNKNOWN, "执行已取消");
+            }
             ActiveExecutionPoint point = activePoints.remove(0);
             String currentId = point.nodeId;
             long stepStartNanos = System.nanoTime();
@@ -597,7 +600,10 @@ public class AgentGraphInterpreter {
         boolean outputSeen = false;
         int rounds = 0;
         while (true) {
-            ChatResponse response = runtime.chatWithRotation(modelConfigId, messages, specs);
+            ChatResponse response = AgentExecutionEventContext.get() == null
+                    ? runtime.chatWithRotation(modelConfigId, messages, specs)
+                    : runtime.chatStreamingWithRotation(modelConfigId, messages, specs,
+                            delta -> AgentExecutionEventContext.emit("MODEL_DELTA", delta));
             dev.langchain4j.model.output.TokenUsage usage =
                     response.metadata() != null ? response.metadata().tokenUsage() : null;
             if (usage != null && usage.inputTokenCount() != null) {

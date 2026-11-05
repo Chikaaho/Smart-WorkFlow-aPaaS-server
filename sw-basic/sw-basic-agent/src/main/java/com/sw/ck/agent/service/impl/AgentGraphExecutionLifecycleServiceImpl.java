@@ -3,11 +3,15 @@ package com.sw.ck.agent.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
+import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
 import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
+import com.sw.ck.agent.entity.AgentGraphExecutionEvent;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionEventMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionRequestMapper;
+import com.sw.ck.agent.orchestration.AgentExecutionEventContext;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.exception.BaseException;
@@ -44,6 +48,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     static final String INTERRUPTED = "INTERRUPTED";
 
     private final AgentGraphExecutionRequestMapper requestMapper;
+    private final AgentGraphExecutionEventMapper eventMapper;
     private final AgentGraphDefMapper graphDefMapper;
     private final AgentGraphExecutionService executionService;
     private final LoginContextProvider loginContext;
@@ -53,6 +58,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
 
     public AgentGraphExecutionLifecycleServiceImpl(
             AgentGraphExecutionRequestMapper requestMapper,
+            AgentGraphExecutionEventMapper eventMapper,
             AgentGraphDefMapper graphDefMapper,
             AgentGraphExecutionService executionService,
             LoginContextProvider loginContext,
@@ -60,6 +66,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             @Value("${sw.agent.execution.workers:4}") int workers,
             @Value("${sw.agent.execution.queue-capacity:64}") int queueCapacity) {
         this.requestMapper = requestMapper;
+        this.eventMapper = eventMapper;
         this.graphDefMapper = graphDefMapper;
         this.executionService = executionService;
         this.loginContext = loginContext;
@@ -85,7 +92,10 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                         .eq(AgentGraphExecutionRequest::getStatus, QUEUED)
                         .orderByAsc(AgentGraphExecutionRequest::getCreateTime));
         for (AgentGraphExecutionRequest request : queued) {
-            dispatch(request.getId(), null);
+            LoginUser recovered = new LoginUser();
+            recovered.setUserId(request.getCreateBy());
+            recovered.setTenantId(request.getTenantId());
+            dispatch(request.getId(), recovered);
         }
     }
 
@@ -147,12 +157,26 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     @Override
+    public List<AgentGraphExecutionEventDTO> listEvents(Long executionId, long afterSequence) {
+        requireOwned(executionId);
+        return eventMapper.selectList(Wrappers.<AgentGraphExecutionEvent>lambdaQuery()
+                        .eq(AgentGraphExecutionEvent::getExecutionId, executionId)
+                        .gt(AgentGraphExecutionEvent::getSequenceNo, Math.max(0, afterSequence))
+                        .orderByAsc(AgentGraphExecutionEvent::getSequenceNo)
+                        .last("LIMIT 500"))
+                .stream().map(this::toEventDto).toList();
+    }
+
+    @Override
     public AgentGraphExecutionLifecycleDTO cancel(Long executionId) {
         AgentGraphExecutionRequest current = requireOwned(executionId);
         if (QUEUED.equals(current.getStatus())) {
-            requestMapper.cancelQueued(executionId);
+            if (requestMapper.cancelQueued(executionId) == 1) {
+                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCELLED);
+            }
         } else if (RUNNING.equals(current.getStatus())) {
             if (requestMapper.requestRunningCancellation(executionId) == 1) {
+                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCEL_REQUESTED);
                 Thread thread = runningThreads.get(executionId);
                 if (thread != null) thread.interrupt();
             }
@@ -184,6 +208,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         requestMapper.updateById(request);
         long started = System.currentTimeMillis();
         try {
+            AgentExecutionEventContext.set((type, payload) -> appendEvent(request, type, null, payload));
+            appendEvent(request, "STATE", null, RUNNING);
             AgentGraphExecuteRespDTO result = executionService.execute(request.getGraphDefId(), request.getInput());
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
             if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
@@ -202,21 +228,33 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 finish(executionId, FAILED, "EXECUTION_ERROR", "图执行失败，请查看节点记录", null, started);
             }
         } finally {
+            AgentExecutionEventContext.clear();
             runningThreads.remove(executionId);
             LoginUserHolder.clear();
         }
     }
 
     private void finish(Long id, String status, String category, String message, Long resultId, long started) {
-        AgentGraphExecutionRequest update = requestMapper.selectById(id);
-        if (List.of(SUCCESS, FAILED, CANCELLED, INTERRUPTED).contains(update.getStatus())) return;
-        update.setStatus(status);
-        update.setErrorCategory(category);
-        update.setErrorMessage(message);
-        update.setResultExecutionId(resultId);
-        update.setLatencyMs(System.currentTimeMillis() - started);
-        update.setFinishedAt(LocalDateTime.now());
-        requestMapper.updateById(update);
+        if (requestMapper.finish(id, status, category, message, resultId,
+                System.currentTimeMillis() - started) == 1) {
+            AgentGraphExecutionRequest terminal = requestMapper.selectById(id);
+            appendEvent(terminal, "STATE", null, status);
+        }
+    }
+
+    private void appendEvent(AgentGraphExecutionRequest request, String type, String nodeId, String payload) {
+        eventMapper.insertNext(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(), request.getTenantId(),
+                String.valueOf(request.getCreateBy()), request.getId(), type, nodeId, payload);
+    }
+
+    private AgentGraphExecutionEventDTO toEventDto(AgentGraphExecutionEvent event) {
+        AgentGraphExecutionEventDTO dto = new AgentGraphExecutionEventDTO();
+        dto.setSequence(event.getSequenceNo());
+        dto.setType(event.getEventType());
+        dto.setNodeId(event.getNodeId());
+        dto.setPayload(event.getPayload());
+        dto.setCreatedAt(event.getCreateTime());
+        return dto;
     }
 
     private AgentGraphExecutionRequest requireOwned(Long id) {
