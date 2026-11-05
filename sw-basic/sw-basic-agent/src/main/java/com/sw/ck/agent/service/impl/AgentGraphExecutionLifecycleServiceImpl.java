@@ -210,10 +210,13 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     private void run(Long executionId, LoginUser loginUser) {
-        if (requestMapper.transition(executionId, QUEUED, RUNNING) != 1) return;
+        if (loginUser != null) LoginUserHolder.set(loginUser);
+        if (requestMapper.transition(executionId, QUEUED, RUNNING) != 1) {
+            LoginUserHolder.clear();
+            return;
+        }
         Thread current = Thread.currentThread();
         runningThreads.put(executionId, current);
-        if (loginUser != null) LoginUserHolder.set(loginUser);
         AgentGraphExecutionRequest request = requestMapper.selectById(executionId);
         request.setStartedAt(LocalDateTime.now());
         requestMapper.updateById(request);
