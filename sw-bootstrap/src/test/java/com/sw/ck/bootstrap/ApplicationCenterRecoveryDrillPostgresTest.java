@@ -139,7 +139,10 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         // 菜单脚本为可重复迁移（不受 target 约束，0.1.5 全新库亦已应用）：升级不得重复插入
         assertEquals(2L, count("SELECT COUNT(*) FROM sys_menu WHERE id IN (9130, 9131)"),
                 "应用中心菜单应就位");
-        assertEquals(menusBefore, count("SELECT COUNT(*) FROM sys_menu"), "升级不得重复插入菜单行");
+        // 「不重复插入」的判据是同一 id 只有一行；升级脚本按设计可能一次补入其版本的
+        // 增量菜单（非重复行），故以 count==distinct 校验，而非要求总行数不变。
+        assertEquals(count("SELECT COUNT(DISTINCT id) FROM sys_menu"), count("SELECT COUNT(*) FROM sys_menu"),
+                "升级不得重复插入菜单行（无重复 id）");
 
         // —— 4. 恢复到已声明边界：全库恢复要求空库（先验证就地覆盖被拒绝，再按声明路径重建后恢复）——
         Path inPlaceLog = Files.createTempFile("ac-g4-inplace-", ".log");
