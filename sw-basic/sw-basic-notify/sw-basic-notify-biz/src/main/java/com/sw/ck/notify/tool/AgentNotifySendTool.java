@@ -66,10 +66,10 @@ public class AgentNotifySendTool {
             return fail("缺少 channels（至少一个渠道，如 [\"IN_APP\",\"EMAIL\"]）");
         }
         JsonNode recipientNode = input.get("recipientId");
-        if (recipientNode == null || !recipientNode.canConvertToLong()) {
+        Long recipientId = longOf(recipientNode);
+        if (recipientId == null) {
             return fail("缺少 recipientId");
         }
-        Long recipientId = recipientNode.asLong();
         String title = textOf(input, "title");
         String content = textOf(input, "content");
         if (title == null || title.isBlank() || content == null || content.isBlank()) {
@@ -150,6 +150,31 @@ public class AgentNotifySendTool {
     private String textOf(JsonNode input, String field) {
         JsonNode node = input.get(field);
         return node == null || node.isNull() ? null : node.asText();
+    }
+
+    /**
+     * 接收人 ID 解析：模型/页面参数常把 64 位 ID 以字符串传递，numeric 与数字字符串都接受；
+     * 非数字/空值返回 null（由调用方给出明确失败，不猜默认接收人）。
+     */
+    private static Long longOf(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (node.isIntegralNumber()) {
+            return node.asLong();
+        }
+        if (node.isTextual()) {
+            String text = node.asText().trim();
+            if (text.isEmpty()) {
+                return null;
+            }
+            try {
+                return Long.valueOf(text);
+            } catch (NumberFormatException notNumeric) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private String writeJson(Map<String, Object> value) {

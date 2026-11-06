@@ -92,6 +92,23 @@ class AgentNotifySendToolTest {
     }
 
     @Test
+    void testTextualRecipientId_Accepted() throws Exception {
+        when(notifyFacade.send(any(NotifySendRequest.class)))
+                .thenReturn(Optional.of(NotifySendResult.builder()
+                        .channel(NotifyChannel.IN_APP).status("SUCCESS").build()));
+
+        String output = tool.execute("{\"channels\":[\"IN_APP\"],\"recipientId\":\"92001\","
+                + "\"title\":\"t\",\"content\":\"c\"}");
+
+        JsonNode result = parse(output);
+        assertTrue(result.get("success").asBoolean(), "数字字符串接收人应可解析");
+        ArgumentCaptor<NotifySendRequest> requestCaptor =
+                ArgumentCaptor.forClass(NotifySendRequest.class);
+        verify(notifyFacade).send(requestCaptor.capture());
+        assertEquals(Long.valueOf(92001L), requestCaptor.getValue().getRecipientId());
+    }
+
+    @Test
     void testUnknownChannel_ExplicitFailure() throws Exception {
         when(notifyFacade.send(any(NotifySendRequest.class)))
                 .thenReturn(Optional.of(NotifySendResult.builder()
