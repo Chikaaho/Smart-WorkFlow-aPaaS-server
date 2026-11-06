@@ -24,6 +24,7 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -56,6 +57,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     private final AgentGraphExecutionService executionService;
     private final LoginContextProvider loginContext;
     private final TransactionTemplate transactionTemplate;
+    /** 受理专用模板（REQUIRES_NEW：受理先独立提交再派发，跨模块触发可见性保证）。 */
+    private final TransactionTemplate acceptTemplate;
     private final ThreadPoolExecutor executor;
     private final ConcurrentHashMap<Long, Thread> runningThreads = new ConcurrentHashMap<>();
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
@@ -76,6 +79,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         this.executionService = executionService;
         this.loginContext = loginContext;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.acceptTemplate = new TransactionTemplate(transactionManager);
+        this.acceptTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.eventPublisher = eventPublisher;
         int boundedWorkers = Math.max(1, Math.min(workers, 16));
         int boundedCapacity = Math.max(1, Math.min(queueCapacity, 1000));
@@ -131,7 +136,11 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         Long userId = requireUserId();
         LoginUser loginUser = LoginUserHolder.get();
 
-        AgentGraphExecutionRequest accepted = transactionTemplate.execute(status -> {
+        // 受理必须独立提交后再派发（0.2.4 缺陷修复）：跨模块触发（IoT 桥、异步监听）
+        // 调用时外层事务尚未提交，REQUIRED 会把 QUEUED 行的可见性推迟到 dispatch 之后，
+        // 工作线程的 QUEUED→RUNNING 转换因此永远失配。受理是独立工作单，按 REQUIRES_NEW
+        // 先落库提交，再进入执行队列。
+        AgentGraphExecutionRequest accepted = acceptTemplate.execute(status -> {
             AgentGraphDef graph = graphDefMapper.selectById(graphDefId);
             if (graph == null || !"PUBLISHED".equals(graph.getStatus())) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "图不存在或未发布");

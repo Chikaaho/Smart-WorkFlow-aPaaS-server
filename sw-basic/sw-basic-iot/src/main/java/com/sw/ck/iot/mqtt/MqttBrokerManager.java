@@ -94,6 +94,7 @@ public class MqttBrokerManager {
             if (client == null) {
                 client = new MqttAsyncClient(brokerUri(conn), clientId(conn, "main"), new MemoryPersistence());
                 final long connId = conn.getId();
+                final Long connTenantId = conn.getTenantId();
                 client.setCallback(new MqttCallback() {
                     @Override
                     public void connectionLost(Throwable cause) {
@@ -104,12 +105,23 @@ public class MqttBrokerManager {
                     @Override
                     public void messageArrived(String topic, MqttMessage message) {
                         try {
+                            // 0.2.4 缺陷修复：MQTT 回调线程无登录态，I5 收口后的租户拦截器
+                            // fail-closed 会拒绝全部 ingest 查询。按连接归属租户还原系统执行
+                            // 身份（与 IoT→流程监听器同一口径），用后即清。
+                            if (connTenantId != null) {
+                                com.sw.ck.security.holder.LoginUser systemUser =
+                                        new com.sw.ck.security.holder.LoginUser();
+                                systemUser.setTenantId(connTenantId);
+                                com.sw.ck.security.holder.LoginUserHolder.set(systemUser);
+                            }
                             messageIngestService.ingest(connId, topic,
                                     new String(message.getPayload(), StandardCharsets.UTF_8),
                                     message.getQos(), String.valueOf(message.getId()));
                         } catch (Exception e) {
                             // 单条消息失败不得拖垮消费线程
                             log.error("消息处理失败（已隔离）: topic={}, error={}", topic, e.getMessage(), e);
+                        } finally {
+                            com.sw.ck.security.holder.LoginUserHolder.clear();
                         }
                     }
 
@@ -144,12 +156,23 @@ public class MqttBrokerManager {
 
     private void subscribe(MqttAsyncClient client, IotTopic topic) {
         try {
-            client.subscribe(topic.getTopic(), topic.getQos() == null ? 1 : topic.getQos())
+            String filter = mqttFilterOf(topic.getTopic());
+            client.subscribe(filter, topic.getQos() == null ? 1 : topic.getQos())
                     .waitForCompletion(10_000);
-            log.info("MQTT 订阅生效: topic={}, qos={}", topic.getTopic(), topic.getQos());
+            log.info("MQTT 订阅生效: topic={}, mqttFilter={}, qos={}", topic.getTopic(), filter,
+                    topic.getQos());
         } catch (MqttException e) {
             throw new IllegalStateException("订阅失败: " + topic.getTopic() + " - " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 主题模板 → MQTT 订阅过滤器（0.2.4 缺陷修复）：{@code {deviceKey}} 模板段落
+     * 必须展开为单层通配 {@code +}，否则按字面量订阅后设备向具体主题的发布永不命中，
+     * 遥测上行全部丢失。入库/回显仍保留原模板（设备解析按 {deviceKey} 段落提取）。
+     */
+    static String mqttFilterOf(String topicTemplate) {
+        return topicTemplate == null ? null : topicTemplate.replace("{deviceKey}", "+");
     }
 
     /**

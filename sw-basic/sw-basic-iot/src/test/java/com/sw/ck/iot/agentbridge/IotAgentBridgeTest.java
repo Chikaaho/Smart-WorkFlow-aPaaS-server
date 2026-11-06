@@ -108,7 +108,7 @@ class IotAgentBridgeTest {
     void testAgentEvent_SubmitsExecutionAndWritesBack() {
         when(graphDefService.resolvePublishedGraphId("agent_gate_judge"))
                 .thenReturn(Optional.of(88L));
-        when(lifecycleService.submit(eq(88L), any(), eq("r11-v3-7-agent-dedup-1")))
+        when(lifecycleService.submit(eq(88L), any(), eq("iotag-55")))
                 .thenReturn(new AgentGraphExecutionAcceptedDTO(666L, "QUEUED"));
         when(triggerMapper.update(any(IotProcessTrigger.class), any())).thenReturn(1);
 
@@ -116,7 +116,7 @@ class IotAgentBridgeTest {
 
         ArgumentCaptor<String> inputCaptor = ArgumentCaptor.forClass(String.class);
         verify(lifecycleService).submit(eq(88L), inputCaptor.capture(),
-                eq("r11-v3-7-agent-dedup-1"));
+                eq("iotag-55"));
         assertTrue(inputCaptor.getValue().contains("\"flow\":\"35.0\""));
         verify(triggerMapper).update(argThat(patch -> patch instanceof IotProcessTrigger p
                         && Long.valueOf(666L).equals(p.getAgentExecutionId())

@@ -310,6 +310,17 @@ public class MessageIngestService {
     }
 
     private boolean mqttFilterMatches(String filter, String topic) {
+        // 0.2.4 缺陷修复：{deviceKey} 模板段与订阅侧同口径展开为单层通配再匹配，
+        // 否则模板主题配置永远无法命中具体主题，PROPERTY 上行全部退化为 RAW。
+        return mqttFilterMatchesRaw(templateToFilter(filter), topic);
+    }
+
+    /** 主题模板 → MQTT 过滤器：{deviceKey} 段落展开为单层通配 +（与订阅侧一致）。 */
+    static String templateToFilter(String template) {
+        return template == null ? null : template.replace("{deviceKey}", "+");
+    }
+
+    private boolean mqttFilterMatchesRaw(String filter, String topic) {
         String[] f = filter.split("/");
         String[] t = topic.split("/");
         int i = 0;

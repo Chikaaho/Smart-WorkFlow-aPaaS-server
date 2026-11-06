@@ -76,8 +76,8 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
                     .externalMessageId("smtp-" + Math.abs(System.nanoTime()))
                     .build());
         } catch (Exception e) {
-            log.warn("邮件投递失败: recipient={}, exceptionClass={}", request.getRecipientId(),
-                    e.getClass().getSimpleName());
+            log.warn("邮件投递失败: recipient={}, exceptionClass={}, message={}", request.getRecipientId(),
+                    e.getClass().getSimpleName(), e.getMessage());
             return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
                     .failureReason("邮件投递失败: " + e.getClass().getSimpleName()).build());
         }

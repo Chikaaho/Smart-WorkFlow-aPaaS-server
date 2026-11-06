@@ -98,6 +98,8 @@ public class AgentProcessStartTool {
         Map<String, Object> variables = new HashMap<>();
         variables.put("formData", formData);
         variables.put("submitter", String.valueOf(loginUser.getUserId()));
+        // 与手动发起同契约：审批节点监听器从流程变量取 tenantId（0.2.4 缺陷修复）
+        variables.put("tenantId", loginUser.getTenantId());
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         try {
             String processInstanceId = template.execute(status -> {

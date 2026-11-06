@@ -60,6 +60,9 @@ public class IotEventRuleController {
         if (rule.getProcessEnabled() == null) {
             rule.setProcessEnabled(0);
         }
+        if (rule.getAgentEnabled() == null) {
+            rule.setAgentEnabled(0);
+        }
         ruleMapper.insert(rule);
         return R.ok(rule);
     }
@@ -151,6 +154,10 @@ public class IotEventRuleController {
         if (rule.getProcessEnabled() != null && rule.getProcessEnabled() == 1
                 && (rule.getProcessTemplateKey() == null || rule.getProcessTemplateKey().isBlank())) {
             throw new IllegalArgumentException("启用流程联动必须指定流程模板 key");
+        }
+        if (rule.getAgentEnabled() != null && rule.getAgentEnabled() == 1
+                && (rule.getAgentGraphKey() == null || rule.getAgentGraphKey().isBlank())) {
+            throw new IllegalArgumentException("启用 Agent 图联动必须指定已发布图 key");
         }
     }
 }

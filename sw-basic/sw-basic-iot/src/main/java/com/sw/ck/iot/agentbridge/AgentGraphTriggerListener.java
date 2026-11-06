@@ -47,6 +47,8 @@ public class AgentGraphTriggerListener {
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void onIotTrigger(IotProcessTriggerEvent event) {
         if (event == null || !"AGENT".equals(event.getActionType())) {
             return;
@@ -89,10 +91,11 @@ public class AgentGraphTriggerListener {
         }
         String input = event.getAgentInput() == null
                 ? "{}" : JSON.toJSONString(event.getAgentInput());
-        // 幂等键与触发记录一一对应：恢复调度重投同一触发时，生命周期按
-        // (tenant, createBy, idempotencyKey) 返回既有请求，不重复执行
+        // 幂等键（生命周期上限 100 字符）：以触发记录 id 派生紧凑稳定键——同一触发
+        // （含恢复调度重投）提交同一执行；触发记录自身的长幂等键仍由 IoT 侧唯一约束保证
+        String submitKey = "iotag-" + event.getTriggerId();
         com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO accepted =
-                lifecycleService.submit(graphDefId, input, event.getIdempotentKey());
+                lifecycleService.submit(graphDefId, input, submitKey);
         IotProcessTrigger patch = new IotProcessTrigger();
         patch.setId(event.getTriggerId());
         patch.setAgentExecutionId(accepted.getExecutionId());

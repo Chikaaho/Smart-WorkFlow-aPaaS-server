@@ -136,6 +136,9 @@ public class IotProcessTriggerListener {
             Map<String, Object> variables = new HashMap<>();
             variables.put("formData", event.getFormData() == null ? Map.of() : event.getFormData());
             variables.put("submitter", IOT_SYSTEM_ACTOR);
+            // 与手动发起同契约：审批节点监听器（ApprovalTaskListener）从流程变量取 tenantId，
+            // IoT 发起路径缺失会导致节点创建 fail-closed（0.2.4 缺陷修复）
+            variables.put("tenantId", event.getTenantId());
             variables.put("iotTriggerSource", event.getTriggerSource());
             variables.put("iotDeviceId", event.getDeviceId());
             variables.put("iotRuleId", event.getRuleId());
