@@ -131,6 +131,36 @@ class AgentToolCallbackFactoryTest {
         assertThat(result).contains("pong:").contains("city");
     }
 
+    @Test
+    @DisplayName("用例2b: GET 外部工具把入参编码进查询串（GET body 会被 JDK 客户端丢弃）")
+    void externalTool_getShouldAppendArgsToQuery() throws Exception {
+        String[] query = new String[1];
+        server = startServer((exchange, body) -> {
+            query[0] = exchange.getRequestURI().getRawQuery();
+            byte[] out = "ok".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, out.length);
+            exchange.getResponseBody().write(out);
+            exchange.close();
+        });
+        int port = server.getAddress().getPort();
+        AgentToolExternalConfig config = externalConfig("search_tool", "搜索工具",
+                "{\"type\":\"object\"}", "http://127.0.0.1:" + port + "/search?q=", "GET", 5);
+        AgentToolInternalConfigMapper internalMapper = mock(AgentToolInternalConfigMapper.class);
+        when(internalMapper.selectList(any())).thenReturn(List.of());
+        AgentToolExternalConfigMapper externalMapper = mock(AgentToolExternalConfigMapper.class);
+        when(externalMapper.selectList(any())).thenReturn(List.of(config));
+        AgentToolCallbackFactory factory = new AgentToolCallbackFactory(
+                internalMapper, externalMapper, mock(ApplicationContext.class));
+
+        String result = factory.buildToolCallbacks(null).get(0).executor().execute(
+                ToolExecutionRequest.builder().id("t2b").name("search_tool")
+                        .arguments("\"{\\\"deviceName\\\":\\\"南大门\\\"}\"").build(),
+                "memory-2b");
+
+        assertThat(result).isEqualTo("ok");
+        assertThat(query[0]).startsWith("q=%7B").contains("%22deviceName%22");
+    }
+
     // ==================== 用例 3：外部工具超时从 DB 配置读 ====================
 
     @Test
