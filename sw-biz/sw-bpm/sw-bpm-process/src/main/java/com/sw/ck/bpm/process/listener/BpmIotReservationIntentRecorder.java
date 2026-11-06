@@ -151,7 +151,7 @@ public class BpmIotReservationIntentRecorder {
         // —— 参数冻结 ——
         String paramField = config.getString("paramField");
         Object param = paramField == null ? null : formData.get(paramField);
-        String payload = param == null ? "{}" : JSON.toJSONString(param);
+        String payload = toCommandPayload(param);
 
         String commandKey = config.getString("commandKey") == null
                 ? "iot_action" : config.getString("commandKey");
@@ -199,6 +199,28 @@ public class BpmIotReservationIntentRecorder {
             }
             default -> throw failClosed(processInstanceId, "未知设备来源: " + source);
         };
+    }
+
+    /**
+     * 表单参数 → MQTT 指令体。表单里以文本维护的 JSON 对象/数组（设备指令参数）按原文下发，
+     * 不再二次序列化成带引号的字符串（0.3.0 修复）；其余值沿用 JSON 序列化。
+     */
+    private String toCommandPayload(Object param) {
+        if (param == null) {
+            return "{}";
+        }
+        if (param instanceof String text) {
+            String trimmed = text.trim();
+            if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                try {
+                    JSON.parse(trimmed);
+                    return trimmed;
+                } catch (Exception ignored) {
+                    // 非法 JSON 文本按普通字符串处理，保留原有可追溯语义
+                }
+            }
+        }
+        return JSON.toJSONString(param);
     }
 
     private BaseException failClosed(String processInstanceId, String reason) {

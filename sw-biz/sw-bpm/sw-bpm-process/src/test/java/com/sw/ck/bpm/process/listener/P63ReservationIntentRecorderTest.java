@@ -173,6 +173,20 @@ class P63ReservationIntentRecorderTest {
     }
 
     @Test
+    @DisplayName("文本型 JSON 指令参数按原文下发，不再二次序列化成带引号字符串")
+    void jsonTextParamIsSentAsRawJson() {
+        String config = configJson("{\"dueField\":\"plan_time\",\"timezoneId\":\"Asia/Shanghai\"}");
+        String payloadText = "{\"powerOff\":true,\"fireAlarm\":true,\"machineRooms\":[\"A机房\"]}";
+        wire(config, Map.of("plan_time", "2026-10-20 14:30", "power_level", payloadText));
+        inTx(() -> recorder.onProcessApproved(approved()));
+        assertThat((String) capturedArgs.get()[11]).isEqualTo(payloadText);
+
+        wire(config, Map.of("plan_time", "2026-10-20 14:30", "power_level", "普通文本"));
+        inTx(() -> recorder.onProcessApproved(approved()));
+        assertThat((String) capturedArgs.get()[11]).isEqualTo("\"普通文本\"");
+    }
+
+    @Test
     @DisplayName("预约时刻缺失/格式非法/时区时间不存在 → fail closed（审批整体回滚），零意图")
     void invalidFreezeElementsFailClosed() {
         wire(configJson("{\"dueField\":\"plan_time\",\"timezoneId\":\"Asia/Shanghai\"}"),

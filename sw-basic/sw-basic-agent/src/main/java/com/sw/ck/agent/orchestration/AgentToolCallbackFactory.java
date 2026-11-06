@@ -240,6 +240,13 @@ public class AgentToolCallbackFactory {
             if (node.isTextual()) {
                 return node.asText();
             }
+            // 工具规格声明的入参是 {input: "JSON 字符串"}；模型按声明返回对象信封时，
+            // 必须把 input 文本还原给白名单方法（否则 execute 收到的是整段信封，
+            // 解析不到 templateKey 等字段——0.3.0 修复）。
+            JsonNode input = node.isObject() ? node.get("input") : null;
+            if (input != null && input.isTextual()) {
+                return input.asText();
+            }
         } catch (Exception ignored) {
             // 非法 JSON：原样透传（由白名单方法/外部服务自行处理）
         }
