@@ -1186,7 +1186,7 @@ public class FormAppBundleService {
                         "字典类型 " + type.getCode() + "（系统字典服务未装配，未创建）"));
                 continue;
             }
-            List<DictItemDTO> items = toItemDTOs(type);
+            List<DictItemDTO> items = toItemDTOs(type, ctx);
             Boolean created = facade
                     .createDictTypeForImport(type.getCode(), type.getName(), type.getStatus(),
                             type.getDescription(), items)
@@ -1204,24 +1204,38 @@ public class FormAppBundleService {
         }
     }
 
-    /** 包内字典项 → Facade 导入 DTO（dictValue 归位为 code，类型编码归位 dictType）。 */
-    private List<DictItemDTO> toItemDTOs(FormAppBundleDocument.DictTypeBundle type) {
+    /**
+     * 包内字典项 → Facade 导入 DTO（dictValue 归位为 code，类型编码归位 dictType）。
+     * <p>
+     * 缺少 dictValue 的字典项无法落库：跳过并计入清除引用清单，报告中的字典项数
+     * 只统计实际导入的项（0.3.0 修复——此前会静默丢弃却按包内条数上报）。
+     * </p>
+     */
+    private List<DictItemDTO> toItemDTOs(FormAppBundleDocument.DictTypeBundle type, ImportContext ctx) {
         if (type.getItems() == null) {
             return List.of();
         }
-        return type.getItems().stream()
-                .map(item -> DictItemDTO.builder()
-                        .dictType(type.getCode())
-                        .code(item.getDictValue())
-                        .label(item.getLabel())
-                        .sort(item.getSort())
-                        .status(item.getStatus())
-                        .isDefault(item.getIsDefault())
-                        .cssClass(item.getCssClass())
-                        .listClass(item.getListClass())
-                        .description(item.getDescription())
-                        .build())
-                .collect(Collectors.toList());
+        List<DictItemDTO> items = new ArrayList<>();
+        for (FormAppBundleDocument.DictItemBundle item : type.getItems()) {
+            String value = item.getDictValue();
+            if (value == null || value.isBlank()) {
+                ctx.report.getClearedRefs().add(cleared("DICT_ITEM", String.valueOf(item.getLabel()),
+                        "字典类型 " + type.getCode() + "（字典项缺少 dictValue，未导入）"));
+                continue;
+            }
+            items.add(DictItemDTO.builder()
+                    .dictType(type.getCode())
+                    .code(value)
+                    .label(item.getLabel())
+                    .sort(item.getSort())
+                    .status(item.getStatus())
+                    .isDefault(item.getIsDefault())
+                    .cssClass(item.getCssClass())
+                    .listClass(item.getListClass())
+                    .description(item.getDescription())
+                    .build());
+        }
+        return items;
     }
 
     private void importProcesses(ImportContext ctx) {
