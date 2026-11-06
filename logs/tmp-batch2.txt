@@ -1,3 +1,0 @@
-id | status | expected_count | settled_count
-2108951592472494082 | BLOCKED | 2 | 0
-(1 rows)

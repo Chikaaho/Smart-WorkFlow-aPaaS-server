@@ -86,4 +86,13 @@ public interface AgentGraphDefService {
      * @return 更新后的图元数据
      */
     AgentGraphDefDTO updateSettings(Long id, Integer executionTimeoutSecs);
+
+    /**
+     * 按图 key 解析当前租户已发布图定义 id（IoT 规则 Agent 联动等跨模块触发用）。
+     * 租户隔离经租户拦截器按当前登录上下文生效。
+     *
+     * @param graphKey 图 key（agent_ 前缀，发布时冻结）
+     * @return present = 已发布图定义 id；empty = 不存在或未发布
+     */
+    java.util.Optional<Long> resolvePublishedGraphId(String graphKey);
 }

@@ -117,6 +117,10 @@ public class ProcessTriggerRecoveryJob {
                     com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaQuery()
                             .eq(IotProcessTrigger::getDeleted, 0)
                             .in(IotProcessTrigger::getStatus, PENDING, FAILED)
+                            // AGENT 的 FAILED 是执行终态（失败升级已承接），不得按流程重投；
+                            // 仅保留 PENDING（提交前崩溃）供恢复调度重新受理。
+                            .and(w -> w.ne(IotProcessTrigger::getActionType, "AGENT")
+                                    .or().eq(IotProcessTrigger::getStatus, PENDING))
                             .lt(IotProcessTrigger::getRetryCount, MAX_RETRY)
                             .and(w -> w.isNull(IotProcessTrigger::getNextRetryTime)
                                     .or().le(IotProcessTrigger::getNextRetryTime, LocalDateTime.now()))
@@ -158,6 +162,7 @@ public class ProcessTriggerRecoveryJob {
             transactionTemplate.executeWithoutResult(status -> {
                 IotProcessTriggerEvent event = new IotProcessTriggerEvent();
                 event.setTenantId(trigger.getTenantId());
+                event.setRuleId(trigger.getRuleId());
                 event.setScriptId(trigger.getScriptId());
                 event.setDeviceId(trigger.getDeviceId());
                 event.setProcessTemplateKey(trigger.getProcessTemplateKey());
@@ -165,6 +170,10 @@ public class ProcessTriggerRecoveryJob {
                 event.setTriggerSource(trigger.getTriggerSource());
                 event.setConfiguredBy(trigger.getConfiguredBy());
                 event.setTriggerId(trigger.getId());
+                // 0.2.4 缺陷修复：恢复重投必须保留动作类型与 AGENT 字段——
+                // 缺失时 AGENT 触发会被流程监听器当作 FLOW、以图 key 当流程模板误判失败。
+                event.setActionType(trigger.getActionType());
+                event.setAgentGraphKey(trigger.getAgentGraphKey());
                 Map<String, Object> formData = new LinkedHashMap<>();
                 if (trigger.getFormSnapshot() != null && !trigger.getFormSnapshot().isBlank()) {
                     try {
@@ -174,6 +183,7 @@ public class ProcessTriggerRecoveryJob {
                     }
                 }
                 event.setFormData(formData);
+                event.setAgentInput("AGENT".equals(trigger.getActionType()) ? formData : null);
                 eventPublisher.publish(event);
                 log.info("IoT 触发已重投: triggerId={}, idempotentKey={}, retryCount={}",
                         trigger.getId(), trigger.getIdempotentKey(), trigger.getRetryCount());

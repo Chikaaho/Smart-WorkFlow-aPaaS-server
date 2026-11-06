@@ -1,2 +1,0 @@
-type_ | user_id_ | group_id_
-(0 rows)

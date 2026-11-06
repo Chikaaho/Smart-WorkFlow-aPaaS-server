@@ -406,8 +406,20 @@ class I6NotifyClosureIntegrationTest {
                 return java.util.Optional.empty();
             }
         };
-        var adapter = new com.sw.ck.notify.adapters.EmailNotifyChannelAdapter((org.springframework.mail.javamail.JavaMailSender) null, resolver,
-                new com.sw.ck.notify.config.NotifyChannelProperties());
+        var adapter = new com.sw.ck.notify.adapters.EmailNotifyChannelAdapter(
+                new org.springframework.beans.factory.ObjectProvider<org.springframework.mail.javamail.JavaMailSender>() {
+                    @Override
+                    public org.springframework.mail.javamail.JavaMailSender getObject() {
+                        return null;
+                    }
+                }, resolver,
+                new com.sw.ck.notify.config.NotifyChannelProperties(),
+                new org.springframework.beans.factory.ObjectProvider<com.sw.ck.notify.service.NotifyChannelConfigService>() {
+                    @Override
+                    public com.sw.ck.notify.service.NotifyChannelConfigService getObject() {
+                        return null;
+                    }
+                });
         var result = adapter.send(com.sw.ck.notify.api.NotifySendRequest.builder()
                 .channel(NotifyChannel.EMAIL)
                 .recipientId(999L)
@@ -826,7 +838,8 @@ class I6NotifyClosureIntegrationTest {
 
         @Bean
         public NotifyChannelConfigService notifyChannelConfigService(com.sw.ck.notify.mapper.NotifyChannelConfigMapper c) {
-            return new NotifyChannelConfigServiceImpl(List.of(), c);
+            return new NotifyChannelConfigServiceImpl(List.of(), c,
+                    java.util.Base64.getEncoder().encodeToString(new byte[32]));
         }
 
         @Bean

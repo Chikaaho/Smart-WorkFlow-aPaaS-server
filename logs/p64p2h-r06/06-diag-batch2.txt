@@ -1,3 +1,0 @@
-id | batch_key | parent_instance_id | status | expected_count
--------------------------------------------------------------
-(0 rows)
