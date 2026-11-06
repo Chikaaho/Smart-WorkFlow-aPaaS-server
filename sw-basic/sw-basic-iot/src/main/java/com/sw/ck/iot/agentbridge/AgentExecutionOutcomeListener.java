@@ -48,17 +48,20 @@ public class AgentExecutionOutcomeListener {
     private final IotDeviceMapper deviceMapper;
     private final DomainEventPublisher eventPublisher;
     private final ObjectProvider<PlatformTransactionManager> transactionManagerProvider;
+    private final ObjectProvider<com.sw.ck.notify.api.NotifyFacade> notifyFacadeProvider;
 
     public AgentExecutionOutcomeListener(IotProcessTriggerMapper triggerMapper,
                                          IotEventRuleMapper ruleMapper,
                                          IotDeviceMapper deviceMapper,
                                          DomainEventPublisher eventPublisher,
-                                         ObjectProvider<PlatformTransactionManager> transactionManagerProvider) {
+                                         ObjectProvider<PlatformTransactionManager> transactionManagerProvider,
+                                         ObjectProvider<com.sw.ck.notify.api.NotifyFacade> notifyFacadeProvider) {
         this.triggerMapper = triggerMapper;
         this.ruleMapper = ruleMapper;
         this.deviceMapper = deviceMapper;
         this.eventPublisher = eventPublisher;
         this.transactionManagerProvider = transactionManagerProvider;
+        this.notifyFacadeProvider = notifyFacadeProvider;
     }
 
     @EventListener
@@ -117,12 +120,24 @@ public class AgentExecutionOutcomeListener {
                         .in(IotProcessTrigger::getStatus, "PENDING", "PROCESSING"));
     }
 
-    /** 失败升级：按规则配置的升级流程模板发起 FLOW 触发（同事务插入 + 提交后发布）。 */
+    /**
+     * 失败升级：按规则配置的升级流程模板发起 FLOW 触发（同事务插入 + 提交后发布），
+     * 并按通用失败配置（agent_failure_config_json）补齐升级级别/表单字段与负责人告警。
+     * <p>配置形状：{@code {"templateKey"?:string, "formDataExtra"?:{...},
+     * "notify"?:{"channels":["IN_APP","EMAIL"],"recipientId":1,"title"?:string,"content"?:string}}}。
+     * 同一次失败（同一 executionId）升级触发与渠道通知均按稳定幂等键只产生一次。</p>
+     */
     private void escalateIfConfigured(AgentGraphExecutionTerminalEvent event, IotProcessTrigger trigger) {
         IotEventRule rule = ruleMapper.selectById(trigger.getRuleId());
-        if (rule == null || rule.getAgentFailureTemplateKey() == null
-                || rule.getAgentFailureTemplateKey().isBlank()) {
-            log.info("Agent 研判失败且未配置升级流程，仅回写触发失败: triggerId={}, executionId={}",
+        com.alibaba.fastjson2.JSONObject failureConfig = parseFailureConfig(rule);
+        String templateKey = failureConfig == null ? null : failureConfig.getString("templateKey");
+        if (templateKey == null || templateKey.isBlank()) {
+            templateKey = rule == null ? null : rule.getAgentFailureTemplateKey();
+        }
+        boolean notifyConfigured = failureConfig != null
+                && failureConfig.getJSONObject("notify") != null;
+        if (rule == null || ((templateKey == null || templateKey.isBlank()) && !notifyConfigured)) {
+            log.info("Agent 研判失败且未配置升级动作，仅回写触发失败: triggerId={}, executionId={}",
                     trigger.getId(), event.getExecutionId());
             return;
         }
@@ -135,6 +150,15 @@ public class AgentExecutionOutcomeListener {
         Map<String, Object> facts = rebuildFacts(rule, trigger);
         Map<String, Object> formData = buildEscalationFormData(rule, device, facts,
                 event.getExecutionId(), event.getErrorCategory(), event.getErrorMessage());
+        if (failureConfig != null && failureConfig.getJSONObject("formDataExtra") != null) {
+            formData.putAll(failureConfig.getJSONObject("formDataExtra"));
+        }
+        // 负责人告警（与流程触发独立：模板可缺省、仅通知；或两者并存）
+        sendFailureNotifications(event, rule, failureConfig, device);
+        if (templateKey == null || templateKey.isBlank()) {
+            return;
+        }
+        final String effectiveTemplateKey = templateKey;
         String idempotentKey = "iot-esc-" + event.getExecutionId();
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         Boolean published = template.execute(status -> {
@@ -146,7 +170,7 @@ public class AgentExecutionOutcomeListener {
             escalation.setFormSnapshot(JSON.toJSONString(formData));
             escalation.setTriggerTime(java.time.LocalDateTime.now());
             escalation.setActionType("FLOW");
-            escalation.setProcessTemplateKey(rule.getAgentFailureTemplateKey());
+            escalation.setProcessTemplateKey(effectiveTemplateKey);
             escalation.setTriggerSource("AGENT_FAIL");
             escalation.setConfiguredBy(rule.getCreateBy());
             escalation.setRetryCount(0);
@@ -162,7 +186,7 @@ public class AgentExecutionOutcomeListener {
             flowEvent.setTriggerId(escalation.getId());
             flowEvent.setRuleId(rule.getId());
             flowEvent.setDeviceId(trigger.getDeviceId());
-            flowEvent.setProcessTemplateKey(rule.getAgentFailureTemplateKey());
+            flowEvent.setProcessTemplateKey(effectiveTemplateKey);
             flowEvent.setIdempotentKey(idempotentKey);
             flowEvent.setTriggerSource("AGENT_FAIL");
             flowEvent.setConfiguredBy(rule.getCreateBy());
@@ -183,7 +207,86 @@ public class AgentExecutionOutcomeListener {
         });
         if (Boolean.TRUE.equals(published)) {
             log.info("Agent 研判失败已升级发起流程: templateKey={}, executionId={}, key={}",
-                    rule.getAgentFailureTemplateKey(), event.getExecutionId(), idempotentKey);
+                    effectiveTemplateKey, event.getExecutionId(), idempotentKey);
+        }
+    }
+
+    /** 解析失败升级通用配置；非法 JSON 记警告并按未配置处理（不阻断终态回写）。 */
+    private com.alibaba.fastjson2.JSONObject parseFailureConfig(IotEventRule rule) {
+        if (rule == null || rule.getAgentFailureConfigJson() == null
+                || rule.getAgentFailureConfigJson().isBlank()) {
+            return null;
+        }
+        try {
+            return JSON.parseObject(rule.getAgentFailureConfigJson());
+        } catch (Exception e) {
+            log.warn("失败升级配置 JSON 非法（按未配置处理）: ruleId={}, error={}",
+                    rule.getId(), e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 失败升级负责人告警（通用）：按配置渠道逐个发送，渠道结果分开记录在通知发送记录；
+     * 幂等键按 executionId+渠道固定，同一次失败只发一次。
+     */
+    private void sendFailureNotifications(AgentGraphExecutionTerminalEvent event, IotEventRule rule,
+                                          com.alibaba.fastjson2.JSONObject failureConfig, IotDevice device) {
+        if (failureConfig == null) {
+            return;
+        }
+        com.alibaba.fastjson2.JSONObject notify = failureConfig.getJSONObject("notify");
+        if (notify == null) {
+            return;
+        }
+        com.sw.ck.notify.api.NotifyFacade facade = notifyFacadeProvider.getIfAvailable();
+        if (facade == null) {
+            log.warn("通知门面未装配，失败升级告警跳过: executionId={}", event.getExecutionId());
+            return;
+        }
+        com.alibaba.fastjson2.JSONArray channels = notify.getJSONArray("channels");
+        Long recipientId = notify.getLong("recipientId");
+        if (channels == null || channels.isEmpty() || recipientId == null) {
+            log.warn("失败升级告警配置缺少 channels 或 recipientId，跳过: ruleId={}", rule.getId());
+            return;
+        }
+        String title = notify.getString("title");
+        if (title == null || title.isBlank()) {
+            title = "研判失败升级告警";
+        }
+        String content = notify.getString("content");
+        if (content == null || content.isBlank()) {
+            content = "规则「" + rule.getName() + "」研判执行失败（"
+                    + (event.getErrorCategory() == null ? "UNKNOWN" : event.getErrorCategory())
+                    + "），已按失败即升级处置，请及时核查。"
+                    + (device == null ? "" : "设备=" + device.getName() + "。");
+        }
+        for (int i = 0; i < channels.size(); i++) {
+            String channelName = channels.getString(i);
+            com.sw.ck.notify.api.NotifyChannel channel;
+            try {
+                channel = com.sw.ck.notify.api.NotifyChannel.valueOf(channelName);
+            } catch (IllegalArgumentException unknownChannel) {
+                log.warn("失败升级告警未知渠道: {}", channelName);
+                continue;
+            }
+            try {
+                facade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+                        .recipientId(recipientId)
+                        .title(title)
+                        .content(content)
+                        .bizType(com.sw.ck.notify.api.NotifyBizType.WF_TODO)
+                        .bizId("agent-fail-" + event.getExecutionId())
+                        .tenantId(event.getTenantId())
+                        .channel(channel)
+                        .idempotencyKey("iot-fail-" + event.getExecutionId() + "-" + channel.name())
+                        .build()).ifPresent(result -> log.info(
+                        "失败升级告警已投递: executionId={}, channel={}, status={}",
+                        event.getExecutionId(), channel, result.getStatus()));
+            } catch (Exception e) {
+                log.warn("失败升级告警投递异常: executionId={}, channel={}, error={}",
+                        event.getExecutionId(), channelName, e.getMessage());
+            }
         }
     }
 

@@ -92,4 +92,8 @@ public class IotEventRule extends BaseEntity {
     @TableField("agent_failure_template_key")
     private String agentFailureTemplateKey;
 
+    /** 失败升级通用配置 JSON：{"templateKey"?:string,"formDataExtra"?:object,"notify"?:{channels:[],recipientId?,title?,content?}} */
+    @TableField("agent_failure_config_json")
+    private String agentFailureConfigJson;
+
 }

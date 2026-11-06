@@ -39,7 +39,7 @@ public class NotifyChannelController {
                           @RequestBody com.sw.ck.notify.dto.NotifyChannelStatusDTO body) {
         notifyChannelConfigService.updateTenantChannel(channel,
                 Boolean.TRUE.equals(body.getTenantEnabled()),
-                body.getSenderDisplay(), body.getConfigSummary());
+                body.getSenderDisplay(), body.getConfigSummary(), body.getConfigSecret());
         return R.ok();
     }
 }

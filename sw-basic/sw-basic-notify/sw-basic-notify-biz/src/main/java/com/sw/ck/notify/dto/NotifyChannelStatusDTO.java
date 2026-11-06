@@ -12,4 +12,8 @@ public class NotifyChannelStatusDTO {
     private Boolean tenantEnabled;
     private String senderDisplay;
     private String configSummary;
+    /** 渠道凭据是否已入库（密文存在；仅状态，不回读明文） */
+    private Boolean hasSecret;
+    /** 渠道凭据明文（仅写入路径使用；服务端加密落库后不保存、不回显） */
+    private String configSecret;
 }

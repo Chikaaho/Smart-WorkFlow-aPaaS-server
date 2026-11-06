@@ -46,6 +46,12 @@
             <artifactId>sw-basic-agent</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- 0.2.4：失败升级负责人告警经通知门面（-api）发出，实现由容器注入 -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-notify-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.sw.ck</groupId>
             <artifactId>sw-common</artifactId>

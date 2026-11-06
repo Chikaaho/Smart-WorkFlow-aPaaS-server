@@ -13,6 +13,10 @@ import com.sw.ck.iot.event.IotProcessTriggerEvent;
 import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.mapper.IotEventRuleMapper;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
+import com.sw.ck.notify.api.NotifyChannel;
+import com.sw.ck.notify.api.NotifyFacade;
+import com.sw.ck.notify.api.NotifySendRequest;
+import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +70,10 @@ class IotAgentBridgeTest {
     private TenantWorkAdmission tenantWorkAdmission;
     @Mock
     private PlatformTransactionManager transactionManager;
+    @Mock
+    private ObjectProvider<NotifyFacade> notifyFacadeProvider;
+    @Mock
+    private NotifyFacade notifyFacade;
 
     private AgentGraphTriggerListener triggerListener;
     private AgentExecutionOutcomeListener outcomeListener;
@@ -75,12 +83,15 @@ class IotAgentBridgeTest {
         when(graphDefServiceProvider.getIfAvailable()).thenReturn(graphDefService);
         when(lifecycleServiceProvider.getIfAvailable()).thenReturn(lifecycleService);
         when(transactionManagerProvider.getIfAvailable()).thenReturn(transactionManager);
+        when(notifyFacadeProvider.getIfAvailable()).thenReturn(notifyFacade);
+        when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(Optional.of(NotifySendResult.builder()
+                .channel(NotifyChannel.IN_APP).status("SUCCESS").build()));
         // 升级路径在显式事务模板内插入并发布；测试中直接同步执行回调
         when(transactionManager.getTransaction(any())).thenReturn(null);
         triggerListener = new AgentGraphTriggerListener(graphDefServiceProvider,
                 lifecycleServiceProvider, triggerMapper, tenantWorkAdmission);
         outcomeListener = new AgentExecutionOutcomeListener(triggerMapper, ruleMapper,
-                deviceMapper, eventPublisher, transactionManagerProvider);
+                deviceMapper, eventPublisher, transactionManagerProvider, notifyFacadeProvider);
         when(tenantWorkAdmission.claim(eq(1L), any())).thenReturn(1);
         LoginUserHolder.clear();
     }
@@ -224,6 +235,81 @@ class IotAgentBridgeTest {
         verify(triggerMapper).update(argThat(patch -> patch instanceof IotProcessTrigger p
                         && "FAILED".equals(p.getStatus())),
                 any());
+    }
+
+    @Test
+    void testTerminalFailed_EscalationWithNotifyConfig_SendsEachConfiguredChannel() {
+        IotProcessTrigger trigger = bridgeTrigger();
+        when(triggerMapper.selectOne(any())).thenReturn(trigger);
+        IotEventRule rule = escalationRule();
+        rule.setAgentFailureTemplateKey(null);
+        rule.setAgentFailureConfigJson("{\"templateKey\":\"agent_fail_escalation\","
+                + "\"formDataExtra\":{\"level\":\"P0\",\"advisor\":\"值班长\"},"
+                + "\"notify\":{\"channels\":[\"IN_APP\",\"EMAIL\"],\"recipientId\":1}}");
+        when(ruleMapper.selectById(11L)).thenReturn(rule);
+        IotDevice device = new IotDevice();
+        device.setId(7L);
+        device.setDeviceKey("dev-001");
+        device.setName("南门");
+        when(deviceMapper.selectById(7L)).thenReturn(device);
+
+        outcomeListener.onTerminal(new AgentGraphExecutionTerminalEvent(
+                666L, 88L, 1L, "9", "FAILED", "GRAPH_EXECUTION_FAILED", "LLM 不可用"));
+
+        ArgumentCaptor<IotProcessTrigger> insertCaptor = ArgumentCaptor.forClass(IotProcessTrigger.class);
+        verify(triggerMapper).insert(insertCaptor.capture());
+        IotProcessTrigger escalation = insertCaptor.getValue();
+        assertEquals("agent_fail_escalation", escalation.getProcessTemplateKey());
+        Map<String, Object> formData = com.alibaba.fastjson2.JSON.parseObject(
+                escalation.getFormSnapshot());
+        assertEquals("P0", formData.get("level"));
+        assertEquals("值班长", formData.get("advisor"));
+
+        ArgumentCaptor<NotifySendRequest> notifyCaptor = ArgumentCaptor.forClass(NotifySendRequest.class);
+        verify(notifyFacade, times(2)).send(notifyCaptor.capture());
+        assertEquals(java.util.List.of(NotifyChannel.IN_APP, NotifyChannel.EMAIL),
+                notifyCaptor.getAllValues().stream().map(NotifySendRequest::getChannel).toList());
+        assertEquals("iot-fail-666-IN_APP", notifyCaptor.getAllValues().get(0).getIdempotencyKey());
+        assertEquals("iot-fail-666-EMAIL", notifyCaptor.getAllValues().get(1).getIdempotencyKey());
+        assertEquals(1L, notifyCaptor.getAllValues().get(0).getRecipientId());
+    }
+
+    @Test
+    void testTerminalFailed_NotifyOnlyConfig_NoFlowTriggerButNotifies() {
+        IotProcessTrigger trigger = bridgeTrigger();
+        when(triggerMapper.selectOne(any())).thenReturn(trigger);
+        IotEventRule rule = escalationRule();
+        rule.setAgentFailureTemplateKey(null);
+        rule.setAgentFailureConfigJson("{\"notify\":{\"channels\":[\"IN_APP\"],\"recipientId\":2}}");
+        when(ruleMapper.selectById(11L)).thenReturn(rule);
+
+        outcomeListener.onTerminal(new AgentGraphExecutionTerminalEvent(
+                666L, 88L, 1L, "9", "FAILED", "EXECUTION_ERROR", null));
+
+        verify(triggerMapper, never()).insert(any(IotProcessTrigger.class));
+        verify(eventPublisher, never()).publish(any());
+        ArgumentCaptor<NotifySendRequest> onlyCaptor = ArgumentCaptor.forClass(NotifySendRequest.class);
+        verify(notifyFacade).send(onlyCaptor.capture());
+        assertEquals(NotifyChannel.IN_APP, onlyCaptor.getValue().getChannel());
+        assertEquals(2L, onlyCaptor.getValue().getRecipientId());
+    }
+
+    @Test
+    void testTerminalFailed_NullNotifyChannel_StillSendsValidOne() {
+        IotProcessTrigger trigger = bridgeTrigger();
+        when(triggerMapper.selectOne(any())).thenReturn(trigger);
+        IotEventRule rule = escalationRule();
+        rule.setAgentFailureConfigJson("{\"notify\":{\"channels\":[\"UNKNOWN_CHANNEL\",\"EMAIL\"],"
+                + "\"recipientId\":1}}");
+        when(ruleMapper.selectById(11L)).thenReturn(rule);
+
+        outcomeListener.onTerminal(new AgentGraphExecutionTerminalEvent(
+                666L, 88L, 1L, "9", "FAILED", "EXECUTION_ERROR", null));
+
+        ArgumentCaptor<NotifySendRequest> validCaptor = ArgumentCaptor.forClass(NotifySendRequest.class);
+        verify(notifyFacade).send(validCaptor.capture());
+        assertEquals(NotifyChannel.EMAIL, validCaptor.getValue().getChannel());
+        verify(notifyFacade, times(1)).send(any(NotifySendRequest.class));
     }
 
     @Test
