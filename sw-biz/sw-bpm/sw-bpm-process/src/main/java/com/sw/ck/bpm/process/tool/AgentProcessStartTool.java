@@ -60,6 +60,31 @@ public class AgentProcessStartTool {
         this.transactionManagerProvider = transactionManagerProvider;
     }
 
+    /**
+     * 实例业务键。{@code sw_bpm_instance.business_key} 为 VARCHAR(36)：缺省用 UUID；
+     * 显式幂等键原样使用，超长时按 SHA-256 取 33 位十六进制并以 {@code at-} 前缀收敛为
+     * 36 字符——保持确定性幂等，又不会因前缀/长键插入失败（0.3.0 修复）。
+     */
+    static String businessKeyOf(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return UUID.randomUUID().toString();
+        }
+        if (idempotencyKey.length() <= 36) {
+            return idempotencyKey;
+        }
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(idempotencyKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder("at-");
+            for (int i = 0; i < 17; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.substring(0, 36);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return UUID.randomUUID().toString();
+        }
+    }
+
     /** 内部工具统一签名：单字符串入参、字符串出参。 */
     public String execute(String inputJson) {
         JSONObject input;
@@ -93,8 +118,7 @@ public class AgentProcessStartTool {
             formData.putAll(formDataJson);
         }
         String idempotencyKey = input.getString("idempotencyKey");
-        String businessKey = "agent-tool-" + (idempotencyKey == null || idempotencyKey.isBlank()
-                ? UUID.randomUUID().toString() : idempotencyKey);
+        String businessKey = businessKeyOf(idempotencyKey);
         Map<String, Object> variables = new HashMap<>();
         variables.put("formData", formData);
         variables.put("submitter", String.valueOf(loginUser.getUserId()));

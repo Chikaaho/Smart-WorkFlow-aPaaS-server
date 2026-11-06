@@ -192,6 +192,12 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
     }
 
     private GraphValidationError validateParticipantValue(GraphElement node, String strategy, Object value) {
+        // 参与人取值缺失必须返回结构化校验错误：List.of(null) 会抛 NPE 变成 500，
+        // 前端无法据此提示“请补选审批人”（0.3.0 修复）。
+        if (value == null || (value instanceof String text && text.isBlank())) {
+            return configError(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
+                    "审批人取值不能为空（策略 " + strategy + "）");
+        }
         if (ParticipantStrategy.FIXED_USER.equalsIgnoreCase(strategy)) {
             Collection<?> values = value instanceof Collection<?> collection ? collection : List.of(value);
             if (values.isEmpty() || values.stream().anyMatch(item -> {

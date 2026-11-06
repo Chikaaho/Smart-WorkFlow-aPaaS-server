@@ -119,7 +119,8 @@ class AgentProcessStartToolTest {
                 "pi-001".equals(instance.getProcessInstanceId())
                         && "p0_ticket".equals(instance.getProcessDefKey())
                         && instance.getBusinessKey() != null
-                        && instance.getBusinessKey().startsWith("agent-tool-")
+                        && instance.getBusinessKey().length() == 36
+                        && !instance.getBusinessKey().startsWith("agent-tool-")
                         && Long.valueOf(9L).equals(instance.getInitiatorId())));
     }
 
@@ -153,5 +154,19 @@ class AgentProcessStartToolTest {
         JSONObject result = JSON.parseObject(output);
         assertFalse(result.getBooleanValue("success"));
         assertTrue(result.getString("error").contains("发起失败"));
+    }
+
+    @Test
+    void businessKeyAlwaysFitsInstanceColumn() {
+        // sw_bpm_instance.business_key = VARCHAR(36)：缺省 UUID、短幂等键原样、长键确定性收敛
+        String uuid = AgentProcessStartTool.businessKeyOf(null);
+        assertEquals(36, uuid.length());
+        assertEquals("drill-2026-q4", AgentProcessStartTool.businessKeyOf("drill-2026-q4"));
+
+        String longKey = "iot-fail-2118599004295127042-IN_APP-some-very-long-idempotency-key";
+        String derived = AgentProcessStartTool.businessKeyOf(longKey);
+        assertEquals(36, derived.length());
+        assertTrue(derived.startsWith("at-"));
+        assertEquals(derived, AgentProcessStartTool.businessKeyOf(longKey));
     }
 }

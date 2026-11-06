@@ -1136,4 +1136,26 @@ class FormAppBundleServiceTest {
         assertThat(dsBinding.get("version")).isNull();
         assertThat(report.getClearedRefs()).extracting("kind").contains("DATASOURCE");
     }
+
+    @Test
+    @DisplayName("字典项缺少 dictValue：跳过并计入清除清单，报告项数只统计实际导入项（0.3.0 修复）")
+    void dictItemWithoutValueIsSkippedAndReported() throws Exception {
+        Map<String, Object> doc = objectMapper.readValue(bundleBytesWithFreshDict(),
+                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+        List<Map<String, Object>> dictTypes = (List<Map<String, Object>>) doc.get("dictTypes");
+        Map<String, Object> firstType = dictTypes.get(0);
+        List<Map<String, Object>> items = (List<Map<String, Object>>) firstType.get("items");
+        assertThat(items).isNotEmpty();
+        int total = items.size();
+        items.get(0).remove("dictValue");
+
+        var report = bundleService.confirmImport(objectMapper.writeValueAsBytes(doc),
+                "[{\"formKey\":\"op_form\",\"newKey\":\"op_form_dict_item\"}]");
+
+        assertThat(report.getCreatedDictTypes()).hasSize(1);
+        assertThat(report.getCreatedDictTypes().get(0).getItemCount()).isEqualTo(total - 1);
+        assertThat(report.getClearedRefs()).extracting("kind").contains("DICT_ITEM");
+        assertThat(count("SELECT COUNT(*) FROM sys_dict_data WHERE dict_code = 'dict_fresh' "
+                + "AND deleted = 0")).isEqualTo(total - 1);
+    }
 }

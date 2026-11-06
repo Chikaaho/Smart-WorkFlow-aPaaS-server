@@ -94,6 +94,29 @@ class AgentToolCallbackFactoryTest {
         assertThat(result).contains("echo:");
     }
 
+    @Test
+    @DisplayName("用例1b: 模型按声明返回 {input: \"JSON 字符串\"} 信封时，白名单方法收到内层入参原文")
+    void internalTool_shouldUnwrapInputEnvelope() {
+        AgentToolInternalConfig config = internalConfig("start_flow", "发起流程",
+                "{\"type\":\"string\"}", "echoToolBean", "execute");
+
+        AgentToolInternalConfigMapper internalMapper = mock(AgentToolInternalConfigMapper.class);
+        when(internalMapper.selectList(any())).thenReturn(List.of(config));
+        AgentToolExternalConfigMapper externalMapper = mock(AgentToolExternalConfigMapper.class);
+        when(externalMapper.selectList(any())).thenReturn(List.of());
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean("echoToolBean")).thenReturn(new EchoToolBean());
+
+        AgentToolCallbackFactory factory = new AgentToolCallbackFactory(internalMapper, externalMapper, ctx);
+        AgentToolCallbackFactory.ToolHandle handle = factory.buildToolCallbacks(100L).get(0);
+        String innerJson = "{\"templateKey\":\"bpm_demo\",\"formData\":{\"a\":1}}";
+        String arguments = "{\"input\":\"" + innerJson.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
+        String result = handle.executor().execute(
+                ToolExecutionRequest.builder().id("t2").name("start_flow").arguments(arguments).build(),
+                "memory-1");
+        assertThat(result).isEqualTo("echo:" + innerJson);
+    }
+
     // ==================== 用例 2：外部工具构造 + 真实 HTTP 调用 ====================
 
     @Test
