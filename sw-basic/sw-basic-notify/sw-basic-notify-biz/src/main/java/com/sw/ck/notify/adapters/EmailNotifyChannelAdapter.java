@@ -41,7 +41,8 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
     /** yml/env 装配的发信器（未配置 spring.mail 时可为空）。 */
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
     private final NotifyTargetResolver targetResolver;
-    private final NotifyChannelConfigService channelConfigService;
+    /** 懒解析：渠道配置服务依赖适配器清单，构造期取用会形成循环。 */
+    private final ObjectProvider<NotifyChannelConfigService> channelConfigServiceProvider;
     private final String from;
     private final Integer port;
 
@@ -52,7 +53,7 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
                                      ObjectProvider<NotifyChannelConfigService> channelConfigServiceProvider) {
         this.mailSenderProvider = mailSenderProvider;
         this.targetResolver = targetResolver;
-        this.channelConfigService = channelConfigServiceProvider.getIfAvailable();
+        this.channelConfigServiceProvider = channelConfigServiceProvider;
         com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps emailProps = props.getChannels() == null ? null : props.getChannels().get("EMAIL");
         this.from = emailProps == null ? null : emailProps.getFrom();
         this.port = emailProps == null ? null : emailProps.getPort();
@@ -72,9 +73,11 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
             return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
                     .failureReason("无法解析收件邮箱（用户无效或未登记邮箱），拒绝发送").build());
         }
-        Map<String, String> dbConfig = channelConfigService == null
-                ? null
-                : channelConfigService.resolveChannelConfig(CHANNEL.name()).orElse(null);
+        Map<String, String> dbConfig = null;
+        NotifyChannelConfigService channelConfigService = channelConfigServiceProvider.getIfAvailable();
+        if (channelConfigService != null) {
+            dbConfig = channelConfigService.resolveChannelConfig(CHANNEL.name()).orElse(null);
+        }
         try {
             JavaMailSender sender = dbConfig == null ? mailSenderProvider.getIfAvailable() : buildSender(dbConfig);
             String effectiveFrom = dbConfig == null ? from
