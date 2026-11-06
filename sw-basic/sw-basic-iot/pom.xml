@@ -39,6 +39,19 @@
             <artifactId>sw-basic-iot-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- 0.2.4：IoT 规则 Agent 联动（触发监听 + 失败升级承接）依赖 agent 服务与终态事件；
+             单向同层依赖（agent 不依赖 iot），与 agent→knowledge 同一先例 -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-agent</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- 0.2.4：失败升级负责人告警经通知门面（-api）发出，实现由容器注入 -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-notify-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.sw.ck</groupId>
             <artifactId>sw-common</artifactId>

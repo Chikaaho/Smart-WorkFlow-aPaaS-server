@@ -182,20 +182,31 @@ public class AgentToolCallbackFactory {
         HttpMethod httpMethod = HttpMethod.valueOf(httpMethodName);
         String url = config.getUrl();
         ToolExecutor executor = (request, memoryId) -> {
-            // 实测（回执 §3.5）：GET 携带 body 不报错（SimpleClientHttpRequestFactory 忽略），
-            // 因此统一携带 body；F04：计时 + ThreadLocal 记录
+            // GET 工具必须把入参放到查询串：JDK SimpleClientHttpRequestFactory 会忽略
+            // GET body，历史上导致搜索类工具收到空查询（REAL-01 实测）。
             long start = System.currentTimeMillis();
             String args = unwrapArguments(request);
-            String result = restClient.method(httpMethod)
-                    .uri(url)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(args)
+            String targetUrl = httpMethod == HttpMethod.GET ? getUrlWithArgs(url, args) : url;
+            RestClient.RequestBodySpec spec = restClient.method(httpMethod)
+                    .uri(java.net.URI.create(targetUrl))
+                    .contentType(MediaType.APPLICATION_JSON);
+            String result = (httpMethod == HttpMethod.GET ? spec : spec.body(args))
                     .retrieve()
                     .body(String.class);
             recordToolCall(config.getName(), args, result, System.currentTimeMillis() - start);
             return result;
         };
         return new ToolHandle(specOf(config.getName(), config.getDescription()), executor);
+    }
+
+    /** GET 入参编码：URL 已以 ? 或 = 结尾时直接追加，否则用 input 参数追加。 */
+    static String getUrlWithArgs(String url, String args) {
+        String encoded = java.net.URLEncoder.encode(args == null ? "" : args,
+                java.nio.charset.StandardCharsets.UTF_8);
+        if (url.endsWith("?") || url.endsWith("=")) {
+            return url + encoded;
+        }
+        return url + (url.contains("?") ? "&input=" : "?input=") + encoded;
     }
 
     /**

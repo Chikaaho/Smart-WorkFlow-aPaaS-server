@@ -13,7 +13,7 @@ import java.util.Map;
  * 必需配置缺失或仍为占位值时拒绝启动。未启用渠道不校验（默认禁用不算已交付）。</p>
  */
 @Data
-@ConfigurationProperties(prefix = "sw.notify.channels")
+@ConfigurationProperties(prefix = "sw.notify")
 public class NotifyChannelProperties {
 
     /** 渠道 → 渠道级配置；enabled 为系统级开关。 */

@@ -1,4 +1,0 @@
-running_mine | ru_task_round | ru_exec_mine
--------------------------------------------
-0 | 0 | 0
-(1 rows)

@@ -25,3 +25,7 @@ bootstrap.jar
 
 # 运行期上传目录（storage base-path: ./uploads）：运行产物不入库
 uploads/
+
+# 运行期日志与浏览器 profile 产物（P64 时期误提交 e2fe50f7 引入，2026-11-06 取消跟踪）
+logs/
+*.crdownload
