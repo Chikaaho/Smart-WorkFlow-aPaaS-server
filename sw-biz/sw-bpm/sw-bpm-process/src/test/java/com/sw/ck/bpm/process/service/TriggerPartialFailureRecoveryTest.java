@@ -114,7 +114,7 @@ class TriggerPartialFailureRecoveryTest {
         when(nodeFormDataService.currentRound("pi-1")).thenReturn(1L);
         return new TriggerExecutionService(nodeFormDataService, snapshotService, okScript,
                 queue, triggerExecMapper, actionRefMapper, mock(BpmTaskFacade.class),
-                new ObjectMapper(), null, null, transactionManager);
+                new ObjectMapper(), null, null, transactionManager, null);
     }
 
     private BpmInstance instance() {

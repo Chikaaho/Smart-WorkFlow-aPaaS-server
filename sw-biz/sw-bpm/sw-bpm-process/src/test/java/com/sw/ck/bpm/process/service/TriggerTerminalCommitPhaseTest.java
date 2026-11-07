@@ -218,7 +218,7 @@ class TriggerTerminalCommitPhaseTest {
         return new TriggerExecutionService(nodeFormDataService, variableSnapshotService, scriptPort,
                 commandQueue, triggerExecMapper,
                 mock(com.sw.ck.bpm.process.mapper.BpmActionRefMapper.class),
-                mock(BpmTaskFacade.class), new ObjectMapper(), null, null, transactionManager);
+                mock(BpmTaskFacade.class), new ObjectMapper(), null, null, transactionManager, null);
     }
 
     private BpmInstance instance() {
