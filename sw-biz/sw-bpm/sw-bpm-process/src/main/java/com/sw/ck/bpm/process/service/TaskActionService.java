@@ -373,6 +373,10 @@ public class TaskActionService {
         if (submitFormEarly) {
             submitNodeFormData(instance, task, effectiveRequest, loginUser);
         }
+        // 0.3.1 意见驱动流转（a）：意见表单字段写入流程变量——必须在 complete 之前，
+        // 引擎在 complete 事务内求值条件分支并解析下一节点参与人，二者都要读到意见变量；
+        // 引擎命令按 REQUIRED 加入本事务，complete 失败（分支求值失败/并发冲突）时变量写入随之回滚。
+        writeOpinionVariables(task, loginUser, effectiveRequest);
         try {
             // 命令方法：present = APPLIED；状态冲突/任务不存在继续抛原异常
             if (assigned) bpmTaskFacade.complete(taskId, variables);
@@ -736,6 +740,67 @@ public class TaskActionService {
                         && ApprovalAction.RETURN.name().equals(item.getAction()))
                 .count();
         return (int) previous + 1;
+    }
+
+    /**
+     * 0.3.1 意见驱动流转（a）：把已通过校验的审批意见写入流程变量，供三类消费方使用——
+     * 条件分支（{@code variables.opinion_<字段>}）、参与人表达式（人员字段值即用户 id）、
+     * 触发器脚本（{@code opinion} 对象与 {@code #获取流程变量}）。
+     * <p>
+     * 写入形状：{@code opinion} = 最新一条意见（nodeKey/actorId/taskId/formId/formVersion/fields）；
+     * {@code opinion_<字段>} = 字段平铺（最新覆盖，单人办理节点按字段直引）；意见字段与主表单
+     * 字段同名时回写 {@code formData} 同名键（如"调整后的演练时间"= plannedStart，预约到期
+     * 与 {@code form.} 条件即用新值）。
+     * <p>
+     * 必须在 {@code complete} 之前执行：引擎在 complete 事务内求值条件并解析下一节点参与人；
+     * 引擎命令按 REQUIRED 加入本事务，complete 失败时写入随之回滚。变量写入失败视为办理失败
+     * （不伪装成功），由调用方的异常路径统一结算。
+     */
+    void writeOpinionVariables(BpmTaskDTO task, LoginUser loginUser,
+                               ApprovalActionRequest request) {
+        if (bpmTaskFacade == null
+                || request.getOpinionData() == null || request.getOpinionData().isEmpty()) {
+            return;
+        }
+        Map<String, Object> data = request.getOpinionData();
+        Map<String, Object> opinion = new java.util.LinkedHashMap<>();
+        opinion.put("nodeKey", task.getTaskDefinitionKey());
+        opinion.put("actorId", String.valueOf(loginUser.getUserId()));
+        opinion.put("taskId", task.getTaskId());
+        if (request.getOpinionFormId() != null) {
+            opinion.put("formId", request.getOpinionFormId());
+        }
+        if (request.getOpinionFormVersion() != null) {
+            opinion.put("formVersion", request.getOpinionFormVersion());
+        }
+        opinion.put("fields", new java.util.LinkedHashMap<>(data));
+        bpmTaskFacade.setVariable(task.getProcessInstanceId(), "opinion", opinion);
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            if (entry.getValue() != null) {
+                bpmTaskFacade.setVariable(task.getProcessInstanceId(),
+                        "opinion_" + entry.getKey(), entry.getValue());
+            }
+        }
+        java.util.Optional<Map<String, Object>> current =
+                bpmTaskFacade.getVariables(task.getProcessInstanceId());
+        Object rawFormData = current.map(variables -> variables.get("formData")).orElse(null);
+        if (rawFormData instanceof Map<?, ?> raw) {
+            Map<String, Object> merged = new java.util.LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : raw.entrySet()) {
+                merged.put(String.valueOf(entry.getKey()), entry.getValue());
+            }
+            boolean changed = false;
+            for (Map.Entry<String, Object> entry : data.entrySet()) {
+                if (entry.getValue() != null && merged.containsKey(entry.getKey())
+                        && !java.util.Objects.equals(merged.get(entry.getKey()), entry.getValue())) {
+                    merged.put(entry.getKey(), entry.getValue());
+                    changed = true;
+                }
+            }
+            if (changed) {
+                bpmTaskFacade.setVariable(task.getProcessInstanceId(), "formData", merged);
+            }
+        }
     }
 
     /**
