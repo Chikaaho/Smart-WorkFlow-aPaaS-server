@@ -92,6 +92,9 @@ public class TriggerExecutionService {
     /** BF20261013-021 脚本函数上下文工厂（可选注入；既有单测保持旧构造）。 */
     private final org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
             scriptFunctionContextProvider;
+    /** 0.3.1 意见驱动（d）：意见记录服务（可选注入）——节点级触发器脚本注入 nodeOpinions 快照。 */
+    private final org.springframework.beans.factory.ObjectProvider<ApprovalActionService>
+            approvalActionServiceProvider;
     /**
      * DR07 新配置终态后评估用的独立短事务模板（REQUIRES_NEW；可选注入，
      * 缺省时终态后评估退化为逐语句提交，行为语义不变）。
@@ -107,7 +110,7 @@ public class TriggerExecutionService {
                                    BpmTaskFacade bpmTaskFacade,
                                    ObjectMapper objectMapper) {
         this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
-                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null, null, null);
+                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null, null, null, null);
     }
 
     /** 兼容既有子流程派发单测构造（无脚本函数上下文工厂）。 */
@@ -123,9 +126,10 @@ public class TriggerExecutionService {
                                            childOrchestrationProvider) {
         this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
                 triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper,
-                childOrchestrationProvider, null, null);
+                childOrchestrationProvider, null, null, null);
     }
 
+    /** 兼容构造（无意见记录服务；nodeOpinions 注入退化为无快照）。 */
     @org.springframework.beans.factory.annotation.Autowired
     public TriggerExecutionService(NodeFormDataService nodeFormDataService,
                                    BpmVariableSnapshotService variableSnapshotService,
@@ -139,7 +143,9 @@ public class TriggerExecutionService {
                                            childOrchestrationProvider,
                                    org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
                                            scriptFunctionContextProvider,
-                                   org.springframework.transaction.PlatformTransactionManager transactionManager) {
+                                   org.springframework.transaction.PlatformTransactionManager transactionManager,
+                                   org.springframework.beans.factory.ObjectProvider<ApprovalActionService>
+                                           approvalActionServiceProvider) {
         this.nodeFormDataService = nodeFormDataService;
         this.variableSnapshotService = variableSnapshotService;
         this.scriptRunner = scriptRunner;
@@ -150,6 +156,7 @@ public class TriggerExecutionService {
         this.objectMapper = objectMapper;
         this.childOrchestrationProvider = childOrchestrationProvider;
         this.scriptFunctionContextProvider = scriptFunctionContextProvider;
+        this.approvalActionServiceProvider = approvalActionServiceProvider;
         if (transactionManager != null) {
             org.springframework.transaction.support.TransactionTemplate template =
                     new org.springframework.transaction.support.TransactionTemplate(transactionManager);
@@ -173,6 +180,54 @@ public class TriggerExecutionService {
         return factory == null
                 ? com.sw.ck.bpm.api.script.ScriptFunctionContext.EMPTY
                 : factory.build(script, processInstanceId, tenantId);
+    }
+
+    /**
+     * 0.3.1 意见驱动（d）：节点级触发器脚本注入 {@code nodeOpinions} —— 本节点本流水轮
+     * 全部已落库意见（actorId/taskId/action/fields），经 {@code #获取流程变量('nodeOpinions')}
+     * 读取，供脚本做会签聚合（如最高风险等级、最长停机时长）与超时判断。
+     * 注入失败不阻断触发器（脚本按缺变量自行处置），记录事实不伪装成功。
+     */
+    com.sw.ck.bpm.api.script.ScriptFunctionContext withNodeOpinions(
+            com.sw.ck.bpm.api.script.ScriptFunctionContext context,
+            String processInstanceId, String nodeKey, long round) {
+        ApprovalActionService actionService = approvalActionServiceProvider == null
+                ? null : approvalActionServiceProvider.getIfAvailable();
+        if (actionService == null || objectMapper == null) {
+            return context;
+        }
+        try {
+            java.util.List<Map<String, Object>> opinions = new java.util.ArrayList<>();
+            for (com.sw.ck.bpm.process.entity.ApprovalActionRecord record
+                    : actionService.findByProcessInstanceId(processInstanceId)) {
+                // complete 路径的审批记录 roundNo 为空（仅退回记录携带轮次），按节点过滤即可；
+                // 多轮退回场景由前端意见草稿与业务语义保证，脚本聚合取该节点全部意见。
+                if (!nodeKey.equals(record.getNodeKey())
+                        || record.getOpinionData() == null || record.getOpinionData().isBlank()) {
+                    continue;
+                }
+                Map<String, Object> item = new java.util.LinkedHashMap<>();
+                item.put("actorId", record.getActorId() == null
+                        ? null : String.valueOf(record.getActorId()));
+                item.put("taskId", record.getTaskId());
+                item.put("action", record.getAction());
+                item.put("roundNo", record.getRoundNo());
+                item.put("fields", objectMapper.readValue(record.getOpinionData(), Map.class));
+                opinions.add(item);
+            }
+            if (opinions.isEmpty()) {
+                return context;
+            }
+            Map<String, Object> merged = new java.util.LinkedHashMap<>(context.instanceVariables());
+            merged.put("nodeOpinions", opinions);
+            return new com.sw.ck.bpm.api.script.ScriptFunctionContext(
+                    context.deptParentMap(), context.deptLeaderMap(), merged);
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(TriggerExecutionService.class)
+                    .warn("nodeOpinions 快照注入失败（触发器按缺变量处置）: processInstanceId={}, nodeKey={}, round={}, error={}",
+                            processInstanceId, nodeKey, round, e.getMessage());
+            return context;
+        }
     }
 
     /**
@@ -408,6 +463,11 @@ public class TriggerExecutionService {
             // BF20261013-021：按脚本引用构建函数上下文（组织目录/实例变量；未引用则空上下文零查询）
             com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext =
                     scriptFunctionContext(trigger.getScript(), instance.getProcessInstanceId(), tenantId);
+            // 0.3.1 意见驱动（d）：节点级事件注入 nodeOpinions 快照（本节点本流水轮全部意见）
+            if (EVENT_TASK_SUBMITTED.equals(event) || EVENT_NODE_ROUND_COMPLETED.equals(event)) {
+                functionContext = withNodeOpinions(functionContext,
+                        instance.getProcessInstanceId(), nodeKey, round);
+            }
             BpmScriptEvaluatePort.ScriptOutcome result = scriptRunner
                     .run(trigger.getScript(), snapshot.values(), scriptTimeoutMs,
                             functionContext)
