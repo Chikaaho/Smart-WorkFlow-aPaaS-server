@@ -218,8 +218,9 @@ public class TriggerExecutionService {
             java.util.List<Map<String, Object>> opinions = new java.util.ArrayList<>();
             for (com.sw.ck.bpm.process.entity.ApprovalActionRecord record
                     : actionService.findByProcessInstanceId(processInstanceId)) {
-                if (!nodeKey.equals(record.getNodeKey()) || record.getRoundNo() == null
-                        || record.getRoundNo() != round
+                // complete 路径的审批记录 roundNo 为空（仅退回记录携带轮次），按节点过滤即可；
+                // 多轮退回场景由前端意见草稿与业务语义保证，脚本聚合取该节点全部意见。
+                if (!nodeKey.equals(record.getNodeKey())
                         || record.getOpinionData() == null || record.getOpinionData().isBlank()) {
                     continue;
                 }
@@ -228,6 +229,7 @@ public class TriggerExecutionService {
                         ? null : String.valueOf(record.getActorId()));
                 item.put("taskId", record.getTaskId());
                 item.put("action", record.getAction());
+                item.put("roundNo", record.getRoundNo());
                 item.put("fields", objectMapper.readValue(record.getOpinionData(), Map.class));
                 opinions.add(item);
             }
