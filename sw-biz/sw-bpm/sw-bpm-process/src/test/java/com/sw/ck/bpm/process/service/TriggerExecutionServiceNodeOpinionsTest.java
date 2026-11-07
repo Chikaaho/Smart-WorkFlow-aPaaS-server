@@ -52,7 +52,7 @@ class TriggerExecutionServiceNodeOpinionsTest {
 
     @Test
     @DisplayName("本节点本流水轮全部意见注入 nodeOpinions（actorId/taskId/action/fields）")
-    void shouldInjectNodeOpinionsForSameNodeAndRound() {
+    void shouldInjectNodeOpinionsForSameNode() {
         when(actionServiceProvider.getIfAvailable()).thenReturn(actionService);
         when(actionService.findByProcessInstanceId("pi-1")).thenReturn(List.of(
                 record("node_tech", 1, 11L, "APPROVE",
@@ -69,7 +69,8 @@ class TriggerExecutionServiceNodeOpinionsTest {
         Object opinions = result.instanceVariables().get("nodeOpinions");
         assertThat(opinions).isInstanceOf(List.class);
         List<Map<String, Object>> rows = (List<Map<String, Object>>) opinions;
-        assertThat(rows).hasSize(2);
+        // 聚合按节点取全部意见（roundNo 过滤已移除——complete 路径记录轮次为空，多轮意见一并纳入）
+        assertThat(rows).hasSize(3);
         assertThat(rows.get(0)).containsEntry("actorId", "11").containsEntry("action", "APPROVE");
         @SuppressWarnings("unchecked") Map<String, Object> fields0 = (Map<String, Object>) rows.get(0).get("fields");
         assertThat(fields0)
@@ -78,6 +79,7 @@ class TriggerExecutionServiceNodeOpinionsTest {
         @SuppressWarnings("unchecked") Map<String, Object> fields1 = (Map<String, Object>) rows.get(1).get("fields");
         assertThat(fields1)
                 .containsEntry("riskRating", "MEDIUM").containsEntry("downtimeMinutes", 300);
+        assertThat(rows.get(2)).containsEntry("actorId", "14");
     }
 
     @Test
