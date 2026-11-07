@@ -801,6 +801,84 @@ public class TaskActionService {
                 bpmTaskFacade.setVariable(task.getProcessInstanceId(), "formData", merged);
             }
         }
+        // 会签节点：意见字段按类型聚合写入 opinionAgg_<字段>（网关在本 complete 事务内
+        // 即时路由，聚合必须先于网关求值；节点完成后触发器时序在路由之后，不用于路由）。
+        // 聚合规则（通用，按字段类型）：RADIO/SELECT=选项序最大值（选项序即等级序）；
+        // NUMBER=最大值；CHECKBOX=并集清单（另写 _Count 计数）；其余类型不聚合。
+        if (isConsensusTask(task)) {
+            aggregateConsensusOpinions(task, data);
+        }
+    }
+
+    /** 会签意见聚合：同节点全部意见（含本次）按字段类型聚合为 opinionAgg_* 流程变量。 */
+    @SuppressWarnings("unchecked")
+    private void aggregateConsensusOpinions(BpmTaskDTO task, Map<String, Object> currentData) {
+        Map<String, Object> frozen = resolveOpinionForm(task);
+        Object rawFields = frozen.get("fields");
+        if (!(rawFields instanceof Collection<?> fields) || approvalActionService == null) {
+            return;
+        }
+        List<Map<String, Object>> all = new java.util.ArrayList<>();
+        try {
+            for (com.sw.ck.bpm.process.entity.ApprovalActionRecord record
+                    : approvalActionService.findByProcessInstanceId(task.getProcessInstanceId())) {
+                if (task.getTaskDefinitionKey() != null
+                        && task.getTaskDefinitionKey().equals(record.getNodeKey())
+                        && record.getOpinionData() != null && !record.getOpinionData().isBlank()
+                        && objectMapper != null) {
+                    all.add(objectMapper.readValue(record.getOpinionData(), Map.class));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("会签意见聚合读取历史意见失败: {}", e.getMessage());
+        }
+        all.add(currentData);
+        for (Object rawField : fields) {
+            if (!(rawField instanceof Map<?, ?> field)) continue;
+            String key = String.valueOf(field.get("key"));
+            String type = String.valueOf(field.get("type")).toUpperCase();
+            java.util.List<Object> values = all.stream()
+                    .map((m) -> m.get(key)).filter((v) -> v != null).toList();
+            if (values.isEmpty()) continue;
+            if ("RADIO".equals(type) || "SELECT".equals(type)) {
+                Object rawOptions = field.get("options");
+                if (!(rawOptions instanceof Collection<?> options) || options.isEmpty()) continue;
+                List<String> order = options.stream().map(String::valueOf).toList();
+                String best = null;
+                int bestRank = -1;
+                for (Object v : values) {
+                    String text = String.valueOf(v);
+                    int rank = order.indexOf(text);
+                    if (rank >= 0 && rank > bestRank) { bestRank = rank; best = text; }
+                }
+                if (best != null) {
+                    bpmTaskFacade.setVariable(task.getProcessInstanceId(), "opinionAgg_" + key, best);
+                }
+            } else if ("NUMBER".equals(type)) {
+                double max = Double.NEGATIVE_INFINITY;
+                for (Object v : values) {
+                    try { max = Math.max(max, Double.parseDouble(String.valueOf(v))); }
+                    catch (NumberFormatException ignore) { /* 非数值项跳过 */ }
+                }
+                if (!Double.isInfinite(max)) {
+                    bpmTaskFacade.setVariable(task.getProcessInstanceId(),
+                            "opinionAgg_" + key, max);
+                }
+            } else if ("CHECKBOX".equals(type)) {
+                java.util.LinkedHashSet<String> union = new java.util.LinkedHashSet<>();
+                for (Object v : values) {
+                    if (v instanceof Collection<?> list) {
+                        for (Object item : list) union.add(String.valueOf(item));
+                    } else {
+                        union.add(String.valueOf(v));
+                    }
+                }
+                bpmTaskFacade.setVariable(task.getProcessInstanceId(),
+                        "opinionAgg_" + key, new java.util.ArrayList<>(union));
+                bpmTaskFacade.setVariable(task.getProcessInstanceId(),
+                        "opinionAgg_" + key + "Count", union.size());
+            }
+        }
     }
 
     /**
