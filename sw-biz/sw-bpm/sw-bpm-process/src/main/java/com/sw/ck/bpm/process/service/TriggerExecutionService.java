@@ -129,26 +129,8 @@ public class TriggerExecutionService {
                 childOrchestrationProvider, null, null, null);
     }
 
+    /** 兼容构造（无意见记录服务；nodeOpinions 注入退化为无快照）。 */
     @org.springframework.beans.factory.annotation.Autowired
-    public TriggerExecutionService(NodeFormDataService nodeFormDataService,
-                                   BpmVariableSnapshotService variableSnapshotService,
-                                   BpmScriptEvaluatePort scriptRunner,
-                                   BpmCommandQueue commandQueue,
-                                   BpmTriggerExecMapper triggerExecMapper,
-                                   BpmActionRefMapper actionRefMapper,
-                                   BpmTaskFacade bpmTaskFacade,
-                                   ObjectMapper objectMapper,
-                                   org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
-                                           childOrchestrationProvider,
-                                   org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
-                                           scriptFunctionContextProvider,
-                                   org.springframework.transaction.PlatformTransactionManager transactionManager) {
-        this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
-                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper,
-                childOrchestrationProvider, scriptFunctionContextProvider, transactionManager, null);
-    }
-
-    /** 0.3.1：完整构造（含意见记录服务；意见记录缺席时 nodeOpinions 注入退化为无快照）。 */
     public TriggerExecutionService(NodeFormDataService nodeFormDataService,
                                    BpmVariableSnapshotService variableSnapshotService,
                                    BpmScriptEvaluatePort scriptRunner,
