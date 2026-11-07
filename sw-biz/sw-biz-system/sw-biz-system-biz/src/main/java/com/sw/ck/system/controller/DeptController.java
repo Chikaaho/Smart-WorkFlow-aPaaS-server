@@ -50,6 +50,38 @@ public class DeptController {
     }
 
     /**
+     * 部门候选选项（表单/详情只读回显数据源，与 /system/user/options 同款）：登录即可调用。
+     * <p>
+     * 仅返回当前租户正常部门的最小展示字段（id / name / parentId），
+     * 不暴露负责人、联系方式等敏感字段；只读回显不再因缺少管理权限退化为"已选择部门"。
+     * </p>
+     */
+    @GetMapping("/options")
+    public R<List<DeptOptionDTO>> options(@RequestParam(value = "keyword", required = false) String keyword) {
+        DeptQuery query = new DeptQuery();
+        query.setName(keyword);
+        query.setStatus(0);
+        query.setTenantId(tenantContext.readTarget(null));
+        List<SysDept> rows = sysDeptService.listTree(query);
+        List<DeptOptionDTO> out = new java.util.ArrayList<>(rows.size());
+        for (SysDept row : rows) {
+            out.add(new DeptOptionDTO(String.valueOf(row.getId()), row.getName(),
+                    row.getParentId() == null ? null : String.valueOf(row.getParentId())));
+        }
+        return R.ok(out);
+    }
+
+    /** 内嵌 DTO：部门候选最小字段（id/name/parentId）。 */
+    @lombok.Data
+    @lombok.AllArgsConstructor
+    @lombok.NoArgsConstructor
+    public static class DeptOptionDTO {
+        private String id;
+        private String name;
+        private String parentId;
+    }
+
+    /**
      * 获取部门详情。
      */
     @GetMapping("/{id}")
