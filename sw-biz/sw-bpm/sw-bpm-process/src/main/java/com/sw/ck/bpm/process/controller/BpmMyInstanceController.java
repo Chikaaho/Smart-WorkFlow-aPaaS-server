@@ -284,7 +284,26 @@ public class BpmMyInstanceController {
         result.put("status", instance.getStatus());
         result.put("progress", progress);
         result.put("history", history);
+        result.put("formData", historicFormData(instance));
         return R.ok(result);
+    }
+
+    /**
+     * 实例业务表单数据（引擎历史变量中的 formData 最终快照，与抄送详情同源）。
+     * <p>
+     * Agent 工具、IoT 规则与开放 API 程序化发起的实例没有独立表单记录
+     * （businessKey 不是表单记录 id），详情页无法按记录 id 回查——该字段作为
+     * 回退数据源；手动发起实例的变量与表单记录同源，回退不改变可见内容。
+     * 实例标识缺失或历史变量不可读时为 null（详情主链不因回退数据失败中断）。
+     * </p>
+     */
+    Object historicFormData(BpmInstance instance) {
+        if (instance.getProcessInstanceId() == null || instance.getProcessInstanceId().isBlank()) {
+            return null;
+        }
+        java.util.Optional<Map<String, Object>> variables =
+                bpmTaskFacade.getHistoricVariables(instance.getProcessInstanceId());
+        return variables == null ? null : variables.map(v -> v.get("formData")).orElse(null);
     }
 
     /** 按表单键+业务键取最新实例（关系查询入口；独立成方法便于事务外单元测试与复用）。 */
@@ -475,6 +494,8 @@ public class BpmMyInstanceController {
         result.put("instance", instanceInfo);
         // 有流程的表单详情：流程信息（外挂组件）与我的详情同装配口径
         result.put("approvalHistory", buildApprovalHistory(instance));
+        // 程序化发起实例（Agent/IoT/API）无独立表单记录，详情页按此回退渲染表单数据
+        result.put("formData", historicFormData(instance));
         return R.ok(result);
     }
 
