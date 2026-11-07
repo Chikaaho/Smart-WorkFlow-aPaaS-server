@@ -165,4 +165,28 @@ class DeptControllerTest {
         assertThat(result.getCode()).isZero();
         verify(sysDeptService).delete(1L);
     }
+
+    @Test
+    @DisplayName("GET /options 登录即可用：只返回 id/name/parentId 最小字段并限定正常状态")
+    void options_shouldReturnMinimalFields() {
+        SysDept dept1 = new SysDept();
+        dept1.setId(1L);
+        dept1.setName("总公司");
+        SysDept dept2 = new SysDept();
+        dept2.setId(2L);
+        dept2.setName("研发部");
+        dept2.setParentId(1L);
+        when(sysDeptService.listTree(any(DeptQuery.class))).thenReturn(List.of(dept1, dept2));
+
+        R<List<DeptController.DeptOptionDTO>> result = controller.options(null);
+
+        assertThat(result.getCode()).isZero();
+        assertThat(result.getData()).hasSize(2);
+        assertThat(result.getData().get(0).getId()).isEqualTo("1");
+        assertThat(result.getData().get(0).getName()).isEqualTo("总公司");
+        assertThat(result.getData().get(1).getParentId()).isEqualTo("1");
+        ArgumentCaptor<DeptQuery> captor = ArgumentCaptor.forClass(DeptQuery.class);
+        verify(sysDeptService).listTree(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(0);
+    }
 }

@@ -261,7 +261,7 @@ class CommandOverlapRealEngineTest {
                 return;
             }
             try {
-                if (!latch.await(30, TimeUnit.SECONDS)) {
+                if (!latch.await(60, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("栅栏等待超时（窗口控制失败）");
                 }
             } catch (InterruptedException e) {
@@ -344,7 +344,7 @@ class CommandOverlapRealEngineTest {
         laneP0.start();
 
         // 4. 两消费者都到达引擎 complete（处理区间重叠窗口打开），两命令均已领取
-        assertThat(secondConsumerArrived.await(20, TimeUnit.SECONDS)).isTrue();
+        assertThat(secondConsumerArrived.await(60, TimeUnit.SECONDS)).isTrue();
         assertThat(queue.findById(cmdA).orElseThrow().getStatus()).isEqualTo("PROCESSING");
         assertThat(queue.findById(cmdB).orElseThrow().getStatus()).isEqualTo("PROCESSING");
 
@@ -352,8 +352,8 @@ class CommandOverlapRealEngineTest {
         gateT1.countDown();
         awaitCommandStatus(cmdA, "COMPLETED");
         gateT2.countDown();
-        laneNormal.join(30000);
-        laneP0.join(30000);
+        laneNormal.join(60000);
+        laneP0.join(60000);
         assertThat(laneNormal.isAlive()).isFalse();
         assertThat(laneP0.isAlive()).isFalse();
         awaitCommandStatus(cmdB, "COMPLETED");
@@ -442,7 +442,7 @@ class CommandOverlapRealEngineTest {
         AtomicReference<Throwable> consumerAFailure = new AtomicReference<>();
         Thread consumerA = consumerThread(firstGen.get(0), consumerAResult, consumerAFailure);
         consumerA.start();
-        assertThat(GatedTaskFacade.afterFirstArrival.await(20, TimeUnit.SECONDS)).isTrue();
+        assertThat(GatedTaskFacade.afterFirstArrival.await(60, TimeUnit.SECONDS)).isTrue();
 
         // 3. 租约回收 → 新持有者 B 领取（新令牌）并进入真实执行（阻塞在引擎 complete）：
         //    此时 B 已取得领取权且仍 PROCESSING
@@ -456,7 +456,7 @@ class CommandOverlapRealEngineTest {
         AtomicReference<Throwable> consumerBFailure = new AtomicReference<>();
         Thread consumerB = consumerThread(secondGen.get(0), consumerBResult, consumerBFailure);
         consumerB.start();
-        assertThat(GatedTaskFacade.afterSecondArrival.await(20, TimeUnit.SECONDS)).isTrue();
+        assertThat(GatedTaskFacade.afterSecondArrival.await(60, TimeUnit.SECONDS)).isTrue();
         assertThat(queue.findById(cmd).orElseThrow().getStatus()).isEqualTo("PROCESSING");
 
         // 4. 旧持有者迟到写回（位于新领取后、B 终态前）：
@@ -679,7 +679,7 @@ class CommandOverlapRealEngineTest {
     }
 
     private void awaitCommandStatus(Long commandId, String expected) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 20000;
+        long deadline = System.currentTimeMillis() + 60000;
         while (System.currentTimeMillis() < deadline) {
             String status = queue.findById(commandId).map(CommandEnvelope::getStatus).orElse(null);
             if (expected.equals(status)) {

@@ -360,4 +360,60 @@ class BpmMyInstanceControllerTest {
 
         assertThat(anonymous.get("count")).isEqualTo(0L);
     }
+
+    @Test
+    @DisplayName("历史意见字段展示视图：中文标签 + 人员姓名/本地时间/多选拼接")
+    void resolveOpinionFields_buildsDisplayValues() {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        BpmMyInstanceController withMapper = new BpmMyInstanceController(
+                bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
+                null, mapper, null, null);
+        when(taskActionService.resolveUserNames(any()))
+                .thenReturn(Map.of(9L, "赵磊"));
+
+        ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
+        item.setTaskId("t1");
+        item.setOpinionData(Map.of(
+                "factResult", "属实",
+                "fieldHandler", "9",
+                "arrivalTime", "2026-11-07 21:58:00",
+                "measures", List.of("疏导", "增派安保")));
+        com.sw.ck.bpm.process.entity.ApprovalActionRecord action =
+                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        action.setTaskId("t1");
+        action.setOpinionFormSnapshot("{\"opinionForm\":{\"fields\":["
+                + "{\"key\":\"factResult\",\"type\":\"RADIO\",\"label\":\"事实核实结论\"},"
+                + "{\"key\":\"fieldHandler\",\"type\":\"USER\",\"label\":\"现场处置人\"},"
+                + "{\"key\":\"arrivalTime\",\"type\":\"DATETIME\",\"label\":\"到场核实时间\"},"
+                + "{\"key\":\"measures\",\"type\":\"CHECKBOX\",\"label\":\"处置措施\"}]}}");
+
+        withMapper.resolveOpinionFields(List.of(item), Map.of("t1", action));
+
+        assertThat(item.getOpinionFields()).hasSize(4);
+        assertThat(item.getOpinionFields().get(0).getLabel()).isEqualTo("事实核实结论");
+        assertThat(item.getOpinionFields().get(0).getDisplayValue()).isEqualTo("属实");
+        assertThat(item.getOpinionFields().get(1).getDisplayValue()).isEqualTo("赵磊");
+        assertThat(item.getOpinionFields().get(2).getDisplayValue()).isEqualTo("2026-11-07 21:58");
+        assertThat(item.getOpinionFields().get(3).getDisplayValue()).isEqualTo("疏导、增派安保");
+    }
+
+    @Test
+    @DisplayName("旧记录缺意见快照时不生成字段视图（不虚构标签）")
+    void resolveOpinionFields_skipsWhenSnapshotMissing() {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        BpmMyInstanceController withMapper = new BpmMyInstanceController(
+                bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
+                null, mapper, null, null);
+        ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
+        item.setTaskId("t1");
+        item.setOpinionData(Map.of("factResult", "属实"));
+        com.sw.ck.bpm.process.entity.ApprovalActionRecord action =
+                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        action.setTaskId("t1");
+        action.setOpinionFormSnapshot("{\"opinionForm\":{}}");
+
+        withMapper.resolveOpinionFields(List.of(item), Map.of("t1", action));
+
+        assertThat(item.getOpinionFields()).isNull();
+    }
 }
