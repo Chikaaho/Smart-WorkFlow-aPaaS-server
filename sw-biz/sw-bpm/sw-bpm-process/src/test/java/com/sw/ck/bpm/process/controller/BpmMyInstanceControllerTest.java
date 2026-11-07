@@ -193,6 +193,38 @@ class BpmMyInstanceControllerTest {
     }
 
     @Test
+    @DisplayName("0.3.0 返修 G2：详情回传引擎 formData 快照——程序化发起实例（无表单记录）详情页据此回退渲染")
+    void myInstanceDetail_shouldReturnFormDataFromHistoricVariables() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
+        when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.getHistoricVariables("pi-001"))
+                .thenReturn(java.util.Optional.of(Map.of(
+                        "formData", Map.of("activityAssessment", "NO_EXPLANATION"),
+                        "submitter", "agent")));
+
+        R<Map<String, Object>> resp = controller.myInstanceDetail(1L);
+
+        assertThat(resp.getData().get("formData"))
+                .isEqualTo(Map.of("activityAssessment", "NO_EXPLANATION"));
+    }
+
+    @Test
+    @DisplayName("0.3.0 返修 G2 反向：历史变量缺失 formData 或查询未返回时不伪造，详情主链不中断")
+    void myInstanceDetail_shouldReturnNullFormDataWithoutVariables() {
+        when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
+        when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.getHistoricVariables("pi-001"))
+                .thenReturn(java.util.Optional.of(Map.of("submitter", "agent")));
+
+        assertThat(controller.myInstanceDetail(1L).getData().get("formData")).isNull();
+        assertThat(controller.historicFormData(instance(2L))).isNull();
+    }
+
+    @Test
     @DisplayName("A1/C1 详情合并动作记录：已办理节点回显真实动作/结果/意见，未办理节点不伪造动作")
     void myInstanceDetail_shouldMergeActionRecordsIntoHistory() {
         BpmMyInstanceController enriched = new BpmMyInstanceController(
@@ -243,6 +275,8 @@ class BpmMyInstanceControllerTest {
                 .thenReturn(java.util.Optional.of(List.of(active)));
         when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
                 .thenReturn(java.util.Optional.of(List.of(task("t-done", true))));
+        when(bpmTaskFacade.getHistoricVariables("pi-001"))
+                .thenReturn(java.util.Optional.of(Map.of("formData", Map.of("k", "v"))));
         BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
         org.mockito.Mockito.doReturn(instance(999L))
                 .when(spy).findLatestInstance("leave_form", "rec-001");
@@ -251,6 +285,7 @@ class BpmMyInstanceControllerTest {
 
         assertThat(result.get("relation")).isEqualTo("APPROVER");
         assertThat(result.get("pendingTaskId")).isEqualTo("t-active");
+        assertThat(result.get("formData")).isEqualTo(Map.of("k", "v"));
         @SuppressWarnings("unchecked")
         Map<String, Object> instanceInfo = (Map<String, Object>) result.get("instance");
         assertThat(instanceInfo)
@@ -281,7 +316,7 @@ class BpmMyInstanceControllerTest {
         Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
 
         assertThat(result.get("relation")).isEqualTo("NONE");
-        assertThat(result).doesNotContainKeys("instance", "approvalHistory", "pendingTaskId");
+        assertThat(result).doesNotContainKeys("instance", "approvalHistory", "pendingTaskId", "formData");
     }
 
     @Test
