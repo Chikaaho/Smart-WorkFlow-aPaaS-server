@@ -2,6 +2,7 @@ package com.sw.ck.notify.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.sw.ck.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -38,9 +39,10 @@ public class NotifyMessage extends BaseEntity {
     @TableField("biz_id")
     private String bizId;
 
-    /** 是否已读，默认 false */
+    /** 是否已读，默认 false；数据库列 is_read，JSON 字段保持 read。 */
     @TableField("is_read")
-    private Boolean read;
+    @JsonProperty("read")
+    private Boolean isRead;
 
     /** 渠道：IN_APP 或预留第三方标识。 */
     @TableField("channel")

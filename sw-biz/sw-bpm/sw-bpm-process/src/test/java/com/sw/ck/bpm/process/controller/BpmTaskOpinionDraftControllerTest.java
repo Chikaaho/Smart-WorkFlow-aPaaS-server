@@ -47,7 +47,7 @@ class BpmTaskOpinionDraftControllerTest {
         draft.setNodeKey("approve");
         draft.setRoundNo(1);
         draft.setAssigneeId(7L);
-        draft.setComment("保留意见");
+        draft.setOpinionComment("保留意见");
         draft.setOpinionData("{\"result\":\"同意\"}");
         when(mapper.selectOne(any())).thenReturn(draft);
 
