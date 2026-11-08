@@ -18,7 +18,8 @@ import java.util.Map;
  * 之后再报错。检查由 {@code FlywayConfiguration} 在调用任何迁移之前执行，
  * 不再作为 {@code ApplicationRunner} 在上下文启动完成后才跑：
  * <ul>
- *   <li>MySQL/MariaDB：utf8mb4 + utf8mb4_bin；MySQL 5.7 另查 DYNAMIC 行格式与大前缀。</li>
+ *   <li>MySQL/MariaDB：utf8mb4 + utf8mb4_bin；MySQL 另查 DYNAMIC 行格式与
+ *       explicit_defaults_for_timestamp=ON，5.7 另查大前缀。</li>
  *   <li>SQL Server：数据库排序规则区分大小写（_CS_ 或 _BIN）。</li>
  *   <li>Oracle：NLS_CHARACTERSET=AL32UTF8（或 UTF8）。</li>
  *   <li>PostgreSQL/Kingbase/openGauss：server_encoding=UTF8。</li>
@@ -67,6 +68,20 @@ public class DatabaseCompatibilityGuard {
                     "SELECT @@innodb_default_row_format", String.class)).toLowerCase(Locale.ROOT);
             if (!"dynamic".equals(rowFormat)) {
                 throw new IllegalStateException("MySQL innodb_default_row_format 必须是 DYNAMIC，当前为 " + rowFormat);
+            }
+            Integer explicitDefaults;
+            try {
+                explicitDefaults = jdbcTemplate.queryForObject(
+                        "SELECT @@SESSION.explicit_defaults_for_timestamp", Integer.class);
+            } catch (RuntimeException e) {
+                throw new IllegalStateException(
+                        "MySQL 无法读取 explicit_defaults_for_timestamp，拒绝启动；"
+                                + "请在 JDBC URL 增加 sessionVariables=explicit_defaults_for_timestamp=ON", e);
+            }
+            if (explicitDefaults == null || explicitDefaults != 1) {
+                throw new IllegalStateException(
+                        "MySQL explicit_defaults_for_timestamp 必须为 ON（JDBC URL 增加 "
+                                + "sessionVariables=explicit_defaults_for_timestamp=ON），当前为 " + explicitDefaults);
             }
             String version = jdbcTemplate.queryForObject("SELECT VERSION()", String.class);
             if (version != null && version.startsWith("5.7")) {

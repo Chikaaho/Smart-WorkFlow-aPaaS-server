@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 第二层：按主键配对，比较所有共有列；空字符串与 NULL 统一归一为同一哨兵，
  * 时间/日期列归一为非空哨兵（种子里的 {@code current_timestamp} 因执行时刻不同，
  * 不参与逐值比较，但 NULL/非 NULL 仍区分）。差异报告定位到“表/主键/列”。
+ * 生成型代理主键的表（{@link #BUSINESS_KEYS}）按业务键配对并跳过 {@code id} 列。
  * Oracle 等大写折叠库通过 {@link DatabaseMetaData} 取实际标识符后再引用。
  * </p>
  */
@@ -51,27 +52,35 @@ class SeedComparisonTest {
 
     private static final int MAX_DIFFS = 200;
 
+    /**
+     * 生成型代理主键的表：跨方言不比较 id，按业务键比较。
+     * MySQL 5.7 无窗口函数，授权行 id 用变量顺延，赋值顺序与 PG 的 ROW_NUMBER 不同；
+     * (tenant_id, role_id, menu_id) 是这些行的真实业务身份。
+     */
+    private static final Map<String, List<String>> BUSINESS_KEYS = Map.of(
+            "sys_role_menu", List.of("tenant_id", "role_id", "menu_id"));
+
     private static final Map<String, List<String>> KEY_COLUMNS = new LinkedHashMap<>();
 
     static {
         KEY_COLUMNS.put("sys_tenant", List.of("id", "code", "name", "status"));
         KEY_COLUMNS.put("sys_dept", List.of("id", "tenant_id", "parent_id", "name", "code", "sort", "status", "leader_id"));
         KEY_COLUMNS.put("sys_user", List.of("id", "tenant_id", "username", "real_name", "dept_id", "status", "is_admin"));
-        KEY_COLUMNS.put("sys_role", List.of("id", "tenant_id", "name", "code", "sort", "status", "data_scope", "is_builtin"));
+        KEY_COLUMNS.put("sys_role", List.of("id", "tenant_id", "name", "code", "sort", "status", "data_scope", "built_in"));
         KEY_COLUMNS.put("sys_menu", List.of("id", "parent_id", "name", "title", "hidden", "menu_type", "path", "component", "permission", "sort"));
-        KEY_COLUMNS.put("sys_role_menu", List.of("id", "tenant_id", "role_id", "menu_id"));
+        KEY_COLUMNS.put("sys_role_menu", List.of("tenant_id", "role_id", "menu_id"));
         KEY_COLUMNS.put("sys_user_role", List.of("id", "tenant_id", "user_id", "role_id"));
         KEY_COLUMNS.put("sys_dict_type", List.of("id", "tenant_id", "code", "name", "status"));
         KEY_COLUMNS.put("sys_dict_data", List.of("id", "tenant_id", "dict_code", "dict_value", "label", "sort", "status"));
         KEY_COLUMNS.put("sys_workspace_card_type", List.of("id", "tenant_id", "type_code", "display_name", "renderer_key", "default_span", "default_order", "status"));
         KEY_COLUMNS.put("sw_bpm_resource_usage", List.of("id", "scope", "scope_key", "segment", "outstanding"));
         KEY_COLUMNS.put("sw_bpm_node_function", List.of("id", "func_key", "func_version", "func_type", "impl_bean", "config", "allowed_nodes", "timeout_ms", "failure_strategy", "enabled"));
-        KEY_COLUMNS.put("sw_form_app", List.of("id", "tenant_id", "app_key", "app_name", "status"));
-        KEY_COLUMNS.put("sw_form_app_scope", List.of("id", "tenant_id", "app_id", "subject_type", "subject_id"));
+        KEY_COLUMNS.put("sw_form_app", List.of("id", "tenant_id", "name", "status", "source"));
+        KEY_COLUMNS.put("sw_form_app_scope", List.of("id", "tenant_id", "app_id", "scope_type", "scope_id"));
         KEY_COLUMNS.put("sw_openapi_app", List.of("id", "tenant_id", "app_id", "app_name", "status"));
-        KEY_COLUMNS.put("sw_agent_provider", List.of("id", "tenant_id", "provider_code", "provider_name", "enabled"));
-        KEY_COLUMNS.put("sw_agent_model", List.of("id", "tenant_id", "provider_id", "model_code", "model_name", "enabled"));
-        KEY_COLUMNS.put("sw_agent_graph_snapshot", List.of("id", "tenant_id", "graph_def_id", "version"));
+        KEY_COLUMNS.put("sw_agent_provider", List.of("id", "tenant_id", "name", "api_format", "enabled"));
+        KEY_COLUMNS.put("sw_agent_model", List.of("id", "tenant_id", "provider_id", "name", "model_name", "enabled"));
+        KEY_COLUMNS.put("sw_agent_graph_snapshot", List.of("id", "tenant_id", "graph_def_id", "def_version"));
     }
 
     @Test
@@ -98,7 +107,9 @@ class SeedComparisonTest {
                 if (keys != null && !keys.isEmpty()) {
                     String baseHash = hash(base, table, keys);
                     String targetHash = hash(target, table, keys);
-                    if (!baseHash.equals(targetHash)) {
+                    if (baseHash.startsWith("MISSING-KEYS") || targetHash.startsWith("MISSING-KEYS")) {
+                        addDiff(mismatches, table + " 关键列缺失 base=" + baseHash + " target=" + targetHash);
+                    } else if (!baseHash.equals(targetHash)) {
                         addDiff(mismatches, table + " 关键列摘要不一致 base=" + baseHash + " target=" + targetHash);
                     } else {
                         System.out.printf("COUNT+KEY OK %-36s %d %s%n", table, baseCount, baseHash.substring(0, 12));
@@ -247,16 +258,31 @@ class SeedComparisonTest {
             addDiff(mismatches, logicalTable + " 表缺失（base=" + baseTable + ", target=" + targetTable + "）");
             return;
         }
-        List<String> basePk = primaryKey(base, baseTable);
-        List<String> targetPk = primaryKey(target, targetTable);
+        List<String> basePk;
+        List<String> targetPk;
+        Map<String, String> baseColumns = columnNames(base, baseTable);
+        Map<String, String> targetColumns = columnNames(target, targetTable);
+        List<String> businessKeys = BUSINESS_KEYS.get(logicalTable);
+        if (businessKeys == null) {
+            basePk = primaryKey(base, baseTable);
+            targetPk = primaryKey(target, targetTable);
+        } else {
+            basePk = businessKeys.stream()
+                    .map(key -> baseColumns.get(key.toLowerCase(Locale.ROOT)))
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+            targetPk = businessKeys.stream()
+                    .map(key -> targetColumns.get(key.toLowerCase(Locale.ROOT)))
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+        }
         if (basePk.isEmpty() || targetPk.isEmpty()) {
             System.out.printf("LAYER2 SKIP  %-36s 无主键%n", logicalTable);
             return;
         }
-        Map<String, String> baseColumns = columnNames(base, baseTable);
-        Map<String, String> targetColumns = columnNames(target, targetTable);
         List<String> logicalColumns = baseColumns.keySet().stream()
                 .filter(targetColumns::containsKey)
+                .filter(column -> businessKeys == null || !"id".equals(column))
                 .toList();
         List<String> baseActual = logicalColumns.stream().map(baseColumns::get).toList();
         List<String> targetActual = logicalColumns.stream().map(targetColumns::get).toList();

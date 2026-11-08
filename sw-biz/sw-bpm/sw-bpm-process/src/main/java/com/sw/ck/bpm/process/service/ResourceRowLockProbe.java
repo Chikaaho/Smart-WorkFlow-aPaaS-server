@@ -16,6 +16,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 资源段空闲探测的方言实现。
@@ -39,6 +41,8 @@ public class ResourceRowLockProbe {
 
     private static final Logger log = LoggerFactory.getLogger(ResourceRowLockProbe.class);
     private static final int PROBE_TIMEOUT_SECONDS = 1;
+    /** MySQL 5.x 不支持 SKIP LOCKED；按 JDBC URL 缓存主版本判定。 */
+    private static final Map<String, Boolean> MYSQL_57_CACHE = new ConcurrentHashMap<>();
 
     private final BpmResourceUsageMapper usageMapper;
     private final JdbcTemplate jdbcTemplate;
@@ -50,6 +54,10 @@ public class ResourceRowLockProbe {
 
     public Long probe(String scope, long scopeKey, String segment) {
         DatabaseVendor vendor = JdbcVendorSupport.vendor(jdbcTemplate);
+        // MySQL 5.7 没有 SKIP LOCKED，supportsSkipLocked() 只代表 8.0+；先按版本分流。
+        if (vendor == DatabaseVendor.MYSQL && isMySql57()) {
+            return probeMySql57(scope, scopeKey, segment);
+        }
         if (vendor.supportsSkipLocked()) {
             return usageMapper.probeIdleRow(scope, scopeKey, segment);
         }
@@ -57,13 +65,32 @@ public class ResourceRowLockProbe {
             return queryOne("SELECT id FROM sw_bpm_resource_usage WITH (UPDLOCK, ROWLOCK, READPAST) "
                     + "WHERE scope = ? AND scope_key = ? AND segment = ?", scope, scopeKey, segment);
         }
-        if (vendor == DatabaseVendor.MYSQL) {
-            return probeMySql57(scope, scopeKey, segment);
-        }
         if (vendor == DatabaseVendor.DM) {
             return probeWithTimeout(scope, scopeKey, segment);
         }
         throw new IllegalStateException("未实现的资源行锁探测方言: " + vendor.displayName());
+    }
+
+    private boolean isMySql57() {
+        var dataSource = jdbcTemplate.getDataSource();
+        if (dataSource == null) {
+            throw new IllegalStateException("JdbcTemplate 未绑定 DataSource，无法判断 MySQL 版本");
+        }
+        try (Connection connection = dataSource.getConnection()) {
+            String url = connection.getMetaData().getURL();
+            if (url == null) {
+                return false;
+            }
+            Boolean cached = MYSQL_57_CACHE.get(url);
+            if (cached != null) {
+                return cached;
+            }
+            boolean mysql57 = connection.getMetaData().getDatabaseMajorVersion() == 5;
+            MYSQL_57_CACHE.put(url, mysql57);
+            return mysql57;
+        } catch (SQLException e) {
+            throw new IllegalStateException("判断 MySQL 版本失败", e);
+        }
     }
 
     private Long probeMySql57(String scope, long scopeKey, String segment) {
