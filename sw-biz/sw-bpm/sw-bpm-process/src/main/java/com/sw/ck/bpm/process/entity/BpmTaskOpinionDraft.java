@@ -25,7 +25,7 @@ public class BpmTaskOpinionDraft extends BaseEntity {
     private String opinionFormId;
     @TableField("opinion_form_version")
     private String opinionFormVersion;
-    @TableField("comment")
+    @TableField("opinion_comment")
     private String comment;
     @TableField("opinion_data")
     private String opinionData;

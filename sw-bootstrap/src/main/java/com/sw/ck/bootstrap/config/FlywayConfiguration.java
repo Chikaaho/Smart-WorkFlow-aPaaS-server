@@ -1,10 +1,11 @@
 package com.sw.ck.bootstrap.config;
 
+import com.sw.ck.bootstrap.migration.SwVendorMigrationRunner;
+import com.sw.ck.common.jdbc.DatabaseVendor;
 import org.flywaydb.core.Flyway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
-import org.springframework.boot.jdbc.DatabaseDriver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -34,18 +35,30 @@ public class FlywayConfiguration {
     @Bean
     public FlywayMigrationStrategy flywayMigrationStrategy(DataSource dataSource) {
         return flyway -> {
+            DatabaseVendor vendor = detectVendor(dataSource);
+            // Flyway 没有达梦/Kingbase/openGauss 模块，改由项目内 Runner 执行。
+            if (vendor == DatabaseVendor.DM
+                    || vendor == DatabaseVendor.KINGBASE
+                    || vendor == DatabaseVendor.OPENGAUSS) {
+                log.info("Executing SwVendorMigrationRunner (vendor = {}, locations = db/migration/{})",
+                        vendor.displayName(), vendor.name().toLowerCase(java.util.Locale.ROOT));
+                SwVendorMigrationRunner.migrate(dataSource, vendor);
+                log.info("SwVendorMigrationRunner completed (vendor = {})", vendor.displayName());
+                return;
+            }
+
             // 1. 执行主迁移
             log.info("Executing primary Flyway migration (locations = db/migration/{vendor})");
             flyway.migrate();
             log.info("Primary Flyway migration completed");
 
             // 2. 执行 prod-update 迁移
-            String vendor = detectVendor(dataSource);
-            log.info("Executing prod-update Flyway migration (vendor = {}, locations = db/prod-update/{})", vendor, vendor);
+            String dir = vendor.prodUpdateDir();
+            log.info("Executing prod-update Flyway migration (vendor = {}, locations = db/prod-update/{})", dir, dir);
 
             Flyway prodFlyway = Flyway.configure()
                     .dataSource(dataSource)
-                    .locations("classpath:db/prod-update/" + vendor)
+                    .locations("classpath:db/prod-update/" + dir)
                     .table("flyway_schema_history_prod")
                     .baselineOnMigrate(true)
                     .validateOnMigrate(true)
@@ -53,16 +66,14 @@ public class FlywayConfiguration {
                     .load();
 
             prodFlyway.migrate();
-            log.info("Prod-update Flyway migration completed (vendor = {})", vendor);
+            log.info("Prod-update Flyway migration completed (vendor = {})", dir);
         };
     }
 
-    private String detectVendor(DataSource dataSource) {
+    private DatabaseVendor detectVendor(DataSource dataSource) {
         try (Connection conn = dataSource.getConnection()) {
-            String jdbcUrl = conn.getMetaData().getURL();
-            DatabaseDriver driver = DatabaseDriver.fromJdbcUrl(jdbcUrl);
-            String vendor = driver.getId();
-            log.info("Detected database vendor: {}", vendor);
+            DatabaseVendor vendor = DatabaseVendor.detect(conn);
+            log.info("Detected database vendor: {}", vendor.displayName());
             return vendor;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to detect database vendor from DataSource", e);

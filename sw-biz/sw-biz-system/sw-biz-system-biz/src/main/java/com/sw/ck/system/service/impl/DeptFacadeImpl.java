@@ -1,6 +1,7 @@
 package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.system.api.dept.DeptDirectoryRow;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.entity.SysDept;
@@ -62,7 +63,8 @@ public class DeptFacadeImpl implements DeptQueryFacade {
             // 缺少查询上下文：查询未执行
             return Optional.empty();
         }
-        List<java.util.Map<String, Object>> rows = sysDeptMapper.selectDeptDirectory(tenantId);
+        List<java.util.Map<String, Object>> rows =
+                JdbcMaps.caseInsensitiveKeys(sysDeptMapper.selectDeptDirectory(tenantId));
         List<DeptDirectoryRow> directory = new ArrayList<>(rows.size());
         for (java.util.Map<String, Object> row : rows) {
             Long deptId = asLong(row.get("dept_id"));

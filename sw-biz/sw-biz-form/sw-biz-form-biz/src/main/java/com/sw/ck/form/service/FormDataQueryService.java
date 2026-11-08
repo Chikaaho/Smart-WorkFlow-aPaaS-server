@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.dto.FilterOp;
 import com.sw.ck.form.api.dto.FormDataFilter;
@@ -267,12 +268,11 @@ public class FormDataQueryService {
         String columns = projectionColumns.stream()
                 .map(DynamicTableSql::quote)
                 .collect(Collectors.joining(", "));
-        String dataSql = "SELECT " + columns + " FROM " + DynamicTableSql.quote(tableName) + " WHERE " + whereSql
-                + " ORDER BY \"create_time\" DESC LIMIT ? OFFSET ?";
+        String dataSql = JdbcVendorSupport.applyLimit(jdbcTemplate,
+                "SELECT " + columns + " FROM " + DynamicTableSql.quote(tableName) + " WHERE " + whereSql
+                        + " ORDER BY \"create_time\" DESC", size, offset);
 
         List<Object> dataParams = new ArrayList<>(filterParams);
-        dataParams.add((long) size);
-        dataParams.add((long) offset);
 
         List<Map<String, Object>> records;
         try {
@@ -450,13 +450,13 @@ public class FormDataQueryService {
         if (!groupColumns.isEmpty()) {
             sql.append(" GROUP BY ").append(String.join(", ", groupColumns));
         }
-        sql.append(" ORDER BY \"m0\" DESC LIMIT ?");
+        sql.append(" ORDER BY \"m0\" DESC");
+        String aggregateSql = JdbcVendorSupport.applyLimit(jdbcTemplate, sql.toString(), limit);
         List<Object> dataParams = new ArrayList<>(params);
-        dataParams.add((long) limit);
 
         List<Map<String, Object>> rows;
         try {
-            rows = DynamicTableSql.query(jdbcTemplate, ctx.tableName(), sql.toString(), dataParams.toArray());
+            rows = DynamicTableSql.query(jdbcTemplate, ctx.tableName(), aggregateSql, dataParams.toArray());
         } catch (Exception e) {
             log.error("Workspace aggregate failed: formKey={}, sql={}", formKey, sql, e);
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "统计查询未能完成，请稍后重试");
@@ -558,14 +558,13 @@ public class FormDataQueryService {
             select.add(DynamicTableSql.quote(physical) + " AS " + DynamicTableSql.quote(column));
         }
 
-        String sql = "SELECT " + String.join(", ", select)
-                + " FROM " + DynamicTableSql.quote(ctx.tableName())
-                + " WHERE " + where
-                + " ORDER BY " + DynamicTableSql.quote(sortPhysical) + " " + sortOrder
-                + " LIMIT ? OFFSET ?";
+        String sql = JdbcVendorSupport.applyLimit(jdbcTemplate,
+                "SELECT " + String.join(", ", select)
+                        + " FROM " + DynamicTableSql.quote(ctx.tableName())
+                        + " WHERE " + where
+                        + " ORDER BY " + DynamicTableSql.quote(sortPhysical) + " " + sortOrder,
+                size, offset);
         List<Object> dataParams = new ArrayList<>(params);
-        dataParams.add((long) size);
-        dataParams.add((long) offset);
 
         List<Map<String, Object>> records;
         try {
@@ -1069,8 +1068,9 @@ public class FormDataQueryService {
         if (tableName == null || !DynamicTableSql.isValidTableName(tableName)) {
             return false;
         }
-        String sql = "SELECT 1 AS present FROM " + DynamicTableSql.quote(tableName)
-                + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ? LIMIT 1";
+        String sql = JdbcVendorSupport.applyLimit(jdbcTemplate,
+                "SELECT 1 AS present FROM " + DynamicTableSql.quote(tableName)
+                        + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?", 1);
         try {
             List<Map<String, Object>> rows = DynamicTableSql.query(jdbcTemplate, tableName, sql,
                     recordId, loginUser.getTenantId());

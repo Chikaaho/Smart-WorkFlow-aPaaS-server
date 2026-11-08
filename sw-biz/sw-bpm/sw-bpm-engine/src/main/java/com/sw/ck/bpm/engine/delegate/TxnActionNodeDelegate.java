@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.jdbc.JdbcMaps;
+import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
@@ -158,10 +160,11 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
             String invocationKey, RuntimeException rollback) {
         org.springframework.jdbc.core.JdbcTemplate jdbcTemplate =
                 applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
-        java.util.List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id, error_code, error_msg FROM sw_form_txn_invocation"
-                        + " WHERE invocation_key = ? AND status = 'REJECTED'"
-                        + " ORDER BY create_time DESC LIMIT 1", invocationKey);
+        java.util.List<java.util.Map<String, Object>> rows = JdbcMaps.caseInsensitiveKeys(jdbcTemplate.queryForList(
+                JdbcVendorSupport.applyLimit(jdbcTemplate,
+                        "SELECT id, error_code, error_msg FROM sw_form_txn_invocation"
+                                + " WHERE invocation_key = ? AND status = 'REJECTED'"
+                                + " ORDER BY create_time DESC", 1), invocationKey));
         if (rows.isEmpty()) {
             throw rollback;
         }

@@ -118,6 +118,14 @@ public final class DataScopeFilter {
         return userId;
     }
 
+    /**
+     * 归属用户列是 VARCHAR 时使用的字符串形态；避免 SQL 里写 {@code CAST(... AS VARCHAR)}，
+     * 该类型名在 MySQL/Oracle/SQL Server 上不一致。
+     */
+    public String getUserIdText() {
+        return userId == null ? null : userId.toString();
+    }
+
     public List<Long> getDeptIds() {
         return deptIds;
     }

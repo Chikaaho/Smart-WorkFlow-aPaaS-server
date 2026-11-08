@@ -10,8 +10,10 @@ import com.sw.ck.common.config.mybatis.datascope.DataScopeHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.common.datascope.DeptScopeProvider;
+import com.sw.ck.common.jdbc.SqlDialectRewriteInterceptor;
 import com.sw.ck.common.security.DefaultLoginContextProvider;
 import com.sw.ck.common.security.LoginContextProvider;
+import org.apache.ibatis.plugin.Interceptor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -77,6 +79,15 @@ public class MybatisPlusConfig {
     public DataPermissionInterceptor dataPermissionInterceptor(LoginContextProvider loginContextProvider,
                                                                  DeptScopeProvider deptScopeProvider) {
         return new DataPermissionInterceptor(new DataScopeHandler(loginContextProvider, deptScopeProvider));
+    }
+
+    /**
+     * 运行时 SQL 方言重写（尾部 LIMIT、SQL Server FOR UPDATE 表提示）。
+     * 挂在 StatementHandler.prepare 上，看到的是分页插件处理后的最终 SQL。
+     */
+    @Bean
+    public Interceptor sqlDialectRewriteInterceptor() {
+        return new SqlDialectRewriteInterceptor();
     }
 
     @Bean

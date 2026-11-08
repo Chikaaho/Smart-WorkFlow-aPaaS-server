@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
@@ -248,11 +249,11 @@ public class FormDataDeleteService {
                     checkSql.append(" AND \"id\" != ?");
                     params.add(recordId);
                 }
-                checkSql.append(" LIMIT 1");
+                String checkStatement = JdbcVendorSupport.applyLimit(jdbcTemplate, checkSql.toString(), 1);
 
                 List<Map<String, Object>> result;
                 try {
-                    result = DynamicTableSql.query(jdbcTemplate, refTableName, checkSql.toString(), params.toArray());
+                    result = DynamicTableSql.query(jdbcTemplate, refTableName, checkStatement, params.toArray());
                 } catch (BaseException e) {
                     throw e;
                 } catch (Exception e) {

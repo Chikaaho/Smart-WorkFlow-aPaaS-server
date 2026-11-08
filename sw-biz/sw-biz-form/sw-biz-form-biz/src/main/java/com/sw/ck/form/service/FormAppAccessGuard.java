@@ -2,6 +2,7 @@ package com.sw.ck.form.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FormRecordAccessPort;
 import com.sw.ck.form.dynamic.DynamicTableSql;
@@ -162,8 +163,9 @@ public class FormAppAccessGuard {
         Long tenantId = loginUser.getTenantId();
         Long userId = loginUser.getUserId();
         try {
-            String sql = "SELECT 1 AS present FROM " + DynamicTableSql.quote(tableName)
-                    + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ? AND \"create_by\" = ? LIMIT 1";
+            String sql = JdbcVendorSupport.applyLimit(jdbcTemplate,
+                    "SELECT 1 AS present FROM " + DynamicTableSql.quote(tableName)
+                            + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ? AND \"create_by\" = ?", 1);
             List<Map<String, Object>> rows = DynamicTableSql.query(jdbcTemplate, tableName, sql,
                     recordId, tenantId, userId);
             if (rows != null && !rows.isEmpty()) {
