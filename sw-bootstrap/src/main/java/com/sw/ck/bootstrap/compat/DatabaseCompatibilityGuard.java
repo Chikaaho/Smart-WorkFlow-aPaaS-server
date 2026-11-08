@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import javax.sql.DataSource;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,8 +34,9 @@ public class DatabaseCompatibilityGuard {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public DatabaseCompatibilityGuard(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public DatabaseCompatibilityGuard(DataSource dataSource) {
+        // 直接依赖 DataSource，避免 JdbcTemplate/MyBatis 初始化与 Flyway 迁移策略形成循环依赖。
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
     }
 
     /**
@@ -124,6 +126,14 @@ public class DatabaseCompatibilityGuard {
         String encoding = jdbcTemplate.queryForObject("SHOW server_encoding", String.class);
         if (encoding == null || !"UTF8".equalsIgnoreCase(encoding)) {
             throw new IllegalStateException(vendor.displayName() + " server_encoding 必须是 UTF8，当前为 " + encoding);
+        }
+        if (vendor == DatabaseVendor.OPENGAUSS) {
+            // openGauss 默认建库为 A（Oracle）兼容，空串会变成 NULL；本项目按 PG 语义实现。
+            String compatibility = jdbcTemplate.queryForObject("SHOW sql_compatibility", String.class);
+            if (compatibility == null || !"PG".equalsIgnoreCase(compatibility)) {
+                throw new IllegalStateException("openGauss 数据库必须使用 PG 兼容模式（DBCOMPATIBILITY 'PG'），当前为 "
+                        + compatibility);
+            }
         }
         log.info("Database compatibility check passed: vendor={}, server_encoding={}",
                 vendor.displayName(), encoding);

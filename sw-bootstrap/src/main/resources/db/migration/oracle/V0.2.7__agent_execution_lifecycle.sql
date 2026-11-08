@@ -21,7 +21,11 @@ CREATE TABLE sw_agent_graph_execution_request (
     tenant_id NUMBER(19) DEFAULT 0 NOT NULL,
     version NUMBER(19) DEFAULT 0 NOT NULL
 );
-CREATE UNIQUE INDEX uk_sw_agent_exec_req_idem ON sw_agent_graph_execution_request (tenant_id, create_by, idempotency_key);
+-- create_by / idempotency_key 均可空：任一为空时不参与唯一判重（与 PG/MySQL 空值语义一致）。
+CREATE UNIQUE INDEX uk_sw_agent_exec_req_idem ON sw_agent_graph_execution_request (
+    CASE WHEN create_by IS NOT NULL AND idempotency_key IS NOT NULL THEN tenant_id END,
+    CASE WHEN create_by IS NOT NULL AND idempotency_key IS NOT NULL THEN create_by END,
+    CASE WHEN create_by IS NOT NULL AND idempotency_key IS NOT NULL THEN idempotency_key END);
 CREATE INDEX idx_sw_agent_exec_req_status ON sw_agent_graph_execution_request (tenant_id, status, create_time);
 
 CREATE TABLE sw_agent_graph_execution_event (

@@ -1,5 +1,6 @@
 package com.sw.ck.form.dynamic;
 
+import com.sw.ck.common.jdbc.DatabaseVendor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -55,6 +56,43 @@ public class DynamicTableManager {
             new SystemColumnDef("update_by", "BIGINT", ""),
             new SystemColumnDef("version", "BIGINT", "NOT NULL DEFAULT 0")
     );
+
+    /**
+     * Oracle/达梦不接受 BIGINT/SMALLINT 与 {@code NOT NULL DEFAULT} 顺序；
+     * 系统列按方言给出等价类型，保持与固定表 NUMBER(19)/NUMBER(5) 对齐。
+     */
+    private List<SystemColumnDef> systemColumns() {
+        return switch (dialect.vendor()) {
+            case ORACLE, DM -> List.of(
+                    new SystemColumnDef("id", "VARCHAR2(36 CHAR)", "NOT NULL"),
+                    new SystemColumnDef("tenant_id", "NUMBER(19)", "DEFAULT 0 NOT NULL"),
+                    new SystemColumnDef("deleted", "NUMBER(5)", "DEFAULT 0 NOT NULL"),
+                    new SystemColumnDef("create_time", "TIMESTAMP", "DEFAULT CURRENT_TIMESTAMP NOT NULL"),
+                    new SystemColumnDef("create_by", "NUMBER(19)", ""),
+                    new SystemColumnDef("update_time", "TIMESTAMP", "DEFAULT CURRENT_TIMESTAMP NOT NULL"),
+                    new SystemColumnDef("update_by", "NUMBER(19)", ""),
+                    new SystemColumnDef("version", "NUMBER(19)", "DEFAULT 0 NOT NULL"));
+            case SQL_SERVER -> List.of(
+                    new SystemColumnDef("id", "NVARCHAR(36)", "NOT NULL"),
+                    new SystemColumnDef("tenant_id", "BIGINT", "NOT NULL DEFAULT 0"),
+                    new SystemColumnDef("deleted", "SMALLINT", "NOT NULL DEFAULT 0"),
+                    new SystemColumnDef("create_time", "DATETIME2", "NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+                    new SystemColumnDef("create_by", "BIGINT", ""),
+                    new SystemColumnDef("update_time", "DATETIME2", "NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+                    new SystemColumnDef("update_by", "BIGINT", ""),
+                    new SystemColumnDef("version", "BIGINT", "NOT NULL DEFAULT 0"));
+            default -> SYSTEM_COLUMNS;
+        };
+    }
+
+    /** 36 字符 UUID 外键列类型（与系统列 id 一致）。 */
+    private String uuidColumnType() {
+        return switch (dialect.vendor()) {
+            case ORACLE, DM -> "VARCHAR2(36 CHAR)";
+            case SQL_SERVER -> "NVARCHAR(36)";
+            default -> "VARCHAR(36)";
+        };
+    }
 
     // 列名校验常量与方法均收敛至 ColumnValidation（单一常量源），
     // 本类仅保留 DDL 构建所需的 SYSTEM_COLUMNS（含类型与约束）。
@@ -163,18 +201,19 @@ public class DynamicTableManager {
         ddl.append("CREATE TABLE ").append(dialect.wrapIdentifier(tableName)).append(" (\n");
 
         // 系统列
-        for (int i = 0; i < SYSTEM_COLUMNS.size(); i++) {
-            SystemColumnDef col = SYSTEM_COLUMNS.get(i);
+        List<SystemColumnDef> systemColumns = systemColumns();
+        for (int i = 0; i < systemColumns.size(); i++) {
+            SystemColumnDef col = systemColumns.get(i);
             ddl.append("  ").append(dialect.wrapIdentifier(col.name()))
                     .append(" ").append(col.type())
                     .append(" ").append(col.constraints());
             ddl.append(",\n");
         }
 
-        // 子表专用：parent_record_id（VARCHAR(36) 匹配父表 UUID 主键）
+        // 子表专用：parent_record_id（匹配父表 UUID 主键）
         if (spec.isSubTable()) {
             ddl.append("  ").append(dialect.wrapIdentifier("parent_record_id"))
-                    .append(" VARCHAR(36) NOT NULL,\n");
+                    .append(" ").append(uuidColumnType()).append(" NOT NULL,\n");
         }
 
         // 用户列
@@ -260,17 +299,35 @@ public class DynamicTableManager {
         return dialect.wrapIdentifier(colName) + " " + colType;
     }
 
-    /** 表是否存在（查询 information_schema） */
+    /** 表是否存在（按方言查询当前 schema 的元数据） */
     boolean tableExists(String tableName) {
-        String sql = "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?";
+        DatabaseVendor vendor = dialect.vendor();
+        String sql = switch (vendor) {
+            case MYSQL, MARIADB -> "SELECT COUNT(*) FROM information_schema.tables "
+                    + "WHERE table_schema = DATABASE() AND table_name = ?";
+            case ORACLE, DM -> "SELECT COUNT(*) FROM user_tables WHERE table_name = ?";
+            case SQL_SERVER -> "SELECT COUNT(*) FROM sys.tables WHERE name = ?";
+            default -> "SELECT COUNT(*) FROM information_schema.tables "
+                    + "WHERE table_schema = current_schema() AND table_name = ?";
+        };
         Integer count = jdbcTemplate.queryForObject(sql, Integer.class, tableName);
         return count != null && count > 0;
     }
 
-    /** 列是否存在（查询 information_schema） */
+    /** 列是否存在（按方言查询当前 schema 的元数据） */
     boolean columnExists(String tableName, String columnName) {
-        String sql = "SELECT COUNT(*) FROM information_schema.columns "
-                + "WHERE table_name = ? AND column_name = ?";
+        DatabaseVendor vendor = dialect.vendor();
+        String sql = switch (vendor) {
+            case MYSQL, MARIADB -> "SELECT COUNT(*) FROM information_schema.columns "
+                    + "WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?";
+            case ORACLE, DM -> "SELECT COUNT(*) FROM user_tab_columns "
+                    + "WHERE table_name = ? AND column_name = ?";
+            case SQL_SERVER -> "SELECT COUNT(*) FROM sys.columns c "
+                    + "JOIN sys.tables t ON c.object_id = t.object_id "
+                    + "WHERE t.name = ? AND c.name = ?";
+            default -> "SELECT COUNT(*) FROM information_schema.columns "
+                    + "WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?";
+        };
         Integer count = jdbcTemplate.queryForObject(sql, Integer.class, tableName, columnName);
         return count != null && count > 0;
     }

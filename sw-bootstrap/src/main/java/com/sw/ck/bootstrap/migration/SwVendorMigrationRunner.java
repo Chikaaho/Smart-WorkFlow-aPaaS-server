@@ -3,6 +3,7 @@ package com.sw.ck.bootstrap.migration;
 import com.sw.ck.common.jdbc.DatabaseVendor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -11,11 +12,13 @@ import org.springframework.jdbc.datasource.init.ScriptUtils;
 import javax.sql.DataSource;
 import java.io.InputStream;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
@@ -37,6 +40,8 @@ public final class SwVendorMigrationRunner {
     private static final Logger log = LoggerFactory.getLogger(SwVendorMigrationRunner.class);
     private static final Pattern VERSIONED = Pattern.compile("^V([0-9][0-9A-Za-z_.]*)__(.+)\\.sql$", Pattern.CASE_INSENSITIVE);
     private static final Pattern REPEATABLE = Pattern.compile("^R__(.+)\\.sql$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DOLLAR_QUOTED_BLOCK =
+            Pattern.compile("(?is)\\bDO\\s*\\$\\$.*?\\$\\$\\s*;");
     private static final String HISTORY_TABLE = "sw_schema_history";
     private static final String LOCK_TABLE = "sw_schema_history_lock";
     private static final long LOCK_STALE_MILLIS = 10 * 60 * 1000L;
@@ -99,7 +104,12 @@ public final class SwVendorMigrationRunner {
             if (autoCommit) {
                 connection.setAutoCommit(false);
             }
-            ScriptUtils.executeSqlScript(connection, script.resource);
+            String content = new String(script.resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String remaining = executeDollarQuotedBlocks(connection, content);
+            if (hasExecutableSql(remaining)) {
+                ScriptUtils.executeSqlScript(connection,
+                        new ByteArrayResource(remaining.getBytes(StandardCharsets.UTF_8)));
+            }
             connection.commit();
             script.executionMillis = (int) (System.currentTimeMillis() - start);
             log.info("Executed migration {} in {} ms", script.name, script.executionMillis);
@@ -111,6 +121,35 @@ public final class SwVendorMigrationRunner {
             }
             throw new IllegalStateException("迁移脚本执行失败: " + script.name, e);
         }
+    }
+
+    /**
+     * Spring {@link ScriptUtils} 不识别 PostgreSQL 系 {@code DO $$ ... $$} 块，会按块内分号错误切分。
+     * 先把整个块用同一连接一次性执行，再把去掉块的剩余脚本交给 ScriptUtils。
+     */
+    private static String executeDollarQuotedBlocks(Connection connection, String content) throws SQLException {
+        Matcher matcher = DOLLAR_QUOTED_BLOCK.matcher(content);
+        StringBuffer remaining = new StringBuffer();
+        while (matcher.find()) {
+            String block = matcher.group();
+            String statement = block.stripTrailing();
+            if (statement.endsWith(";")) {
+                statement = statement.substring(0, statement.length() - 1);
+            }
+            try (Statement jdbcStatement = connection.createStatement()) {
+                jdbcStatement.execute(statement);
+            }
+            matcher.appendReplacement(remaining, "");
+        }
+        matcher.appendTail(remaining);
+        return remaining.toString();
+    }
+
+    /** 去掉块注释与行注释后是否仍有可执行 SQL（纯注释脚本不交给 ScriptUtils）。 */
+    private static boolean hasExecutableSql(String sql) {
+        String withoutBlockComments = sql.replaceAll("(?s)/\\*.*?\\*/", "");
+        String withoutLineComments = withoutBlockComments.replaceAll("(?m)--.*$", "");
+        return !withoutLineComments.isBlank();
     }
 
     private static void record(JdbcTemplate jdbc, Script script, String type) {

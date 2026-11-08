@@ -4,7 +4,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.util.Collections;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -14,6 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class JdbcVendorSupport {
 
     private static final Map<String, DatabaseVendor> CACHE = new ConcurrentHashMap<>();
+    private static final Map<DataSource, DatabaseVendor> DATA_SOURCE_CACHE =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private JdbcVendorSupport() {
     }
@@ -23,8 +27,14 @@ public final class JdbcVendorSupport {
         if (dataSource == null) {
             throw new IllegalStateException("JdbcTemplate 未绑定 DataSource，无法确定数据库方言");
         }
+        DatabaseVendor cached = DATA_SOURCE_CACHE.get(dataSource);
+        if (cached != null) {
+            return cached;
+        }
         try (Connection connection = dataSource.getConnection()) {
-            return vendor(connection);
+            DatabaseVendor detected = vendor(connection);
+            DATA_SOURCE_CACHE.put(dataSource, detected);
+            return detected;
         } catch (Exception e) {
             throw new IllegalStateException("无法确定数据库方言", e);
         }

@@ -2,6 +2,8 @@ package com.sw.ck.bootstrap.multidb;
 
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
 import com.sw.ck.bpm.process.service.ResourceRowLockProbe;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -139,6 +141,36 @@ class MySql57ResourceProbeTest {
     @DisplayName("行空闲：探测返回 id")
     void probeReturnsIdWhenRowFree() {
         assertEquals(1L, probe.probe("GLOBAL", 0L, "SHARED"));
+    }
+
+    @Test
+    @DisplayName("连接归还池子后 innodb_lock_wait_timeout 已恢复原值")
+    void poolReturnRestoresSessionTimeout() throws Exception {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(targetUrl);
+        config.setUsername(user);
+        config.setPassword(password);
+        config.setMaximumPoolSize(1);
+        config.setMinimumIdle(0);
+        try (HikariDataSource pool = new HikariDataSource(config)) {
+            ResourceRowLockProbe pooledProbe = new ResourceRowLockProbe(
+                    mock(BpmResourceUsageMapper.class), new JdbcTemplate(pool));
+            int original;
+            try (Connection connection = pool.getConnection();
+                 Statement statement = connection.createStatement();
+                 ResultSet rs = statement.executeQuery("SELECT @@SESSION.innodb_lock_wait_timeout")) {
+                assertTrue(rs.next());
+                original = rs.getInt(1);
+            }
+            assertEquals(1L, pooledProbe.probe("GLOBAL", 0L, "SHARED"));
+            try (Connection connection = pool.getConnection();
+                 Statement statement = connection.createStatement();
+                 ResultSet rs = statement.executeQuery("SELECT @@SESSION.innodb_lock_wait_timeout")) {
+                assertTrue(rs.next());
+                assertEquals(original, rs.getInt(1),
+                        "连接归还池子后会话超时值应恢复为原值");
+            }
+        }
     }
 
     @Test

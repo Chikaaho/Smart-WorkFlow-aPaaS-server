@@ -3,12 +3,15 @@ package com.sw.ck.bootstrap.multidb;
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bpm.process.entity.BpmTaskOpinionDraft;
 import com.sw.ck.bpm.process.mapper.BpmTaskOpinionDraftMapper;
+import com.sw.ck.knowledge.vector.KnowledgeVectorStore;
 import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.mapper.NotifyMessageMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SysTenant;
+import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.mapper.SysTenantMapper;
+import com.sw.ck.system.mapper.SysWorkspaceCardTypeMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -40,6 +43,7 @@ class OracleBootSmokeTest {
 
     private ConfigurableApplicationContext app;
     private JdbcTemplate jdbc;
+    private String base;
 
     @BeforeAll
     void boot() {
@@ -51,6 +55,8 @@ class OracleBootSmokeTest {
 
         Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
+        props.put("spring.profiles.active", "dev");
+        props.put("ch.dev.test-mock", "true");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "oracle.jdbc.OracleDriver");
         props.put("spring.datasource.dynamic.datasource.master.url", url);
@@ -64,10 +70,13 @@ class OracleBootSmokeTest {
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.knowledge.vector-store", "database");
-        app = new SpringApplicationBuilder(ProdBootTestApplication.class)
+        app = new SpringApplicationBuilder(ProdBootTestApplication.class,
+                com.sw.ck.bootstrap.config.FlywayConfiguration.class,
+                com.sw.ck.bootstrap.compat.DatabaseCompatibilityGuard.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
                             new org.springframework.core.env.MapPropertySource("oracle-smoke", props));
+                    context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
                     org.springframework.beans.factory.support.RootBeanDefinition provider =
@@ -79,6 +88,7 @@ class OracleBootSmokeTest {
                 })
                 .run();
         jdbc = app.getBean(JdbcTemplate.class);
+        base = "http://127.0.0.1:" + app.getEnvironment().getProperty("local.server.port") + "/api";
     }
 
     @AfterAll
@@ -123,7 +133,7 @@ class OracleBootSmokeTest {
             message.setTitle("中文通知");
             message.setContent("通知内容");
             message.setBizType("SYSTEM");
-            message.setBizId("1");
+            message.setBizId("oracle-smoke-" + System.nanoTime());
             message.setIsRead(false);
             message.setTenantId(0L);
             notifyMapper.insert(message);
@@ -131,6 +141,8 @@ class OracleBootSmokeTest {
             assertThat(loadedMessage.getIsRead()).isFalse();
             assertThat(app.getBean(ObjectMapper.class).writeValueAsString(loadedMessage))
                     .contains("\"read\"");
+
+            assertNullableUniqueKeySemantics();
 
             BpmTaskOpinionDraftMapper draftMapper = app.getBean(BpmTaskOpinionDraftMapper.class);
             BpmTaskOpinionDraft draft = new BpmTaskOpinionDraft();
@@ -144,6 +156,71 @@ class OracleBootSmokeTest {
             assertThat(loadedDraft.getOpinionComment()).isEqualTo("中文意见");
             assertThat(app.getBean(ObjectMapper.class).writeValueAsString(loadedDraft))
                     .contains("\"comment\"");
+
+            SysWorkspaceCardTypeMapper cardTypeMapper = app.getBean(SysWorkspaceCardTypeMapper.class);
+            SysWorkspaceCardType cardType = new SysWorkspaceCardType();
+            cardType.setTypeCode("smoke_" + System.nanoTime());
+            cardType.setDisplayName("冒烟卡片");
+            cardType.setRendererKey("todo");
+            cardType.setDefaultSpan(1);
+            cardType.setDefaultOrder(1);
+            cardType.setStatus(0);
+            cardType.setTenantId(0L);
+            cardTypeMapper.insert(cardType);
+            assertThat(jdbc.queryForObject(
+                    "SELECT metadata_json FROM sys_workspace_card_type WHERE id = ?",
+                    String.class, cardType.getId())).isEqualTo("{}");
+
+            KnowledgeVectorStore vectorStore = app.getBean(KnowledgeVectorStore.class);
+            long kbId = 880001L;
+            long documentId = 880002L;
+            long chunkId = 880003L;
+            jdbc.update("DELETE FROM sw_knowledge_vector WHERE chunk_id = ?", chunkId);
+            jdbc.update("DELETE FROM sw_knowledge_chunk WHERE id = ?", chunkId);
+            jdbc.update("DELETE FROM sw_knowledge_document WHERE id = ?", documentId);
+            jdbc.update("INSERT INTO sw_knowledge_document (id, kb_id, name, status, chunk_count, "
+                    + "tenant_id, deleted, version) VALUES (?, ?, '冒烟文档', 'READY', 1, 0, 0, 0)",
+                    documentId, kbId);
+            jdbc.update("INSERT INTO sw_knowledge_chunk (id, kb_id, document_id, chunk_index, content, "
+                    + "tenant_id, deleted, version) VALUES (?, ?, ?, 0, '中文分片', 0, 0, 0)",
+                    chunkId, kbId, documentId);
+            vectorStore.store(chunkId, new float[]{1f, 0f, 0f});
+            assertThat(vectorStore.search(kbId, new float[]{1f, 0f, 0f}, 5, 0.9)).hasSize(1);
+            vectorStore.deleteByDocument(kbId, documentId);
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sw_knowledge_vector WHERE chunk_id = ?", Integer.class, chunkId))
+                    .isZero();
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sw_knowledge_chunk WHERE id = ?", Integer.class, chunkId))
+                    .isZero();
+
+            // Oracle 空串 = NULL：可选文本留空回读为 null、必填留空被拒、清空后保存、审批意见留空
+            jdbc.update("DELETE FROM sys_user WHERE id = 990002");
+            jdbc.update("INSERT INTO sys_user (id, tenant_id, username, password, real_name, email, "
+                    + "status, is_admin, deleted, version) VALUES (990002, 0, 'oracle_empty_text', "
+                    + "'not-a-login-secret', '空串冒烟', '', 0, 0, 0, 0)");
+            assertThat(jdbc.queryForObject(
+                    "SELECT email FROM sys_user WHERE id = 990002", String.class)).isNull();
+            jdbc.update("UPDATE sys_user SET email = 'a@b.c' WHERE id = 990002");
+            jdbc.update("UPDATE sys_user SET email = '' WHERE id = 990002");
+            assertThat(jdbc.queryForObject(
+                    "SELECT email FROM sys_user WHERE id = 990002", String.class)).isNull();
+
+            jdbc.update("DELETE FROM sys_dict_type WHERE id = 990003");
+            org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class,
+                    () -> jdbc.update("INSERT INTO sys_dict_type (id, create_time, update_time, deleted, "
+                            + "tenant_id, version, name, code, status) VALUES (990003, CURRENT_TIMESTAMP, "
+                            + "CURRENT_TIMESTAMP, 0, 0, 0, '', 'oracle_empty_required', 0)"),
+                    "Oracle 必填文本写入空串应按 NULL 拒绝");
+
+            BpmTaskOpinionDraft emptyDraft = new BpmTaskOpinionDraft();
+            emptyDraft.setTaskId("oracle-empty-comment-" + System.nanoTime());
+            emptyDraft.setProcessInstanceId("oracle-empty-comment-pi");
+            emptyDraft.setAssigneeId(1L);
+            emptyDraft.setOpinionComment("");
+            emptyDraft.setTenantId(0L);
+            draftMapper.insert(emptyDraft);
+            assertThat(draftMapper.selectById(emptyDraft.getId()).getOpinionComment()).isNull();
         } finally {
             LoginUserHolder.clear();
         }
@@ -170,11 +247,61 @@ class OracleBootSmokeTest {
                 "SELECT id FROM sys_menu ORDER BY id FETCH FIRST 3 ROWS ONLY", Long.class);
         assertThat(page2).containsExactly(all.get(2));
 
+        String token = BusinessSmokeSupport.login(base, "admin", "AdminP@ssw0rd");
+        BusinessSmokeSupport.assertMenus(base, token);
+        String formId = BusinessSmokeSupport.publishForm(
+                app, loginUser, "oracle_smoke_form_" + System.nanoTime());
+        BusinessSmokeSupport.assertDynamicRecordRoundTrip(app, formId, 0L);
+        BusinessSmokeSupport.runApproval(app);
+        BusinessSmokeSupport.triggerQuartz(app);
+
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ACT_GE_PROPERTY", Integer.class))
                 .isGreaterThan(0);
         assertThat(jdbc.queryForObject(
                 "SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_CHARACTERSET'",
                 String.class)).isEqualTo("AL32UTF8");
+    }
+
+    /**
+     * Oracle 复合唯一索引对“部分列为 NULL”的键仍会判重，而 PG/MySQL/H2 允许任意多条。
+     * 冒烟直接验证通知的幂等键与业务身份：空键可重复、非空键仍唯一。
+     */
+    private void assertNullableUniqueKeySemantics() {
+        long tag = System.nanoTime();
+        String insert = "INSERT INTO sw_notify_message (id, recipient_id, title, content, biz_type, "
+                + "biz_id, is_read, tenant_id, create_time, create_by, update_time, update_by, "
+                + "deleted, version) VALUES (?, 1, '空键', '内容', 'SYSTEM', ?, 0, 0, "
+                + "CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, NULL, 0, 0)";
+        String insertWithKey = "INSERT INTO sw_notify_message (id, recipient_id, title, content, "
+                + "biz_type, biz_id, is_read, tenant_id, create_time, create_by, update_time, "
+                + "update_by, deleted, version, idempotency_key) VALUES (?, 1, '幂等', '内容', "
+                + "'SYSTEM', NULL, 0, 0, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, NULL, 0, 0, ?)";
+        long id1 = 993000001L;
+        long id2 = 993000002L;
+        long id3 = 993000003L;
+        long id4 = 993000004L;
+        long id5 = 993000005L;
+        long id6 = 993000006L;
+        try {
+            jdbc.update("DELETE FROM sw_notify_message WHERE id BETWEEN 993000001 AND 993000006");
+            // 两条 biz_id 与 idempotency_key 均为空的通知可并存
+            jdbc.update(insert, id1, null);
+            jdbc.update(insert, id2, null);
+            // 两条 biz_id 相同（其余身份列相同）的通知第二条被拒
+            jdbc.update(insert, id3, "oracle-identity-" + tag);
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    org.springframework.dao.DataAccessException.class,
+                    () -> jdbc.update(insert, id4, "oracle-identity-" + tag),
+                    "非空 biz_id 的相同通知身份应被唯一索引拒绝");
+            // 两条相同非空幂等键的通知第二条被拒
+            jdbc.update(insertWithKey, id5, "oracle-idem-" + tag);
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    org.springframework.dao.DataAccessException.class,
+                    () -> jdbc.update(insertWithKey, id6, "oracle-idem-" + tag),
+                    "相同非空 idempotency_key 的第二条通知应被拒绝");
+        } finally {
+            jdbc.update("DELETE FROM sw_notify_message WHERE id BETWEEN 993000001 AND 993000006");
+        }
     }
 
     private static String generatedRsaPkcs8Base64() {

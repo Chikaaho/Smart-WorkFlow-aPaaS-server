@@ -1,10 +1,13 @@
 package com.sw.ck.bootstrap.multidb;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.knowledge.vector.KnowledgeVectorStore;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SysTenant;
+import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.mapper.SysTenantMapper;
+import com.sw.ck.system.mapper.SysWorkspaceCardTypeMapper;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -35,30 +38,34 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@DisplayName("MySQL 5.7 空库启动冒烟（真实库；未配置 mysql.url 时跳过）")
+@DisplayName("MySQL/MariaDB 空库启动冒烟（真实库；未配置 mysql.url 时跳过）")
 class MySqlBootSmokeTest {
 
     private static final String DATABASE = "swmdb_smoke";
-    private static final Pattern JDBC_URL = Pattern.compile("^(jdbc:mysql://[^/]+)/([^?]*)(\\?.*)?$");
+    private static final Pattern JDBC_URL =
+            Pattern.compile("^(jdbc:(?:mysql|mariadb)://[^/]+)/([^?]*)(\\?.*)?$");
 
     private String serverUrl;
     private String targetUrl;
     private String user;
     private String password;
+    private boolean mariadb;
     private ConfigurableApplicationContext app;
     private JdbcTemplate jdbc;
+    private String base;
 
     @BeforeAll
     void boot() throws Exception {
         String url = System.getProperty("mysql.url");
         Assumptions.assumeTrue(url != null && !url.isBlank(),
-                "未配置 mysql.url，跳过 MySQL 启动冒烟");
+                "未配置 mysql.url，跳过 MySQL/MariaDB 启动冒烟");
         user = System.getProperty("mysql.user", "root");
         password = System.getProperty("mysql.password", "");
         Matcher matcher = JDBC_URL.matcher(url);
         if (!matcher.matches()) {
-            throw new IllegalArgumentException("mysql.url 应形如 jdbc:mysql://host:port/db: " + url);
+            throw new IllegalArgumentException("mysql.url 应形如 jdbc:mysql:// 或 jdbc:mariadb://: " + url);
         }
+        mariadb = url.startsWith("jdbc:mariadb:");
         String params = matcher.group(3) == null ? "" : matcher.group(3);
         String separator = params.isEmpty() ? "?" : params.endsWith("&") ? "" : "&";
         String sessionParam = params.contains("sessionVariables=") ? ""
@@ -75,8 +82,11 @@ class MySqlBootSmokeTest {
 
         Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
+        props.put("spring.profiles.active", "dev");
+        props.put("ch.dev.test-mock", "true");
         props.put("spring.main.allow-bean-definition-overriding", "true");
-        props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "com.mysql.cj.jdbc.Driver");
+        props.put("spring.datasource.dynamic.datasource.master.driver-class-name",
+                mariadb ? "org.mariadb.jdbc.Driver" : "com.mysql.cj.jdbc.Driver");
         props.put("spring.datasource.dynamic.datasource.master.url", targetUrl);
         props.put("spring.datasource.dynamic.datasource.master.username", user);
         props.put("spring.datasource.dynamic.datasource.master.password", password);
@@ -88,10 +98,13 @@ class MySqlBootSmokeTest {
         props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.knowledge.vector-store", "database");
-        app = new SpringApplicationBuilder(ProdBootTestApplication.class)
+        app = new SpringApplicationBuilder(ProdBootTestApplication.class,
+                com.sw.ck.bootstrap.config.FlywayConfiguration.class,
+                com.sw.ck.bootstrap.compat.DatabaseCompatibilityGuard.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
                             new org.springframework.core.env.MapPropertySource("mysql-smoke", props));
+                    context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
                     org.springframework.beans.factory.support.RootBeanDefinition provider =
@@ -103,6 +116,7 @@ class MySqlBootSmokeTest {
                 })
                 .run();
         jdbc = app.getBean(JdbcTemplate.class);
+        base = "http://127.0.0.1:" + app.getEnvironment().getProperty("local.server.port") + "/api";
     }
 
     @AfterAll
@@ -121,7 +135,7 @@ class MySqlBootSmokeTest {
 
     @Test
     @DisplayName("空库启动：Flyway 30 条到 V0.4.0，MyBatis/中文/JSON/分页/Flowable 可用")
-    void smoke() {
+    void smoke() throws Exception {
         Integer migrations = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1", Integer.class);
         assertThat(migrations).isEqualTo(30);
@@ -145,6 +159,48 @@ class MySqlBootSmokeTest {
         }
         assertThat(tenants).hasSize(4);
 
+        LoginUserHolder.set(loginUser);
+        try {
+            SysWorkspaceCardTypeMapper cardTypeMapper = app.getBean(SysWorkspaceCardTypeMapper.class);
+            SysWorkspaceCardType cardType = new SysWorkspaceCardType();
+            cardType.setTypeCode("smoke_" + System.nanoTime());
+            cardType.setDisplayName("冒烟卡片");
+            cardType.setRendererKey("todo");
+            cardType.setDefaultSpan(1);
+            cardType.setDefaultOrder(1);
+            cardType.setStatus(0);
+            cardType.setTenantId(0L);
+            cardTypeMapper.insert(cardType);
+            assertThat(jdbc.queryForObject(
+                    "SELECT metadata_json FROM sys_workspace_card_type WHERE id = ?",
+                    String.class, cardType.getId())).isEqualTo("{}");
+
+            KnowledgeVectorStore vectorStore = app.getBean(KnowledgeVectorStore.class);
+            long kbId = 880001L;
+            long documentId = 880002L;
+            long chunkId = 880003L;
+            jdbc.update("DELETE FROM sw_knowledge_vector WHERE chunk_id = ?", chunkId);
+            jdbc.update("DELETE FROM sw_knowledge_chunk WHERE id = ?", chunkId);
+            jdbc.update("DELETE FROM sw_knowledge_document WHERE id = ?", documentId);
+            jdbc.update("INSERT INTO sw_knowledge_document (id, kb_id, name, status, chunk_count, "
+                    + "tenant_id, deleted, version) VALUES (?, ?, '冒烟文档', 'READY', 1, 0, 0, 0)",
+                    documentId, kbId);
+            jdbc.update("INSERT INTO sw_knowledge_chunk (id, kb_id, document_id, chunk_index, content, "
+                    + "tenant_id, deleted, version) VALUES (?, ?, ?, 0, '中文分片', 0, 0, 0)",
+                    chunkId, kbId, documentId);
+            vectorStore.store(chunkId, new float[]{1f, 0f, 0f});
+            assertThat(vectorStore.search(kbId, new float[]{1f, 0f, 0f}, 5, 0.9)).hasSize(1);
+            vectorStore.deleteByDocument(kbId, documentId);
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sw_knowledge_vector WHERE chunk_id = ?", Integer.class, chunkId))
+                    .isZero();
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sw_knowledge_chunk WHERE id = ?", Integer.class, chunkId))
+                    .isZero();
+        } finally {
+            LoginUserHolder.clear();
+        }
+
         jdbc.update("INSERT INTO sys_dict_type (id, create_time, update_time, deleted, tenant_id, version, "
                 + "name, code, status) VALUES (990001, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 0, 0, "
                 + "'中文校验', 'mysql_smoke_zh', 0)");
@@ -153,8 +209,9 @@ class MySqlBootSmokeTest {
                 .isEqualTo("中文校验");
 
         jdbc.update("INSERT INTO sw_form_config (id, form_id, definition, tenant_id, deleted, "
-                + "create_time, update_time, version) VALUES ('smoke-config', 'smoke-form', "
-                + "CAST('{\"title\":\"中文表单\"}' AS JSON), 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)");
+                        + "create_time, update_time, version) VALUES (?, ?, ?, 0, 0, "
+                        + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)",
+                "smoke-config", "smoke-form", "{\"title\":\"中文表单\"}");
         assertThat(jdbc.queryForObject(
                 "SELECT JSON_UNQUOTE(JSON_EXTRACT(definition, '$.title')) FROM sw_form_config "
                         + "WHERE id = 'smoke-config'", String.class)).isEqualTo("中文表单");
@@ -166,6 +223,14 @@ class MySqlBootSmokeTest {
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ACT_GE_PROPERTY", Integer.class))
                 .isGreaterThan(0);
+        String token = BusinessSmokeSupport.login(base, "admin", "AdminP@ssw0rd");
+        BusinessSmokeSupport.assertMenus(base, token);
+        String formId = BusinessSmokeSupport.publishForm(
+                app, loginUser, "mysql_smoke_form_" + System.nanoTime());
+        BusinessSmokeSupport.assertDynamicRecordRoundTrip(app, formId, 0L);
+        BusinessSmokeSupport.runApproval(app);
+        BusinessSmokeSupport.triggerQuartz(app);
+
         assertThat(jdbc.queryForObject(
                 "SELECT @@character_set_database", String.class)).isEqualTo("utf8mb4");
         assertThat(jdbc.queryForObject(

@@ -1,6 +1,8 @@
 package com.sw.ck.form.dynamic;
 
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.jdbc.DatabaseVendor;
+import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,7 +86,11 @@ public final class DynamicTableSql {
     private static final Pattern DELETED_WORD = Pattern.compile("(?i)(?<![A-Za-z0-9_])deleted(?![A-Za-z0-9_])");
 
     /** 语句中出现的动态宽表标识（用于单表约束）。 */
-    private static final Pattern DYNAMIC_TABLE_TOKEN = Pattern.compile("sw_form(?:_table)?_[a-z][a-z0-9]{9}");
+    private static final Pattern DYNAMIC_TABLE_TOKEN = Pattern.compile(
+            "(?<![A-Za-z0-9_])sw_form(?:_table)?_[a-z][a-z0-9]{9}(?![A-Za-z0-9_])");
+
+    /** 受控入口内部统一使用的 ANSI 双引号标识符；执行前按数据库方言转换。 */
+    private static final Pattern ANSI_IDENTIFIER = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"");
 
     /** 动态宽表系统列（与 {@link DynamicTableManager#SYSTEM_COLUMNS} 语义一致）。 */
     public static final List<String> SYSTEM_COLUMNS = List.of(
@@ -206,7 +212,7 @@ public final class DynamicTableSql {
         Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         Object[] bound = normalize(params);
         assertContract(table, sql, bound);
-        return jdbcTemplate.queryForList(sql, bound);
+        return jdbcTemplate.queryForList(toVendorSql(jdbcTemplate, sql), bound);
     }
 
     /**
@@ -216,7 +222,7 @@ public final class DynamicTableSql {
         Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         Object[] bound = normalize(params);
         assertContract(table, sql, bound);
-        return jdbcTemplate.queryForObject(sql, Long.class, bound);
+        return jdbcTemplate.queryForObject(toVendorSql(jdbcTemplate, sql), Long.class, bound);
     }
 
     /**
@@ -226,7 +232,7 @@ public final class DynamicTableSql {
         Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         Object[] bound = normalize(params);
         assertContract(table, sql, bound);
-        return jdbcTemplate.queryForObject(sql, Integer.class, bound);
+        return jdbcTemplate.queryForObject(toVendorSql(jdbcTemplate, sql), Integer.class, bound);
     }
 
     /**
@@ -236,7 +242,7 @@ public final class DynamicTableSql {
         Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         Object[] bound = normalize(params);
         assertContract(table, sql, bound);
-        return jdbcTemplate.update(sql, bound);
+        return jdbcTemplate.update(toVendorSql(jdbcTemplate, sql), bound);
     }
 
     /**
@@ -255,10 +261,18 @@ public final class DynamicTableSql {
         if (sql.indexOf(';') >= 0 || sql.contains("--") || sql.contains("/*")) {
             throw contractViolation("DDL 禁止多语句或注释: " + firstLine(sql));
         }
-        if (!sql.contains(quote(table))) {
-            throw contractViolation("DDL 未引用声明表 " + table);
+        String target = ddlTargetTable(sql);
+        if (!table.equals(target)) {
+            throw contractViolation("DDL 未引用声明表 " + table + "（实际 " + target + "）");
         }
-        jdbcTemplate.execute(sql);
+        java.util.regex.Matcher referenced = DYNAMIC_TABLE_TOKEN.matcher(sql);
+        while (referenced.find()) {
+            if (!table.equals(referenced.group())) {
+                throw contractViolation("DDL 禁止引用其它动态宽表（声明 " + table
+                        + "，实际引用 " + referenced.group() + "）");
+            }
+        }
+        jdbcTemplate.execute(toVendorSql(jdbcTemplate, sql));
     }
 
     // ==================== REFERENCE 串行化 ====================
@@ -381,6 +395,40 @@ public final class DynamicTableSql {
 
     // ==================== 内部：契约断言 ====================
 
+    /** 受控入口内部统一用 ANSI 双引号；执行前按方言改写为 MySQL/MariaDB 反引号。 */
+    static String toVendorSql(JdbcTemplate jdbcTemplate, String sql) {
+        DatabaseVendor vendor = JdbcVendorSupport.vendor(jdbcTemplate);
+        if (vendor == DatabaseVendor.MYSQL || vendor == DatabaseVendor.MARIADB) {
+            return ANSI_IDENTIFIER.matcher(sql).replaceAll("`$1`");
+        }
+        return sql;
+    }
+
+    /** 提取 DDL 的目标表（支持双引号、反引号、方括号与未引用四种写法）。 */
+    static String ddlTargetTable(String sql) {
+        String rest = sql.stripLeading();
+        int prefixLength = rest.regionMatches(true, 0, "CREATE TABLE", 0, 12) ? 12 : 11;
+        rest = rest.substring(prefixLength).stripLeading();
+        if (rest.isEmpty()) {
+            return "";
+        }
+        char first = rest.charAt(0);
+        if (first == '"' || first == '`') {
+            int end = rest.indexOf(first, 1);
+            return end < 0 ? "" : rest.substring(1, end);
+        }
+        if (first == '[') {
+            int end = rest.indexOf(']', 1);
+            return end < 0 ? "" : rest.substring(1, end);
+        }
+        int end = 0;
+        while (end < rest.length()
+                && (Character.isLetterOrDigit(rest.charAt(end)) || rest.charAt(end) == '_')) {
+            end++;
+        }
+        return rest.substring(0, end);
+    }
+
     private static void assertContract(String table, String sql, Object[] params) {
         if (sql == null || sql.isBlank()) {
             throw contractViolation("SQL 语句为空");
@@ -452,7 +500,7 @@ public final class DynamicTableSql {
                                                           String sql, Object... params) {
         Object[] bound = normalize(params);
         assertContract(table, sql, bound);
-        return jdbcTemplate.query(sql,
+        return jdbcTemplate.query(toVendorSql(jdbcTemplate, sql),
                 ps -> {
                     ps.setQueryTimeout(LOCK_QUERY_TIMEOUT_SECONDS);
                     for (int i = 0; i < bound.length; i++) {

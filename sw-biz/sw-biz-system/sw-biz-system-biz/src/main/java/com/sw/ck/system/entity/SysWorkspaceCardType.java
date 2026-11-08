@@ -24,9 +24,9 @@ public class SysWorkspaceCardType extends BaseEntity {
     @TableField("renderer_key")
     private String rendererKey;
 
-    /** 卡片默认元数据 JSON。 */
+    /** 卡片默认元数据 JSON；非 PG 方言无库级默认值，实体层兜底 '{}'。 */
     @TableField("metadata_json")
-    private String metadataJson;
+    private String metadataJson = "{}";
 
     /** 默认宽度：1=半宽，2=整行。 */
     @TableField("default_span")

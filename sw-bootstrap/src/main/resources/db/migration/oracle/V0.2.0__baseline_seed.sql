@@ -917,7 +917,11 @@ CREATE UNIQUE INDEX uk_sw_form_def_form_key ON sw_form_def (form_key, deleted);
 -- ==================== 8. sw_form_config (table_name) ====================
 -- V12 用 ALTER TABLE ADD CONSTRAINT 创建的唯一约束
 alter table sw_form_config drop constraint uk_sw_form_cfg_tname;
-CREATE UNIQUE INDEX uk_sw_form_cfg_tname ON sw_form_config (table_name, deleted);
+-- Oracle 复合唯一索引只要有一列非空就参与判重；table_name 在草稿阶段为空，
+-- 用函数索引排除 NULL 行，保持 PG/MySQL/H2 “任一列为 NULL 即不判重”的语义。
+CREATE UNIQUE INDEX uk_sw_form_cfg_tname ON sw_form_config (
+    CASE WHEN table_name IS NOT NULL THEN table_name END,
+    CASE WHEN table_name IS NOT NULL THEN deleted END);
 
 -- ==================== 9. sw_bpm_ext_datasource ====================
 drop index uk_sw_bpm_ext_ds_name;
@@ -2061,8 +2065,11 @@ ALTER TABLE sw_iot_device add device_name VARCHAR2(128 CHAR) DEFAULT 'unknown' N
 -- 新增 tencent_status 字段（腾讯云在线状态）
 ALTER TABLE sw_iot_device add tencent_status VARCHAR2(32 CHAR) DEFAULT 'offline';
 
--- 创建 product_id + device_name 唯一索引
-create UNIQUE index uk_iot_device_product_device ON sw_iot_device (product_id, device_name, tenant_id);
+-- 创建 product_id + device_name 唯一索引（两列均可空：任一为空时不参与判重，与 PG/MySQL 一致）
+create UNIQUE index uk_iot_device_product_device ON sw_iot_device (
+    CASE WHEN product_id IS NOT NULL AND device_name IS NOT NULL THEN product_id END,
+    CASE WHEN product_id IS NOT NULL AND device_name IS NOT NULL THEN device_name END,
+    CASE WHEN product_id IS NOT NULL AND device_name IS NOT NULL THEN tenant_id END);
 
 -- ============================================================
 -- sw_iot_device_command 表升级
@@ -2379,7 +2386,11 @@ alter table sw_notify_message add external_message_id VARCHAR2(200 CHAR);
 alter table sw_notify_message add failure_reason VARCHAR2(500 CHAR);
 alter table sw_notify_message add idempotency_key VARCHAR2(200 CHAR);
 create index idx_sw_notify_msg_delivery on sw_notify_message (tenant_id, delivery_status);
-create unique index uk_sw_notify_msg_idempotency on sw_notify_message (tenant_id, idempotency_key);
+-- idempotency_key 可空：Oracle 复合唯一索引对 (非空 tenant_id, NULL key) 仍判重，
+-- 用函数索引排除空键行，与 PG/MySQL 允许任意多条无幂等键通知的语义一致。
+create unique index uk_sw_notify_msg_idempotency on sw_notify_message (
+    CASE WHEN idempotency_key IS NOT NULL THEN tenant_id END,
+    CASE WHEN idempotency_key IS NOT NULL THEN idempotency_key END);
 
 -- ======== V49（来源: sw-biz/sw-bpm/sw-bpm-process，副本 1 处已去重） ========
 -- P58：参与人快照、审批动作/意见、分支轨迹与抄送投递审计。
@@ -2467,7 +2478,10 @@ WHERE p.permission = 'workflow:def:view'
 -- ======== V52（来源: sw-biz/sw-biz-form/sw-biz-form-biz，副本 1 处已去重） ========
 -- P4：表单提交幂等键（草稿/命令重试场景防重复落表单数据）。
 alter table sw_form_trace add submit_idempotency_key VARCHAR2(128 CHAR);
-create unique index uk_sw_form_trace_idem on sw_form_trace (tenant_id, submit_idempotency_key);
+-- 提交幂等键可空：仅非空键参与唯一判重（PG/MySQL/H2 的空键语义）。
+create unique index uk_sw_form_trace_idem on sw_form_trace (
+    CASE WHEN submit_idempotency_key IS NOT NULL THEN tenant_id END,
+    CASE WHEN submit_idempotency_key IS NOT NULL THEN submit_idempotency_key END);
 
 -- ======== V53（来源: sw-bootstrap，副本 1 处已去重） ========
 -- ===================================================================
@@ -3431,7 +3445,11 @@ create table sw_bpm_communication (
 create index idx_sw_bpm_comm_task
     ON sw_bpm_communication (tenant_id, task_id);
 create UNIQUE index uk_sw_bpm_comm_instance_receiver
-    ON sw_bpm_communication (tenant_id, process_instance_id, task_id, receiver_id);
+    ON sw_bpm_communication (
+        CASE WHEN task_id IS NOT NULL THEN tenant_id END,
+        CASE WHEN task_id IS NOT NULL THEN process_instance_id END,
+        CASE WHEN task_id IS NOT NULL THEN task_id END,
+        CASE WHEN task_id IS NOT NULL THEN receiver_id END);
 
 create table sw_bpm_sign_record (
     id                NUMBER(19)          not null primary key,
@@ -4252,8 +4270,14 @@ alter table sw_notify_message add failure_class VARCHAR2(40 CHAR);
 alter table sw_notify_message add receipt_digest VARCHAR2(200 CHAR);
 
 -- 一次业务通知稳定身份：租户+事件类型+业务对象+发生次序+接收人+渠道
--- （biz_id 为空的系统通告不受唯一键约束，保持可重复广播语义）
-create unique index uk_sw_notify_msg_identity on sw_notify_message (tenant_id, event_type, biz_id, occurrence_no, recipient_id, channel);
+-- （biz_id 为空的系统通告不受唯一键约束，保持可重复广播语义；Oracle 需用函数索引表达）
+create unique index uk_sw_notify_msg_identity on sw_notify_message (
+    CASE WHEN biz_id IS NOT NULL THEN tenant_id END,
+    CASE WHEN biz_id IS NOT NULL THEN event_type END,
+    CASE WHEN biz_id IS NOT NULL THEN biz_id END,
+    CASE WHEN biz_id IS NOT NULL THEN occurrence_no END,
+    CASE WHEN biz_id IS NOT NULL THEN recipient_id END,
+    CASE WHEN biz_id IS NOT NULL THEN channel END);
 create index idx_sw_notify_msg_retry on sw_notify_message (tenant_id, event_type, biz_id);
 
 -- ---------- 7. 尝试流水扩展 ----------
@@ -4877,7 +4901,10 @@ ALTER TABLE sw_bpm_command add completion_point VARCHAR2(200 CHAR);
 ALTER TABLE sw_bpm_command add deadline_at timestamp;
 ALTER TABLE sw_bpm_command add overdue_at timestamp;
 
-create UNIQUE index uk_sw_bpm_command_logical ON sw_bpm_command (tenant_id, logical_command_id);
+-- logical_command_id 可空：仅逻辑命令参与唯一判重。
+create UNIQUE index uk_sw_bpm_command_logical ON sw_bpm_command (
+    CASE WHEN logical_command_id IS NOT NULL THEN tenant_id END,
+    CASE WHEN logical_command_id IS NOT NULL THEN logical_command_id END);
 create index idx_sw_bpm_command_deadline ON sw_bpm_command (status, deadline_at);
 
 -- 3) 效果权威账本（sw_bpm_command_effect）：与业务效果同事务写入；
@@ -5094,8 +5121,14 @@ ALTER TABLE sw_bpm_dynamic_branch add round_no NUMBER(19);
 ALTER TABLE sw_bpm_dynamic_branch add execution_id VARCHAR2(64 CHAR);
 ALTER TABLE sw_bpm_dynamic_branch add source_refs CLOB;
 drop index uk_sw_bpm_dyn_branch;
+-- round_no 可空：仅非空轮次参与唯一判重，保持与 PG/MySQL 空值语义一致。
 CREATE UNIQUE INDEX uk_sw_bpm_dyn_branch
-    ON sw_bpm_dynamic_branch (tenant_id, process_instance_id, node_key, round_no, branch_index);
+    ON sw_bpm_dynamic_branch (
+        CASE WHEN round_no IS NOT NULL THEN tenant_id END,
+        CASE WHEN round_no IS NOT NULL THEN process_instance_id END,
+        CASE WHEN round_no IS NOT NULL THEN node_key END,
+        CASE WHEN round_no IS NOT NULL THEN round_no END,
+        CASE WHEN round_no IS NOT NULL THEN branch_index END);
 
 -- ======== 来源: V0.1.6__p63_iot_command_reservation.sql ========
 -- V0.1.6 (P63): 流程成功结束后的一次性 IoT 预约意图。
