@@ -218,19 +218,25 @@ class SeedComparisonTest {
         }
         StringBuilder sql = new StringBuilder("SELECT ");
         appendColumns(sql, vendor, actualKeys);
-        sql.append(" FROM ").append(vendor.wrapIdentifier(actualTable)).append(" ORDER BY ");
-        appendColumns(sql, vendor, actualKeys);
-        MessageDigest digest = sha256();
+        sql.append(" FROM ").append(vendor.wrapIdentifier(actualTable));
+        List<String> rows = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement(sql.toString());
              ResultSet rs = ps.executeQuery()) {
             ResultSetMetaData meta = rs.getMetaData();
             while (rs.next()) {
+                StringBuilder row = new StringBuilder();
                 for (int i = 1; i <= meta.getColumnCount(); i++) {
-                    digest.update(normalize(rs.getObject(i)).getBytes(StandardCharsets.UTF_8));
-                    digest.update((byte) 0x1f);
+                    row.append(normalize(rs.getObject(i))).append('\u001f');
                 }
-                digest.update((byte) 0x1e);
+                rows.add(row.toString());
             }
+        }
+        // 在 Java 侧排序，避免 Oracle 不能 ORDER BY CLOB，也避免代理键顺序影响跨方言摘要。
+        rows.sort(null);
+        MessageDigest digest = sha256();
+        for (String row : rows) {
+            digest.update(row.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0x1e);
         }
         return HexFormat.of().formatHex(digest.digest());
     }
@@ -395,7 +401,10 @@ class SeedComparisonTest {
             return new BigDecimal(number.toString()).stripTrailingZeros().toPlainString();
         }
         if (value instanceof Timestamp || value instanceof java.sql.Date
-                || value instanceof java.sql.Time || value instanceof TemporalAccessor) {
+                || value instanceof java.sql.Time || value instanceof TemporalAccessor
+                || value.getClass().getName().startsWith("oracle.sql.TIMESTAMP")
+                || value.getClass().getName().startsWith("oracle.sql.DATE")
+                || value.getClass().getName().startsWith("oracle.sql.TIMESTAMPTZ")) {
             return "\u0001TS";
         }
         return String.valueOf(value);
