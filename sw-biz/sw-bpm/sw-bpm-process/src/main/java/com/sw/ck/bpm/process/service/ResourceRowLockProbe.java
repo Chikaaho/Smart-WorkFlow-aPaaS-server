@@ -6,18 +6,32 @@ import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 
 /**
  * 资源段空闲探测的方言实现。
  * <p>
  * 支持 {@code SKIP LOCKED} 的数据库保持原语义（不等待、不污染事务）；SQL Server 用
- * {@code READPAST} 表提示；MySQL 5.7/达梦用带语句超时的 {@code FOR UPDATE}，
- * 超时视为“段忙”返回 null，不无限阻塞。行被并发事务持有时返回 null，调用方放弃借用。
+ * {@code READPAST} 表提示；MySQL 5.7 无 {@code SKIP LOCKED}，用会话级
+ * {@code innodb_lock_wait_timeout=1} 的 {@code FOR UPDATE}，1 秒是等待上限，超时视为
+ * “段忙”返回 null，不无限阻塞；达梦用语句超时，B2 实测若支持 {@code SKIP LOCKED}
+ * 再切换。行被并发事务持有时返回 null，调用方放弃借用。
+ * </p>
+ * <p>
+ * MySQL 5.7 为什么必须保留行锁探测，而不是改成独立的原子 {@code UPDATE ... WHERE}：
+ * 调用方在探测返回后、同一事务内执行 {@code incrementWithinCap}。探测持有的行锁保证
+ * “段空闲”判断到条件占用之间不被其他事务插入；独立 UPDATE 既不持有该锁，也仍会等待
+ * 被占用的行锁（MySQL 5.7 无 NOWAIT），反而失去原子性。会话变量在同一个
+ * {@link ConnectionCallback} 内设置并还原，连接归还池子前已恢复。
  * </p>
  */
 @Component
@@ -53,22 +67,58 @@ public class ResourceRowLockProbe {
     }
 
     private Long probeMySql57(String scope, long scopeKey, String segment) {
+        return jdbcTemplate.execute((ConnectionCallback<Long>) connection ->
+                probeMySqlOnConnection(connection, scope, scopeKey, segment));
+    }
+
+    /**
+     * 在同一个连接上设置、探测并还原会话变量；连接归还池子后超时值已恢复。
+     */
+    Long probeMySqlOnConnection(Connection connection, String scope, long scopeKey, String segment) {
         Integer previous = null;
+        boolean changed = false;
         try {
-            previous = jdbcTemplate.queryForObject("SELECT @@SESSION.innodb_lock_wait_timeout", Integer.class);
-            jdbcTemplate.execute("SET SESSION innodb_lock_wait_timeout = 1");
-            return probeWithTimeout(scope, scopeKey, segment);
-        } catch (DataAccessException e) {
+            previous = queryInt(connection, "SELECT @@SESSION.innodb_lock_wait_timeout");
+            if (previous == null) {
+                return null;
+            }
+            execute(connection, "SET SESSION innodb_lock_wait_timeout = " + PROBE_TIMEOUT_SECONDS);
+            changed = true;
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT id FROM sw_bpm_resource_usage "
+                            + "WHERE scope = ? AND scope_key = ? AND segment = ? FOR UPDATE")) {
+                ps.setQueryTimeout(PROBE_TIMEOUT_SECONDS);
+                ps.setString(1, scope);
+                ps.setLong(2, scopeKey);
+                ps.setString(3, segment);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? rs.getLong(1) : null;
+                }
+            }
+        } catch (SQLException e) {
             log.debug("MySQL 5.7 资源段探测失败，按段忙处理: segment={}, cause={}", segment, e.getMessage());
             return null;
         } finally {
-            if (previous != null) {
+            if (changed) {
                 try {
-                    jdbcTemplate.execute("SET SESSION innodb_lock_wait_timeout = " + previous);
-                } catch (DataAccessException e) {
+                    execute(connection, "SET SESSION innodb_lock_wait_timeout = " + previous);
+                } catch (SQLException e) {
                     log.warn("恢复 MySQL innodb_lock_wait_timeout 失败: {}", e.getMessage());
                 }
             }
+        }
+    }
+
+    private static Integer queryInt(Connection connection, String sql) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            return rs.next() ? rs.getInt(1) : null;
+        }
+    }
+
+    private static void execute(Connection connection, String sql) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(sql);
         }
     }
 
