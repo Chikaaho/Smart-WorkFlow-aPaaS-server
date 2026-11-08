@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.Blob;
+import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -15,9 +17,11 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -27,18 +31,27 @@ import java.util.TreeSet;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 种子两层比对：所有表行数 + 关键表关键列逐值摘要。
+ * 种子两层比对：所有表行数 + 关键表关键列逐值摘要 + 其余列逐值比对。
  * <p>
  * 通过系统属性指定基准库和目标库：
  * {@code -Dseed.base.url=... -Dseed.base.user=... -Dseed.base.password=...}
  * 与 {@code seed.target.*}。未配置时跳过，供阶段 B/C 每库执行。
  * 基准库由 PostgreSQL 空库执行完整迁移后得到；目标库执行对应方言迁移。
- * 空字符串与 NULL 在摘要中统一归一到同一个哨兵，避免 Oracle 把 '' 当 NULL 造成假差异。
+ * </p>
+ * <p>
+ * 第一层：全部 {@code sys_*}/{@code sw_*} 表行数；{@link #KEY_COLUMNS} 中的 18 张表
+ * 按主键排序后的关键列 SHA-256。
+ * 第二层：按主键配对，比较所有共有列；空字符串与 NULL 统一归一为同一哨兵，
+ * 时间/日期列归一为非空哨兵（种子里的 {@code current_timestamp} 因执行时刻不同，
+ * 不参与逐值比较，但 NULL/非 NULL 仍区分）。差异报告定位到“表/主键/列”。
+ * Oracle 等大写折叠库通过 {@link DatabaseMetaData} 取实际标识符后再引用。
  * </p>
  */
 class SeedComparisonTest {
 
-    private static final Map<String, List<String>> KEY_COLUMNS = new HashMap<>();
+    private static final int MAX_DIFFS = 200;
+
+    private static final Map<String, List<String>> KEY_COLUMNS = new LinkedHashMap<>();
 
     static {
         KEY_COLUMNS.put("sys_tenant", List.of("id", "code", "name", "status"));
@@ -62,7 +75,7 @@ class SeedComparisonTest {
     }
 
     @Test
-    @DisplayName("种子两层比对：行数 + 关键列摘要")
+    @DisplayName("种子两层比对：行数 + 关键列摘要 + 其余列逐值")
     void compareSeedData() throws Exception {
         String baseUrl = System.getProperty("seed.base.url");
         String targetUrl = System.getProperty("seed.target.url");
@@ -78,23 +91,30 @@ class SeedComparisonTest {
                 long baseCount = count(base, table);
                 long targetCount = count(target, table);
                 if (baseCount != targetCount) {
-                    mismatches.add(table + " 行数 " + baseCount + " != " + targetCount);
+                    addDiff(mismatches, table + " 行数 " + baseCount + " != " + targetCount);
                     continue;
                 }
                 List<String> keys = KEY_COLUMNS.get(table);
-                if (keys == null || keys.isEmpty()) {
-                    System.out.printf("COUNT OK  %-40s %d%n", table, baseCount);
-                    continue;
-                }
-                String baseHash = hash(base, table, keys);
-                String targetHash = hash(target, table, keys);
-                if (!baseHash.equals(targetHash)) {
-                    mismatches.add(table + " 关键列摘要不一致 base=" + baseHash + " target=" + targetHash);
+                if (keys != null && !keys.isEmpty()) {
+                    String baseHash = hash(base, table, keys);
+                    String targetHash = hash(target, table, keys);
+                    if (!baseHash.equals(targetHash)) {
+                        addDiff(mismatches, table + " 关键列摘要不一致 base=" + baseHash + " target=" + targetHash);
+                    } else {
+                        System.out.printf("COUNT+KEY OK %-36s %d %s%n", table, baseCount, baseHash.substring(0, 12));
+                    }
                 } else {
-                    System.out.printf("COUNT+KEY OK %-36s %d %s%n", table, baseCount, baseHash.substring(0, 12));
+                    System.out.printf("COUNT OK     %-36s %d%n", table, baseCount);
                 }
+                compareAllColumns(base, target, table, mismatches);
             }
-            assertThat(mismatches).as("种子比对差异").isEmpty();
+            assertThat(mismatches).as("种子两层比对差异（表/主键/列）").isEmpty();
+        }
+    }
+
+    private static void addDiff(List<String> mismatches, String diff) {
+        if (mismatches.size() < MAX_DIFFS) {
+            mismatches.add(diff);
         }
     }
 
@@ -106,23 +126,66 @@ class SeedComparisonTest {
 
     private static List<String> seedTables(Connection connection) throws SQLException {
         Set<String> tables = new TreeSet<>();
-        DatabaseMetaData meta = connection.getMetaData();
-        try (ResultSet rs = meta.getTables(null, null, "%", new String[]{"TABLE"})) {
-            while (rs.next()) {
-                String name = rs.getString("TABLE_NAME").toLowerCase(Locale.ROOT);
-                if ((name.startsWith("sys_") || name.startsWith("sw_"))
-                        && !name.equals("sw_schema_history")
-                        && !name.equals("sw_schema_history_lock")) {
-                    tables.add(name);
-                }
+        for (String name : tableNames(connection).keySet()) {
+            if ((name.startsWith("sys_") || name.startsWith("sw_"))
+                    && !name.equals("sw_schema_history")
+                    && !name.equals("sw_schema_history_lock")) {
+                tables.add(name);
             }
         }
         return new ArrayList<>(tables);
     }
 
-    private static long count(Connection connection, String table) throws SQLException {
+    /** 逻辑小写表名 → 数据库实际表名（Oracle 为大写）。 */
+    private static Map<String, String> tableNames(Connection connection) throws SQLException {
+        Map<String, String> names = new LinkedHashMap<>();
+        DatabaseMetaData meta = connection.getMetaData();
+        try (ResultSet rs = meta.getTables(null, null, "%", new String[]{"TABLE"})) {
+            while (rs.next()) {
+                String actual = rs.getString("TABLE_NAME");
+                names.putIfAbsent(actual.toLowerCase(Locale.ROOT), actual);
+            }
+        }
+        return names;
+    }
+
+    private static String actualTable(Connection connection, String logical) throws SQLException {
+        return tableNames(connection).get(logical.toLowerCase(Locale.ROOT));
+    }
+
+    /** 逻辑小写列名 → 数据库实际列名。 */
+    private static Map<String, String> columnNames(Connection connection, String actualTable)
+            throws SQLException {
+        Map<String, String> names = new LinkedHashMap<>();
+        DatabaseMetaData meta = connection.getMetaData();
+        try (ResultSet rs = meta.getColumns(null, null, actualTable, "%")) {
+            while (rs.next()) {
+                String actual = rs.getString("COLUMN_NAME");
+                names.putIfAbsent(actual.toLowerCase(Locale.ROOT), actual);
+            }
+        }
+        return names;
+    }
+
+    private static List<String> primaryKey(Connection connection, String actualTable)
+            throws SQLException {
+        Map<Integer, String> ordered = new LinkedHashMap<>();
+        DatabaseMetaData meta = connection.getMetaData();
+        try (ResultSet rs = meta.getPrimaryKeys(null, null, actualTable)) {
+            while (rs.next()) {
+                ordered.put(rs.getInt("KEY_SEQ"), rs.getString("COLUMN_NAME"));
+            }
+        }
+        return ordered.values().stream().toList();
+    }
+
+    private static long count(Connection connection, String logicalTable) throws SQLException {
         DatabaseVendor vendor = DatabaseVendor.detect(connection);
-        String sql = "SELECT COUNT(*) FROM " + vendor.wrapIdentifier(table);
+        String actual = actualTable(connection, logicalTable);
+        if (actual == null) {
+            return -1;
+        }
+        String sql = "SELECT COUNT(*) FROM " + vendor.wrapIdentifier(actual);
         try (PreparedStatement ps = connection.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             rs.next();
@@ -130,28 +193,23 @@ class SeedComparisonTest {
         }
     }
 
-    private static String hash(Connection connection, String table, List<String> keys) throws SQLException {
+    private static String hash(Connection connection, String logicalTable, List<String> keys)
+            throws SQLException {
         DatabaseVendor vendor = DatabaseVendor.detect(connection);
+        String actualTable = actualTable(connection, logicalTable);
+        Map<String, String> columns = columnNames(connection, actualTable);
+        List<String> actualKeys = keys.stream()
+                .map(key -> columns.get(key.toLowerCase(Locale.ROOT)))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        if (actualKeys.size() != keys.size()) {
+            return "MISSING-KEYS";
+        }
         StringBuilder sql = new StringBuilder("SELECT ");
-        for (int i = 0; i < keys.size(); i++) {
-            if (i > 0) {
-                sql.append(", ");
-            }
-            sql.append(vendor.wrapIdentifier(keys.get(i)));
-        }
-        sql.append(" FROM ").append(vendor.wrapIdentifier(table)).append(" ORDER BY ");
-        for (int i = 0; i < keys.size(); i++) {
-            if (i > 0) {
-                sql.append(", ");
-            }
-            sql.append(vendor.wrapIdentifier(keys.get(i)));
-        }
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
+        appendColumns(sql, vendor, actualKeys);
+        sql.append(" FROM ").append(vendor.wrapIdentifier(actualTable)).append(" ORDER BY ");
+        appendColumns(sql, vendor, actualKeys);
+        MessageDigest digest = sha256();
         try (PreparedStatement ps = connection.prepareStatement(sql.toString());
              ResultSet rs = ps.executeQuery()) {
             ResultSetMetaData meta = rs.getMetaData();
@@ -166,20 +224,162 @@ class SeedComparisonTest {
         return HexFormat.of().formatHex(digest.digest());
     }
 
-    private static String normalize(Object value) {
+    private static void appendColumns(StringBuilder sql, DatabaseVendor vendor, List<String> columns) {
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) {
+                sql.append(", ");
+            }
+            sql.append(vendor.wrapIdentifier(columns.get(i)));
+        }
+    }
+
+    /**
+     * 第二层：按主键配对比较所有共有列；差异定位到“表/主键/列”。
+     * 无主键的表跳过并在输出中标注。
+     */
+    private static void compareAllColumns(Connection base, Connection target, String logicalTable,
+                                          List<String> mismatches) throws SQLException {
+        DatabaseVendor baseVendor = DatabaseVendor.detect(base);
+        DatabaseVendor targetVendor = DatabaseVendor.detect(target);
+        String baseTable = actualTable(base, logicalTable);
+        String targetTable = actualTable(target, logicalTable);
+        if (baseTable == null || targetTable == null) {
+            addDiff(mismatches, logicalTable + " 表缺失（base=" + baseTable + ", target=" + targetTable + "）");
+            return;
+        }
+        List<String> basePk = primaryKey(base, baseTable);
+        List<String> targetPk = primaryKey(target, targetTable);
+        if (basePk.isEmpty() || targetPk.isEmpty()) {
+            System.out.printf("LAYER2 SKIP  %-36s 无主键%n", logicalTable);
+            return;
+        }
+        Map<String, String> baseColumns = columnNames(base, baseTable);
+        Map<String, String> targetColumns = columnNames(target, targetTable);
+        List<String> logicalColumns = baseColumns.keySet().stream()
+                .filter(targetColumns::containsKey)
+                .toList();
+        List<String> baseActual = logicalColumns.stream().map(baseColumns::get).toList();
+        List<String> targetActual = logicalColumns.stream().map(targetColumns::get).toList();
+
+        Map<String, List<String>> baseRows =
+                readRows(base, baseVendor, baseTable, basePk, baseActual);
+        Map<String, List<String>> targetRows =
+                readRows(target, targetVendor, targetTable, targetPk, targetActual);
+
+        for (String key : baseRows.keySet()) {
+            List<String> targetValues = targetRows.get(key);
+            if (targetValues == null) {
+                addDiff(mismatches, logicalTable + "[" + key + "] 目标库缺行");
+                continue;
+            }
+            List<String> values = baseRows.get(key);
+            for (int i = 0; i < logicalColumns.size(); i++) {
+                if (!java.util.Objects.equals(values.get(i), targetValues.get(i))) {
+                    addDiff(mismatches, logicalTable + "[" + key + "] 列 "
+                            + logicalColumns.get(i) + " base=" + values.get(i)
+                            + " target=" + targetValues.get(i));
+                }
+            }
+        }
+        for (String key : targetRows.keySet()) {
+            if (!baseRows.containsKey(key)) {
+                addDiff(mismatches, logicalTable + "[" + key + "] 基准库缺行");
+            }
+        }
+    }
+
+    private static Map<String, List<String>> readRows(Connection connection, DatabaseVendor vendor,
+                                                      String actualTable, List<String> primaryKey,
+                                                      List<String> valueColumns) throws SQLException {
+        List<String> selectColumns = new ArrayList<>(valueColumns);
+        for (String key : primaryKey) {
+            if (selectColumns.stream().noneMatch(column -> column.equalsIgnoreCase(key))) {
+                selectColumns.add(key);
+            }
+        }
+        StringBuilder sql = new StringBuilder("SELECT ");
+        appendColumns(sql, vendor, selectColumns);
+        sql.append(" FROM ").append(vendor.wrapIdentifier(actualTable)).append(" ORDER BY ");
+        appendColumns(sql, vendor, primaryKey);
+
+        Map<String, List<String>> rows = new LinkedHashMap<>();
+        try (PreparedStatement ps = connection.prepareStatement(sql.toString());
+             ResultSet rs = ps.executeQuery()) {
+            ResultSetMetaData meta = rs.getMetaData();
+            Map<String, Integer> indexes = new LinkedHashMap<>();
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+                indexes.put(meta.getColumnLabel(i).toLowerCase(Locale.ROOT), i);
+            }
+            List<Integer> keyIndexes = primaryKey.stream()
+                    .map(key -> requireIndex(indexes, key))
+                    .toList();
+            List<Integer> valueIndexes = valueColumns.stream()
+                    .map(column -> requireIndex(indexes, column))
+                    .toList();
+            while (rs.next()) {
+                StringBuilder key = new StringBuilder();
+                for (int i = 0; i < keyIndexes.size(); i++) {
+                    if (i > 0) {
+                        key.append('\u001f');
+                    }
+                    key.append(normalize(rs.getObject(keyIndexes.get(i))));
+                }
+                List<String> values = new ArrayList<>(valueIndexes.size());
+                for (int index : valueIndexes) {
+                    values.add(normalize(rs.getObject(index)));
+                }
+                rows.put(key.toString(), values);
+            }
+        }
+        return rows;
+    }
+
+    private static int requireIndex(Map<String, Integer> indexes, String column) {
+        Integer index = indexes.get(column.toLowerCase(Locale.ROOT));
+        if (index == null) {
+            throw new IllegalStateException("结果集缺少列: " + column);
+        }
+        return index;
+    }
+
+    private static String normalize(Object value) throws SQLException {
         if (value == null) {
             return "\u0000";
         }
         if (value instanceof String text) {
             return text.isEmpty() ? "\u0000" : text;
         }
-        if (value instanceof BigDecimal decimal) {
-            return decimal.stripTrailingZeros().toPlainString();
+        if (value instanceof Clob clob) {
+            long length = clob.length();
+            if (length > Integer.MAX_VALUE) {
+                throw new IllegalStateException("CLOB 过大，无法比对");
+            }
+            return normalize(clob.getSubString(1, (int) length));
+        }
+        if (value instanceof Blob blob) {
+            return HexFormat.of().formatHex(blob.getBytes(1, (int) blob.length()));
         }
         if (value instanceof byte[] bytes) {
             return HexFormat.of().formatHex(bytes);
         }
+        if (value instanceof Boolean flag) {
+            return flag ? "1" : "0";
+        }
+        if (value instanceof Number number) {
+            return new BigDecimal(number.toString()).stripTrailingZeros().toPlainString();
+        }
+        if (value instanceof Timestamp || value instanceof java.sql.Date
+                || value instanceof java.sql.Time || value instanceof TemporalAccessor) {
+            return "\u0001TS";
+        }
         return String.valueOf(value);
     }
 
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
 }
