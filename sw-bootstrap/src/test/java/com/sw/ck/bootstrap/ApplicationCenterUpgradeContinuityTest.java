@@ -191,7 +191,7 @@ class ApplicationCenterUpgradeContinuityTest {
         // —— 4.0.1 执行 0.2.0 存量升级脚本（0.1.8/0.1.9/0.1.10 增量 + 历史衔接收敛为 V0.2.0，发布资产原文）——
         execScript(classpathResource(UPGRADE_020_SCRIPT));
 
-        // —— 4.1 主链衔接验证：V0.2.0 已登记、R__ 已对账，仅执行新增 V0.2.2—V0.2.9/V0.4.1 与 R__0.4.0、validate 通过 ——
+        // —— 4.1 主链衔接验证：V0.2.0 已登记、R__ 已对账，仅执行新增 V0.2.2—V0.2.9/V0.4.0 与 R__0.4.0、validate 通过 ——
         MigrateResult upgrade = Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())
@@ -199,7 +199,7 @@ class ApplicationCenterUpgradeContinuityTest {
                 .migrate();
         assertTrue(upgrade.success, "主链衔接验证应成功");
         assertEquals(9, upgrade.migrationsExecuted,
-                "0.2.0 存量升级脚本衔接后仅执行新增 V0.2.2—V0.2.9/V0.4.1 与 R__0.4.0 迁移，不重放已登记的 versioned 与 R__");
+                "0.2.0 存量升级脚本衔接后仅执行新增 V0.2.2—V0.2.9/V0.4.0 与 R__0.4.0 迁移，不重放已登记的 versioned 与 R__");
         Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())

@@ -1,5 +1,6 @@
 package com.sw.ck.bootstrap.config;
 
+import com.sw.ck.bootstrap.compat.DatabaseCompatibilityGuard;
 import com.sw.ck.bootstrap.migration.SwVendorMigrationRunner;
 import com.sw.ck.common.jdbc.DatabaseVendor;
 import org.flywaydb.core.Flyway;
@@ -27,14 +28,18 @@ public class FlywayConfiguration {
     private static final Logger log = LoggerFactory.getLogger(FlywayConfiguration.class);
 
     /**
-     * 自定义 Flyway 迁移策略，保证主迁移先跑、prod-update 补丁后跑。
+     * 自定义 Flyway 迁移策略，保证兼容性检查先于任何迁移、主迁移先跑、prod-update 补丁后跑。
      *
      * @param dataSource 主数据源
+     * @param guard      迁移前兼容性检查（字符集/排序规则/行格式）
      * @return FlywayMigrationStrategy
      */
     @Bean
-    public FlywayMigrationStrategy flywayMigrationStrategy(DataSource dataSource) {
+    public FlywayMigrationStrategy flywayMigrationStrategy(DataSource dataSource,
+                                                           DatabaseCompatibilityGuard guard) {
         return flyway -> {
+            // 必须在任何 DDL 之前检查；失败时 Flyway/SwVendorMigrationRunner 零执行。
+            guard.check();
             DatabaseVendor vendor = detectVendor(dataSource);
             // Flyway 没有达梦/Kingbase/openGauss 模块，改由项目内 Runner 执行。
             if (vendor == DatabaseVendor.DM

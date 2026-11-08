@@ -1,11 +1,11 @@
--- 0.4.1 非 pgvector 数据库的持久化向量表；PostgreSQL 保留 pgvector 链路，本表供其他方言使用。
+-- 0.4.0 非 pgvector 数据库的持久化向量表；PostgreSQL 保留 pgvector 链路，本表供其他方言使用。
 CREATE TABLE IF NOT EXISTS sw_knowledge_vector (
     id              BIGINT       NOT NULL PRIMARY KEY,
     tenant_id       BIGINT       NOT NULL DEFAULT 0,
     kb_id           BIGINT       NOT NULL,
     document_id     BIGINT       NOT NULL,
     chunk_id        BIGINT       NOT NULL,
-    embedding_text  TEXT         NOT NULL,
+    embedding_text  CLOB         NOT NULL,
     create_time     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -4,8 +4,6 @@ import com.sw.ck.common.jdbc.DatabaseVendor;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -14,10 +12,11 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * 启动时数据库兼容性检查。
+ * 迁移前数据库兼容性检查。
  * <p>
- * 多数据库适配的前提条件不满足时直接拒绝启动，避免应用跑起来后才发现字符集/排序规则
- * 导致唯一键或 LIKE 语义与 PostgreSQL 不一致：
+ * 多数据库适配的前提条件不满足时拒绝启动，避免表先按错误的字符集/排序规则建好、
+ * 之后再报错。检查由 {@code FlywayConfiguration} 在调用任何迁移之前执行，
+ * 不再作为 {@code ApplicationRunner} 在上下文启动完成后才跑：
  * <ul>
  *   <li>MySQL/MariaDB：utf8mb4 + utf8mb4_bin；MySQL 5.7 另查 DYNAMIC 行格式与大前缀。</li>
  *   <li>SQL Server：数据库排序规则区分大小写（_CS_ 或 _BIN）。</li>
@@ -27,7 +26,7 @@ import java.util.Map;
  * </ul>
  */
 @Component
-public class DatabaseCompatibilityGuard implements ApplicationRunner {
+public class DatabaseCompatibilityGuard {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseCompatibilityGuard.class);
 
@@ -37,8 +36,10 @@ public class DatabaseCompatibilityGuard implements ApplicationRunner {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    @Override
-    public void run(ApplicationArguments args) {
+    /**
+     * 在迁移策略执行任何 Flyway/SwVendorMigrationRunner 之前调用；失败则抛出，迁移零执行。
+     */
+    public void check() {
         DatabaseVendor vendor = JdbcVendorSupport.vendor(jdbcTemplate);
         switch (vendor) {
             case H2 -> log.info("Database compatibility guard skipped for H2 test/dev database");
