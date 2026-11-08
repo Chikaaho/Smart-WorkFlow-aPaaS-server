@@ -928,14 +928,14 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         Long internal = internalToolMapper.selectCount(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
                         .eq(AgentToolInternalConfig::getName, toolName)
-                        .eq(AgentToolInternalConfig::getEnabled, true));
+                        .eq(AgentToolInternalConfig::getEnabled, 1));
         if (internal != null && internal > 0) {
             return true;
         }
         Long external = externalToolMapper.selectCount(
                 Wrappers.<AgentToolExternalConfig>lambdaQuery()
                         .eq(AgentToolExternalConfig::getName, toolName)
-                        .eq(AgentToolExternalConfig::getEnabled, true));
+                        .eq(AgentToolExternalConfig::getEnabled, 1));
         return external != null && external > 0;
     }
 }
