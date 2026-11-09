@@ -2,6 +2,10 @@ package com.sw.ck.bootstrap.multidb;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
+import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
+import com.sw.ck.agent.service.AgentToolConfigService;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -74,6 +78,40 @@ final class BusinessSmokeSupport {
         JsonNode data = MAPPER.readTree(response.body()).path("data");
         if (!data.isArray() || data.isEmpty()) {
             throw new IllegalStateException("菜单为空: " + response.body());
+        }
+    }
+
+    /**
+     * X1：各库业务冒烟追加一条智能体工具启用过滤查询。
+     * 直接经服务层执行 Boolean 绑定，覆盖管理端内部/外部工具列表的 enabled 过滤。
+     */
+    static void assertAgentToolEnabledFilter(ConfigurableApplicationContext app) {
+        LoginUser loginUser = new LoginUser();
+        loginUser.setUserId(1L);
+        loginUser.setUsername("admin");
+        loginUser.setTenantId(0L);
+        loginUser.setSuperAdmin(true);
+        LoginUserHolder.set(loginUser);
+        try {
+            AgentToolConfigService service = app.getBean(AgentToolConfigService.class);
+            AgentToolInternalConfigQuery internalQuery = new AgentToolInternalConfigQuery();
+            internalQuery.setPageNum(1);
+            internalQuery.setPageSize(10);
+            internalQuery.setEnabled(true);
+            PageResult<?> internal = service.pageInternalTools(internalQuery);
+            if (internal == null) {
+                throw new IllegalStateException("内部工具启用过滤返回 null");
+            }
+            AgentToolExternalConfigQuery externalQuery = new AgentToolExternalConfigQuery();
+            externalQuery.setPageNum(1);
+            externalQuery.setPageSize(10);
+            externalQuery.setEnabled(true);
+            PageResult<?> external = service.pageExternalTools(externalQuery);
+            if (external == null) {
+                throw new IllegalStateException("外部工具启用过滤返回 null");
+            }
+        } finally {
+            LoginUserHolder.clear();
         }
     }
 

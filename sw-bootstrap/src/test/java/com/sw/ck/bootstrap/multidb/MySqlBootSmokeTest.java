@@ -227,6 +227,7 @@ class MySqlBootSmokeTest {
                 .isGreaterThan(0);
         String token = BusinessSmokeSupport.login(base, "admin", "AdminP@ssw0rd");
         BusinessSmokeSupport.assertMenus(base, token);
+        BusinessSmokeSupport.assertAgentToolEnabledFilter(app);
         String formId = BusinessSmokeSupport.publishForm(
                 app, loginUser, "mysql_smoke_form_" + System.nanoTime());
         BusinessSmokeSupport.assertDynamicRecordRoundTrip(app, formId, 0L);
