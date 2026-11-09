@@ -71,20 +71,22 @@ public class DatabaseCompatibilityGuard {
             if (!"dynamic".equals(rowFormat)) {
                 throw new IllegalStateException("MySQL innodb_default_row_format 必须是 DYNAMIC，当前为 " + rowFormat);
             }
-            Integer explicitDefaults;
-            try {
-                explicitDefaults = jdbcTemplate.queryForObject(
-                        "SELECT @@SESSION.explicit_defaults_for_timestamp", Integer.class);
-            } catch (RuntimeException e) {
-                throw new IllegalStateException(
-                        "MySQL 无法读取 explicit_defaults_for_timestamp，拒绝启动；"
-                                + "请在 JDBC URL 增加 sessionVariables=explicit_defaults_for_timestamp=ON", e);
-            }
-            if (explicitDefaults == null || explicitDefaults != 1) {
-                throw new IllegalStateException(
-                        "MySQL explicit_defaults_for_timestamp 必须为 ON（JDBC URL 增加 "
-                                + "sessionVariables=explicit_defaults_for_timestamp=ON），当前为 " + explicitDefaults);
-            }
+        }
+        Integer explicitDefaults;
+        try {
+            explicitDefaults = jdbcTemplate.queryForObject(
+                    "SELECT @@SESSION.explicit_defaults_for_timestamp", Integer.class);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException(
+                    "MySQL/MariaDB 无法读取 explicit_defaults_for_timestamp，拒绝启动；"
+                            + "请在 JDBC URL 增加 sessionVariables=explicit_defaults_for_timestamp=ON", e);
+        }
+        if (explicitDefaults == null || explicitDefaults != 1) {
+            throw new IllegalStateException(
+                    "MySQL/MariaDB explicit_defaults_for_timestamp 必须为 ON（JDBC URL 增加 "
+                            + "sessionVariables=explicit_defaults_for_timestamp=ON），当前为 " + explicitDefaults);
+        }
+        if (vendor == DatabaseVendor.MYSQL) {
             String version = jdbcTemplate.queryForObject("SELECT VERSION()", String.class);
             if (version != null && version.startsWith("5.7")) {
                 Integer largePrefix;
@@ -135,8 +137,38 @@ public class DatabaseCompatibilityGuard {
                         + compatibility);
             }
         }
+        if (vendor == DatabaseVendor.KINGBASE) {
+            checkKingbaseCompatibility();
+        }
         log.info("Database compatibility check passed: vendor={}, server_encoding={}",
                 vendor.displayName(), encoding);
+    }
+
+    /**
+     * KingbaseES 初始化模式（Oracle/PG/MySQL）会影响空串与比较语义。
+     * 官方参数名随版本不同，依次探测；都无法读取时记录告警，由 Owner 验证时确认。
+     */
+    private void checkKingbaseCompatibility() {
+        for (String parameter : List.of("database_mode", "sql_compatibility", "compatibility_mode")) {
+            try {
+                String value = jdbcTemplate.queryForObject("SHOW " + parameter, String.class);
+                if (value == null || value.isBlank()) {
+                    continue;
+                }
+                if (!"PG".equalsIgnoreCase(value) && !"POSTGRESQL".equalsIgnoreCase(value)) {
+                    throw new IllegalStateException("KingbaseES 必须使用 PG 兼容模式（" + parameter
+                            + "=pg），当前为 " + value);
+                }
+                log.info("Kingbase compatibility mode OK: {}={}", parameter, value);
+                return;
+            } catch (IllegalStateException e) {
+                throw e;
+            } catch (RuntimeException ignored) {
+                // 参数名不识别，继续尝试下一个
+            }
+        }
+        log.warn("KingbaseES 兼容模式参数未识别；请 Owner 在真实库确认 database_mode=pg，"
+                + "否则空串/NULL 语义可能与 PG 脚本不一致");
     }
 
     private void logDmSettings() {

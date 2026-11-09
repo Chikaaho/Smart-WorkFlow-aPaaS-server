@@ -31,6 +31,9 @@ class MariaDbSeedMigrationTest {
         int queryAt = url.indexOf('?');
         String base = queryAt >= 0 ? url.substring(0, queryAt) : url;
         String params = queryAt >= 0 ? url.substring(queryAt) : "";
+        if (!params.contains("sessionVariables=")) {
+            params += (params.isEmpty() ? "?" : "&") + "sessionVariables=explicit_defaults_for_timestamp=ON";
+        }
         String prefix = base.substring(0, base.lastIndexOf('/') + 1);
         String serverUrl = prefix + "mysql" + params;
         String targetUrl = prefix + DATABASE + params;
