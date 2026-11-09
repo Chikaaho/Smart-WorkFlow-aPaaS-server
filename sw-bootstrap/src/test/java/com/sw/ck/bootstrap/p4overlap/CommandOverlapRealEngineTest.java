@@ -236,6 +236,25 @@ class CommandOverlapRealEngineTest {
             event("engine-complete-exit", taskId);
         }
 
+        /**
+         * 两个车道在 complete 前都会通过 setVariable 写流程变量，并发写同一流程实例会触发
+         * Flowable 乐观锁（这是被测重叠窗口之外的噪声）。串行化变量写入，使断言只观察
+         * 受门控的 complete 区间，不改变真实 complete 的并发语义。
+         */
+        private static final java.util.concurrent.locks.ReentrantLock SET_VARIABLE_LOCK =
+                new java.util.concurrent.locks.ReentrantLock();
+
+        @Override
+        public java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> setVariable(
+                String processInstanceId, String name, Object value) {
+            SET_VARIABLE_LOCK.lock();
+            try {
+                return super.setVariable(processInstanceId, name, value);
+            } finally {
+                SET_VARIABLE_LOCK.unlock();
+            }
+        }
+
         @Override
         public java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> complete(
                 String taskId, Map<String, Object> variables) {

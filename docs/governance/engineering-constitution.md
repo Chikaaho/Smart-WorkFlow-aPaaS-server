@@ -276,6 +276,23 @@ sw-dependencies (BOM)
   仍全部归 Flyway。
 - 动态宽表的环境迁移靠表单导入导出，不靠 Flyway 脚本。
 
+### 6.3 SQL Server 终态基线（0.4.0 首次支持）
+
+- SQL Server 在 0.4.0 首次支持，无 0.3.x 升级路径。为保持 30 条迁移身份，
+  `db/migration/sqlserver/` 采用**终态基线**：
+  - `V0.2.0__baseline_seed.sql` 由 PG 0.4.0 终态 schema 生成；
+  - `R__0.2.0_sqlserver_seed.sql` 为终态种子数据；
+  - 其余 V/R 为 `SELECT 1` 占位脚本。
+- 这是对“同一版本序列逐版本增量”的**显式方案偏离**；版本号相同，但占位脚本不代表
+  该历史版本的真实增量。部署文档与发布说明必须标注。
+- **维护规则（硬约束）**：修改任何 PG `R__` 或种子数据时，必须同时修改 SQL Server
+  增量脚本（或重建终态基线），并更新
+  `db/migration/sqlserver/pg-repeatable-checksums.properties`。
+  `SqlServerRepeatableSyncTest` 固化 PG R__ 与 SQL Server 种子校验和，未同步即失败。
+- SQL Server 基线由 `scripts/db-compat/generate_sqlserver.py` 生成，输入为 PG 18
+  `pg_dump`；UAT/CI 的 PG 权威版本为 17.5，dump 仅含迁移链产物，不含手工数据。
+- 后续 SQL Server 版本升级按正常前向增量迁移，不再合并终态基线。
+
 ---
 
 ## 7. 多数据源

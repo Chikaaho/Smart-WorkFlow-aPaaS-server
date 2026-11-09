@@ -82,8 +82,8 @@ public class AgentToolCallbackFactory {
      * @return 工具句柄列表（可能为空）
      */
     public List<ToolHandle> buildToolCallbacks(Long tenantId) {
-        // enabled 条件用数字字面量 1（非 Boolean 参数）：H2/PG 下 Boolean 参数与
-        // SMALLINT 列比较不稳定（M07 Step4 现场实证，见回执 §7）
+        // enabled 用 Boolean 绑定，由各数据库驱动映射到 BOOLEAN/BIT/SMALLINT/NUMBER(1)。
+        // 不在业务代码写死 1/0：PG 的 V0.2.3 已把该列转为 BOOLEAN，1 会报 boolean = integer。
         List<AgentToolInternalConfig> internals = internalMapper.selectList(
                 Wrappers.<AgentToolInternalConfig>lambdaQuery()
                         .eq(AgentToolInternalConfig::getEnabled, true)

@@ -2,6 +2,7 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.sw.ck.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -25,8 +26,9 @@ public class BpmTaskOpinionDraft extends BaseEntity {
     private String opinionFormId;
     @TableField("opinion_form_version")
     private String opinionFormVersion;
-    @TableField("comment")
-    private String comment;
+    @TableField("opinion_comment")
+    @JsonProperty("comment")
+    private String opinionComment;
     @TableField("opinion_data")
     private String opinionData;
 }

@@ -10,6 +10,8 @@ import com.sw.ck.bpm.process.service.ResourceFactView;
 import com.sw.ck.bpm.process.service.ResourcePolicyService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.jdbc.JdbcMaps;
+import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.form.api.port.TxnActionRuntimePort;
 import com.sw.ck.security.holder.LoginUser;
@@ -320,16 +322,14 @@ public class BpmResourceOpsService {
         }
         Long total = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM sw_bpm_command" + where, Long.class, args.toArray());
-        List<Object> rowsArgs = new ArrayList<>(args);
-        rowsArgs.add(pageSize);
-        rowsArgs.add(offset);
-        List<Map<String, Object>> rows = lowerCaseKeys(jdbcTemplate.queryForList(
+        String pageSql = JdbcVendorSupport.applyLimit(jdbcTemplate,
                 "SELECT id, command_key, command_type, channel, status, resource_class, resource_units, "
                         + "resource_segment, policy_version, retry_count, tenant_id, initiator_id, "
                         + "create_time, claimed_at, finished_at, deadline_at, overdue_at, "
                         + "resource_released_at, failure_reason "
-                        + "FROM sw_bpm_command" + where + " ORDER BY create_time DESC LIMIT ? OFFSET ?",
-                rowsArgs.toArray()));
+                        + "FROM sw_bpm_command" + where + " ORDER BY create_time DESC", pageSize, offset);
+        List<Map<String, Object>> rows = lowerCaseKeys(jdbcTemplate.queryForList(
+                pageSql, args.toArray()));
         return new BpmResourceOpsViews.CommandPage(Math.max(1, page), pageSize,
                 total == null ? 0 : total, rows);
     }
@@ -383,14 +383,12 @@ public class BpmResourceOpsService {
         Object[] args = scope == null ? new Object[0] : new Object[]{scope};
         Long total = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM sw_bpm_resource_reject_log" + where, Long.class, args);
-        Object[] pageArgs = scope == null
-                ? new Object[]{pageSize, offset}
-                : new Object[]{scope, pageSize, offset};
-        List<Map<String, Object>> rows = lowerCaseKeys(jdbcTemplate.queryForList(
+        String pageSql = JdbcVendorSupport.applyLimit(jdbcTemplate,
                 "SELECT id, tenant_id, policy_version, resource_class, reject_scope, requested_units, "
                         + "reason_code, detail, command_key, create_time "
                         + "FROM sw_bpm_resource_reject_log" + where
-                        + " ORDER BY create_time DESC LIMIT ? OFFSET ?", pageArgs));
+                        + " ORDER BY create_time DESC", pageSize, offset);
+        List<Map<String, Object>> rows = lowerCaseKeys(jdbcTemplate.queryForList(pageSql, args));
         return new BpmResourceOpsViews.RejectPage(Math.max(1, page), pageSize,
                 total == null ? 0 : total, rows);
     }
@@ -453,16 +451,7 @@ public class BpmResourceOpsService {
      * 只规整视图输出的键大小写，不改变任何值。
      */
     private static List<Map<String, Object>> lowerCaseKeys(List<Map<String, Object>> rows) {
-        List<Map<String, Object>> out = new ArrayList<>(rows.size());
-        for (Map<String, Object> row : rows) {
-            Map<String, Object> normalized = new java.util.LinkedHashMap<>(row.size());
-            for (Map.Entry<String, Object> entry : row.entrySet()) {
-                normalized.put(entry.getKey() == null ? null
-                        : entry.getKey().toLowerCase(java.util.Locale.ROOT), entry.getValue());
-            }
-            out.add(normalized);
-        }
-        return out;
+        return JdbcMaps.lowerCaseKeys(rows);
     }
 
     private String now() {

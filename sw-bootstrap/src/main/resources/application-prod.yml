@@ -55,8 +55,10 @@ spring:
 logging:
   level:
     root: info
-    com.sw.ck: debug
-    org.springframework.jdbc: debug
+    # 0.4.0 运维附带项：生产默认不输出 DEBUG（各类日志等级不单独调整，
+    # 后续日志管理页面按类动态开启 DEBUG 时仍可生效）。
+    com.sw.ck: info
+    org.springframework.jdbc: info
     com.baomidou.mybatisplus: info
     # I6 R-E：生产环境不输出全量 SQL 与参数（防正文/联系方式/Provider 标识进入普通日志）
     org.apache.ibatis: info

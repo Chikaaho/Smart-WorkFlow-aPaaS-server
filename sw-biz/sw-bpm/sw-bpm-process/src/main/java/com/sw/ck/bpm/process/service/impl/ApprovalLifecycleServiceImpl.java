@@ -37,6 +37,7 @@ import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -963,7 +964,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                                 .eq("semantic_version", 2)
                                 .eq("deleted", 0);
                         java.util.List<java.util.Map<String, Object>> roundRows =
-                                dynamicBranchSnapshotMapper.selectMaps(branchQw);
+                                JdbcMaps.caseInsensitiveKeys(
+                                        dynamicBranchSnapshotMapper.selectMaps(branchQw));
                         Object maxRound = roundRows.isEmpty() ? null : roundRows.get(0).get("max_round");
                         if (maxRound instanceof Number latestRound) {
                             QueryWrapper<com.sw.ck.bpm.process.entity.DynamicBranchSnapshot> countQw =
@@ -976,7 +978,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                                     .ne("status", "CANCELED")
                                     .eq("deleted", 0);
                             java.util.List<java.util.Map<String, Object>> countRows =
-                                    dynamicBranchSnapshotMapper.selectMaps(countQw);
+                                    JdbcMaps.caseInsensitiveKeys(
+                                            dynamicBranchSnapshotMapper.selectMaps(countQw));
                             Object branchTotal = countRows.isEmpty() ? null
                                     : countRows.get(0).get("branch_total");
                             if (branchTotal instanceof Number branchNumber) {
@@ -990,7 +993,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                             .eq("node_key", nodeKey)
                             .eq("deleted", 0);
                     java.util.List<java.util.Map<String, Object>> rows =
-                            participantSnapshotMapper.selectMaps(qw);
+                            JdbcMaps.caseInsensitiveKeys(
+                                    participantSnapshotMapper.selectMaps(qw));
                     Object total = rows.isEmpty() ? null : rows.get(0).get("total");
                     // 无冻结快照（或口径缺失）：调用方回退变量口径（原 -1 哨兵已移除）
                     return total instanceof Number number

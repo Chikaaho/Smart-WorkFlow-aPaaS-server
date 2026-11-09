@@ -186,7 +186,7 @@ public class NotifyTemplateController {
         msg.setContent(content);
         msg.setBizType(NotifyBizType.SYSTEM.name());
         msg.setBizId(t.getTemplateCode());
-        msg.setRead(false);
+        msg.setIsRead(false);
         if (existing != null) {
             log.info("模板直发幂等回照: code={}, recipient={}, msgId={}",
                     t.getTemplateCode(), request.getRecipientId(), existing.getId());

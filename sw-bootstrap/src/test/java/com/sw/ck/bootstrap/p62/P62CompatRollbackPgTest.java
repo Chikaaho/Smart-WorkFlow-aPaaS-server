@@ -113,6 +113,9 @@ class P62CompatRollbackPgTest {
         batchMapper = app.getBean(BpmCommandBatchMapper.class);
         txnActionPort = app.getBean(FormTxnActionPort.class);
         queue = app.getBean(PersistentBpmCommandQueue.class);
+        // 本测试按步骤手工领取/分发命令；关闭后台调度器，避免其抢先消费 requeue 后的命令
+        // 导致 claimBy 偶发取不到（与 P62 的隔离升级语义无关的测试噪声）。
+        app.getBean(CommandDispatcher.class).stop();
 
         // 管理员操作身份（role 2 已含 form:action:invoke）
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "

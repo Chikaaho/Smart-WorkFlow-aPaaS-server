@@ -112,7 +112,7 @@ public class NotifyController {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权操作该通知");
         }
 
-        msg.setRead(true);
+        msg.setIsRead(true);
         notifyMessageService.updateById(msg);
         log.debug("通知已标记已读: id={}, recipientId={}", id, currentUserId);
 

@@ -216,7 +216,7 @@ class NotifyControllerIntegrationTest {
         assertThat(msg.getId()).isEqualTo(msgId);
         assertThat(msg.getTitle()).isEqualTo(TITLE);
         assertThat(msg.getContent()).isEqualTo(CONTENT);
-        assertThat(msg.getRead())
+        assertThat(msg.getIsRead())
                 .as("新通知 read 应为 false")
                 .isFalse();
 
@@ -228,13 +228,13 @@ class NotifyControllerIntegrationTest {
 
         // Assert：查库确认已读
         NotifyMessage updated = notifyMessageService.getById(msgId);
-        assertThat(updated.getRead())
+        assertThat(updated.getIsRead())
                 .as("标记已读后 read 应为 true")
                 .isTrue();
 
         System.out.println("=== 端到端闭合验证 ===");
-        System.out.println("  msgId=" + msgId + ", beforeRead=" + msg.getRead()
-                + ", afterRead=" + updated.getRead() + " ✓");
+        System.out.println("  msgId=" + msgId + ", beforeRead=" + msg.getIsRead()
+                + ", afterRead=" + updated.getIsRead() + " ✓");
     }
 
     // ==================== 测试 2：越权拒绝 ====================
@@ -267,13 +267,13 @@ class NotifyControllerIntegrationTest {
         LoginUserHolder.set(userA);
 
         NotifyMessage msg = notifyMessageService.getById(msgId);
-        assertThat(msg.getRead())
+        assertThat(msg.getIsRead())
                 .as("越权调用不应改变已读状态")
                 .isFalse();
 
         System.out.println("=== 越权拒绝验证 ===");
         System.out.println("  msgId=" + msgId + ", recipientId=" + msg.getRecipientId()
-                + ", read=" + msg.getRead() + " ✓");
+                + ", read=" + msg.getIsRead() + " ✓");
     }
 
     // ==================== 测试 3：租户隔离 ====================
@@ -311,13 +311,13 @@ class NotifyControllerIntegrationTest {
         LoginUserHolder.set(origUser);
 
         NotifyMessage msg = notifyMessageService.getById(msgId);
-        assertThat(msg.getRead())
+        assertThat(msg.getIsRead())
                 .as("跨租户调用不应改变已读状态")
                 .isFalse();
 
         System.out.println("=== 租户隔离验证 ===");
         System.out.println("  msgId=" + msgId + ", tenantId=" + msg.getTenantId()
-                + ", listByT200=0, read→NOT_FOUND, origRead=" + msg.getRead() + " ✓");
+                + ", listByT200=0, read→NOT_FOUND, origRead=" + msg.getIsRead() + " ✓");
     }
 
     // ==================== 测试 4：用户隔离 ====================
@@ -408,13 +408,13 @@ class NotifyControllerIntegrationTest {
         assertThat(msg)
                 .as("越权调用不应删除消息")
                 .isNotNull();
-        assertThat(msg.getRead())
+        assertThat(msg.getIsRead())
                 .as("越权调用不应改变已读状态")
                 .isFalse();
 
         System.out.println("=== 越权删除拒绝验证 ===");
         System.out.println("  msgId=" + msgId + ", recipientId=" + msg.getRecipientId()
-                + ", read=" + msg.getRead() + " ✓");
+                + ", read=" + msg.getIsRead() + " ✓");
     }
 
     // ==================== 测试 7：跨租户删除 ====================

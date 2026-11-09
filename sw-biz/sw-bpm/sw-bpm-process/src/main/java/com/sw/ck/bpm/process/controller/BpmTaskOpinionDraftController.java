@@ -71,14 +71,14 @@ public class BpmTaskOpinionDraftController {
             draft.setOpinionData(opinionJson);
             draft.setOpinionFormId(request.opinionFormId());
             draft.setOpinionFormVersion(request.opinionFormVersion());
-            draft.setComment(request.comment());
+            draft.setOpinionComment(request.comment());
             mapper.insert(draft);
         } else {
             draft.setNodeKey(task.getTaskDefinitionKey());
             draft.setOpinionData(opinionJson);
             draft.setOpinionFormId(request.opinionFormId());
             draft.setOpinionFormVersion(request.opinionFormVersion());
-            draft.setComment(request.comment());
+            draft.setOpinionComment(request.comment());
             draft.setUpdateTime(LocalDateTime.now());
             mapper.updateById(draft);
         }
@@ -139,7 +139,7 @@ public class BpmTaskOpinionDraftController {
         out.put("assigneeId", String.valueOf(draft.getAssigneeId()));
         out.put("opinionFormId", draft.getOpinionFormId());
         out.put("opinionFormVersion", draft.getOpinionFormVersion());
-        out.put("comment", draft.getComment());
+        out.put("comment", draft.getOpinionComment());
         try {
             out.put("opinionData", objectMapper.readValue(
                     draft.getOpinionData() == null ? "{}" : draft.getOpinionData(),

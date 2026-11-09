@@ -30,7 +30,7 @@ public interface JobInfoMapper extends BaseMapperX<JobInfo> {
             SELECT * FROM sw_job_info
             <where>
               deleted = 0
-              <if test="jobName != null and jobName != ''">AND job_name LIKE CONCAT('%', #{jobName}, '%')</if>
+              <if test="jobName != null and jobName != ''">AND job_name LIKE CONCAT(CONCAT('%', #{jobName}), '%')</if>
               <if test="jobType != null and jobType != ''">AND job_type = #{jobType}</if>
               <if test="status != null and status != ''">AND status = #{status}</if>
               <if test="scope.userId != null">AND create_by = #{scope.userId}</if>
