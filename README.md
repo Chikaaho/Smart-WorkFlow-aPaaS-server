@@ -2,7 +2,11 @@
 
 <img src="docs/images/ch-apaas-logo.png" alt="CH-aPaaS Logo" width="180" />
 
-Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Spring Boot），承载组织权限、表单、流程、审批、通知以及设备与智能能力的组合基础。CH-aPaaS 是用于搭建企业业务应用的平台；办公审批（OA）是当前已经落地的一类使用场景，而不是项目的全部定义。
+Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Spring Boot），承载组织权限、表单、流程、审批、通知以及设备与智能能力的组合基础。CH-aPaaS 是用于搭建企业业务应用的平台；办公审批（OA）是已经落地的一类使用场景，而不是项目的全部定义。
+
+- 当前正式版本：**0.4.0**（2026-11-09，多数据库兼容）
+- 配套前端：[Smart-WorkFlow-aPaaS-Web](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-Web) **0.3.6**
+- 支持数据库：PostgreSQL / MySQL / MariaDB / Oracle / SQL Server / openGauss / DM8 / KingbaseES / H2
 
 ## 谁可以使用、可以做什么
 
@@ -13,9 +17,56 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 
 为什么要使用它：把业务事项配置为表单与流程之后，使用者即可在统一的工作台发起和办理，不需要为每个业务流程重复开发页面、权限、表单和审批链。
 
+## 当前版本：0.4.0
+
+0.4.0 让同一套迁移脚本和 SQL 种子可以在九种数据库上完成空库启动、迁移、种子初始化和业务冒烟；业务功能与 0.3.2 相同。
+
+| 项目 | 内容 |
+| --- | --- |
+| tag | `0.4.0` → `a4f6c278`（annotated tag） |
+| Release | [CH-aPaaS Server 0.4.0](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server/releases/tag/0.4.0)（id `438918154`） |
+| 制品 | `bootstrap-0.4.0.jar`，236,245,457 B，sha256 `188be963796af0583f2e59653cfc19cd482856e6fc4d0ecd22f102223b5e620b` |
+| CI | main run `42588179160` success |
+| 数据库迁移 | Flyway 终点 **V0.4.0**：新增 `V0.4.0__knowledge_vector_persistence.sql`（知识库向量持久化）和 `R__0.4.0_rename_bpm_opinion_comment.sql`（意见草稿表 `comment` 列改名为 `opinion_comment`）；已发布迁移的校验和不变 |
+| 部署 | UAT 运行 `build.version=0.4.0`，health UP |
+
+### 从旧版本升级
+
+1. 停服前备份数据库（PostgreSQL 用 `pg_dump -Fc`），并保留旧 jar。
+2. 换上 `bootstrap-0.4.0.jar` 后启动，Flyway 自动补齐迁移：从 0.3.x 升级会应用上表的两条新迁移，从更早版本升级会沿迁移链依次应用。
+3. 启动时 `DatabaseCompatibilityGuard` 会先检查库级前提（字符集、排序规则、兼容模式等），不满足就在迁移前停止。非 PostgreSQL 数据库请先按 [多数据库部署说明](docs/deployment/multi-database.md) 建库。
+4. 生产默认日志级别为 INFO。
+
+### 回退到 0.3.2
+
+0.4.0 已经对数据库应用了新迁移（含列改名），0.3.2 的 jar 不能直接运行在升级后的库上：只换 jar 会因 Flyway 校验失败（`Detected applied migration not resolved locally`）而无法启动。回退必须按以下顺序：
+
+1. 停服；
+2. 恢复升级前的数据库备份（UAT 为 `smart_workflow_20261109_pre040.dump`）；
+3. 换回 0.3.2 的 jar；
+4. 启动。
+
+完整步骤见工作区运维手册 [`production-ops.md`](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/blob/develop-sw/docs/ops/production-ops.md) §8.1、§9.1。
+
+## 多数据库支持
+
+| 数据库 | 版本 | 验证方式 | 建库前提（摘要） |
+| --- | --- | --- | --- |
+| H2 | 测试/开发模式 | 既有回归 | 保持现状 |
+| PostgreSQL | 14.24（UAT）/ 17.5+（CI） | 实测 | UTF8；UAT 迁移校验和为准 |
+| MySQL | 5.7 / 8.0 | 实测 | `utf8mb4` + `utf8mb4_bin`；`explicit_defaults_for_timestamp=ON` |
+| MariaDB | 10.6+ | 实测 | `utf8mb4_bin`；`explicit_defaults_for_timestamp=ON` |
+| Oracle | 21c XE | 实测 | `AL32UTF8`；空串=NULL 语义 |
+| SQL Server | 2019+ / 2022 | 实测 | `Chinese_PRC_CS_AS`；终态基线 |
+| openGauss | 5.0 | 实测 | `UTF8` + `DBCOMPATIBILITY 'PG'` |
+| DM8 | — | Owner 实库验证 | `CASE_SENSITIVE=Y`、`LENGTH_IN_CHAR=1` |
+| KingbaseES | V8 | Owner 实库验证 | `database_mode=pg`（参数名随版本） |
+
+完整建库参数、JDBC 示例、向量存储与 SQL Server 基线说明见 [`docs/deployment/multi-database.md`](docs/deployment/multi-database.md)。
+
 ## 当前可体验的业务闭环
 
-当前发布版本为 **0.2.3**（Agent 执行生命周期：graph 异步受理/`Idempotency-Key` 幂等/容量拒绝、持久回查与事件 `afterSequence` 有序无重复续传、取消语义（排队 0 副作用/运行 1 次/终态幂等）、重启收敛 INTERRUPTED/SERVICE_RESTART、三协议流式（OPENAI_CHAT/OPENAI_RESPONSES/ANTHROPIC）与两 Key 429 轮换/首 delta 后不重放；现有 Agent graph 功能增强，不新增功能数。**DB 迁移形态**：`V0.2.0__baseline_seed.sql` 基线 + 版本化 `V0.2.2`～`V0.2.7`（新增 `V0.2.7__agent_execution_lifecycle.sql`）+ 各支 `R__`，启动自动应用；工程默认版本 `0.2.3-SNAPSHOT`、正式构建以 `-Drevision=0.2.3` 覆盖。发布源 main `9b86ff0d`（CI run `42075329494` attempt 2 success，attempt 1 为既有抖动测试族同提交 rerun 通过），annotated tag `0.2.3` 与语义 Release「CH-aPaaS Server 0.2.3」资产 `bootstrap-0.2.3.jar` 220,811,858 B sha256 `ababcba6…`（`build.version=0.2.3` 实测；发布说明含 EXT-023-01 真实供应商流式实测结果）；UAT 已由 0.2.2 就地升级（启动 181.01s、启动段 ERROR 0、Flyway v0.2.7、health UP；启动前必须 `. ./server.env`），详见工作区 `product/0.2.3/receipts/execution-release-023-08.md`。此前 0.2.2（F1 Agent 完善＋F2 应用整包导出导入；发布源 `0bf4c938`，资产 `bootstrap-0.2.2.jar` 220,778,675 B sha256 `c13eccd8…`，CI run 41967257752 a2 success）、0.2.1（缺陷修复批次 B021-001～029；发布源 `5c33eab3`，资产 `bootstrap-0.2.1.jar` 218,553,737 B sha256 `188b476a…`，CI run 41608817497 success）、0.2.0（全局 UI 与关联功能完善；DB 基线收敛单条 `V0.2.0` + 18 支 R__）、0.1.10（超管种子口令收敛、应用管理菜单顶级归位、流程定义创建人/版本发布人回填、会签按人数结算、角色分页按租户过滤）、0.1.9（判断脚本执行链与业务验收修复）、0.1.8（原生 MQTT 设备控制通道、用户态实例计数端点）、0.1.7（Bug 修复列车 43 项＋线上返修＋openapi 回调修复）、0.1.6（应用中心与表单分类统一）、0.1.5（持续修复发布列车，UAT 直接部署、未建 tag/Release）、0.1.3 与 0.1.0 为历史发布。0.1.0 已交付的业务闭环（办公审批/OA 场景）为主线，如下：
+以下能力在当前版本 0.4.0 中均可使用。以办公审批（OA）为主线：
 
 > 用户从工作台找到可发起事项，填写或恢复业务草稿，提交申请；审批人处理待办并填写意见；发起人随后查看状态和结果，相关人员收到抄送，管理员在后台维护事项、表单、流程和通知记录。
 
@@ -26,42 +77,54 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 - **表单能力**：多选、附件、图片、说明文字等控件，支持默认值、条件显示（显隐联动）；草稿可保存与恢复，提交校验与服务端一致，隐藏字段不进入正式提交载荷。
 - **个人办理**：我发起的、我的待办、我的已办、抄送我的与催办；催办只针对仍在办理中的实例，重复催办受冷却控制。
 - **流程编排与运营**：自研流程设计器（审批人选择、会签、分支与条件）、动态并行编排、流程模板中心、监控/干预与基础分析、批量审批与流程交接，以及流程专用跨系统接入（外部应用发起/查询/签名回调/重试/防重放）。
+- **审批意见驱动流转**：意见表单字段写入流程变量，会签意见按字段类型聚合，条件分支和参与人可以直接取用意见；流转记录和审批详情逐项显示意见内容。
+- **Agent 与知识**：模型供应商与模型配置、图编排执行（异步受理、持久回查、取消与重启恢复、流式输出）、知识库 RAG；IoT 事件规则可以启动已发布的 Agent 图做研判，研判失败自动升级通知负责人。
 - **组织与权限底座**：用户、部门、角色、菜单与数据访问范围的后台维护，支撑前后台分层的入口与操作权限。
 - **普通业务入口与管理后台**：前后台分层，普通用户与管理员的入口和权限各自独立；无权深链、管理接口和跨用户对象访问会被拒绝。
 - **租户安全与三方 SSO**：租户归属贯穿表单、流程、通知等对象并 fail closed；企业微信、飞书、钉钉 SSO 的服务端授权发起、回调换票、state 限时一次性绑定与稳定主体绑定已就位。
 - **统一通知**：站内信、短信、飞书卡片、钉钉、企业微信与邮件六类渠道共用一套投递权威；模板按事件与渠道版本化，通知规则与订阅偏好可配置，收件箱支持真分页与未读数，发送记录脱敏并支持有权限的重发；通知失败不影响审批状态。
 
-身份、组织、角色与数据权限贯穿以上能力，附件等对象访问遵守各自权限边界；外部渠道与三方 SSO 的生产 Adapter 已实现且未装配即不可启用，其真实凭据下的成功/失败/恢复链尚待取得验证证据。
+身份、组织、角色与数据权限贯穿以上能力，附件等对象访问遵守各自权限边界。外部渠道与三方 SSO 的生产 Adapter 已实现，未装配即不可启用；邮件渠道已用真实凭据发送成功，其余渠道与 SSO 的真实凭据链路尚未验证。
 
-## 三个示例应用场景
+## 三个示例场景（已完成）
 
-以下三个场景展示 CH-aPaaS 如何组合表单、流程、通知、知识与设备等能力，作为平台应用愿景呈现。
+三条示例流程在 0.3.0—0.3.6 落地并达到 MVP，在 UAT 上用真实业务数据跑通了“表单 → 流程 → 审批 → 业务动作 → Agent/IoT 联动”的完整链路。
 
-### 场景一：多部门灾备演练
+### 场景一：多部门灾备演练（A · 应急演练）
 
-分公司科技部负责人发起灾备演练申请。流程经过多位技术负责人审核，再由各部门分管领导并行审批，最后进入总公司科技部会签并抄送相关领导。审批通过后，系统依据表单中的预定时间进入任务队列，到时通过 MQTT 执行机房断电和火警告警等演练动作。
+分公司发起跨部门灾备演练计划。流程依次经过申请单位负责人、技术委员会会签、分管副总，再由各参与部门分管领导并行审批，最后经总公司会签后交现场指挥。审批通过后，系统按表单里的预定时间登记预约，到点通过 MQTT 下发机房断电、火警告警等演练指令。
 
 它展示表单、多人审批、动态并行、会签、抄送、定时任务与设备控制的组合价值。
 
-### 场景二：校园出入口流量异常
+### 场景二：校园出入口流量异常（B · 值班协同）
 
-校园某个大门出现异常流量后，系统先查找近期校内活动和已有知识，再结合公开活动或特殊节日信息判断原因。符合正常特殊情况时记录日志并建立 P1 工单；找不到合理原因时建立 P0 工单，并通过告警、短信和电话提醒负责人。
+校园某个出入口出现异常流量后，Agent 先检索近期校内活动和已有知识，再结合公开信息判断原因：有合理解释的记录日志并建立 P1 工单，找不到原因的建立 P0 工单并告警负责人。人工侧由安保复核，核实事实后分流到督办、上报或现场处置。告警目前走站内信和邮件，短信、电话渠道尚未接入。
 
 它展示事件接入、流程与知识检索、外部信息判断、工单分级和多渠道告警的组合价值。
 
-### 场景三：MES 温度智能判断
+### 场景三：MES 温度智能判断（C · MES 异常研判）
 
-厂房设备常温约为 75℃，80℃ 为告警阈值，85℃ 必须停机。人工加料可能短时超过 80℃，业务人员可配置相关知识和样本：短时异常升温触发工单与告警；缓慢升温且未达到 85℃ 时识别为可能的正常操作并记录；超过 85℃ 则进入紧急停机告警流程。
+厂房设备常温约为 75℃，80℃ 为告警阈值，85℃ 必须停机。Agent 结合业务人员配置的知识和样本研判温度序列：短时快速升温判为异常并建立工单，缓慢升温且未到 85℃ 识别为可能的正常操作并记录，超过 85℃ 进入紧急停机流程。工单经班组长确认、原因分类后进入校准、维修或工艺调整，处置完成再走复产审批。
 
 它展示实时数据、业务知识、趋势判断、分级处置和流程联动的组合价值。
 
-> 当前平台已经具备上述场景中的部分可复用基础能力（如审批流程、通知与告警、定时任务、知识检索与设备接入），三个完整端到端场景仍在持续完善中，不属于 0.1.0 已交付范围。
+交付登记与验收链路见工作区 [`knowledge/features/0.3.2-opinion-display.md`](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/blob/develop-sw/knowledge/features/0.3.2-opinion-display.md)。
 
-## 当前版本
+## 版本历史
 
-当前正式发布版本为 **0.2.4**（annotated tag `0.2.4`→`41511bd4` 与公开 Release，main 推送 CI run `42198270905` success，已在 UAT 就地部署；回执 `product/0.2.4/receipts/execution-release-024-02.md`）：**README 示例二/三落地**（第 51 个正式功能）——IoT 事件规则启动已发布 Agent 图执行（含 `RECENT_SERIES` 近期序列）、失败即升级（升级模板/级别字段/负责人 IN_APP+EMAIL 双渠道、按 executionId 幂等一次）、Agent 内部工具（发起工单流程/查询近期流程记录/发送通知告警）、`sw_notify_channel_config.config_cipher` 渠道凭据 AES-256-GCM 密文、外部工具 GET 入参修复；**DB 迁移**：新增 `V0.2.8__iot_agent_bridge.sql`、`V0.2.9__agent_failure_channel_secret.sql`（H2/PG 双份），自 V0.2.7 自动升级至 **V0.2.9**；工程默认版本 `0.2.4-SNAPSHOT`，正式构建 `-Drevision=0.2.4`；制品 `bootstrap-0.2.4.jar` 220,856,383 B sha256 `1c73a5ee…`，`build.version=0.2.4` 实测。UAT：备份 DB/前后端后 stop→换包→start，启动 176.906s、ERROR 0、health UP（本机与 nginx）、HTTPS 根 200。
+| 版本 | 内容 | tag / Release |
+| --- | --- | --- |
+| 0.4.0 | 多数据库兼容（见上文） | `0.4.0`→`a4f6c278` / `438918154` |
+| 0.3.2 | 意见展示与回显：审批详情逐项显示中文标签和值，会签记录可查看每人意见，部门字段回显名称；无新迁移（Flyway V0.2.9） | `0.3.2`→`de8ec017` / `437820040` |
+| 0.3.1 | 审批意见驱动流转：意见字段写入流程变量，触发器注入本节点意见，会签意见按字段类型聚合；本版前端未随版 | `0.3.1`→`452178d8` / `437557325` |
+| 0.3.0 | 三示例流程首版：应用“运营与风险管理工作台”（3 张业务表单、3 条流程）与 4 类缺陷修复。**Owner 2026-11-07 审核后退回**：意见过于简单，没有用审批意见、流程变量和脚本来驱动分支与参与人；由 0.3.1—0.3.6 返修，0.3.0 的 tag、Release 和部署记录保持原样 | `0.3.0`→`a0ac3a1a`（同版本覆盖）/ `436832133` |
+| 0.2.4 | IoT 事件规则启动 Agent 研判、失败自动升级、Agent 内部工具、渠道凭据密文存储；Flyway V0.2.9 | `0.2.4`→`41511bd4` |
+| 0.2.3 | Agent 执行生命周期：异步受理、持久回查、取消与重启恢复、三协议流式输出；Flyway V0.2.7 | `0.2.3`→`9b86ff0d` |
+| 0.2.2 | Agent 完善（模型供应商与模型、graph 快照、知识库 RAG）与应用整包导出导入 | `0.2.2`→`0bf4c938` |
+| 0.2.1 | 缺陷修复批次 B021-001～029 | `0.2.1`→`5c33eab3` |
+| 0.2.0 | 全局 UI 与关联功能完善；数据库基线收敛为单条 `V0.2.0` | `0.2.0`→`39dcedb7` |
 
-此前 **0.2.3**（annotated tag `0.2.3` 与公开 Release，经既有 CI 通道发布并在 UAT 部署同一制品；发布源与 CI run 以工作区 `product/0.2.3/receipts/` 发布后回读为准）：**Agent 执行生命周期**（现有 Agent graph 功能增强，不另增 P 编号、不新增功能数）——graph 异步受理（先返回 executionId、`Idempotency-Key` 幂等/冲突 400/容量满拒绝）、持久回查与事件 `afterSequence` 有序无重复续传、取消语义（排队取消 0 副作用、运行取消后不调度新节点/工具且副作用精确 1 次、终态后取消幂等不改写结果）、重启收敛（不确定 RUNNING/CANCEL_REQUESTED → INTERRUPTED/SERVICE_RESTART，只重派 QUEUED）、三协议流式（OPENAI_CHAT/OPENAI_RESPONSES/ANTHROPIC 真实增量）与两 Key 429 轮换/首 delta 后不重放；同步接口与调试 stop/RAG/工具兼容；**DB 迁移**：`V0.2.0` 基线 + 版本化 `V0.2.2`～`V0.2.7`（新增 `V0.2.7__agent_execution_lifecycle.sql`）+ 各支 `R__`；工程默认版本 `0.2.3-SNAPSHOT`、正式构建以 `-Drevision=0.2.3` 覆盖。已接受限制：无逐节点进度事件（节点轨迹执行后回查）；事件为 JSON 轮询续传（非 SSE）。EXT-023-01 真实供应商流式已实测闭合（隔离环境 1 次真实执行 SUCCESS，凭据全程密文不出库）。此前 **0.2.2**（F1 Agent 完善＋F2 应用整包导出导入；发布源 `0bf4c938`，资产 `bootstrap-0.2.2.jar`，CI run 41967257752 a2 success）、**0.2.1**（缺陷修复批次；发布源 `5c33eab3`，资产 `bootstrap-0.2.1.jar`，CI run 41608817497 success）、**0.2.0**（全局 UI 与关联功能完善；DB 基线收敛单条 `V0.2.0` + 18 支 R__）、**0.1.10**（超管种子口令收敛、应用管理菜单顶级归位等）、**0.1.9**（判断脚本执行链与业务验收修复；同版本覆盖四次）、**0.1.8**（原生 MQTT 设备控制通道、用户态实例计数端点）、**0.1.7**（Bug 修复列车 43 项＋第 41 项返修与 openapi 回调修复；同版本覆盖两次）、**0.1.6**（应用中心与表单分类统一，正式功能第 49 个）、**0.1.5**（持续修复发布列车，UAT 直接部署、未建 tag/Release）、**0.1.3**、**0.1.0**（以仓库 `0.1.0` 标签与 Release 为准）及更早的 v0.0.2、v0.0.1 为历史发布，见仓库标签。
+0.1.x 及更早版本见仓库 [tags](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server/tags) 与工作区 [`CHANGELOG.md`](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/blob/develop-sw/CHANGELOG.md)。
 
 ## 项目入口
 
@@ -69,7 +132,8 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端 API 服务（Java 21 / Sp
 | --- | --- |
 | [Smart-WorkFlow-aPaaS-server](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server) | 后端仓库（本仓库） |
 | [Smart-WorkFlow-aPaaS-Web](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-Web) | 前端仓库 |
-| [Smart-WorkFlow-Agent-Workspace](../README.md) | 项目规划与知识中心 |
+| [Smart-WorkFlow-Agent-Workspace](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/tree/develop-sw) | 项目规划与知识中心（`develop-sw` 分支） |
 | [后端工程文档](docs/governance/engineering-constitution.md) | 工程规范、模块结构与验证入口等开发者资料汇总 |
+| [多数据库部署说明](docs/deployment/multi-database.md) | 九种数据库的建库前提、JDBC 示例与差异说明 |
 
-从使用者视角了解界面与操作体验，见配套前端：[Smart-WorkFlow-aPaaS-Web](../Smart-WorkFlow-aPaaS-Web/README.md)。
+从使用者视角了解界面与操作体验，见配套前端 [Smart-WorkFlow-aPaaS-Web](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-Web)。
