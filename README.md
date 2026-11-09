@@ -201,7 +201,7 @@ Flyway 种子内置默认超管：**用户名 `admin`，口令 `AdminP@ssw0rd`**
 | [工程宪法](docs/governance/engineering-constitution.md) | 模块依赖方向、编码规范与验证门 |
 | [多数据库部署说明](docs/deployment/multi-database.md) | 九种数据库的建库前提、JDBC 示例与差异说明 |
 | [运维手册](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/blob/develop-sw/docs/ops/production-ops.md) | 生产部署、升级、备份与回退（工作区仓库） |
-| [功能清单](功能清单.md) | 正式功能与版本焦点 |
+| [功能清单](%E5%8A%9F%E8%83%BD%E6%B8%85%E5%8D%95.md) | 正式功能与版本焦点 |
 
 ## 当前版本：0.4.0
 
