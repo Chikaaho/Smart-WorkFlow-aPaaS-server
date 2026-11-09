@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.vector;
 
+import com.sw.ck.common.jdbc.DatabaseVendor;
+import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -32,6 +34,11 @@ public class KnowledgeVectorColumnInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        if (JdbcVendorSupport.vendor(jdbcTemplate) != DatabaseVendor.POSTGRESQL) {
+            log.warn("pgvector 初始化仅在 PostgreSQL 执行；非 PG 方言请配置 "
+                    + "sw.knowledge.vector-store=database");
+            return;
+        }
         Integer tableCount = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.tables "
                         + "WHERE table_schema = current_schema() AND table_name = 'sw_knowledge_chunk'",

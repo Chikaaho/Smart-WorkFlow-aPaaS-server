@@ -126,8 +126,7 @@ public class AgentToolConfigServiceImpl
         if (query.getNameKeyword() != null && !query.getNameKeyword().isBlank()) {
             wrapper.like(AgentToolExternalConfig::getName, query.getNameKeyword());
         }
-        // enabled 条件用数字字面量（Boolean 参数与 SMALLINT 列比较在 H2/PG 下不稳定，
-        // M07 Step4 现场实证 H2 90110，见 step-4-execution 回执 §7）
+        // enabled 用 Boolean 绑定，由驱动按列类型映射；PG 的 V0.2.3 已把该列转为 BOOLEAN。
         wrapper.eq(query.getEnabled() != null, AgentToolExternalConfig::getEnabled,
                 query.getEnabled());
         wrapper.orderByDesc(AgentToolExternalConfig::getId);

@@ -1,0 +1,1 @@
+-- MySQL 建表即使用 opinion_comment（R__0.2.0_approval_opinion_draft.sql），无需改名。

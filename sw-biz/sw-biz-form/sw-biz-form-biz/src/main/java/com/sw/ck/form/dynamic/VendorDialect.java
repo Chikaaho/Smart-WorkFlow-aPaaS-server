@@ -1,106 +1,177 @@
 package com.sw.ck.form.dynamic;
 
+import com.sw.ck.common.jdbc.DatabaseVendor;
+
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 
 /**
- * 数据库方言枚举。
+ * 表单动态宽表的数据库方言。
  * <p>
- * 封装 H2 与 PostgreSQL 两套方言的列类型映射与标识符引用规则。
- * 用枚举策略模式代替散落的 if-else 字符串拼接，新增方言时只需新增枚举常量。
+ * 列类型映射仍按表单 FieldType 表达；标识符引用统一委托
+ * {@link DatabaseVendor}，避免与运行时 SQL 重写/启动检查各自维护一份厂商判断。
+ * 新增方言时在 {@link DatabaseVendor} 与本枚举同步增加常量。
  * </p>
  *
- * <h3>列类型映射表</h3>
+ * <h3>列类型映射（FORMULA/NUMBER 等数值列统一 NUMERIC(20,6)/DECIMAL(20,6)）</h3>
  * <pre>
- * FieldType   │ H2              │ PostgreSQL
- * ────────────┼─────────────────┼──────────────────
- * TEXT        │ VARCHAR(1000)   │ VARCHAR(1000)
- * RICH_TEXT   │ CLOB            │ TEXT
- * NUMBER      │ NUMERIC(20,6)   │ NUMERIC(20,6)
- * DATE        │ TIMESTAMP       │ TIMESTAMP
- * BOOL        │ SMALLINT        │ SMALLINT
- * DICT        │ VARCHAR(100)    │ VARCHAR(100)
- * REFERENCE   │ VARCHAR(36)     │ VARCHAR(36)
- * TABLE       │ (无列)          │ (无列)
+ * FieldType   │ H2/PG/Kingbase/openGauss │ MySQL/MariaDB │ Oracle/达梦 │ SQL Server
+ * ────────────┼──────────────────────────┼───────────────┼─────────────┼────────────
+ * TEXT        │ VARCHAR(1000)            │ VARCHAR(1000) │ VARCHAR2(1000 CHAR) │ NVARCHAR(1000)
+ * RICH_TEXT   │ CLOB/TEXT                │ LONGTEXT      │ CLOB        │ NVARCHAR(MAX)
+ * BOOL        │ SMALLINT                 │ TINYINT(1)    │ NUMBER(1)/BIT │ BIT
+ * DATE/TIME   │ TIMESTAMP/TIME           │ DATETIME/TIME │ TIMESTAMP   │ DATETIME2/TIME
  * </pre>
  */
 public enum VendorDialect {
 
-    H2 {
-        @Override
-        public String columnType(FieldType fieldType) {
-            return switch (fieldType) {
-                case TEXT -> "VARCHAR(1000)";
-                case RICH_TEXT -> "CLOB";
-                case NUMBER -> "NUMERIC(20,6)";
-                case DATE -> "TIMESTAMP";
-                case BOOL -> "SMALLINT";
-                case DICT -> "VARCHAR(100)";
-                case REFERENCE -> "VARCHAR(36)";
-                case MULTISELECT -> "VARCHAR(1000)";
-                case ATTACHMENT, IMAGE -> "CLOB";
-                case TIME -> "TIME";
-                case USER, DEPT -> "VARCHAR(64)";
-                case FORMULA -> "NUMERIC(20,6)";
-                case DATASOURCE -> "CLOB";
-                case TABLE, LABEL -> throw new IllegalArgumentException(
-                        FieldType.class.getSimpleName() + " " + fieldType + " is not a column type");
-                // disabled 占位成员 — 无列映射
-                case EMAIL, PHONE, URL, RATE, SLIDER ->
-                        throw new IllegalArgumentException(
-                                "FieldType " + fieldType + " is not enabled (disabled placeholder)");
-            };
-        }
+    H2(DatabaseVendor.H2),
+    POSTGRESQL(DatabaseVendor.POSTGRESQL),
+    MYSQL(DatabaseVendor.MYSQL),
+    MARIADB(DatabaseVendor.MARIADB),
+    ORACLE(DatabaseVendor.ORACLE),
+    SQL_SERVER(DatabaseVendor.SQL_SERVER),
+    DM(DatabaseVendor.DM),
+    KINGBASE(DatabaseVendor.KINGBASE),
+    OPENGAUSS(DatabaseVendor.OPENGAUSS);
 
-        @Override
-        public String wrapIdentifier(String name) {
-            // H2 在 PostgreSQL 模式下，引用标识符保留大小写；
-            // 我们的表名列名均为小写，加双引号避免与关键字冲突
-            return "\"" + name + "\"";
-        }
-    },
+    private final DatabaseVendor vendor;
 
-    POSTGRESQL {
-        @Override
-        public String columnType(FieldType fieldType) {
-            return switch (fieldType) {
-                case TEXT -> "VARCHAR(1000)";
-                case RICH_TEXT -> "TEXT";
-                case NUMBER -> "NUMERIC(20,6)";
-                case DATE -> "TIMESTAMP";
-                case BOOL -> "SMALLINT";
-                case DICT -> "VARCHAR(100)";
-                case REFERENCE -> "VARCHAR(36)";
-                case MULTISELECT -> "VARCHAR(1000)";
-                case ATTACHMENT, IMAGE -> "TEXT";
-                case TIME -> "TIME";
-                case USER, DEPT -> "VARCHAR(64)";
-                case FORMULA -> "NUMERIC(20,6)";
-                case DATASOURCE -> "TEXT";
-                case TABLE, LABEL -> throw new IllegalArgumentException(
-                        FieldType.class.getSimpleName() + " " + fieldType + " is not a column type");
-                // disabled 占位成员 — 无列映射
-                case EMAIL, PHONE, URL, RATE, SLIDER ->
-                        throw new IllegalArgumentException(
-                                "FieldType " + fieldType + " is not enabled (disabled placeholder)");
-            };
-        }
+    VendorDialect(DatabaseVendor vendor) {
+        this.vendor = vendor;
+    }
 
-        @Override
-        public String wrapIdentifier(String name) {
-            // 动态字段允许安全的 camelCase 名称。显式引用必须保留原始大小写，
-            // 否则 CREATE TABLE 会生成 applicantnote，而提交/查询路径按逻辑字段
-            // 引用 "applicantNote"，两条路径在 PostgreSQL 上会分裂为不同列。
-            return "\"" + name + "\"";
-        }
-    };
+    public DatabaseVendor vendor() {
+        return vendor;
+    }
 
-    /**
-     * @param fieldType 字段类型（不允许 {@link FieldType#TABLE}）
-     * @return 当前方言下的 SQL 列类型定义
-     */
-    public abstract String columnType(FieldType fieldType);
+    public String columnType(FieldType fieldType) {
+        return switch (this) {
+            case H2 -> h2ColumnType(fieldType);
+            case POSTGRESQL, KINGBASE, OPENGAUSS -> postgresColumnType(fieldType);
+            case MYSQL, MARIADB -> mysqlColumnType(fieldType);
+            case ORACLE -> oracleColumnType(fieldType);
+            case SQL_SERVER -> sqlServerColumnType(fieldType);
+            case DM -> dmColumnType(fieldType);
+        };
+    }
+
+    private static String h2ColumnType(FieldType fieldType) {
+        return switch (fieldType) {
+            case TEXT -> "VARCHAR(1000)";
+            case RICH_TEXT -> "CLOB";
+            case NUMBER, FORMULA -> "NUMERIC(20,6)";
+            case DATE -> "TIMESTAMP";
+            case BOOL -> "SMALLINT";
+            case DICT -> "VARCHAR(100)";
+            case REFERENCE -> "VARCHAR(36)";
+            case MULTISELECT -> "VARCHAR(1000)";
+            case ATTACHMENT, IMAGE -> "CLOB";
+            case TIME -> "TIME";
+            case USER, DEPT -> "VARCHAR(64)";
+            case DATASOURCE -> "CLOB";
+            case TABLE, LABEL -> throw notColumn(fieldType);
+            case EMAIL, PHONE, URL, RATE, SLIDER -> throw disabled(fieldType);
+        };
+    }
+
+    private static String postgresColumnType(FieldType fieldType) {
+        return switch (fieldType) {
+            case TEXT -> "VARCHAR(1000)";
+            case RICH_TEXT -> "TEXT";
+            case NUMBER, FORMULA -> "NUMERIC(20,6)";
+            case DATE -> "TIMESTAMP";
+            case BOOL -> "SMALLINT";
+            case DICT -> "VARCHAR(100)";
+            case REFERENCE -> "VARCHAR(36)";
+            case MULTISELECT -> "VARCHAR(1000)";
+            case ATTACHMENT, IMAGE, DATASOURCE -> "TEXT";
+            case TIME -> "TIME";
+            case USER, DEPT -> "VARCHAR(64)";
+            case TABLE, LABEL -> throw notColumn(fieldType);
+            case EMAIL, PHONE, URL, RATE, SLIDER -> throw disabled(fieldType);
+        };
+    }
+
+    private static String mysqlColumnType(FieldType fieldType) {
+        return switch (fieldType) {
+            case TEXT -> "VARCHAR(1000)";
+            case RICH_TEXT, DATASOURCE -> "LONGTEXT";
+            case NUMBER, FORMULA -> "DECIMAL(20,6)";
+            case DATE -> "DATETIME";
+            case BOOL -> "TINYINT(1)";
+            case DICT -> "VARCHAR(100)";
+            case REFERENCE -> "VARCHAR(36)";
+            case MULTISELECT -> "VARCHAR(1000)";
+            case ATTACHMENT, IMAGE -> "LONGTEXT";
+            case TIME -> "TIME";
+            case USER, DEPT -> "VARCHAR(64)";
+            case TABLE, LABEL -> throw notColumn(fieldType);
+            case EMAIL, PHONE, URL, RATE, SLIDER -> throw disabled(fieldType);
+        };
+    }
+
+    private static String oracleColumnType(FieldType fieldType) {
+        return switch (fieldType) {
+            case TEXT -> "VARCHAR2(1000 CHAR)";
+            case RICH_TEXT, ATTACHMENT, IMAGE, DATASOURCE -> "CLOB";
+            case NUMBER, FORMULA -> "NUMBER(20,6)";
+            case DATE -> "TIMESTAMP";
+            case BOOL -> "NUMBER(1)";
+            case DICT -> "VARCHAR2(100)";
+            case REFERENCE -> "VARCHAR2(36)";
+            case MULTISELECT -> "VARCHAR2(1000 CHAR)";
+            case TIME -> "VARCHAR2(20)";
+            case USER, DEPT -> "VARCHAR2(64)";
+            case TABLE, LABEL -> throw notColumn(fieldType);
+            case EMAIL, PHONE, URL, RATE, SLIDER -> throw disabled(fieldType);
+        };
+    }
+
+    private static String sqlServerColumnType(FieldType fieldType) {
+        return switch (fieldType) {
+            case TEXT -> "NVARCHAR(1000)";
+            case RICH_TEXT, ATTACHMENT, IMAGE, DATASOURCE -> "NVARCHAR(MAX)";
+            case NUMBER, FORMULA -> "DECIMAL(20,6)";
+            case DATE -> "DATETIME2";
+            case BOOL -> "BIT";
+            case DICT -> "NVARCHAR(100)";
+            case REFERENCE -> "NVARCHAR(36)";
+            case MULTISELECT -> "NVARCHAR(1000)";
+            case TIME -> "TIME";
+            case USER, DEPT -> "NVARCHAR(64)";
+            case TABLE, LABEL -> throw notColumn(fieldType);
+            case EMAIL, PHONE, URL, RATE, SLIDER -> throw disabled(fieldType);
+        };
+    }
+
+    private static String dmColumnType(FieldType fieldType) {
+        return switch (fieldType) {
+            case TEXT -> "VARCHAR2(1000 CHAR)";
+            case RICH_TEXT, ATTACHMENT, IMAGE, DATASOURCE -> "CLOB";
+            case NUMBER, FORMULA -> "NUMBER(20,6)";
+            case DATE -> "TIMESTAMP";
+            case BOOL -> "BIT";
+            case DICT -> "VARCHAR2(100)";
+            case REFERENCE -> "VARCHAR2(36)";
+            case MULTISELECT -> "VARCHAR2(1000 CHAR)";
+            case TIME -> "VARCHAR2(20)";
+            case USER, DEPT -> "VARCHAR2(64)";
+            case TABLE, LABEL -> throw notColumn(fieldType);
+            case EMAIL, PHONE, URL, RATE, SLIDER -> throw disabled(fieldType);
+        };
+    }
+
+    private static IllegalArgumentException notColumn(FieldType fieldType) {
+        return new IllegalArgumentException(
+                FieldType.class.getSimpleName() + " " + fieldType + " is not a column type");
+    }
+
+    private static IllegalArgumentException disabled(FieldType fieldType) {
+        return new IllegalArgumentException(
+                "FieldType " + fieldType + " is not enabled (disabled placeholder)");
+    }
 
     /**
      * 多选感知的列类型（P63）：USER/DEPT 多选值=ID 列表 JSON 字符串，列宽与
@@ -111,31 +182,39 @@ public enum VendorDialect {
         if (multiple
                 && (fieldType == FieldType.USER || fieldType == FieldType.DEPT
                         || fieldType == FieldType.DICT)) {
-            return "VARCHAR(1000)";
+            return switch (this) {
+                case ORACLE, DM -> "VARCHAR2(1000 CHAR)";
+                case SQL_SERVER -> "NVARCHAR(1000)";
+                default -> "VARCHAR(1000)";
+            };
         }
         return columnType(fieldType);
     }
 
-    /**
-     * 将标识符（表名/列名）包装为带引号的安全形式。
-     */
-    public abstract String wrapIdentifier(String name);
+    /** 标识符引用：MySQL/MariaDB 反引号，SQL Server 方括号，其余双引号。 */
+    public String wrapIdentifier(String name) {
+        return vendor.wrapIdentifier(name);
+    }
 
     /**
      * 根据 JDBC 连接元数据自动检测方言。
      *
-     * @param dataSource 数据源
-     * @return 匹配的方言枚举，未知数据库默认返回 {@link #H2}
+     * @throws IllegalStateException 无法识别时
      */
     public static VendorDialect detect(DataSource dataSource) {
         try (Connection conn = dataSource.getConnection()) {
-            String productName = conn.getMetaData().getDatabaseProductName().toLowerCase();
-            if (productName.contains("postgresql") || productName.contains("postgres")) {
-                return POSTGRESQL;
-            }
-            return H2;
+            return from(DatabaseVendor.detect(conn));
         } catch (SQLException e) {
-            throw new RuntimeException("Failed to detect database vendor from DataSource", e);
+            throw new IllegalStateException("Failed to detect database vendor from DataSource", e);
         }
+    }
+
+    static VendorDialect from(DatabaseVendor vendor) {
+        for (VendorDialect dialect : values()) {
+            if (dialect.vendor == vendor) {
+                return dialect;
+            }
+        }
+        throw new IllegalStateException("Unsupported database vendor: " + vendor);
     }
 }

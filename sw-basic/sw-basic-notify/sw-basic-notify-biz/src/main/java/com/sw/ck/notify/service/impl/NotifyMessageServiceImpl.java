@@ -82,7 +82,7 @@ public class NotifyMessageServiceImpl
         var wrapper = lambdaQuery()
                 .eq(NotifyMessage::getRecipientId, recipientId);
         if (read != null) {
-            wrapper.eq(NotifyMessage::getRead, read);
+            wrapper.eq(NotifyMessage::getIsRead, read);
         }
         if (StringUtils.hasText(keyword)) {
             String pattern = "%" + keyword + "%";
@@ -168,7 +168,7 @@ public class NotifyMessageServiceImpl
             msg.setTitle(title);
             msg.setContent(content);
             msg.setBizType("SYSTEM");
-            msg.setRead(false);
+            msg.setIsRead(false);
             msg.setEventType(eventTypeIfPresent());
             msg.setOccurrenceNo(1L);
             msg.setTemplateId(pinnedTemplateId);
@@ -372,7 +372,7 @@ public class NotifyMessageServiceImpl
                 .eq(eventType != null && !eventType.isBlank(), NotifyMessage::getEventType, eventType)
                 .eq(NotifyMessage::getChannel, "IN_APP");
         if (read != null) {
-            wrapper.eq(NotifyMessage::getRead, read);
+            wrapper.eq(NotifyMessage::getIsRead, read);
         }
         if (StringUtils.hasText(keyword)) {
             String pattern = "%" + keyword + "%";
@@ -386,15 +386,15 @@ public class NotifyMessageServiceImpl
     @Override
     public long unreadCount(Long recipientId) {
         return lambdaQuery().eq(NotifyMessage::getRecipientId, recipientId)
-                .eq(NotifyMessage::getRead, false).count();
+                .eq(NotifyMessage::getIsRead, false).count();
     }
 
     @Override
     public int markAllRead(Long recipientId) {
         return getBaseMapper().update(null,
                 new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<NotifyMessage>()
-                        .set(NotifyMessage::getRead, true)
+                        .set(NotifyMessage::getIsRead, true)
                         .eq(NotifyMessage::getRecipientId, recipientId)
-                        .eq(NotifyMessage::getRead, false));
+                        .eq(NotifyMessage::getIsRead, false));
     }
 }

@@ -13,6 +13,7 @@ import com.sw.ck.bpm.process.mapper.BpmCategoryMapper;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -359,11 +360,12 @@ public class BpmProcessDefController {
         if (processKeys.isEmpty()) {
             return;
         }
-        List<Map<String, Object>> rows = instanceMapper.selectMaps(
-                Wrappers.<BpmInstance>query()
-                        .select("process_def_key as \"processKey\"", "count(*) as cnt")
-                        .in("process_def_key", processKeys)
-                        .groupBy("process_def_key"));
+        List<Map<String, Object>> rows = JdbcMaps.caseInsensitiveKeys(
+                instanceMapper.selectMaps(
+                        Wrappers.<BpmInstance>query()
+                                .select("process_def_key as \"processKey\"", "count(*) as cnt")
+                                .in("process_def_key", processKeys)
+                                .groupBy("process_def_key")));
         Map<String, Long> counts = rows.stream()
                 .filter(row -> row.get("processKey") != null && row.get("cnt") instanceof Number)
                 .collect(Collectors.toMap(

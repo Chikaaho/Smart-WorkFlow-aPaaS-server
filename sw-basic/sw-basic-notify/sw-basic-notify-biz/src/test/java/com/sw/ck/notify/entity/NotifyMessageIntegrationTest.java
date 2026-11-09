@@ -170,7 +170,7 @@ class NotifyMessageIntegrationTest {
                     m.setContent(rs.getString("content"));
                     m.setBizType(rs.getString("biz_type"));
                     m.setBizId(rs.getString("biz_id"));
-                    m.setRead(rs.getBoolean("is_read"));
+                    m.setIsRead(rs.getBoolean("is_read"));
                     return m;
                 });
         assertThat(all).as("应至少有一条记录").isNotEmpty();
@@ -191,11 +191,11 @@ class NotifyMessageIntegrationTest {
         assertThat(found.getBizId()).isEqualTo(BIZ_ID);
 
         // is_read 默认 false
-        assertThat(found.getRead()).as("is_read 应默认为 false").isFalse();
+        assertThat(found.getIsRead()).as("is_read 应默认为 false").isFalse();
 
         System.out.println("=== send 自动注入 + is_read 验证 ===");
         System.out.println("  id=" + found.getId() + ", tenantId=" + found.getTenantId()
-                + ", createBy=" + found.getCreateBy() + ", isRead=" + found.getRead()
+                + ", createBy=" + found.getCreateBy() + ", isRead=" + found.getIsRead()
                 + ", deleted=" + found.getDeleted() + ", version=" + found.getVersion()
                 + ", bizType=" + found.getBizType() + ", bizId=" + found.getBizId() + " ✓");
     }

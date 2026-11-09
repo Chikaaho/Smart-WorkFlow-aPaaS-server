@@ -57,6 +57,14 @@ public class ResourceAdmissionService {
      */
     private final java.util.Set<Long> ensuredTenants = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /** 生产环境由 Spring 注入；单测直接构造时为空，回退原 Mapper 探测。 */
+    private ResourceRowLockProbe rowLockProbe;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRowLockProbe(ResourceRowLockProbe rowLockProbe) {
+        this.rowLockProbe = rowLockProbe;
+    }
+
     /** 准入凭证：受理冻结到命令行的段与策略版本。 */
     public record AdmissionTicket(String segment, Integer policyVersion, int units) {
     }
@@ -135,13 +143,20 @@ public class ResourceAdmissionService {
         throw new BaseException(BpmErrorCode.RESOURCE_QUOTA_EXCEEDED);
     }
 
+    /** 段是否被其他事务持有；有方言探测器时用它，否则回退原 Mapper。 */
+    private boolean segmentBusy(ResourceSegmentEnum segment) {
+        Long id = rowLockProbe != null
+                ? rowLockProbe.probe("GLOBAL", 0, segment.getCode())
+                : usageMapper.probeIdleRow("GLOBAL", 0, segment.getCode());
+        return id == null;
+    }
+
     /** 容量裁决单次尝试：成功返回凭证；失败返回 null 并把拒绝域写入 rejectScope[0]。 */
     private AdmissionTicket tryOccupy(Long tenantId, ResourceClassEnum resourceClass, int units,
                                       BpmResourcePolicy policy, String[] rejectScope) {
         List<ResourceSegmentEnum> preference = ResourceSegmentEnum.preference(resourceClass);
         for (ResourceSegmentEnum segment : preference) {
-            if (ResourceSegmentEnum.isBorrow(resourceClass, segment)
-                    && usageMapper.probeIdleRow("GLOBAL", 0, segment.getCode()) == null) {
+            if (ResourceSegmentEnum.isBorrow(resourceClass, segment) && segmentBusy(segment)) {
                 // 借用只在段空闲时发生：对方保留段正被在途事务持有（非空闲）→ 放弃借用，不等待。
                 // 等待会与对方类别的在途受理互等成环（RA02a1），并让保留通道被借用请求排队挤占。
                 if (rejectScope[0] == null) {

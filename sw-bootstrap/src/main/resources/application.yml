@@ -247,6 +247,7 @@ mybatis-plus:
   type-aliases-package: com.sw.ck.**.entity
   configuration:
     map-underscore-to-camel-case: true
+    jdbc-type-for-null: 'NULL'   # Oracle 不接受 JdbcType.OTHER(1111)；NULL 对 PG/MySQL 等价
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl # I6 G3f：行级 SQL 走 Slf4j，服从日志级别（org.mybatis=info），联系方式/正文/密文零进普通日志
   global-config:
     banner: false

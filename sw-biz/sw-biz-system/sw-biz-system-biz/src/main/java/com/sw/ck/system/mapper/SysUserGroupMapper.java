@@ -58,8 +58,8 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
             "    ))",
             "  </otherwise>",
             "</choose>",
-            "<if test='q != null and q.groupCode != null and q.groupCode != \"\"'> AND g.group_code LIKE CONCAT('%', #{q.groupCode}, '%') </if>",
-            "<if test='q != null and q.groupName != null and q.groupName != \"\"'> AND g.group_name LIKE CONCAT('%', #{q.groupName}, '%') </if>",
+            "<if test='q != null and q.groupCode != null and q.groupCode != \"\"'> AND g.group_code LIKE CONCAT(CONCAT('%', #{q.groupCode}), '%') </if>",
+            "<if test='q != null and q.groupName != null and q.groupName != \"\"'> AND g.group_name LIKE CONCAT(CONCAT('%', #{q.groupName}), '%') </if>",
             "<if test='q != null and q.status != null'> AND g.status = #{q.status} </if>",
             "</script>"})
     IPage<SysUserGroup> selectGroupPage(Page<SysUserGroup> page,
@@ -103,7 +103,7 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
             "    </otherwise>",
             "  </choose>",
             "  ) ",
-            "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') OR u.real_name LIKE CONCAT('%', #{keyword}, '%')) </if>",
+            "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT(CONCAT('%', #{keyword}), '%') OR u.real_name LIKE CONCAT(CONCAT('%', #{keyword}), '%')) </if>",
             "</script>"})
     IPage<SysUser> selectMemberCandidates(Page<SysUser> page,
                                           @Param("keyword") String keyword,

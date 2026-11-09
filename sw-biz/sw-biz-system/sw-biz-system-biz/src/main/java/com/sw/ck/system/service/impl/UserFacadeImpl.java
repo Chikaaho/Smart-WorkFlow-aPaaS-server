@@ -1,6 +1,7 @@
 package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.system.entity.SysDept;
@@ -220,7 +221,8 @@ public class UserFacadeImpl implements UserQueryFacade {
             return Optional.of(java.util.Map.of());
         }
         java.util.Map<Long, Long> leaderByDept = new java.util.LinkedHashMap<>();
-        for (java.util.Map<String, Object> row : sysUserMapper.selectDeptLeaderMap(distinct, tenantId)) {
+        for (java.util.Map<String, Object> row
+                : JdbcMaps.caseInsensitiveKeys(sysUserMapper.selectDeptLeaderMap(distinct, tenantId))) {
             Object deptId = row.get("dept_id");
             Object leaderId = row.get("leader_id");
             if (deptId instanceof Number d && leaderId instanceof Number l) {

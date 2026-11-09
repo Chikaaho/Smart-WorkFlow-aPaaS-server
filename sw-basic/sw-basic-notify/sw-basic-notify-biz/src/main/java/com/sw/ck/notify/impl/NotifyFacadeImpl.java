@@ -100,7 +100,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
         msg.setContent(cmd.getContent());
         msg.setBizType(cmd.getBizType().name());
         msg.setBizId(cmd.getBizId());
-        msg.setRead(false);
+        msg.setIsRead(false);
         // 旧入口依赖数据库默认值，兼容尚未包含 P58 渠道列的历史测试/存量 schema。
         notifyMessageService.save(msg);
         // 站内信入口恒成功：结果镜像落库行语义，持久化失败仍抛。
@@ -357,7 +357,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
         msg.setContent(request.getContent());
         msg.setBizType(request.getBizType() == null ? "SYSTEM" : request.getBizType().name());
         msg.setBizId(request.getBizId());
-        msg.setRead(false);
+        msg.setIsRead(false);
         msg.setChannel(request.getChannel().name());
         msg.setIdempotencyKey(request.getIdempotencyKey());
         msg.setEventType(hasText(request.getEventType()) ? request.getEventType() : "SYSTEM");
@@ -381,7 +381,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
         msg.setContent(request.getContent());
         msg.setBizType(request.getBizType() == null ? "SYSTEM" : request.getBizType().name());
         msg.setBizId(request.getBizId());
-        msg.setRead(false);
+        msg.setIsRead(false);
         msg.setChannel(request.getChannel().name());
         msg.setDeliveryStatus(status);
         msg.setExternalMessageId(result.getExternalMessageId());

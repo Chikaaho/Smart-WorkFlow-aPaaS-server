@@ -674,8 +674,8 @@ public class AgentGraphExecutionServiceImpl
     }
 
     /**
-     * 工具白名单精确匹配：internal/external 两表任一存在 name 精确相等且 enabled=1 的记录。
-     * enabled 用数字字面量 1（非 Boolean 参数）：H2/PG 下 SMALLINT 列比对惯例（Step4 现场实证）。
+     * 工具白名单精确匹配：internal/external 两表任一存在 name 精确相等且 enabled=true 的记录。
+     * enabled 用 Boolean 绑定，由驱动映射；PG 的 V0.2.3 已把该列转为 BOOLEAN。
      */
     private boolean toolExists(String toolName) {
         Long internal = internalToolMapper.selectCount(
