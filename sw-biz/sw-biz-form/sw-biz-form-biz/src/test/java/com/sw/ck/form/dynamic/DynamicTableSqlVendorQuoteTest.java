@@ -52,6 +52,16 @@ class DynamicTableSqlVendorQuoteTest {
         assertEquals(sql, DynamicTableSql.toVendorSql(jdbcTemplate, sql));
     }
 
+    @Test
+    @DisplayName("字符串字面量与注释里的双引号不得被改写")
+    void literalsAndCommentsAreNotRewritten() {
+        String sql = "SELECT \"id\" FROM \"" + TABLE + "\" WHERE \"note\" = 'say \"hi\"' -- \"fake\"\n"
+                + " AND \"reason\" = 'it''s \"ok\"' /* \"fake2\" */ AND \"flag\" = 1";
+        String expected = "SELECT `id` FROM `" + TABLE + "` WHERE `note` = 'say \"hi\"' -- \"fake\"\n"
+                + " AND `reason` = 'it''s \"ok\"' /* \"fake2\" */ AND `flag` = 1";
+        assertEquals(expected, DynamicTableSql.rewriteAnsiIdentifiers(sql));
+    }
+
     private static JdbcTemplate jdbcTemplateFor(String url) throws Exception {
         DataSource dataSource = mock(DataSource.class);
         Connection connection = mock(Connection.class);

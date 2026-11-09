@@ -44,14 +44,27 @@ mvn -pl sw-bootstrap -am -Dtest=SeedComparisonTest -Dsurefire.failIfNoSpecifiedT
 
 3. 启动冒烟需覆盖：MyBatis、中文、CLOB、分页、Flowable、动态宽表建表/读写、主流程业务。
 
-## 已知待 Owner 确认点
+## Owner 验证清单
 
-- **可空唯一键**：`uk_sw_notify_msg_idempotency`、`uk_sw_notify_msg_identity`、
+DM8 支持函数索引；脚本已与 Oracle 同口径：
+
+- 9 个可空唯一键（`uk_sw_notify_msg_idempotency`、`uk_sw_notify_msg_identity`、
   `uk_sw_form_trace_idem`、`uk_sw_agent_exec_req_idem`、`uk_sw_bpm_command_logical`、
   `uk_sw_bpm_comm_instance_receiver`、`uk_sw_bpm_dyn_branch`、`uk_sw_form_cfg_tname`、
-  `uk_iot_device_product_device` 在 Oracle 上会因复合唯一索引“部分列为 NULL 仍判重”而阻塞多行；
-  DM 脚本当前保持普通唯一索引（未使用函数索引，避免 H2 代理不可执行）。
-  请 Owner 在 DM8 上确认其 NULL 判重语义；若与 Oracle 相同，需要单独补丁（函数索引或生成列）。
-- **`uk_sw_bpm_binding_active`**：Oracle 用函数索引只约束 `active=1` 的行；DM 脚本改为
-  `(tenant_id, form_key, active)` 普通唯一索引。若业务允许同一表单存在多条 `active=0` 历史绑定，
-  Owner 验证时需重点检查。
+  `uk_iot_device_product_device`）用 `CASE WHEN 所有可空键列 IS NOT NULL THEN 列 END`
+  函数索引：只有所有键列非空时才参与唯一判重，与 PG“任一键列为 NULL 即不判重”一致。
+- `uk_sw_bpm_binding_active` 用 `CASE WHEN active = 1 THEN tenant_id/form_key END`
+  函数索引：只约束启用中的绑定，多条 `active=0` 历史绑定可并存。
+
+请 Owner 在真实 DM8 上验证以下正反例：
+
+1. 同一租户两条 `idempotency_key IS NULL` 的通知可并存；相同非空 `idempotency_key`
+   的第二条通知被唯一索引拒绝。
+2. 同一租户两条 `biz_id IS NULL` 的系统通告可并存；相同非空通知身份的第二条被拒绝。
+3. `sw_form_config.table_name IS NULL` 的多条草稿配置可并存；相同非空 `table_name`
+   的重复配置被拒绝。
+4. 同一表单多条 `active=0` 的绑定可并存；第二条 `active=1` 的绑定被拒绝。
+5. 单列可空唯一键（`sw_bpm_urge_record.cooldown_key`、
+   `sw_iot_device_command.idempotent_key`）允许多条 NULL，非空重复仍被拒绝。
+6. `sw_bpm_dynamic_branch` 的 `round_no IS NULL` 行可多条并存；非空轮次身份重复被拒绝。
+

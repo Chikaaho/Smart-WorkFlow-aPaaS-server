@@ -89,9 +89,6 @@ public final class DynamicTableSql {
     private static final Pattern DYNAMIC_TABLE_TOKEN = Pattern.compile(
             "(?<![A-Za-z0-9_])sw_form(?:_table)?_[a-z][a-z0-9]{9}(?![A-Za-z0-9_])");
 
-    /** 受控入口内部统一使用的 ANSI 双引号标识符；执行前按数据库方言转换。 */
-    private static final Pattern ANSI_IDENTIFIER = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"");
-
     /** 动态宽表系统列（与 {@link DynamicTableManager#SYSTEM_COLUMNS} 语义一致）。 */
     public static final List<String> SYSTEM_COLUMNS = List.of(
             "id", "tenant_id", "deleted", "create_time", "create_by",
@@ -399,9 +396,75 @@ public final class DynamicTableSql {
     static String toVendorSql(JdbcTemplate jdbcTemplate, String sql) {
         DatabaseVendor vendor = JdbcVendorSupport.vendor(jdbcTemplate);
         if (vendor == DatabaseVendor.MYSQL || vendor == DatabaseVendor.MARIADB) {
-            return ANSI_IDENTIFIER.matcher(sql).replaceAll("`$1`");
+            return rewriteAnsiIdentifiers(sql);
         }
         return sql;
+    }
+
+    /**
+     * 只把 SQL 语法位置上的 ANSI 双引号标识符改成反引号；
+     * 单引号字符串、行注释、块注释内的双引号原样保留。
+     */
+    static String rewriteAnsiIdentifiers(String sql) {
+        StringBuilder out = new StringBuilder(sql.length());
+        int i = 0;
+        int n = sql.length();
+        while (i < n) {
+            char c = sql.charAt(i);
+            char next = i + 1 < n ? sql.charAt(i + 1) : '\0';
+            if (c == '\'') {
+                int end = skipSingleQuoted(sql, i);
+                out.append(sql, i, end);
+                i = end;
+            } else if (c == '-' && next == '-') {
+                int end = sql.indexOf('\n', i);
+                if (end < 0) {
+                    out.append(sql, i, n);
+                    i = n;
+                } else {
+                    out.append(sql, i, end + 1);
+                    i = end + 1;
+                }
+            } else if (c == '/' && next == '*') {
+                int end = sql.indexOf("*/", i + 2);
+                end = end < 0 ? n : end + 2;
+                out.append(sql, i, end);
+                i = end;
+            } else if (c == '"') {
+                int end = sql.indexOf('"', i + 1);
+                if (end > i + 1 && IDENTIFIER.matcher(sql.substring(i + 1, end)).matches()) {
+                    out.append('`').append(sql, i + 1, end).append('`');
+                    i = end + 1;
+                } else {
+                    out.append(c);
+                    i++;
+                }
+            } else {
+                out.append(c);
+                i++;
+            }
+        }
+        return out.toString();
+    }
+
+    private static int skipSingleQuoted(String sql, int start) {
+        int i = start + 1;
+        int n = sql.length();
+        while (i < n) {
+            char c = sql.charAt(i);
+            if (c == '\\' && i + 1 < n) {
+                i += 2;
+            } else if (c == '\'') {
+                if (i + 1 < n && sql.charAt(i + 1) == '\'') {
+                    i += 2;
+                } else {
+                    return i + 1;
+                }
+            } else {
+                i++;
+            }
+        }
+        return n;
     }
 
     /** 提取 DDL 的目标表（支持双引号、反引号、方括号与未引用四种写法）。 */

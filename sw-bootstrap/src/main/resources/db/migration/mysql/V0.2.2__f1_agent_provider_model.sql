@@ -67,10 +67,10 @@ SELECT c.id,
        c.name,
        'OPENAI_CHAT',
        CASE WHEN c.protocol_type = 'ollama' AND c.base_url NOT LIKE '%/v1'
-            THEN c.base_url || '/v1' ELSE c.base_url END,
+            THEN CONCAT(c.base_url, '/v1') ELSE c.base_url END,
        c.api_key_cipher,
        CASE WHEN c.protocol_type = 'other' THEN FALSE ELSE c.enabled <> 0 END,
-       'D022-03 迁移自 sw_agent_model_config（protocol=' || c.protocol_type || '）',
+       CONCAT('D022-03 迁移自 sw_agent_model_config（protocol=', c.protocol_type, '）'),
        c.create_time, c.create_by, c.update_time, c.update_by, c.deleted, c.tenant_id, c.version
 FROM sw_agent_model_config c;
 

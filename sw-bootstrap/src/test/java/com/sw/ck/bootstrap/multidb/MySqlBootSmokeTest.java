@@ -129,7 +129,9 @@ class MySqlBootSmokeTest {
         }
         try (Connection connection = DriverManager.getConnection(serverUrl, user, password);
              Statement statement = connection.createStatement()) {
-            statement.executeUpdate("DROP DATABASE IF EXISTS " + DATABASE);
+            if (!Boolean.getBoolean("smoke.keep-db")) {
+                statement.executeUpdate("DROP DATABASE IF EXISTS " + DATABASE);
+            }
         }
     }
 

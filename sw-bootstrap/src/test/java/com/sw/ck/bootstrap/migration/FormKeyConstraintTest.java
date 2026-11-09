@@ -100,4 +100,91 @@ class FormKeyConstraintTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("MySQL/MariaDB：uk_sw_form_def_form_key 列顺序为 tenant_id, form_key, deleted")
+    void mysqlFinalIndex() throws Exception {
+        String url = System.getProperty("formkey.mysql.url");
+        org.junit.jupiter.api.Assumptions.assumeTrue(url != null && !url.isBlank(),
+                "未配置 formkey.mysql.url，跳过 MySQL form_key 断言");
+        String user = System.getProperty("formkey.mysql.user", "root");
+        String password = System.getProperty("formkey.mysql.password", "");
+        try (Connection connection = DriverManager.getConnection(url, user, password);
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(
+                     "SELECT column_name FROM information_schema.statistics "
+                             + "WHERE table_schema = DATABASE() AND table_name = 'sw_form_def' "
+                             + "AND index_name = 'uk_sw_form_def_form_key' ORDER BY seq_in_index")) {
+            List<String> columns = new ArrayList<>();
+            while (rs.next()) {
+                columns.add(rs.getString(1).toLowerCase());
+            }
+            assertEquals(List.of("tenant_id", "form_key", "deleted"), columns);
+        }
+        try (Connection connection = DriverManager.getConnection(url, user, password);
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(
+                     "SELECT index_name FROM information_schema.statistics "
+                             + "WHERE table_schema = DATABASE() AND table_name = 'sw_form_def' "
+                             + "AND non_unique = 0 GROUP BY index_name "
+                             + "HAVING GROUP_CONCAT(column_name ORDER BY seq_in_index) = 'form_key'")) {
+            assertTrue(!rs.next(), "不应残留仅 form_key 的唯一索引");
+        }
+    }
+
+    @Test
+    @DisplayName("Oracle：uk_sw_form_def_form_key 列顺序为 tenant_id, form_key, deleted")
+    void oracleFinalIndex() throws Exception {
+        String url = System.getProperty("formkey.oracle.url");
+        org.junit.jupiter.api.Assumptions.assumeTrue(url != null && !url.isBlank(),
+                "未配置 formkey.oracle.url，跳过 Oracle form_key 断言");
+        String user = System.getProperty("formkey.oracle.user", "swmdb");
+        String password = System.getProperty("formkey.oracle.password", "");
+        try (Connection connection = DriverManager.getConnection(url, user, password);
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(
+                     "SELECT column_name FROM user_ind_columns "
+                             + "WHERE index_name = 'UK_SW_FORM_DEF_FORM_KEY' ORDER BY column_position")) {
+            List<String> columns = new ArrayList<>();
+            while (rs.next()) {
+                columns.add(rs.getString(1).toLowerCase());
+            }
+            assertEquals(List.of("tenant_id", "form_key", "deleted"), columns);
+        }
+        try (Connection connection = DriverManager.getConnection(url, user, password);
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(
+                     "SELECT i.index_name FROM user_indexes i JOIN user_ind_columns c "
+                             + "ON i.index_name = c.index_name "
+                             + "WHERE i.table_name = 'SW_FORM_DEF' AND i.uniqueness = 'UNIQUE' "
+                             + "GROUP BY i.index_name "
+                             + "HAVING COUNT(*) = 1 AND MAX(c.column_name) = 'FORM_KEY'")) {
+            assertTrue(!rs.next(), "不应残留仅 form_key 的唯一索引");
+        }
+    }
+
+    @Test
+    @DisplayName("SQL Server：uk_sw_form_def_form_key 列顺序为 tenant_id, form_key, deleted")
+    void sqlServerFinalIndex() throws Exception {
+        String url = System.getProperty("formkey.sqlserver.url");
+        org.junit.jupiter.api.Assumptions.assumeTrue(url != null && !url.isBlank(),
+                "未配置 formkey.sqlserver.url，跳过 SQL Server form_key 断言");
+        String user = System.getProperty("formkey.sqlserver.user", "sa");
+        String password = System.getProperty("formkey.sqlserver.password", "");
+        try (Connection connection = DriverManager.getConnection(url, user, password);
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(
+                     "SELECT c.name FROM sys.indexes i "
+                             + "JOIN sys.index_columns ic ON ic.object_id = i.object_id "
+                             + "AND ic.index_id = i.index_id "
+                             + "JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id "
+                             + "WHERE i.object_id = OBJECT_ID('dbo.sw_form_def') "
+                             + "AND i.name = 'uk_sw_form_def_form_key' ORDER BY ic.key_ordinal")) {
+            List<String> columns = new ArrayList<>();
+            while (rs.next()) {
+                columns.add(rs.getString(1).toLowerCase());
+            }
+            assertEquals(List.of("tenant_id", "form_key", "deleted"), columns);
+        }
+    }
 }

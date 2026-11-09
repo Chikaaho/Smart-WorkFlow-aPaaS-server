@@ -5059,10 +5059,10 @@ ALTER TABLE sw_form_def ADD COLUMN form_type VARCHAR(20) NOT NULL DEFAULT 'BUSIN
 --   1. 新增 sw_form_app / sw_form_app_dir / sw_form_app_user 三表；
 --      sw_form_def 增加 app_id / dir_id 归属列（目录可空=直接归属应用）。
 --   2. 存量承接（幂等条件均为确定性判定，不取首项、不自动复制业务数据）：
---      a) 每个有效分类承接为一个应用（id = 'lc' || category.id，legacy_category_id 保留追溯）；
+--      a) 每个有效分类承接为一个应用（id = CONCAT('lc', category.id)，legacy_category_id 保留追溯）；
 --      b) 表单归属：该 formKey 的全部有效事项（deleted=0）关联的有效分类去重后
 --         恰为一个 → 归属该分类承接应用；为零个（分类缺失且无冲突）→ 归属本租户
---         「未分类」承接应用（id = 'uncat-t' || tenant_id，仅在该租户存在此类表单时创建）；
+--         「未分类」承接应用（id = CONCAT('uncat-t', tenant_id)，仅在该租户存在此类表单时创建）；
 --         多于一个（跨分类共用表单=多归属歧义）→ 不自动转换，app_id 保持 NULL，
 --         保留原可用路径，由正式冲突清单交 Planner 裁决后才转换。
 --      c) 承接应用可见范围 = ALL（本租户全部用户），以保留既有合法访问；
@@ -5138,14 +5138,14 @@ CREATE INDEX idx_sw_form_def_app ON sw_form_def (tenant_id, app_id, deleted);
 -- ==================== 5. 存量承接：分类 → 应用 ====================
 INSERT INTO sw_form_app (id, tenant_id, name, icon, color, sort_no, visible_scope_type, status, source,
                          legacy_category_id, deleted, create_time, update_time, version)
-SELECT 'lc' || c.id, c.tenant_id, c.name, 'Folder', '#7e306b', c.sort_no, 'ALL', 'ENABLED', 'LEGACY_CATEGORY',
+SELECT CONCAT('lc', c.id), c.tenant_id, c.name, 'Folder', '#7e306b', c.sort_no, 'ALL', 'ENABLED', 'LEGACY_CATEGORY',
        c.id, 0, current_timestamp, current_timestamp, 0
 FROM sw_bpm_category c
 WHERE c.deleted = 0;
 
 -- ==================== 6. 存量承接：唯一分类表单归属 ====================
 UPDATE sw_form_def f SET app_id = (
-    SELECT 'lc' || MIN(pd.category_id)
+    SELECT CONCAT('lc', MIN(pd.category_id))
     FROM sw_bpm_process_def pd
     JOIN sw_bpm_category c ON c.id = pd.category_id AND c.deleted = 0
     WHERE pd.form_key = f.form_key AND pd.tenant_id = f.tenant_id AND pd.deleted = 0
@@ -5159,7 +5159,7 @@ WHERE f.deleted = 0
 -- ==================== 7. 存量承接：未分类应用（按需创建） ====================
 INSERT INTO sw_form_app (id, tenant_id, name, icon, color, sort_no, visible_scope_type, status, source,
                          legacy_category_id, deleted, create_time, update_time, version)
-SELECT 'uncat-t' || f.tenant_id, f.tenant_id, '未分类', 'Folder', '#909399', 9999, 'ALL', 'ENABLED',
+SELECT CONCAT('uncat-t', f.tenant_id), f.tenant_id, '未分类', 'Folder', '#909399', 9999, 'ALL', 'ENABLED',
        'LEGACY_UNCATEGORIZED', NULL, 0, current_timestamp, current_timestamp, 0
 FROM sw_form_def f
 WHERE f.deleted = 0
@@ -5170,7 +5170,7 @@ WHERE f.deleted = 0
 GROUP BY f.tenant_id;
 
 -- ==================== 8. 存量承接：分类缺失表单归属未分类 ====================
-UPDATE sw_form_def f SET app_id = 'uncat-t' || f.tenant_id
+UPDATE sw_form_def f SET app_id = CONCAT('uncat-t', f.tenant_id)
 WHERE f.deleted = 0 AND f.app_id IS NULL
   AND (SELECT COUNT(DISTINCT pd.category_id)
        FROM sw_bpm_process_def pd
