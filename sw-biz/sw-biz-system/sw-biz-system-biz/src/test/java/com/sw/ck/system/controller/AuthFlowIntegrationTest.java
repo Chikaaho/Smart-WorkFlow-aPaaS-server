@@ -170,6 +170,7 @@ class AuthFlowIntegrationTest {
                     status            smallint        not null default 0,
                     dept_id           bigint,
                     is_admin          smallint        not null default 0,
+                    must_change_password smallint not null default 0,
                     last_login_time   timestamp,
                     last_login_ip     varchar(50),
                     remark            clob,
@@ -1111,6 +1112,12 @@ class AuthFlowIntegrationTest {
         }
 
         @Bean
+        public com.sw.ck.system.service.AuditLogService auditLogService(
+                com.sw.ck.system.mapper.SysAuditLogMapper auditLogMapper) {
+            return new com.sw.ck.system.service.AuditLogService(auditLogMapper);
+        }
+
+        @Bean
         public AuthController authController(
                 UserDetailsProvider userDetailsProvider,
                 PasswordEncoder passwordEncoder,
@@ -1121,11 +1128,12 @@ class AuthFlowIntegrationTest {
                 LoginUserLoader loginUserLoader,
                 LoginChallengeService loginChallengeService,
                 com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager,
-                com.sw.ck.system.service.TenantValidityService tenantValidityService) {
+                com.sw.ck.system.service.TenantValidityService tenantValidityService,
+                com.sw.ck.system.service.AuditLogService auditLogService) {
             return new AuthController(userDetailsProvider, passwordEncoder,
                     jwtTokenProvider, sysUserService, jwtProperties,
                     refreshTokenService, loginUserLoader, loginChallengeService, rsaLoginKeyManager,
-                    tenantValidityService);
+                    tenantValidityService, auditLogService);
         }
 
         @Bean

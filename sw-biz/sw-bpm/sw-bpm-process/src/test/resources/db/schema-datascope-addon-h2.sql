@@ -13,6 +13,7 @@ create table sys_user (
     dept_id     bigint,
     create_by   bigint,
     tenant_id   bigint          not null default 0,
-    deleted     smallint        not null default 0
+    deleted     smallint        not null default 0,
+    must_change_password smallint   not null default 0
 );
 create unique index uk_sys_user_username on sys_user (username);

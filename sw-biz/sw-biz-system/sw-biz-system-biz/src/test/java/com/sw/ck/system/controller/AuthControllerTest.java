@@ -65,7 +65,8 @@ class AuthControllerTest {
             userDetailsProvider, passwordEncoder, jwtTokenProvider, sysUserService,
             jwtProperties, refreshTokenService, loginUserLoader,
             challengeService, keyManager,
-            alwaysValidTenantService());
+            alwaysValidTenantService(),
+            mock(com.sw.ck.system.service.AuditLogService.class));
 
     /** 默认租户校验替身：非空租户一律有效（租户拒绝分支由 I5 集成测试覆盖）。 */
     private com.sw.ck.system.service.TenantValidityService alwaysValidTenantService() {
@@ -103,7 +104,7 @@ class AuthControllerTest {
         request.setCaptcha(captchaOverride != null ? captchaOverride : challengeService.lastCaptchaCode());
         request.setCaptchaId(challenge.captchaId());
         request.setTimestamp(timestampOverride != null ? timestampOverride : String.valueOf(System.currentTimeMillis()));
-        return controller.login(request, mockResponse);
+        return controller.login(request, new MockHttpServletRequest(), mockResponse);
     }
 
     private SysUser activeUser(String username, String rawPassword) {
@@ -159,7 +160,7 @@ class AuthControllerTest {
         request.setCaptcha("aaaa");
         request.setCaptchaId("not-exist-uuid");
         request.setTimestamp(String.valueOf(System.currentTimeMillis()));
-        R<TokenResponse> replay = controller.login(request, mockResponse);
+        R<TokenResponse> replay = controller.login(request, new MockHttpServletRequest(), mockResponse);
 
         assertThat(result.getCode()).isNotZero();
         assertThat(replay.getCode()).isEqualTo(CAPTCHA_ERROR);
@@ -180,7 +181,7 @@ class AuthControllerTest {
         request.setCaptcha(challengeService.lastCaptchaCode());
         request.setCaptchaId(challenge.captchaId());
         request.setTimestamp(String.valueOf(System.currentTimeMillis()));
-        R<TokenResponse> result = controller.login(request, mockResponse);
+        R<TokenResponse> result = controller.login(request, new MockHttpServletRequest(), mockResponse);
 
         assertThat(result.getCode()).isEqualTo(CAPTCHA_EXPIRED);
         assertThat(result.getMsg()).isEqualTo("验证码已过期");
@@ -200,7 +201,7 @@ class AuthControllerTest {
         request.setTimestamp(String.valueOf(System.currentTimeMillis()));
         // 内存替身不模拟 TTL 消亡：删除记录等价于真实 Redis 保留期（600s）过后记录已消亡
         challengeStore.records.remove(challenge.captchaId());
-        R<TokenResponse> gone = controller.login(request, mockResponse);
+        R<TokenResponse> gone = controller.login(request, new MockHttpServletRequest(), mockResponse);
         assertThat(gone.getCode()).isEqualTo(CAPTCHA_ERROR);
         assertThat(gone.getMsg()).isEqualTo("验证码错误");
     }
@@ -256,7 +257,7 @@ class AuthControllerTest {
         request.setCaptchaId(challenge.captchaId());
         request.setTimestamp(String.valueOf(System.currentTimeMillis()));
 
-        R<TokenResponse> result = controller.login(request, mockResponse);
+        R<TokenResponse> result = controller.login(request, new MockHttpServletRequest(), mockResponse);
 
         assertThat(result.getCode()).isEqualTo(PASSWORD_ERROR);
     }
@@ -277,8 +278,8 @@ class AuthControllerTest {
         request.setCaptchaId(challenge.captchaId());
         request.setTimestamp(String.valueOf(System.currentTimeMillis()));
 
-        R<TokenResponse> first = controller.login(request, mockResponse);
-        R<TokenResponse> second = controller.login(request, mockResponse);
+        R<TokenResponse> first = controller.login(request, new MockHttpServletRequest(), mockResponse);
+        R<TokenResponse> second = controller.login(request, new MockHttpServletRequest(), mockResponse);
 
         assertThat(first.getCode()).as("首次提交应成功").isZero();
         assertThat(second.getCode()).as("重复提交应被拒绝").isEqualTo(CAPTCHA_ERROR);

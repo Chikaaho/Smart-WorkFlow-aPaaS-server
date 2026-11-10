@@ -188,8 +188,8 @@ public class BpmMyInstanceController {
             item.setBusinessKey(record.getBusinessKey());
             item.setFormKey(record.getFormKey());
             item.setInitiatorId(record.getInitiatorId());
-            item.setInitiatorName(record.getInitiatorId() == null ? null
-                    : initiatorNames.get(record.getInitiatorId()));
+            item.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                    record.getInitiatorId(), initiatorNames));
             item.setStatus(record.getStatus());
             item.setCurrentNode(resolveCurrentNode(record, endNodeNames));
             item.setCreateTime(record.getCreateTime());
@@ -504,13 +504,13 @@ public class BpmMyInstanceController {
             BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(instance.getProcessDefKey());
             processName = processDef == null ? null : processDef.getName();
         }
-        String initiatorName = null;
-        if (userQueryFacade != null && instance.getInitiatorId() != null) {
-            initiatorName = userQueryFacade
-                    .getUserDisplayNames(java.util.Set.of(instance.getInitiatorId()))
-                    .orElse(Map.of())
-                    .get(instance.getInitiatorId());
-        }
+        String initiatorName = com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                instance.getInitiatorId(),
+                userQueryFacade == null || instance.getInitiatorId() == null
+                        ? Map.of()
+                        : userQueryFacade
+                                .getUserDisplayNames(java.util.Set.of(instance.getInitiatorId()))
+                                .orElse(Map.of()));
 
         Map<String, Object> instanceInfo = new java.util.HashMap<>();
         instanceInfo.put("id", instance.getId());

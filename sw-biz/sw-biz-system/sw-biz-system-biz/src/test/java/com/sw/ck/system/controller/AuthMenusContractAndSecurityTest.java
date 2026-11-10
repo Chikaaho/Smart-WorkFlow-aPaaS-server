@@ -204,6 +204,7 @@ class AuthMenusContractAndSecurityTest {
                     status            smallint        not null default 0,
                     dept_id           bigint,
                     is_admin          smallint        not null default 0,
+                    must_change_password smallint not null default 0,
                     last_login_time   timestamp,
                     last_login_ip     varchar(50),
                     remark            clob,

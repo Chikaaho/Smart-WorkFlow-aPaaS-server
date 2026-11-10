@@ -31,8 +31,27 @@ public class GlobalExceptionHandler {
     /** 消息目录；为空（未装配）时全部回退到枚举中的 zh-CN 默认文案。 */
     private final org.springframework.context.MessageSource messageSource;
 
+    /**
+     * 未处理异常审计发布器（1.0.0 F3-3）；为 null（手工构造的单参路径）时不发布。
+     * 审计载体 {@link com.sw.ck.common.audit.UnhandledExceptionAudit} 由业务侧监听落库，
+     * 框架层不反向依赖业务模块。
+     */
+    private final org.springframework.context.ApplicationEventPublisher auditPublisher;
+
+    /** 登录上下文延迟引用；手工构造（单参）或无安全装配时为空，操作人字段留空。 */
+    private final org.springframework.beans.factory.ObjectProvider<com.sw.ck.common.security.LoginContextProvider> loginContext;
+
     public GlobalExceptionHandler(org.springframework.context.MessageSource messageSource) {
+        this(messageSource, null, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public GlobalExceptionHandler(org.springframework.context.MessageSource messageSource,
+                                  org.springframework.context.ApplicationEventPublisher auditPublisher,
+                                  org.springframework.beans.factory.ObjectProvider<com.sw.ck.common.security.LoginContextProvider> loginContext) {
         this.messageSource = messageSource;
+        this.auditPublisher = auditPublisher;
+        this.loginContext = loginContext;
     }
 
     /** 按当前请求语言解析文案；目录缺失或未装配时回退到缺省文案。 */
@@ -197,7 +216,38 @@ public class GlobalExceptionHandler {
     public R<Void> handleException(Exception ex) {
         String eventRef = EventRef.current();
         log.error("unexpected exception: eventRef={}", eventRef, ex);
+        publishUnhandledExceptionAudit(ex, eventRef);
         return fail(CommonErrorCode.SYSTEM_ERROR, eventRef);
+    }
+
+    /**
+     * 发布未处理异常审计事件（1.0.0 F3-3）：只带异常类型 + 安全结论级摘要 + 事件引用，
+     * 不带堆栈与请求体；发布或携带的任何异常都不影响原响应。
+     */
+    private void publishUnhandledExceptionAudit(Exception ex, String eventRef) {
+        if (auditPublisher == null) {
+            return;
+        }
+        try {
+            String uri = null;
+            String method = null;
+            if (org.springframework.web.context.request.RequestContextHolder.getRequestAttributes()
+                    instanceof org.springframework.web.context.request.ServletRequestAttributes attrs) {
+                uri = attrs.getRequest().getRequestURI();
+                method = attrs.getRequest().getMethod();
+            }
+            com.sw.ck.common.security.LoginContextProvider login =
+                    loginContext != null ? loginContext.getIfAvailable() : null;
+            auditPublisher.publishEvent(new com.sw.ck.common.audit.UnhandledExceptionAudit(
+                    uri, method, null,
+                    login == null ? null : login.getUserId(),
+                    login == null ? null : login.getTenantId(),
+                    ex.getClass().getSimpleName(),
+                    text("common.system_error", "系统异常，请稍后重试"),
+                    eventRef));
+        } catch (Exception ignored) {
+            // 审计为尽力而为，不影响原始异常响应
+        }
     }
 
     private R<Void> fail(CommonErrorCode errorCode, String eventRef) {
