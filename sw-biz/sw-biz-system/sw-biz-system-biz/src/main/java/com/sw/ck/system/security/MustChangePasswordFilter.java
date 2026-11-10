@@ -37,7 +37,9 @@ public class MustChangePasswordFilter extends OncePerRequestFilter {
 
     /** 改密闭环放行端点（不含 context-path；/auth/me、/auth/menus 仅自身只读信息）。 */
     private static final List<String> ALLOWED_PATHS = List.of(
-            "/auth/refresh", "/auth/logout", "/auth/password", "/auth/me", "/auth/menus");
+            "/auth/refresh", "/auth/logout", "/auth/password", "/auth/me", "/auth/menus",
+            // AuthMeController 双映射（@RequestMapping({"/system/auth", "/auth"})）
+            "/system/auth/me", "/system/auth/menus");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
