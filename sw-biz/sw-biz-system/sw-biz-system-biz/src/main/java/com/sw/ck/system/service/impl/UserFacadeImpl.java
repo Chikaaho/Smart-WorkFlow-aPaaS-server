@@ -73,6 +73,30 @@ public class UserFacadeImpl implements UserQueryFacade {
     }
 
     /**
+     * 审批历史所属部门：按用户主部门批量解析（只读、脱敏；无主部门/停用用户不返回）。
+     */
+    @Override
+    public Optional<Map<Long, Long>> getUserDeptIds(Collection<Long> ids) {
+        if (ids == null) {
+            return Optional.empty();
+        }
+        if (ids.isEmpty()) {
+            return Optional.of(Map.of());
+        }
+        List<SysUser> users = sysUserMapper.selectList(Wrappers.lambdaQuery(SysUser.class)
+                .select(SysUser::getId, SysUser::getDeptId)
+                .in(SysUser::getId, ids)
+                .eq(SysUser::getStatus, STATUS_ACTIVE));
+        Map<Long, Long> result = new java.util.LinkedHashMap<>();
+        for (SysUser user : users) {
+            if (user.getId() != null && user.getDeptId() != null) {
+                result.put(user.getId(), user.getDeptId());
+            }
+        }
+        return Optional.of(result);
+    }
+
+    /**
      * B021-027：审批人候选按组织架构筛选——部门 + 全部子孙部门内的正常状态用户。
      * deptId 为空时退回全量关键字搜索（与原行为一致）。
      */

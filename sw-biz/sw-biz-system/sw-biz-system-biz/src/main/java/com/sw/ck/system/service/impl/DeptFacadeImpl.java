@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -55,6 +56,30 @@ public class DeptFacadeImpl implements DeptQueryFacade {
             found.add(d.getId());
         }
         return Optional.of(found);
+    }
+
+    /**
+     * 审批历史所属部门：按部门 ID 批量解析正常状态部门名（不存在/停用不返回，空 Map 为零匹配）。
+     */
+    @Override
+    public Optional<Map<Long, String>> findActiveDeptNames(Collection<Long> ids) {
+        if (ids == null) {
+            return Optional.empty();
+        }
+        if (ids.isEmpty()) {
+            return Optional.of(Map.of());
+        }
+        List<SysDept> depts = sysDeptMapper.selectList(Wrappers.lambdaQuery(SysDept.class)
+                .select(SysDept::getId, SysDept::getName)
+                .in(SysDept::getId, ids)
+                .eq(SysDept::getStatus, STATUS_ACTIVE));
+        Map<Long, String> result = new java.util.LinkedHashMap<>();
+        for (SysDept dept : depts) {
+            if (dept.getId() != null && dept.getName() != null) {
+                result.put(dept.getId(), dept.getName());
+            }
+        }
+        return Optional.of(result);
     }
 
     @Override
