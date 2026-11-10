@@ -8,9 +8,9 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
@@ -49,9 +49,14 @@ public class AuditOperationFilter extends OncePerRequestFilter {
 
     private static final Pattern BODY_CODE = Pattern.compile("\"code\"\\s*:\\s*(-?\\d+)");
 
-    private final AuditLogService auditLogService;
+    /**
+     * 惰性解析（1.0.0）：过滤器 Bean 在 Servlet 上下文 onRefresh 阶段实例化，
+     * 早于常规单例（sqlSessionFactory）；构造期直接依赖会把 mapper 初始化拖进
+     * Tomcat 资源未就绪的时段（启动测试实证），故经 ObjectProvider 延迟到首个请求。
+     */
+    private final org.springframework.beans.factory.ObjectProvider<AuditLogService> auditLogService;
 
-    public AuditOperationFilter(AuditLogService auditLogService) {
+    public AuditOperationFilter(org.springframework.beans.factory.ObjectProvider<AuditLogService> auditLogService) {
         this.auditLogService = auditLogService;
     }
 
@@ -115,7 +120,7 @@ public class AuditOperationFilter extends OncePerRequestFilter {
         entry.setTarget(AuditLogService.requestTarget(request));
         entry.setIp(AuditLogService.clientIp(request));
         entry.setUserAgent(request.getHeader("User-Agent"));
-        auditLogService.record(entry);
+        auditLogService.getObject().record(entry);
     }
 
     /** 解析响应体开头的业务码；读不到（非 JSON/空）返回 null。 */
