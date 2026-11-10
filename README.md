@@ -4,7 +4,7 @@
 
 Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端服务（Java 21 / Spring Boot 3.4）。CH-aPaaS 是一个可以自己搭建业务应用的低代码平台：把业务做成表单和流程，就能在工作台上发起、审批和跟进；在这个基础上，还带 AI 智能体、设备接入和消息通知。
 
-![Version](https://img.shields.io/badge/version-0.4.0-2563EB)
+![Version](https://img.shields.io/badge/version-0.4.1-2563EB)
 ![License](https://img.shields.io/badge/license-MIT-2563EB)
 ![Java](https://img.shields.io/badge/Java-21-6DB33F)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-6DB33F)
@@ -14,7 +14,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端服务（Java 21 / Spring 
 
 ![智能体编排（Web 界面截图）](docs/assets/readme/agent-graph.png)
 
-配套前端：[Smart-WorkFlow-aPaaS-Web](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-Web)（当前 0.3.6，本服务 0.4.0）
+配套前端：[Smart-WorkFlow-aPaaS-Web](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-Web)（当前 0.3.8，本服务 0.4.1）
 
 ## 能做什么
 
@@ -33,6 +33,10 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端服务（Java 21 / Spring 
 | 应急演练 | 校园门岗异常 | 设备温度监控 |
 | --- | --- | --- |
 | ![应急演练审批](docs/assets/readme/sample-a.png) | ![校园门岗异常处置](docs/assets/readme/sample-b.png) | ![设备温度研判](docs/assets/readme/sample-c.png) |
+
+| 会签记录（意见摘要与部门） |
+| --- |
+| ![会签记录](docs/assets/readme/approval-detail.png) |
 
 - **应急演练**：一份跨部门演练计划，经过多轮会签和并行审批后，到点自动向机房设备下发断电、告警等演练指令。
 - **校园门岗异常**：门岗出现异常人流时，AI 先查校内活动和知识库判断原因：能解释的记录在案并派工单，解释不了的升级为紧急工单并通知负责人。
@@ -185,7 +189,7 @@ java -jar sw-bootstrap/target/bootstrap.jar
 
 ## 版本与升级
 
-当前版本 **0.4.0**，与前端 0.3.6 搭配使用。升级时替换 jar 后启动即可，建表脚本会自动补齐；**降级回旧版本前必须先恢复升级前的数据库备份**，否则无法启动。完整步骤见[运维手册](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/blob/develop-sw/docs/ops/production-ops.md)。
+当前版本 **0.4.1**，与前端 0.3.8 搭配使用。升级时替换 jar 后启动即可，建表脚本会自动补齐；**降级回旧版本前必须先恢复升级前的数据库备份**，否则无法启动。完整步骤见[运维手册](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/blob/develop-sw/docs/ops/production-ops.md)。
 
 历史版本和下载见 [Releases](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server/releases) 与 [CHANGELOG](https://github.com/Chikaaho/Smart-WorkFlow-Agent-Workspace/blob/develop-sw/CHANGELOG.md)。
 
