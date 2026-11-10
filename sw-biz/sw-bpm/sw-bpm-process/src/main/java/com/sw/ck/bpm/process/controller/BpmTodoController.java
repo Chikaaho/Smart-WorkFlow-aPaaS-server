@@ -66,6 +66,8 @@ public class BpmTodoController {
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
     private final com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper;
+    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade;
+    private final com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade;
 
     public BpmTodoController(BpmTaskFacade bpmTaskFacade,
                              BpmInstanceService bpmInstanceService,
@@ -74,7 +76,19 @@ public class BpmTodoController {
                              com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
-                approvalActionService, objectMapper, null, null);
+                approvalActionService, objectMapper, null, null, null, null);
+    }
+
+    public BpmTodoController(BpmTaskFacade bpmTaskFacade,
+                             BpmInstanceService bpmInstanceService,
+                             BpmProcessDefService bpmProcessDefService,
+                             TaskActionService taskActionService,
+                             com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
+                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
+                             com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper) {
+        this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
+                approvalActionService, objectMapper, participantNameService, deadlineMapper, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -86,7 +100,11 @@ public class BpmTodoController {
                              com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                              com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
                              @org.springframework.beans.factory.annotation.Autowired(required = false)
-                             com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper) {
+                             com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper,
+                             @org.springframework.beans.factory.annotation.Autowired(required = false)
+                             com.sw.ck.system.api.user.UserQueryFacade userQueryFacade,
+                             @org.springframework.beans.factory.annotation.Autowired(required = false)
+                             com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade) {
         this.bpmTaskFacade = bpmTaskFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
@@ -95,6 +113,8 @@ public class BpmTodoController {
         this.objectMapper = objectMapper;
         this.participantNameService = participantNameService;
         this.deadlineMapper = deadlineMapper;
+        this.userQueryFacade = userQueryFacade;
+        this.deptQueryFacade = deptQueryFacade;
     }
 
     /**
@@ -354,8 +374,9 @@ public class BpmTodoController {
             }
             history.add(item);
         }
+        Map<String, ApprovalActionRecord> actions = Map.of();
         if (approvalActionService != null) {
-            Map<String, ApprovalActionRecord> actions = approvalActionService
+            actions = approvalActionService
                     .findByProcessInstanceId(task.getProcessInstanceId()).stream()
                     .collect(Collectors.toMap(ApprovalActionRecord::getTaskId,
                             java.util.function.Function.identity(), (left, right) -> left));
@@ -394,6 +415,9 @@ public class BpmTodoController {
                 item.setAssigneeName(historyNames.get(Long.valueOf(item.getAssignee())));
             }
         }
+        // 意见字段与处理人部门：与「我发起的」实例详情共用同一解析实现
+        com.sw.ck.bpm.process.service.ApprovalHistoryEnricher.enrich(
+                history, actions, objectMapper, taskActionService, userQueryFacade, deptQueryFacade);
         dto.setApprovalHistory(history);
 
         return R.ok(dto);

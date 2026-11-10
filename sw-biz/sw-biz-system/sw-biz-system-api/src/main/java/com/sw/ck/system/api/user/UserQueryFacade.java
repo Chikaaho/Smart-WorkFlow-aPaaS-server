@@ -65,6 +65,17 @@ public interface UserQueryFacade {
     Optional<Map<Long, String>> getUserDisplayNames(Collection<Long> ids);
 
     /**
+     * 按用户 ID 批量查询主部门 ID（审批历史“所属部门”展示用；只读、脱敏）。
+     *
+     * @param ids 用户 ID 集合
+     * @return present = id → 主部门 ID（无主部门或用户不存在/停用的 ID 不在结果中）；
+     *         empty = {@code ids} 为 {@code null} 或实现未提供该查询，调用方按无部门处理
+     */
+    default Optional<Map<Long, Long>> getUserDeptIds(Collection<Long> ids) {
+        return Optional.empty();
+    }
+
+    /**
      * 查询当前租户内启用用户，供流程节点运行期重新校验固定用户配置。
      *
      * @return present = 命中用户 ID 列表（空列表为合法零匹配）；empty = 查询对象缺失

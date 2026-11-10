@@ -29,6 +29,9 @@ public class ApprovalHistoryItemDTO {
     /** 审批人展示名（可读身份回显） */
     private String assigneeName;
 
+    /** 处理人部门名（主部门；无部门或部门已停用时为空，前端显示占位符）。 */
+    private String assigneeDept;
+
     /** 任务创建时间 */
     private LocalDateTime createTime;
 
