@@ -13,6 +13,14 @@
     <description>嵌入 Agent 的低代码 OA 系统后端基础框架</description>
     <url>https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-server</url>
 
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <modules>
         <!-- BOM 版本管理 -->
         <module>sw-dependencies</module>

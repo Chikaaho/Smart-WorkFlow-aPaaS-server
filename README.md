@@ -5,7 +5,7 @@
 Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端服务（Java 21 / Spring Boot 3.4）。CH-aPaaS 是一个可以自己搭建业务应用的低代码平台：把业务做成表单和流程，就能在工作台上发起、审批和跟进；在这个基础上，还带 AI 智能体、设备接入和消息通知。
 
 ![Version](https://img.shields.io/badge/version-0.4.0-2563EB)
-![License](https://img.shields.io/badge/license-internal%20demo-6B7280)
+![License](https://img.shields.io/badge/license-MIT-2563EB)
 ![Java](https://img.shields.io/badge/Java-21-6DB33F)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-6DB33F)
 ![Databases](https://img.shields.io/badge/databases-9-0EA5E9)
@@ -34,7 +34,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端服务（Java 21 / Spring 
 
 - **应急演练**：一份跨部门演练计划，经过多轮会签和并行审批后，到点自动向机房设备下发断电、告警等演练指令。
 - **校园门岗异常**：门岗出现异常人流时，AI 先查校内活动和知识库判断原因：能解释的记录在案并派工单，解释不了的升级为紧急工单并通知负责人。
-- **设备温度监控**：AI 按业务设定的温度阈值和升温速度判断设备状态：异常升温自动建单维修，临届停机线时直接触发紧急停机审批。
+- **设备温度监控**：AI 按业务设定的温度阈值和升温速度判断设备状态：异常升温自动建单维修，临界停机线时直接触发紧急停机审批。
 
 ## 架构
 
@@ -198,6 +198,6 @@ java -jar sw-bootstrap/target/bootstrap.jar
 
 ## 许可证与致谢
 
-本项目当前未附带开源许可证；对外使用、分发或再发布前请先联系作者。
+本项目以 [MIT License](LICENSE) 开源，可自由使用、修改和分发。
 
 基于 Java 21、Spring Boot、Flowable、MyBatis-Plus、Flyway、LangChain4j 等开源组件构建，感谢这些上游项目与贡献者。
