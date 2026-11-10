@@ -51,12 +51,25 @@ public class BpmMyInstanceController {
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
     private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade;
+    private final com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade;
 
     public BpmMyInstanceController(BpmInstanceService bpmInstanceService,
                                    BpmProcessDefService bpmProcessDefService,
                                    BpmTaskFacade bpmTaskFacade,
                                    TaskActionService taskActionService) {
-        this(bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService, null, null, null, null);
+        this(bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService, null, null, null, null, null);
+    }
+
+    public BpmMyInstanceController(BpmInstanceService bpmInstanceService,
+                                   BpmProcessDefService bpmProcessDefService,
+                                   BpmTaskFacade bpmTaskFacade,
+                                   TaskActionService taskActionService,
+                                   com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
+                                   com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                                   com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
+                                   com.sw.ck.system.api.user.UserQueryFacade userQueryFacade) {
+        this(bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
+                approvalActionService, objectMapper, participantNameService, userQueryFacade, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -67,7 +80,8 @@ public class BpmMyInstanceController {
                                    com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
                                    com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                                    com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
-                                   com.sw.ck.system.api.user.UserQueryFacade userQueryFacade) {
+                                   com.sw.ck.system.api.user.UserQueryFacade userQueryFacade,
+                                   com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade) {
         this.bpmInstanceService = bpmInstanceService;
         this.bpmProcessDefService = bpmProcessDefService;
         this.bpmTaskFacade = bpmTaskFacade;
@@ -76,6 +90,7 @@ public class BpmMyInstanceController {
         this.objectMapper = objectMapper;
         this.participantNameService = participantNameService;
         this.userQueryFacade = userQueryFacade;
+        this.deptQueryFacade = deptQueryFacade;
     }
 
     /**
@@ -409,133 +424,31 @@ public class BpmMyInstanceController {
             }
         }
         resolveOpinionFields(history, actionByTask);
+        com.sw.ck.bpm.process.service.ApprovalHistoryEnricher.enrichAssigneeDept(
+                history, userQueryFacade, deptQueryFacade);
         return history;
     }
 
     /**
-     * 意见字段展示视图：按提交时冻结的意见表单配置逐项给出中文标签与展示值。
-     * <p>
-     * 人员显示姓名（解析不到保留 ID）、日期按本地格式、多选拼接入文本；
-     * 旧动作记录缺快照或未填意见时保持空列表，不虚构字段。
-     * </p>
+     * 意见字段展示视图：复用 {@link com.sw.ck.bpm.process.service.ApprovalHistoryEnricher}，
+     * 与任务详情保持同一解析口径。
      */
     void resolveOpinionFields(List<ApprovalHistoryItemDTO> history,
                               Map<String, com.sw.ck.bpm.process.entity.ApprovalActionRecord> actionByTask) {
-        if (objectMapper == null || history == null || history.isEmpty()) {
-            return;
-        }
-        java.util.Set<Long> userIds = new java.util.LinkedHashSet<>();
-        for (ApprovalHistoryItemDTO item : history) {
-            com.sw.ck.bpm.process.entity.ApprovalActionRecord action =
-                    item.getTaskId() == null ? null : actionByTask.get(item.getTaskId());
-            if (action == null || action.getOpinionFormSnapshot() == null
-                    || action.getOpinionFormSnapshot().isBlank()) {
-                continue;
-            }
-            List<Map<String, Object>> definitions = opinionFieldDefinitions(action.getOpinionFormSnapshot());
-            if (definitions.isEmpty() || item.getOpinionData() == null) {
-                continue;
-            }
-            List<ApprovalHistoryItemDTO.OpinionFieldView> views = new java.util.ArrayList<>();
-            for (Map<String, Object> definition : definitions) {
-                String type = definition.get("type") == null ? "" : String.valueOf(definition.get("type"));
-                if ("NOTE".equalsIgnoreCase(type)) {
-                    continue;
-                }
-                String key = definition.get("key") == null ? null : String.valueOf(definition.get("key"));
-                if (key == null || key.isBlank()) {
-                    continue;
-                }
-                ApprovalHistoryItemDTO.OpinionFieldView view = new ApprovalHistoryItemDTO.OpinionFieldView();
-                view.setName(key);
-                view.setLabel(definition.get("label") == null ? key : String.valueOf(definition.get("label")));
-                view.setType(type);
-                Object value = item.getOpinionData().get(key);
-                view.setValue(value);
-                if ("USER".equalsIgnoreCase(type) && value != null) {
-                    for (Object raw : (value instanceof List<?> list ? list : List.of(value))) {
-                        String text = raw == null ? "" : String.valueOf(raw).trim();
-                        if (text.matches("\\d+")) {
-                            userIds.add(Long.valueOf(text));
-                        }
-                    }
-                }
-                views.add(view);
-            }
-            item.setOpinionFields(views);
-        }
-        Map<Long, String> userNames = userIds.isEmpty() || taskActionService == null
-                ? Map.of() : taskActionService.resolveUserNames(userIds);
-        for (ApprovalHistoryItemDTO item : history) {
-            if (item.getOpinionFields() == null) {
-                continue;
-            }
-            for (ApprovalHistoryItemDTO.OpinionFieldView view : item.getOpinionFields()) {
-                view.setDisplayValue(opinionDisplayValue(view.getType(), view.getValue(), userNames));
-            }
-        }
+        com.sw.ck.bpm.process.service.ApprovalHistoryEnricher.enrichOpinionFields(
+                history, actionByTask, objectMapper, taskActionService);
     }
 
-    /** 冻结快照 JSON → 字段定义列表；结构不可解析时返回空列表（不阻断历史响应）。 */
+    /** 冻结快照 JSON → 字段定义列表（保留包内入口，实现委托共享组件）。 */
     List<Map<String, Object>> opinionFieldDefinitions(String snapshotJson) {
-        try {
-            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(snapshotJson);
-            com.fasterxml.jackson.databind.JsonNode fields = root == null ? null : root.path("opinionForm").path("fields");
-            if (fields == null || !fields.isArray() || fields.isEmpty()) {
-                return List.of();
-            }
-            List<Map<String, Object>> out = new java.util.ArrayList<>();
-            for (com.fasterxml.jackson.databind.JsonNode node : fields) {
-                if (node == null || !node.isObject()) {
-                    continue;
-                }
-                Map<String, Object> field = new java.util.LinkedHashMap<>();
-                for (String name : List.of("key", "type", "label", "maxLength")) {
-                    if (node.hasNonNull(name)) {
-                        field.put(name, node.get(name).isNumber() ? node.get(name).asInt() : node.get(name).asText());
-                    }
-                }
-                out.add(field);
-            }
-            return out;
-        } catch (Exception e) {
-            log.warn("审批意见快照解析失败，忽略字段展示视图: {}", e.getMessage());
-            return List.of();
-        }
+        return com.sw.ck.bpm.process.service.ApprovalHistoryEnricher
+                .opinionFieldDefinitions(snapshotJson, objectMapper);
     }
 
-    /** 意见字段展示文本：人员姓名、日期本地格式（yyyy-MM-dd HH:mm）、多选拼接。 */
+    /** 意见字段展示文本（保留包内入口，实现委托共享组件）。 */
     String opinionDisplayValue(String type, Object value, Map<Long, String> userNames) {
-        if (value == null) {
-            return "";
-        }
-        String normalized = type == null ? "" : type.toUpperCase();
-        if ("USER".equals(normalized)) {
-            List<String> ids = new java.util.ArrayList<>();
-            for (Object raw : (value instanceof List<?> list ? list : List.of(value))) {
-                String text = raw == null ? "" : String.valueOf(raw).trim();
-                if (!text.isEmpty()) {
-                    ids.add(text.matches("\\d+")
-                            ? userNames.getOrDefault(Long.valueOf(text), text) : text);
-                }
-            }
-            return String.join("、", ids);
-        }
-        if ("CHECKBOX".equals(normalized) || "MULTISELECT".equals(normalized) || value instanceof List<?>) {
-            List<String> items = new java.util.ArrayList<>();
-            for (Object raw : (value instanceof List<?> list ? list : List.of(value))) {
-                if (raw != null && !String.valueOf(raw).isBlank()) {
-                    items.add(String.valueOf(raw));
-                }
-            }
-            return String.join("、", items);
-        }
-        String text = String.valueOf(value);
-        if (normalized.startsWith("DATE")) {
-            String trimmed = text.replace('T', ' ');
-            return trimmed.length() >= 16 ? trimmed.substring(0, 16) : trimmed;
-        }
-        return text;
+        return com.sw.ck.bpm.process.service.ApprovalHistoryEnricher
+                .opinionDisplayValue(type, value, userNames);
     }
 
     /**

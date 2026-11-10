@@ -2,6 +2,7 @@ package com.sw.ck.system.api.dept;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -27,6 +28,17 @@ public interface DeptQueryFacade {
      *         empty = {@code ids} 为 {@code null}，缺少查询对象，查询未执行
      */
     Optional<List<Long>> findActiveDeptIds(Collection<Long> ids);
+
+    /**
+     * 按部门 ID 批量查询正常状态部门名称（审批历史“所属部门”展示用；只读、脱敏）。
+     *
+     * @param ids 部门 ID 集合
+     * @return present = deptId → 部门名（不存在/停用的部门不在结果中，空 Map = 零匹配）；
+     *         empty = {@code ids} 为 {@code null} 或实现未提供该查询，调用方按无部门处理
+     */
+    default Optional<Map<Long, String>> findActiveDeptNames(Collection<Long> ids) {
+        return Optional.empty();
+    }
 
     /**
      * BF20261013-021：列出指定租户内正常状态部门的目录行（部门ID/上级部门/有效负责人）。

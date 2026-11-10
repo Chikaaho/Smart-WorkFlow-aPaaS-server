@@ -5,6 +5,7 @@ import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
 import com.sw.ck.bpm.process.dto.ProcessedTaskRespDTO;
+import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
 import com.sw.ck.bpm.process.dto.TaskDetailRespDTO;
 import com.sw.ck.bpm.process.dto.TodoTaskRespDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
@@ -386,6 +387,56 @@ class BpmTodoControllerTest {
             assertThat(dto.getApprovalHistory().get(0).getAssignee()).isEqualTo("2");
             assertThat(dto.getApprovalHistory().get(0).getEndTime()).isNotNull();
             assertThat(dto.getApprovalHistory().get(1).getTaskName()).isEqualTo("提交");
+        }
+
+        @Test
+        @DisplayName("W-c：任务详情历史带意见字段与处理人部门（复用实例详情解析）")
+        void detail_shouldExposeOpinionFieldsAndDept() {
+            setLoginUser();
+            BpmTaskDTO task = createTask("task-001");
+            when(bpmTaskFacade.getTask("task-001")).thenReturn(java.util.Optional.of(task));
+            when(bpmProcessDefService.findByProcessKey("skeleton_approval")).thenReturn(createProcessDef());
+            when(bpmInstanceService.findByProcessInstanceId("pi-task-001"))
+                    .thenReturn(Optional.of(createInstance()));
+            when(bpmTaskFacade.getVariables("pi-task-001"))
+                    .thenReturn(java.util.Optional.of(Map.of("formKey", "leave_form")));
+
+            BpmTaskDTO signRow = createProcessedTask("hist-001");
+            signRow.setAssignee("2");
+            when(bpmTaskFacade.queryHistoryByProcessInstance("pi-task-001"))
+                    .thenReturn(java.util.Optional.of(List.of(signRow)));
+
+            com.sw.ck.bpm.process.entity.ApprovalActionRecord action =
+                    new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+            action.setTaskId("hist-001");
+            action.setAction("APPROVE");
+            action.setSettlementStatus("APPROVED");
+            action.setOpinionData("{\"fact\":\"属实\",\"handler\":\"9\"}");
+            action.setOpinionFormSnapshot("{\"opinionForm\":{\"fields\":["
+                    + "{\"key\":\"fact\",\"type\":\"RADIO\",\"label\":\"事实核实结论\"},"
+                    + "{\"key\":\"handler\",\"type\":\"USER\",\"label\":\"现场处置人\"}]}}");
+            when(approvalActionService.findByProcessInstanceId("pi-task-001"))
+                    .thenReturn(List.of(action));
+            when(userQueryFacade.getUserDisplayNames(any())).thenReturn(java.util.Optional.of(Map.of(9L, "赵磊")));
+            when(userQueryFacade.getUserDeptIds(any()))
+                    .thenReturn(java.util.Optional.of(Map.of(2L, 9001L)));
+            com.sw.ck.system.api.dept.DeptQueryFacade deptFacade =
+                    mock(com.sw.ck.system.api.dept.DeptQueryFacade.class);
+            when(deptFacade.findActiveDeptNames(any()))
+                    .thenReturn(java.util.Optional.of(Map.of(9001L, "安全保卫部")));
+            BpmTodoController withFacades = new BpmTodoController(
+                    bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
+                    approvalActionService, objectMapper, null, null, userQueryFacade, deptFacade);
+
+            R<TaskDetailRespDTO> result = withFacades.detail("task-001");
+
+            TaskDetailRespDTO dto = result.getData();
+            ApprovalHistoryItemDTO row = dto.getApprovalHistory().get(0);
+            assertThat(row.getOpinionFields()).hasSize(2);
+            assertThat(row.getOpinionFields().get(0).getLabel()).isEqualTo("事实核实结论");
+            assertThat(row.getOpinionFields().get(0).getDisplayValue()).isEqualTo("属实");
+            assertThat(row.getOpinionFields().get(1).getDisplayValue()).isEqualTo("赵磊");
+            assertThat(row.getAssigneeDept()).isEqualTo("安全保卫部");
         }
 
         @Test
