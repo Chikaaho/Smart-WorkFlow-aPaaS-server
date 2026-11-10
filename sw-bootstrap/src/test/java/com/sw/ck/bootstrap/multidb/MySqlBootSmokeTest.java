@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * MySQL 5.7 空库启动冒烟（未配置 {@code mysql.url} 时跳过）。
  * <p>
- * 真实 MySQL 容器 + 空库启动完整应用：Flyway 迁移 30 条到 V0.4.0、兼容性检查通过、
+ * 真实 MySQL 容器 + 空库启动完整应用：Flyway 迁移 31 条到 V1.0.0、兼容性检查通过、
  * MyBatis 查询、中文写入回读、JSON 列、分页第二页、Flowable 引擎建表。
  * 测试使用独立临时库 {@code swmdb_smoke}，结束后删除。
  * </p>
@@ -136,18 +136,18 @@ class MySqlBootSmokeTest {
     }
 
     @Test
-    @DisplayName("空库启动：Flyway 30 条到 V0.4.0，MyBatis/中文/JSON/分页/Flowable 可用")
+    @DisplayName("空库启动：Flyway 31 条到 V1.0.0，MyBatis/中文/JSON/分页/Flowable 可用")
     void smoke() throws Exception {
         Integer migrations = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1", Integer.class);
-        assertThat(migrations).isEqualTo(30);
+        assertThat(migrations).isEqualTo(31);
         String version = jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 AND version IS NOT NULL "
                         + "ORDER BY installed_rank DESC LIMIT 1", String.class);
-        assertThat(version).isEqualTo("0.4.0");
+        assertThat(version).isEqualTo("1.0.0");
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_tenant", Integer.class)).isEqualTo(4);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(143);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(146);
 
         List<SysTenant> tenants;
         LoginUser loginUser = new LoginUser();

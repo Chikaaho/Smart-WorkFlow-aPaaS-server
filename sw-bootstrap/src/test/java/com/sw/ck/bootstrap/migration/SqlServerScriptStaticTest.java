@@ -26,7 +26,7 @@ class SqlServerScriptStaticTest {
             "PUBLIC.", "USING BTREE", "COMMENT ON", "DO $$", "ON CONFLICT");
 
     @Test
-    @DisplayName("30 个脚本无 PostgreSQL 专属语法，筛选索引齐全")
+    @DisplayName("31 个脚本无 PostgreSQL 专属语法，筛选索引齐全")
     void scriptsAreSqlServerReady() throws IOException {
         Path dir = Path.of(System.getProperty("basedir", "."))
                 .resolve("src/main/resources/db/migration/sqlserver");
@@ -34,7 +34,7 @@ class SqlServerScriptStaticTest {
         try (var stream = Files.list(dir)) {
             scripts = stream.filter(p -> p.toString().endsWith(".sql")).sorted().toList();
         }
-        assertEquals(30, scripts.size(), "SQL Server 应有 30 个迁移脚本");
+        assertEquals(31, scripts.size(), "SQL Server 应有 31 个迁移脚本");
 
         String schema = Files.readString(dir.resolve("V0.2.0__baseline_seed.sql"), StandardCharsets.UTF_8);
         String upper = schema.toUpperCase(Locale.ROOT);

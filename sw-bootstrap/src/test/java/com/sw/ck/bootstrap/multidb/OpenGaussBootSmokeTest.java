@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * openGauss 5.0 空库启动冒烟（未配置 {@code opengauss.url} 时跳过）。
  * <p>
  * 使用官方社区镜像与 openGauss JDBC 驱动；FlywayConfiguration 识别 openGauss 后走
- * {@code SwVendorMigrationRunner}，验证 30 条迁移、种子、MyBatis、中文、JSON、
+ * {@code SwVendorMigrationRunner}，验证 31 条迁移、种子、MyBatis、中文、JSON、
  * 动态宽表、向量持久化与主流程业务冒烟。
  * </p>
  */
@@ -124,15 +124,15 @@ class OpenGaussBootSmokeTest {
     }
 
     @Test
-    @DisplayName("空库启动：Runner 30 条到 0.4.0，种子/中文/JSON/动态宽表/向量/主流程可用")
+    @DisplayName("空库启动：Runner 31 条到 1.0.0，种子/中文/JSON/动态宽表/向量/主流程可用")
     void smoke() throws Exception {
         assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM sw_schema_history", Integer.class)).isEqualTo(30);
+                "SELECT COUNT(*) FROM sw_schema_history", Integer.class)).isEqualTo(31);
         assertThat(jdbc.queryForObject(
                 "SELECT version FROM sw_schema_history WHERE version IS NOT NULL "
-                        + "ORDER BY installed_rank DESC LIMIT 1", String.class)).isEqualTo("0.4.0");
+                        + "ORDER BY installed_rank DESC LIMIT 1", String.class)).isEqualTo("1.0.0");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_tenant", Integer.class)).isEqualTo(4);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(143);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(146);
 
         LoginUser loginUser = new LoginUser();
         loginUser.setUserId(1L);

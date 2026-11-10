@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * SQL Server 2019/2022 空库启动冒烟（未配置 {@code sqlserver.url} 时跳过）。
  * <p>
  * 数据库排序规则必须为 Chinese_PRC_CS_AS；迁移由 Flyway 的 sqlserver 目录执行，
- * 覆盖 30 条迁移、种子、MyBatis、中文、JSON、动态宽表、向量与主流程业务。
+ * 覆盖 31 条迁移、种子、MyBatis、中文、JSON、动态宽表、向量与主流程业务。
  * </p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -123,17 +123,17 @@ class SqlServerBootSmokeTest {
     }
 
     @Test
-    @DisplayName("空库启动：Flyway 30 条到 0.4.0，种子/中文/JSON/动态宽表/向量/主流程可用")
+    @DisplayName("空库启动：Flyway 31 条到 1.0.0，种子/中文/JSON/动态宽表/向量/主流程可用")
     void smoke() throws Exception {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1", Integer.class))
-                .isEqualTo(30);
+                .isEqualTo(31);
         assertThat(jdbc.queryForObject(
                 "SELECT TOP 1 version FROM flyway_schema_history WHERE success = 1 "
                         + "AND version IS NOT NULL ORDER BY installed_rank DESC", String.class))
-                .isEqualTo("0.4.0");
+                .isEqualTo("1.0.0");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_tenant", Integer.class)).isEqualTo(4);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(143);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(146);
 
         LoginUser loginUser = new LoginUser();
         loginUser.setUserId(1L);

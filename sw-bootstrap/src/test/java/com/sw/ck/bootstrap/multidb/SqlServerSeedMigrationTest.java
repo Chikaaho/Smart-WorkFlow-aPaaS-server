@@ -21,7 +21,7 @@ class SqlServerSeedMigrationTest {
     private static final String DATABASE = "swmdb_sqlserver_seed";
 
     @Test
-    @DisplayName("空库执行 30 条 SQL Server 迁移，保留库供 SeedComparisonTest 比对")
+    @DisplayName("空库执行 31 条 SQL Server 迁移，保留库供 SeedComparisonTest 比对")
     void migrateSeedDatabase() throws Exception {
         String url = System.getProperty("sqlserver.url");
         Assumptions.assumeTrue(url != null && !url.isBlank(),
@@ -44,6 +44,6 @@ class SqlServerSeedMigrationTest {
                 .locations("classpath:db/migration/sqlserver")
                 .load()
                 .migrate();
-        assertThat(result.migrationsExecuted).isEqualTo(30);
+        assertThat(result.migrationsExecuted).isEqualTo(31);
     }
 }

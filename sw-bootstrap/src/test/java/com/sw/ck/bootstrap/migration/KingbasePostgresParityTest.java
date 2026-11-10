@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class KingbasePostgresParityTest {
 
     @Test
-    @DisplayName("30 个脚本一一对应，仅 V0.2.5 去掉 pgvector")
+    @DisplayName("31 个脚本一一对应，仅 V0.2.5 去掉 pgvector")
     void kingbaseScriptsArePostgresScriptsWithoutPgvector() throws IOException {
         Path base = Path.of(System.getProperty("basedir", "."))
                 .resolve("src/main/resources/db/migration");
@@ -32,7 +32,7 @@ class KingbasePostgresParityTest {
         Set<String> pgFiles = sqlFiles(pg);
         Set<String> kbFiles = sqlFiles(kb);
         assertEquals(pgFiles, kbFiles, "Kingbase 与 PostgreSQL 脚本文件名必须一致");
-        assertEquals(30, kbFiles.size(), "迁移脚本应为 30 条");
+        assertEquals(31, kbFiles.size(), "迁移脚本应为 31 条");
 
         for (String file : pgFiles) {
             String pgSql = Files.readString(pg.resolve(file), StandardCharsets.UTF_8);
