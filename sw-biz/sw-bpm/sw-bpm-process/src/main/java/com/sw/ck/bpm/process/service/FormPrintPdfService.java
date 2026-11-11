@@ -53,6 +53,7 @@ public class FormPrintPdfService {
     private static final float MARGIN = 48f;
     private static final float PAGE_WIDTH = PAGE_SIZE.getWidth() - 2 * MARGIN;
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     private final FormPrintFacade formPrintFacade;
     /** 显示值解析（USER/DEPT/DICT）；单元测试手工构造时可为空（回退原值渲染）。 */
@@ -275,6 +276,7 @@ public class FormPrintPdfService {
         return new FieldDef(name, node.getString("type"),
                 node.getString("label") == null ? name : node.getString("label"),
                 options, node.getString("source"), node.getString("dictType"),
+                node.getString("format"),
                 decimalsOf(node), new ArrayList<>());
     }
 
@@ -289,7 +291,7 @@ public class FormPrintPdfService {
 
     private record FieldDef(String name, String type, String label,
                             Map<String, String> options, String source, String dictType,
-                            Integer decimals, List<FieldDef> subFields) {
+                            String format, Integer decimals, List<FieldDef> subFields) {
     }
 
     /** printTemplate 配置；缺省=全部可见字段 + 全部明细表 + 审批历史（F2-1）。 */
@@ -328,7 +330,7 @@ public class FormPrintPdfService {
         }
         String type = field.type() == null ? "TEXT" : field.type();
         return switch (type) {
-            case "DATE" -> formatDate(raw);
+            case "DATE" -> formatDate(raw, field.format());
             case "TIME" -> formatTime(raw);
             case "BOOL" -> boolText(raw);
             case "NUMBER", "FORMULA" -> numberText(raw, field.decimals());
@@ -413,19 +415,25 @@ public class FormPrintPdfService {
         return null;
     }
 
-    private static String formatDate(Object raw) {
+    /** 日期按字段 format 输出：datetime → yyyy-MM-dd HH:mm，其余（含未配置）→ yyyy-MM-dd（U2）。 */
+    private static String formatDate(Object raw, String format) {
+        boolean datetime = "datetime".equals(format);
+        DateTimeFormatter pattern = datetime ? TIME_FMT : DATE_FMT;
         if (raw instanceof LocalDateTime dateTime) {
-            return TIME_FMT.format(dateTime);
+            return pattern.format(dateTime);
         }
         if (raw instanceof java.sql.Timestamp timestamp) {
-            return TIME_FMT.format(timestamp.toLocalDateTime());
+            return pattern.format(timestamp.toLocalDateTime());
         }
         if (raw instanceof java.util.Date date) {
-            return TIME_FMT.format(LocalDateTime.ofInstant(date.toInstant(),
+            return pattern.format(LocalDateTime.ofInstant(date.toInstant(),
                     java.time.ZoneId.systemDefault()));
         }
+        if (raw instanceof java.time.LocalDate date) {
+            return date.toString();
+        }
         String text = String.valueOf(raw).replace('T', ' ');
-        return text.length() > 16 ? text.substring(0, 16) : text;
+        return text.length() > (datetime ? 16 : 10) ? text.substring(0, datetime ? 16 : 10) : text;
     }
 
     private static String formatTime(Object raw) {

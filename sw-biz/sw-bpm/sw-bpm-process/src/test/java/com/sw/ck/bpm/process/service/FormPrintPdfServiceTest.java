@@ -90,4 +90,39 @@ class FormPrintPdfServiceTest {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
                 () -> service.render("gate", "rec-x", null, null));
     }
+
+    @Test
+    @DisplayName("U2 日期格式：datetime 字段输出到分，缺省日期字段只到日")
+    void renderDateRespectsFieldFormat() throws Exception {
+        String def = """
+                {
+                  "title": "日期格式验收",
+                  "fields": [
+                    {"name": "dueDate", "type": "DATE", "label": "到货时间"},
+                    {"name": "reviewAt", "type": "DATE", "label": "验收时间", "format": "datetime"}
+                  ],
+                  "tables": []
+                }
+                """;
+        Map<String, Object> record = Map.of(
+                "dueDate", java.sql.Timestamp.valueOf("2026-11-12 09:30:00"),
+                "reviewAt", java.sql.Timestamp.valueOf("2026-11-12 14:00:00"));
+        FormPrintFacade facade = mock(FormPrintFacade.class);
+        when(facade.recordDetail(eq("gate"), eq("rec-date"), any()))
+                .thenReturn(Optional.of(new FormPrintFacade.FormPrintData(
+                        record, "日期格式验收", def, 3, true)));
+        FormPrintPdfService service = new FormPrintPdfService(facade);
+
+        byte[] pdf = service.render("gate", "rec-date",
+                LocalDateTime.of(2026, 11, 10, 9, 0), List.of());
+
+        try (var doc = org.apache.pdfbox.Loader.loadPDF(pdf)) {
+            var stripper = new org.apache.pdfbox.text.PDFTextStripper();
+            String text = stripper.getText(doc);
+            assertTrue(text.contains("2026-11-12 14:00"), "datetime 字段应输出到分: " + text);
+            assertTrue(text.contains("2026-11-12"), "日期字段应输出到日: " + text);
+            org.junit.jupiter.api.Assertions.assertFalse(text.contains("2026-11-12 09:30"),
+                    "缺省日期字段不应带时分: " + text);
+        }
+    }
 }

@@ -59,6 +59,7 @@ class FormDetailTableExportServiceTest {
                   {"name": "tags", "type": "MULTISELECT", "source": "custom", "label": "标签",
                    "options": [{"key": "a", "value": "红"}, {"key": "b", "value": "蓝"}]},
                   {"name": "due", "type": "DATE", "label": "截止时间"},
+                  {"name": "dueAt", "type": "DATE", "label": "验收时间", "format": "datetime"},
                   {"name": "amount", "type": "NUMBER", "label": "金额"},
                   {"name": "remark", "type": "TEXT", "label": "备注"},
                   {"name": "secret", "type": "TEXT", "label": "隐藏字段"}
@@ -120,6 +121,7 @@ class FormDetailTableExportServiceTest {
         hiddenRow.put("level", "high");
         hiddenRow.put("tags", "[\"a\",\"b\"]");
         hiddenRow.put("due", "2026-11-11T03:04:51.972153");
+        hiddenRow.put("dueAt", "2026-11-11T03:04:51.972153");
         hiddenRow.put("amount", new BigDecimal("12.50"));
         hiddenRow.put("remark", "普通备注");
         // secret 列缺失 = 字段级隐藏（详情投影剔除）
@@ -140,7 +142,8 @@ class FormDetailTableExportServiceTest {
             Row header = sheet.getRow(0);
             assertThat(header.getCell(0).getStringCellValue()).isEqualTo("产品名称");
             assertThat(header.getCell(1).getStringCellValue()).isEqualTo("负责人");
-            assertThat(header.getCell(7).getStringCellValue()).isEqualTo("备注");
+            assertThat(header.getCell(6).getStringCellValue()).isEqualTo("验收时间");
+            assertThat(header.getCell(8).getStringCellValue()).isEqualTo("备注");
 
             Row first = sheet.getRow(1);
             assertThat(first.getCell(0).getStringCellValue()).isEqualTo("服务器");
@@ -148,11 +151,13 @@ class FormDetailTableExportServiceTest {
             assertThat(first.getCell(2).getStringCellValue()).isEqualTo("总公司");
             assertThat(first.getCell(3).getStringCellValue()).isEqualTo("高");
             assertThat(first.getCell(4).getStringCellValue()).isEqualTo("红、蓝");
-            assertThat(first.getCell(5).getStringCellValue()).isEqualTo("2026-11-11 03:04");
-            assertThat(first.getCell(6).getCellType()).isEqualTo(CellType.NUMERIC);
-            assertThat(first.getCell(6).getNumericCellValue()).isEqualTo(12.5);
+            // 缺省日期字段只到日；datetime 字段到分（U2）
+            assertThat(first.getCell(5).getStringCellValue()).isEqualTo("2026-11-11");
+            assertThat(first.getCell(6).getStringCellValue()).isEqualTo("2026-11-11 03:04");
+            assertThat(first.getCell(7).getCellType()).isEqualTo(CellType.NUMERIC);
+            assertThat(first.getCell(7).getNumericCellValue()).isEqualTo(12.5);
             // 隐藏字段列在表头存在但值为空（与页面空白单元格一致），不泄漏原值
-            assertThat(first.getCell(8).getStringCellValue()).isEmpty();
+            assertThat(first.getCell(9).getStringCellValue()).isEmpty();
         }
     }
 
@@ -180,7 +185,7 @@ class FormDetailTableExportServiceTest {
             assertThat(product.getCellType()).isEqualTo(CellType.STRING);
             assertThat(product.getStringCellValue()).startsWith("=HYPERLINK");
             assertThat(product.getCellStyle().getDataFormatString()).isEqualTo("@");
-            Cell remark = first.getCell(7);
+            Cell remark = first.getCell(8);
             assertThat(remark.getCellType()).isEqualTo(CellType.STRING);
             assertThat(remark.getStringCellValue()).isEqualTo("@SUM(1,2)");
         }

@@ -58,6 +58,7 @@ public class FormDetailTableExportService {
     private static final Logger log = LoggerFactory.getLogger(FormDetailTableExportService.class);
 
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final DateTimeFormatter DATE_ONLY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm");
     private static final String MULTI_SEPARATOR = "、";
     private static final int MAX_FILENAME_PART = 60;
@@ -166,7 +167,8 @@ public class FormDetailTableExportService {
                                 sub.path("dictType").asText(null),
                                 sub.path("targetFormId").asText(null),
                                 sub.path("multiple").asBoolean(false),
-                                parseDecimals(sub)));
+                                parseDecimals(sub),
+                                "datetime".equals(sub.path("format").asText(""))));
                     }
                 }
                 String label = node.path("label").asText(fieldName);
@@ -317,7 +319,7 @@ public class FormDetailTableExportService {
             case RICH_TEXT -> Jsoup.parse(asText(raw)).text();
             case NUMBER, FORMULA -> numberText(raw);
             case BOOL -> boolText(raw);
-            case DATE -> dateText(raw);
+            case DATE -> dateText(raw, field.datetimeFormat());
             case TIME -> timeText(raw);
             case DICT -> dictText(field, raw, context);
             case MULTISELECT -> multiText(field, raw, context);
@@ -563,15 +565,17 @@ public class FormDetailTableExportService {
         };
     }
 
-    private static String dateText(Object value) {
+    /** 日期按子字段 format 输出：datetime → yyyy-MM-dd HH:mm，其余（含未配置）→ yyyy-MM-dd（U2）。 */
+    private static String dateText(Object value, boolean datetimeFormat) {
+        DateTimeFormatter pattern = datetimeFormat ? DATE_TIME : DATE_ONLY;
         if (value instanceof LocalDateTime dateTime) {
-            return DATE_TIME.format(dateTime);
+            return pattern.format(dateTime);
         }
         if (value instanceof java.sql.Timestamp timestamp) {
-            return DATE_TIME.format(timestamp.toLocalDateTime());
+            return pattern.format(timestamp.toLocalDateTime());
         }
         if (value instanceof java.util.Date date) {
-            return DATE_TIME.format(LocalDateTime.ofInstant(date.toInstant(), java.time.ZoneId.systemDefault()));
+            return pattern.format(LocalDateTime.ofInstant(date.toInstant(), java.time.ZoneId.systemDefault()));
         }
         if (value instanceof LocalDate date) {
             return date.toString();
@@ -580,10 +584,11 @@ public class FormDetailTableExportService {
         if (text == null) {
             return "";
         }
-        // ISO 文本（带 T/微秒）统一收敛为 yyyy-MM-dd HH:mm
+        // ISO 文本（带 T/微秒）按字段格式收敛；日期字段截到日，日期时间字段截到分
         String normalized = text.replace('T', ' ');
-        if (normalized.length() >= 16) {
-            return normalized.substring(0, 16);
+        int maxLength = datetimeFormat ? 16 : 10;
+        if (normalized.length() > maxLength) {
+            return normalized.substring(0, maxLength);
         }
         return normalized;
     }
@@ -692,7 +697,8 @@ public class FormDetailTableExportService {
 
     private record SubField(String name, String label, FieldType type, String mappingKey,
                             Map<String, String> options, String source, String dictType,
-                            String targetFormId, boolean multiple, Integer decimals) {
+                            String targetFormId, boolean multiple, Integer decimals,
+                            boolean datetimeFormat) {
     }
 
     private record TableField(String name, String label, List<SubField> subFields) {
