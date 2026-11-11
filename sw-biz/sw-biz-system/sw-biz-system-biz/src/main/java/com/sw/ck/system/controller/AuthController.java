@@ -214,7 +214,7 @@ public class AuthController {
                 (int) jwtProperties.getRefreshExpireSeconds(), cookieSecure, cookiePath);
 
         log.info("用户 {} 登录成功, userId={}", request.getUsername(), user.getId());
-        writeLoginAudit(httpRequest, "LOGIN", request.getUsername(),
+        writeLoginAudit(httpRequest, "登录", request.getUsername(),
                 user != null ? user.getId() : null,
                 user != null ? user.getTenantId() : null,
                 SysAuditLog.RESULT_SUCCESS, null);
@@ -231,7 +231,7 @@ public class AuthController {
      */
     private R<TokenResponse> loginFailed(HttpServletRequest httpRequest, String username,
                                          SysUser user, String reason, R<TokenResponse> response) {
-        writeLoginAudit(httpRequest, "LOGIN", username,
+        writeLoginAudit(httpRequest, "登录", username,
                 user != null ? user.getId() : null,
                 user != null ? user.getTenantId() : null,
                 SysAuditLog.RESULT_FAIL, reason);
@@ -244,12 +244,14 @@ public class AuthController {
         SysAuditLog entry = new SysAuditLog();
         entry.setLogType(SysAuditLog.TYPE_LOGIN);
         entry.setAction(action);
+        // 登录类日志面向业务用户可读：模块固定「认证」，对象由账号列承载（不写接口路径）
+        entry.setModule("认证");
         entry.setUsername(username);
         entry.setUserId(userId);
         entry.setTenantId(tenantId != null ? tenantId : 0L);
         entry.setResult(result);
         entry.setFailReason(reason);
-        entry.setTarget(AuditLogService.requestTarget(httpRequest));
+        entry.setTarget(null);
         entry.setIp(AuditLogService.clientIp(httpRequest));
         entry.setUserAgent(httpRequest.getHeader("User-Agent"));
         auditLogService.record(entry);
@@ -341,7 +343,7 @@ public class AuthController {
         }
         // 5. 登出审计（1.0.0 F3-1）：已认证会话记一条 LOGOUT；未认证（过期登出）不记
         if (currentUser != null) {
-            writeLoginAudit(request, "LOGOUT", currentUser.getUsername(),
+            writeLoginAudit(request, "登出", currentUser.getUsername(),
                     currentUser.getUserId(), currentUser.getTenantId(),
                     SysAuditLog.RESULT_SUCCESS, null);
         }
@@ -369,19 +371,19 @@ public class AuthController {
             return authFail(401, SystemErrorKeys.SESSION_REQUIRED, "登录状态已失效，请重新登录");
         }
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
-            writeLoginAudit(httpRequest, "CHANGE_PASSWORD", user.getUsername(),
+            writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
                     user.getId(), user.getTenantId(), SysAuditLog.RESULT_FAIL, "旧密码不正确");
             return authFail(400, SystemErrorKeys.CREDENTIAL_MISMATCH, "当前密码不正确");
         }
         // 首登改密强度（1.0.0 F1-4）：新密码至少 8 位，且不能等于当前（初始）密码
         if (request.getNewPassword() == null || request.getNewPassword().length() < FIRST_CHANGE_MIN_PASSWORD_LENGTH) {
-            writeLoginAudit(httpRequest, "CHANGE_PASSWORD", user.getUsername(),
+            writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
                     user.getId(), user.getTenantId(), SysAuditLog.RESULT_FAIL, "新密码过短");
             return authFail(400, SystemErrorKeys.REQUEST_INVALID,
                     "新密码长度至少 " + FIRST_CHANGE_MIN_PASSWORD_LENGTH + " 位");
         }
         if (request.getNewPassword().equals(request.getOldPassword())) {
-            writeLoginAudit(httpRequest, "CHANGE_PASSWORD", user.getUsername(),
+            writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
                     user.getId(), user.getTenantId(), SysAuditLog.RESULT_FAIL, "新密码与当前密码相同");
             return authFail(400, SystemErrorKeys.REQUEST_INVALID,
                     "新密码不能与当前密码相同");
@@ -389,7 +391,7 @@ public class AuthController {
         sysUserService.updatePassword(user.getId(), request.getNewPassword());
         loginUserLoader.kickOut(user.getId());
         log.info("用户 {} 已修改密码, userId={}", user.getUsername(), user.getId());
-        writeLoginAudit(httpRequest, "CHANGE_PASSWORD", user.getUsername(),
+        writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
                 user.getId(), user.getTenantId(), SysAuditLog.RESULT_SUCCESS, null);
         return R.ok();
     }

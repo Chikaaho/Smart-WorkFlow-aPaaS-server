@@ -5,6 +5,10 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
 import com.sw.ck.form.api.print.FormPrintFacade;
+import com.sw.ck.system.api.dept.DeptQueryFacade;
+import com.sw.ck.system.api.dict.DictFacade;
+import com.sw.ck.system.api.dict.DictItemDTO;
+import com.sw.ck.system.api.user.UserQueryFacade;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -19,8 +23,10 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 服务端打印 PDF 生成（1.0.0 F2-3）。
@@ -49,9 +55,24 @@ public class FormPrintPdfService {
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final FormPrintFacade formPrintFacade;
+    /** 显示值解析（USER/DEPT/DICT）；单元测试手工构造时可为空（回退原值渲染）。 */
+    private final UserQueryFacade userQueryFacade;
+    private final DeptQueryFacade deptQueryFacade;
+    private final DictFacade dictFacade;
 
     public FormPrintPdfService(FormPrintFacade formPrintFacade) {
+        this(formPrintFacade, null, null, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public FormPrintPdfService(FormPrintFacade formPrintFacade,
+                               UserQueryFacade userQueryFacade,
+                               DeptQueryFacade deptQueryFacade,
+                               DictFacade dictFacade) {
         this.formPrintFacade = formPrintFacade;
+        this.userQueryFacade = userQueryFacade;
+        this.deptQueryFacade = deptQueryFacade;
+        this.dictFacade = dictFacade;
     }
 
     /**
@@ -103,7 +124,7 @@ public class FormPrintPdfService {
             for (FieldDef field : shown) {
                 Object value = data.record().get(field.name());
                 canvas.fieldLine(field.label() == null ? field.name() : field.label(),
-                        renderValue(value));
+                        displayValue(field, value));
             }
 
             // 明细表
@@ -126,7 +147,15 @@ public class FormPrintPdfService {
                     columns.add(new Column(sub.label() == null ? sub.name() : sub.label(),
                             sub.name(), (PAGE_WIDTH - 12) / Math.max(1, field.subFields().size())));
                 }
-                canvas.table(columns, rows, false);
+                List<Map<String, Object>> displayRows = new ArrayList<>(rows.size());
+                for (Map<String, Object> row : rows) {
+                    Map<String, Object> displayRow = new LinkedHashMap<>();
+                    for (FieldDef sub : field.subFields()) {
+                        displayRow.put(sub.name(), displayValue(sub, row.get(sub.name())));
+                    }
+                    displayRows.add(displayRow);
+                }
+                canvas.table(columns, displayRows, false);
             }
 
             // 审批历史
@@ -169,10 +198,12 @@ public class FormPrintPdfService {
         }
     }
 
-    /** 意见摘要：意见字段展示文本拼接（不含完整快照 JSON）。 */
+    /** 意见摘要：意见字段展示文本拼接（不含完整快照 JSON）；缺省回退普通意见文本。 */
     private String opinionSummary(ApprovalHistoryItemDTO item) {
         if (item.getOpinionFields() == null || item.getOpinionFields().isEmpty()) {
-            return "";
+            Object comment = item.getOpinionData() == null ? null
+                    : item.getOpinionData().get("comment");
+            return comment == null ? "" : String.valueOf(comment);
         }
         List<String> parts = new ArrayList<>();
         for (ApprovalHistoryItemDTO.OpinionFieldView view : item.getOpinionFields()) {
@@ -206,14 +237,12 @@ public class FormPrintPdfService {
             if (f == null || f.getString("name") == null) {
                 continue;
             }
-            FieldDef field = new FieldDef(f.getString("name"), f.getString("type"),
-                    f.getString("label") == null ? f.getString("name") : f.getString("label"));
-            if ("TABLE".equals(field.type) && f.getJSONArray("subFields") != null) {
+            FieldDef field = fieldDef(f);
+            if ("TABLE".equals(field.type()) && f.getJSONArray("subFields") != null) {
                 for (int j = 0; j < f.getJSONArray("subFields").size(); j++) {
                     JSONObject sub = f.getJSONArray("subFields").getJSONObject(j);
                     if (sub != null && sub.getString("name") != null) {
-                        field.subFields().add(new FieldDef(sub.getString("name"), sub.getString("type"),
-                                sub.getString("label") == null ? sub.getString("name") : sub.getString("label")));
+                        field.subFields().add(fieldDef(sub));
                     }
                 }
             }
@@ -222,11 +251,36 @@ public class FormPrintPdfService {
         return fields;
     }
 
-    private record FieldDef(String name, String type, String label,
-                            List<FieldDef> subFields) {
-        private FieldDef(String name, String type, String label) {
-            this(name, type, label, new ArrayList<>());
+    private static FieldDef fieldDef(JSONObject node) {
+        String name = node.getString("name");
+        Map<String, String> options = new LinkedHashMap<>();
+        JSONArray optionArray = node.getJSONArray("options");
+        if (optionArray != null) {
+            for (int i = 0; i < optionArray.size(); i++) {
+                Object item = optionArray.get(i);
+                if (item instanceof String text) {
+                    options.put(text, text);
+                } else if (item instanceof JSONObject option) {
+                    String key = option.getString("key");
+                    if (key == null) {
+                        key = option.getString("value");
+                    }
+                    if (key != null && !key.isBlank()) {
+                        String optionLabel = option.getString("value");
+                        options.put(key, optionLabel == null ? key : optionLabel);
+                    }
+                }
+            }
         }
+        return new FieldDef(name, node.getString("type"),
+                node.getString("label") == null ? name : node.getString("label"),
+                options, node.getString("source"), node.getString("dictType"),
+                new ArrayList<>());
+    }
+
+    private record FieldDef(String name, String type, String label,
+                            Map<String, String> options, String source, String dictType,
+                            List<FieldDef> subFields) {
     }
 
     /** printTemplate 配置；缺省=全部可见字段 + 全部明细表 + 审批历史（F2-1）。 */
@@ -257,6 +311,195 @@ public class FormPrintPdfService {
     }
 
     // ==================== 值渲染 ====================
+
+    /** 按字段类型解析显示值（人员/部门/字典/多选/日期/布尔/附件），与页面回读一致。 */
+    private String displayValue(FieldDef field, Object raw) {
+        if (raw == null) {
+            return "";
+        }
+        String type = field.type() == null ? "TEXT" : field.type();
+        return switch (type) {
+            case "DATE" -> formatDate(raw);
+            case "TIME" -> formatTime(raw);
+            case "BOOL" -> boolText(raw);
+            case "USER" -> resolveUsers(raw);
+            case "DEPT" -> resolveDepts(raw);
+            case "DICT" -> resolveDict(field, raw);
+            case "MULTISELECT" -> resolveMulti(field, raw);
+            case "ATTACHMENT", "IMAGE" -> attachmentText(raw);
+            default -> renderValue(raw);
+        };
+    }
+
+    private String resolveUsers(Object raw) {
+        List<Long> ids = numericIds(raw);
+        if (ids.isEmpty() || userQueryFacade == null) {
+            return "";
+        }
+        Optional<Map<Long, String>> names = userQueryFacade.getUserDisplayNames(ids);
+        Map<Long, String> resolved = names.orElse(Map.of());
+        List<String> labels = new ArrayList<>();
+        for (Long id : ids) {
+            String label = resolved.get(id);
+            if (label != null && !label.isBlank()) {
+                labels.add(label);
+            }
+        }
+        return String.join("、", labels);
+    }
+
+    private String resolveDepts(Object raw) {
+        List<Long> ids = numericIds(raw);
+        if (ids.isEmpty() || deptQueryFacade == null) {
+            return "";
+        }
+        Optional<Map<Long, String>> names = deptQueryFacade.findActiveDeptNames(ids);
+        Map<Long, String> resolved = names.orElse(Map.of());
+        List<String> labels = new ArrayList<>();
+        for (Long id : ids) {
+            String label = resolved.get(id);
+            if (label != null && !label.isBlank()) {
+                labels.add(label);
+            }
+        }
+        return String.join("、", labels);
+    }
+
+    private String resolveDict(FieldDef field, Object raw) {
+        String code = String.valueOf(raw);
+        if (code.isBlank()) {
+            return "";
+        }
+        String label = dictLabel(field, code);
+        return label == null ? code : label;
+    }
+
+    private String resolveMulti(FieldDef field, Object raw) {
+        List<String> values = splitValues(raw);
+        List<String> labels = new ArrayList<>(values.size());
+        for (String value : values) {
+            String label = dictLabel(field, value);
+            labels.add(label == null ? value : label);
+        }
+        return String.join("、", labels);
+    }
+
+    private String dictLabel(FieldDef field, String code) {
+        if (field.options() != null && field.options().containsKey(code)) {
+            return field.options().get(code);
+        }
+        if (dictFacade == null || field.dictType() == null || field.dictType().isBlank()) {
+            return null;
+        }
+        Optional<List<DictItemDTO>> items = dictFacade.listByType(field.dictType());
+        if (items.isEmpty()) {
+            return null;
+        }
+        for (DictItemDTO item : items.get()) {
+            if (code.equals(item.getCode())) {
+                return item.getLabel();
+            }
+        }
+        return null;
+    }
+
+    private static String formatDate(Object raw) {
+        if (raw instanceof LocalDateTime dateTime) {
+            return TIME_FMT.format(dateTime);
+        }
+        if (raw instanceof java.sql.Timestamp timestamp) {
+            return TIME_FMT.format(timestamp.toLocalDateTime());
+        }
+        if (raw instanceof java.util.Date date) {
+            return TIME_FMT.format(LocalDateTime.ofInstant(date.toInstant(),
+                    java.time.ZoneId.systemDefault()));
+        }
+        String text = String.valueOf(raw).replace('T', ' ');
+        return text.length() > 16 ? text.substring(0, 16) : text;
+    }
+
+    private static String formatTime(Object raw) {
+        String text = String.valueOf(raw);
+        return text.length() > 5 ? text.substring(0, 5) : text;
+    }
+
+    private static String boolText(Object raw) {
+        String text = String.valueOf(raw);
+        return switch (text) {
+            case "1", "true", "TRUE", "True" -> "是";
+            case "0", "false", "FALSE", "False" -> "否";
+            default -> text;
+        };
+    }
+
+    private static List<Long> numericIds(Object raw) {
+        List<Long> ids = new ArrayList<>();
+        for (String value : splitValues(raw)) {
+            String trimmed = value.trim();
+            if (trimmed.matches("\\d{1,19}")) {
+                ids.add(Long.valueOf(trimmed));
+            }
+        }
+        return ids;
+    }
+
+    private static List<String> splitValues(Object raw) {
+        List<String> values = new ArrayList<>();
+        if (raw == null) {
+            return values;
+        }
+        if (raw instanceof Iterable<?> iterable) {
+            for (Object item : iterable) {
+                if (item != null && !String.valueOf(item).isBlank()) {
+                    values.add(String.valueOf(item).trim());
+                }
+            }
+            return values;
+        }
+        String text = String.valueOf(raw).trim();
+        if (text.startsWith("[")) {
+            try {
+                JSONArray array = JSON.parseArray(text);
+                for (int i = 0; i < array.size(); i++) {
+                    String item = array.getString(i);
+                    if (item != null && !item.isBlank()) {
+                        values.add(item);
+                    }
+                }
+                return values;
+            } catch (Exception ignored) {
+                // 非 JSON：按逗号回退
+            }
+        }
+        for (String part : text.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                values.add(trimmed);
+            }
+        }
+        return values;
+    }
+
+    private String attachmentText(Object raw) {
+        String text = String.valueOf(raw);
+        if (text.isBlank()) {
+            return "";
+        }
+        try {
+            JSONArray array = JSON.parseArray(text);
+            List<String> names = new ArrayList<>();
+            for (int i = 0; i < array.size(); i++) {
+                JSONObject item = array.getJSONObject(i);
+                String name = item == null ? null : item.getString("name");
+                if (name != null && !name.isBlank()) {
+                    names.add(name);
+                }
+            }
+            return String.join("、", names);
+        } catch (Exception ignored) {
+            return text;
+        }
+    }
 
     private String renderValue(Object value) {
         if (value == null) {

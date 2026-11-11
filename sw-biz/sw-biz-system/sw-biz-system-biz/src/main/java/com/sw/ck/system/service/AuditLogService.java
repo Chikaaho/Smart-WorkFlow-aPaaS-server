@@ -116,7 +116,12 @@ public class AuditLogService {
                 if (ids.isEmpty()) {
                     return total;
                 }
-                total += auditLogMapper.deleteByIds(ids);
+                int deleted = auditLogMapper.deleteByIds(ids);
+                if (deleted <= 0) {
+                    // 并发删除/锁冲突：本轮结束，避免同一批 id 反复查询造成死循环（下一轮再试）
+                    return total;
+                }
+                total += deleted;
             } catch (Exception e) {
                 log.warn("审计日志清理批次失败(下轮重试): deleted={} err={}", total, e.getMessage());
                 return total;

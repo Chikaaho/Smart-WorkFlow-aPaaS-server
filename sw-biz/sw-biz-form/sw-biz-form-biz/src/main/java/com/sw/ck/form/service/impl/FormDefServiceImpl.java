@@ -460,10 +460,17 @@ public class FormDefServiceImpl implements FormDefService {
         String frozenDefinition = freezeSnapshotDefinition(formId, definition);
 
         // 先完成全部定义校验，再执行不可回滚的增量 DDL；新版本只允许复用原表。
+        // 明细表（TABLE）不产生主表列：结构未变化时允许随新版本保留（打印模板等
+        // 定义级配置需要能随版本发布），新增/变更明细表仍拒绝（F2-6 验收实测暴露）。
+        java.util.Map<String, String> previousTables = tableSignatures(getDefinitionById(formId));
         for (FieldSpec field : fields) {
             if (field.getFieldType() == FieldType.TABLE) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                        "新版本暂不支持新增或变更 TABLE 字段");
+                String signature = tableSignature(definition, field.getFieldName());
+                if (!signature.equals(previousTables.get(field.getFieldName()))) {
+                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
+                            "新版本暂不支持新增或变更 TABLE 字段");
+                }
+                continue;
             }
             if (field.getFieldType() != FieldType.LABEL) {
                 dynamicTableManager.addColumn(entity.getPhysicalTableName(), field);
@@ -500,6 +507,47 @@ public class FormDefServiceImpl implements FormDefService {
 
         log.info("Form new version published: id={}, formKey={}, physicalTable={}, version={}",
                 formId, entity.getFormKey(), entity.getPhysicalTableName(), newVersion);
+    }
+
+    /** 解析定义中的全部 TABLE 字段结构签名（字段名 → 子字段 name:type 有序串）。 */
+    private java.util.Map<String, String> tableSignatures(String definitionJson) {
+        java.util.Map<String, String> result = new java.util.LinkedHashMap<>();
+        if (definitionJson == null || definitionJson.isBlank()) {
+            return result;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(definitionJson);
+            JsonNode fields = root == null ? null : root.get("fields");
+            if (fields == null || !fields.isArray()) {
+                return result;
+            }
+            for (JsonNode field : fields) {
+                if (!"TABLE".equals(field.path("type").asText())) {
+                    continue;
+                }
+                String name = field.path("name").asText(null);
+                if (name == null) {
+                    continue;
+                }
+                StringBuilder signature = new StringBuilder(name).append('|');
+                JsonNode subFields = field.get("subFields");
+                if (subFields != null && subFields.isArray()) {
+                    for (JsonNode sub : subFields) {
+                        signature.append(sub.path("name").asText("")).append(':')
+                                .append(sub.path("type").asText("TEXT")).append(',');
+                    }
+                }
+                result.put(name, signature.toString());
+            }
+            return result;
+        } catch (Exception e) {
+            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单定义配置异常，请检查后重试");
+        }
+    }
+
+    /** 单个 TABLE 字段的结构签名；定义中不存在返回空串（视为新增明细表）。 */
+    private String tableSignature(String definitionJson, String fieldName) {
+        return tableSignatures(definitionJson).getOrDefault(fieldName, "");
     }
 
     @Override

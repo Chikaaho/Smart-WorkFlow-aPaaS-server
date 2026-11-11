@@ -234,6 +234,10 @@ public class GlobalExceptionHandler {
             if (org.springframework.web.context.request.RequestContextHolder.getRequestAttributes()
                     instanceof org.springframework.web.context.request.ServletRequestAttributes attrs) {
                 uri = attrs.getRequest().getRequestURI();
+                String contextPath = attrs.getRequest().getContextPath();
+                if (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)) {
+                    uri = uri.substring(contextPath.length());
+                }
                 method = attrs.getRequest().getMethod();
             }
             com.sw.ck.common.security.LoginContextProvider login =

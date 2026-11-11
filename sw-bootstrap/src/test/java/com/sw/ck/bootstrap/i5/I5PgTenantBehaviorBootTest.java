@@ -254,8 +254,10 @@ class I5PgTenantBehaviorBootTest {
                 + " user1=" + user1SessionAfter + " user9001=" + user9001SessionAfter
                 + " at=" + java.time.LocalDateTime.now());
         assertThat(addedKeys).as("并发绑定不得新增任何会话键").isEmpty();
-        assertThat(user1SessionAfter).as("user1 无会话产生").isEqualTo(user1SessionBefore);
-        assertThat(user9001SessionAfter).as("user9001 无会话产生").isEqualTo(user9001SessionBefore);
+        // 只断言“不得新增”：并发前已存在的会话键可能在本窗口内自然过期（TTL），
+        // 集合相等断言会把过期误判成新会话（本轮全量偶发实证）。
+        assertThat(!user1SessionAfter || user1SessionBefore).as("user1 无会话产生").isTrue();
+        assertThat(!user9001SessionAfter || user9001SessionBefore).as("user9001 无会话产生").isTrue();
         System.out.println("[G6a1] PASS");
     }
 

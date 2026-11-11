@@ -55,12 +55,19 @@ public class UnhandledExceptionAuditListener {
         }
     }
 
-    /** 请求路径首段作为模块（/system/xxx → system）。 */
+    /** 请求路径首段 → 可读模块名（/system/xxx → 系统管理）。 */
     private String moduleOf(String uri) {
         if (uri == null || uri.isEmpty() || uri.charAt(0) != '/') {
             return uri;
         }
         int end = uri.indexOf('/', 1);
-        return end > 1 ? uri.substring(1, end) : uri.substring(1);
+        String segment = end > 1 ? uri.substring(1, end) : uri.substring(1);
+        return switch (segment) {
+            case "system" -> "系统管理";
+            case "workflow" -> "流程管理";
+            case "form" -> "表单管理";
+            case "auth" -> "认证";
+            default -> segment;
+        };
     }
 }
