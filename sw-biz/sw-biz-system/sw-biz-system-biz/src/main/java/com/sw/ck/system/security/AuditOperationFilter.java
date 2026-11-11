@@ -121,7 +121,9 @@ public class AuditOperationFilter extends OncePerRequestFilter {
             "\"(?:" + String.join("|", BODY_NAME_KEYS) + ")\"\\s*:\\s*\"([^\"]{1,120})\"");
     private static final Pattern STATUS_ZERO = Pattern.compile("\"status\"\\s*:\\s*\"?0\"?");
     private static final Pattern ENABLED_TRUE = Pattern.compile("\"enabled\"\\s*:\\s*true");
-    private static final Pattern PATH_ID = Pattern.compile("/(\\d{1,19})(?=/|$)");
+    /** 路径中的业务对象标识：数字 id 或 UUID（表单定义等使用 UUID 主键）。 */
+    private static final Pattern PATH_ID = Pattern.compile(
+            "/([0-9a-fA-F]{8}-[0-9a-fA-F-]{8,30}|\\d{1,19})(?=/|$)");
 
     /**
      * 惰性解析（1.0.0）：过滤器 Bean 在 Servlet 上下文 onRefresh 阶段实例化，

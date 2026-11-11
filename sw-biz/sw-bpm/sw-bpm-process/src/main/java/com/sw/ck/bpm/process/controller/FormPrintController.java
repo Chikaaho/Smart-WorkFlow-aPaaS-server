@@ -7,6 +7,8 @@ import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.FormPrintPdfService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.response.R;
+import com.sw.ck.form.api.print.FormPrintFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.slf4j.Logger;
@@ -35,18 +37,59 @@ public class FormPrintController {
     private static final Logger log = LoggerFactory.getLogger(FormPrintController.class);
 
     private final FormPrintPdfService formPrintPdfService;
+    private final FormPrintFacade formPrintFacade;
     private final BpmInstanceService bpmInstanceService;
     private final ApprovalHistoryAssembler approvalHistoryAssembler;
     private final com.sw.ck.bpm.api.facade.BpmTaskFacade bpmTaskFacade;
 
     public FormPrintController(FormPrintPdfService formPrintPdfService,
+                               FormPrintFacade formPrintFacade,
                                BpmInstanceService bpmInstanceService,
                                ApprovalHistoryAssembler approvalHistoryAssembler,
                                com.sw.ck.bpm.api.facade.BpmTaskFacade bpmTaskFacade) {
         this.formPrintPdfService = formPrintPdfService;
+        this.formPrintFacade = formPrintFacade;
         this.bpmInstanceService = bpmInstanceService;
         this.approvalHistoryAssembler = approvalHistoryAssembler;
         this.bpmTaskFacade = bpmTaskFacade;
+    }
+
+    /**
+     * 浏览器打印上下文（F2-5，S1）：与 PDF 共用提交时版本定位。
+     * <p>
+     * 返回实际用于打印的定义 JSON（提交时快照或当前定义）、版本号与版本定位结果；
+     * 浏览器按同一份定义渲染字段与 printTemplate，定位不到时由前端页脚注明。
+     * 记录读取仍走 FormPrintFacade 的权限过滤链。
+     * </p>
+     */
+    @GetMapping("/context")
+    public R<PrintContextResponse> context(@RequestParam("formKey") String formKey,
+                                           @RequestParam("recordId") String recordId,
+                                           @RequestParam(value = "processInstanceId", required = false)
+                                           String processInstanceId) {
+        LoginUser current = LoginUserHolder.get();
+        if (current == null) {
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "登录状态已失效，请重新登录");
+        }
+        BpmInstance instance = null;
+        if (processInstanceId != null && !processInstanceId.isBlank()) {
+            instance = bpmInstanceService.findByProcessInstanceId(processInstanceId).orElse(null);
+            if (instance == null) {
+                throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在");
+            }
+            requireInstanceAccessible(instance, current);
+        }
+        FormPrintFacade.FormPrintData data = formPrintFacade
+                .recordDetail(formKey, recordId, instance == null ? null : instance.getCreateTime())
+                .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(),
+                        "打印数据不可用或无权读取"));
+        return R.ok(new PrintContextResponse(data.formName(), data.printDefinitionJson(),
+                data.printVersion(), data.versionPinned()));
+    }
+
+    /** 浏览器打印上下文响应（不携带记录业务值）。 */
+    public record PrintContextResponse(String formName, String definition,
+                                       Integer formVersion, boolean versionPinned) {
     }
 
     /**

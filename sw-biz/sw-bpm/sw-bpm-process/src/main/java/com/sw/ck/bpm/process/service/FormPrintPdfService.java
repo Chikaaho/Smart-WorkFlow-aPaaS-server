@@ -275,12 +275,21 @@ public class FormPrintPdfService {
         return new FieldDef(name, node.getString("type"),
                 node.getString("label") == null ? name : node.getString("label"),
                 options, node.getString("source"), node.getString("dictType"),
-                new ArrayList<>());
+                decimalsOf(node), new ArrayList<>());
+    }
+
+    /** 数值小数位配置（decimals/precision）；未配置返回 null=去掉尾随 0。 */
+    private static Integer decimalsOf(JSONObject node) {
+        Integer decimals = node.getInteger("decimals");
+        if (decimals == null) {
+            decimals = node.getInteger("precision");
+        }
+        return decimals == null ? null : Math.max(0, decimals);
     }
 
     private record FieldDef(String name, String type, String label,
                             Map<String, String> options, String source, String dictType,
-                            List<FieldDef> subFields) {
+                            Integer decimals, List<FieldDef> subFields) {
     }
 
     /** printTemplate 配置；缺省=全部可见字段 + 全部明细表 + 审批历史（F2-1）。 */
@@ -322,6 +331,7 @@ public class FormPrintPdfService {
             case "DATE" -> formatDate(raw);
             case "TIME" -> formatTime(raw);
             case "BOOL" -> boolText(raw);
+            case "NUMBER", "FORMULA" -> numberText(raw, field.decimals());
             case "USER" -> resolveUsers(raw);
             case "DEPT" -> resolveDepts(raw);
             case "DICT" -> resolveDict(field, raw);
@@ -421,6 +431,33 @@ public class FormPrintPdfService {
     private static String formatTime(Object raw) {
         String text = String.valueOf(raw);
         return text.length() > 5 ? text.substring(0, 5) : text;
+    }
+
+    /** 数值显示：配置小数位按配置，否则去掉尾随 0（与页面一致）；Excel 侧写数值单元格。 */
+    private static String numberText(Object raw, Integer decimals) {
+        java.math.BigDecimal value = decimalOf(raw);
+        if (value == null) {
+            return String.valueOf(raw);
+        }
+        if (decimals != null) {
+            return value.setScale(decimals, java.math.RoundingMode.HALF_UP).toPlainString();
+        }
+        return value.stripTrailingZeros().toPlainString();
+    }
+
+    private static java.math.BigDecimal decimalOf(Object raw) {
+        if (raw instanceof java.math.BigDecimal decimal) {
+            return decimal;
+        }
+        if (raw instanceof Number number) {
+            double value = number.doubleValue();
+            return Double.isFinite(value) ? java.math.BigDecimal.valueOf(value) : null;
+        }
+        try {
+            return new java.math.BigDecimal(String.valueOf(raw));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String boolText(Object raw) {

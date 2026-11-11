@@ -104,6 +104,19 @@ class AuditOperationFilterTest {
     }
 
     @Test
+    @DisplayName("UUID 主键（表单定义）对象回退写 id，不只剩类型")
+    void uuidPathTargetFallsBackToId() throws Exception {
+        String uuid = "27b5ab65-6bcc-442d-b433-fa7adff61bc0";
+        MockHttpServletRequest request = jsonRequest("POST", "/form/def/" + uuid + "/config", "{}");
+        execute(request, 200, "application/json", "{\"code\":0,\"msg\":\"success\"}");
+
+        SysAuditLog entry = captured();
+        assertThat(entry.getAction()).isEqualTo("修改");
+        assertThat(entry.getModule()).isEqualTo("表单定义");
+        assertThat(entry.getTarget()).isEqualTo("表单定义 " + uuid);
+    }
+
+    @Test
     @DisplayName("二进制下载响应（xlsx）记成功，不误判为业务失败")
     void binaryDownloadIsSuccess() throws Exception {
         MockHttpServletRequest request = jsonRequest("POST", "/system/user/export", "{}");

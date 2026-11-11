@@ -165,7 +165,8 @@ public class FormDetailTableExportService {
                                 sub.path("source").asText("custom"),
                                 sub.path("dictType").asText(null),
                                 sub.path("targetFormId").asText(null),
-                                sub.path("multiple").asBoolean(false)));
+                                sub.path("multiple").asBoolean(false),
+                                parseDecimals(sub)));
                     }
                 }
                 String label = node.path("label").asText(fieldName);
@@ -173,6 +174,17 @@ public class FormDetailTableExportService {
             }
         } catch (IOException e) {
             log.warn("表单定义解析失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /** 字段小数位配置（decimals/precision，未配置返回 null=去掉尾随 0）。 */
+    private Integer parseDecimals(JsonNode node) {
+        if (node.has("decimals") && node.get("decimals").isNumber()) {
+            return Math.max(0, node.get("decimals").asInt());
+        }
+        if (node.has("precision") && node.get("precision").isNumber()) {
+            return Math.max(0, node.get("precision").asInt());
         }
         return null;
     }
@@ -473,14 +485,26 @@ public class FormDetailTableExportService {
         }
         if (raw instanceof Number number) {
             cell.setCellValue(number.doubleValue());
+            applyNumberFormat(cell, field);
             return;
         }
         String text = numberText(raw);
         try {
             cell.setCellValue(Double.parseDouble(text));
+            applyNumberFormat(cell, field);
         } catch (NumberFormatException e) {
             writeTextCell(cell, text);
         }
+    }
+
+    /** 数值单元格格式：有小数位配置按配置，否则最多 12 位并去掉尾随 0（与页面显示一致）。 */
+    private void applyNumberFormat(Cell cell, SubField field) {
+        String format = field.decimals() == null
+                ? "0.############"
+                : "0." + "0".repeat(Math.max(0, field.decimals()));
+        CellStyle style = cell.getSheet().getWorkbook().createCellStyle();
+        style.setDataFormat(cell.getSheet().getWorkbook().createDataFormat().getFormat(format));
+        cell.setCellStyle(style);
     }
 
     /** 文本单元格：公式风险前缀（= + - @）显式按文本格式写入，绝不成为公式。 */
@@ -668,7 +692,7 @@ public class FormDetailTableExportService {
 
     private record SubField(String name, String label, FieldType type, String mappingKey,
                             Map<String, String> options, String source, String dictType,
-                            String targetFormId, boolean multiple) {
+                            String targetFormId, boolean multiple, Integer decimals) {
     }
 
     private record TableField(String name, String label, List<SubField> subFields) {
