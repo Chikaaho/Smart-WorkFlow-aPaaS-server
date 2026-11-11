@@ -279,6 +279,14 @@ class CommandQueueIntegrationTest {
         }
         List<CommandEnvelope> occupied = queue.claimDue(List.of(CommandChannelEnum.NORMAL), 2);
         assertThat(occupied).hasSize(2);
+        // 领取受租户公平/准入策略影响，具体是哪两条不保证；按状态计数断言积压形态。
+        java.util.List<String> normalKeys = java.util.stream.IntStream.range(0, 5)
+                .mapToObj(i -> "G5-B2-N-" + i)
+                .toList();
+        long normalPending = normalKeys.stream()
+                .filter(key -> "PENDING".equals(queue.findByKey(1L, key).orElseThrow().getStatus()))
+                .count();
+        assertThat(normalPending).as("5 条 NORMAL 中 2 条被占用、3 条仍 PENDING").isEqualTo(3);
         long p0EnqueueAt = System.currentTimeMillis();
         queue.enqueue(envelope("G5-B2-P0", CommandChannelEnum.P0));
 
@@ -287,20 +295,32 @@ class CommandQueueIntegrationTest {
         ensureLogin();
         long p0HandledAt = effectTime("G5-B2-P0");
         // P0 处理时 3 条 NORMAL 仍在 PENDING（未被普通车道处理）
-        assertThat(queue.findByKey(1L, "G5-B2-N-3").orElseThrow().getStatus()).isEqualTo("PENDING");
+        long pendingAfterP0 = normalKeys.stream()
+                .filter(key -> "PENDING".equals(queue.findByKey(1L, key).orElseThrow().getStatus()))
+                .count();
+        assertThat(pendingAfterP0).as("P0 轮询不消费 NORMAL 积压").isEqualTo(3);
         assertThat(p0HandledAt).isGreaterThanOrEqualTo(p0EnqueueAt);
 
-        // NORMAL 积压随后继续推进（不因 P0 永久饥饿）
+        // NORMAL 积压随后继续推进（不因 P0 永久饥饿）。
+        // 领取可能受租户公平/准入策略影响而不保证恰好是前两条，因此以实际 occupied
+        // 集合为准：被长期占用的保持 PROCESSING，其余正常命令被处理。
         dispatcherWith(idempotentHandler()).pollNormal();
         ensureLogin();
-        assertThat(queue.findByKey(1L, "G5-B2-N-0").orElseThrow().getStatus()).isEqualTo("PROCESSING");
-        assertThat(queue.findByKey(1L, "G5-B2-N-1").orElseThrow().getStatus()).isEqualTo("PROCESSING");
-        for (int i = 2; i < 5; i++) {
-            assertThat(effects).containsKey("G5-B2-N-" + i);
+        java.util.Set<String> occupiedKeys = occupied.stream()
+                .map(CommandEnvelope::getCommandKey)
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.List<String> remainingKeys = normalKeys.stream()
+                .filter(key -> !occupiedKeys.contains(key))
+                .toList();
+        for (String key : occupiedKeys) {
+            assertThat(queue.findByKey(1L, key).orElseThrow().getStatus()).isEqualTo("PROCESSING");
+        }
+        for (String key : remainingKeys) {
+            assertThat(effects).containsKey(key);
         }
         // 时间线：P0 先于所有滞留 NORMAL 的处理时间
-        for (int i = 2; i < 5; i++) {
-            assertThat(p0HandledAt).isLessThanOrEqualTo(effectTime("G5-B2-N-" + i));
+        for (String key : remainingKeys) {
+            assertThat(p0HandledAt).isLessThanOrEqualTo(effectTime(key));
         }
         assertThat(effects.get("G5-B2-P0").get()).isEqualTo(1);
     }

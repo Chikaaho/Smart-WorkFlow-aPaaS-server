@@ -15,8 +15,13 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -29,12 +34,15 @@ public class UserController {
     private final SysUserService sysUserService;
     private final UserQueryFacade userQueryFacade;
     private final com.sw.ck.system.service.ManagementTenantContext tenantContext;
+    private final com.sw.ck.system.service.UserImportExportService userImportExportService;
 
     public UserController(SysUserService sysUserService, UserQueryFacade userQueryFacade,
-                          com.sw.ck.system.service.ManagementTenantContext tenantContext) {
+                          com.sw.ck.system.service.ManagementTenantContext tenantContext,
+                          com.sw.ck.system.service.UserImportExportService userImportExportService) {
         this.sysUserService = sysUserService;
         this.userQueryFacade = userQueryFacade;
         this.tenantContext = tenantContext;
+        this.userImportExportService = userImportExportService;
     }
 
     /**
@@ -211,5 +219,53 @@ public class UserController {
         return posts.stream()
                 .map(item -> new UserPostAssociation(item.getPostId(), item.getDeptId()))
                 .toList();
+    }
+
+    // ==================== 人员批量导入导出（1.0.0 F1） ====================
+
+    /**
+     * 下载导入模板（F1-1）：xlsx、带模板签名、无密码列。
+     */
+    @GetMapping("/import-template")
+    @PreAuthorize("@ss.hasPermi('system:user:import')")
+    public ResponseEntity<byte[]> downloadImportTemplate() {
+        byte[] bytes = userImportExportService.downloadTemplate();
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=user-import-template.xlsx")
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(bytes);
+    }
+
+    /**
+     * 批量导入（F1-2/F1-6）：统一初始密码 + 整批原子；超管必须显式指定目标租户。
+     */
+    @PostMapping("/import")
+    @PreAuthorize("@ss.hasPermi('system:user:import')")
+    public R<com.sw.ck.system.service.UserImportExportService.UserImportResult> importUsers(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("initialPassword") String initialPassword,
+            @RequestParam(value = "tenantId", required = false) Long tenantId) throws IOException {
+        Long target = tenantContext.createTarget(tenantId);
+        return R.ok(userImportExportService.importUsers(file.getBytes(), initialPassword, target));
+    }
+
+    /**
+     * 按当前筛选导出（F1-3）：列与模板一致（附部门名称等可读列），不导出密码，受数据权限约束。
+     */
+    @PostMapping("/export")
+    @PreAuthorize("@ss.hasPermi('system:user:export')")
+    public ResponseEntity<byte[]> exportUsers(@RequestBody(required = false) UserPageQuery query) {
+        Long tenantId = tenantContext.readTarget(query == null ? null : query.getTenantId());
+        UserPageQuery filter = query == null ? new UserPageQuery() : query;
+        if (tenantId != null) {
+            filter.setTenantId(tenantId);
+        }
+        byte[] bytes = userImportExportService.exportUsers(filter);
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=users.xlsx")
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(bytes);
     }
 }

@@ -128,15 +128,15 @@ class ApplicationCenterLegacyUpgradeTest {
         // —— 3.0.1 执行 0.2.0 存量升级脚本（0.1.8/0.1.9/0.1.10 增量 + 历史衔接收敛为 V0.2.0，发布资产原文）——
         execScript(classpathResource(UPGRADE_020_SCRIPT));
 
-        // —— 3.1 主链衔接验证：V0.2.0 已由升级脚本登记、R__ 已全部对账，仅执行新增 V0.2.2—V0.2.9/V0.4.0 与 R__0.4.0，validate 通过 ——
+        // —— 3.1 主链衔接验证：V0.2.0 已由升级脚本登记、R__ 已全部对账，仅执行新增 V0.2.2—V0.2.9/V0.4.0/V1.0.0，validate 通过 ——
         Flyway upgrade = Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)
                 .locations(h2Locations())
                 .load();
         MigrateResult result = upgrade.migrate();
         assertTrue(result.success, "主链衔接验证应成功");
-        assertEquals(9, result.migrationsExecuted,
-                "0.2.0 存量升级脚本衔接后仅执行新增 V0.2.2—V0.2.9/V0.4.0 与 R__0.4.0 迁移，不重放已登记的 versioned 与 R__");
+        assertEquals(10, result.migrationsExecuted,
+                "0.2.0 存量升级脚本衔接后仅执行新增 V0.2.2—V0.2.9/V0.4.0/V1.0.0 迁移，不重放已登记的 versioned 与 R__");
         upgrade.validate();
     }
 
@@ -293,13 +293,13 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult upgrade = after.migrate();
         assertTrue(upgrade.success, "衔接后主链应迁移成功");
-        // V0.2.0 已由升级脚本登记，仅执行快照（12 支 R__）之外新增的 8 支 R__ 与新增 V0.2.2—V0.2.9/V0.4.0；历史版本化迁移不得重放。
-        assertEquals(17, upgrade.migrationsExecuted,
-                "衔接后应执行快照外新增的 8 支 R__ 对账与 V0.2.2—V0.2.9/V0.4.0，不得重放历史版本化迁移");
+        // V0.2.0 已由升级脚本登记，仅执行快照（12 支 R__）之外新增的 8 支 R__ 与新增 V0.2.2—V0.2.9/V0.4.0/V1.0.0；历史版本化迁移不得重放。
+        assertEquals(18, upgrade.migrationsExecuted,
+                "衔接后应执行快照外新增的 8 支 R__ 对账与 V0.2.2—V0.2.9/V0.4.0/V1.0.0，不得重放历史版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();
         assertEquals(0, again.migrationsExecuted, "衔接后主链不应重复执行任何迁移");
-        assertEquals("0.4.0", after.info().current().getVersion().getVersion(), "终点应为 0.4.0");
+        assertEquals("1.0.0", after.info().current().getVersion().getVersion(), "终点应为 1.0.0");
     }
 
     @Test
@@ -311,8 +311,8 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult result = again.migrate();
         assertEquals(0, result.migrationsExecuted, "重复 migrate 不应执行任何迁移");
-        assertEquals("0.4.0", again.info().current().getVersion().getVersion(),
-                "终点应为 0.4.0 版本");
+        assertEquals("1.0.0", again.info().current().getVersion().getVersion(),
+                "终点应为 1.0.0 版本");
         again.validate();
     }
 

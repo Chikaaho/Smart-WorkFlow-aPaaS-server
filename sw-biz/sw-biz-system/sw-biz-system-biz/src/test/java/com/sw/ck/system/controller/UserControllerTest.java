@@ -32,7 +32,8 @@ class UserControllerTest {
             mock(com.sw.ck.system.api.user.UserQueryFacade.class);
     private final com.sw.ck.system.service.ManagementTenantContext tenantContext =
             mock(com.sw.ck.system.service.ManagementTenantContext.class);
-    private final UserController controller = new UserController(sysUserService, userQueryFacade, tenantContext);
+    private final UserController controller = new UserController(sysUserService, userQueryFacade, tenantContext,
+            mock(com.sw.ck.system.service.UserImportExportService.class));
 
     @org.junit.jupiter.api.BeforeEach
     void defaultOwnedObject() {

@@ -47,10 +47,10 @@ class I6G7UpgradeDrillH2Test {
                 .load();
         var result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(30, result.migrationsExecuted,
-                "全新库应执行 30 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0 + 20 个 R__）");
-        assertEquals("0.4.0", flyway.info().current().getVersion().getVersion(),
-                "终点当前版本应为最后一个 versioned 迁移（V0.4.0）");
+        assertEquals(31, result.migrationsExecuted,
+                "全新库应执行 31 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0 + 20 个 R__）");
+        assertEquals("1.0.0", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移（V1.0.0）");
 
         // ---------- 2. 写入代表性数据（真实 INSERT，非 schema 构造） ----------
         try (Connection conn = DriverManager.getConnection(DB, USER, PASSWORD); Statement st = conn.createStatement()) {
@@ -134,14 +134,14 @@ class I6G7UpgradeDrillH2Test {
                     + "1, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
         }
 
-        // ---------- 3. 放开 target 迁满（V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0） ----------
+        // ---------- 3. 放开 target 迁满（V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0） ----------
         var phase2 = Flyway.configure().dataSource(UPGRADE_DB, USER, PASSWORD)
                 .locations(allLocations)
                 .load();
         var result = phase2.migrate();
-        assertTrue(result.success, "第二阶段迁移（含 V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0）应成功");
-        assertEquals("0.4.0", phase2.info().current().getVersion().getVersion(),
-                "升级后终点应为 V0.4.0");
+        assertTrue(result.success, "第二阶段迁移（含 V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0）应成功");
+        assertEquals("1.0.0", phase2.info().current().getVersion().getVersion(),
+                "升级后终点应为 V1.0.0");
 
         // ---------- 4. 断言 D022-03 搬运结果 ----------
         try (Connection conn = DriverManager.getConnection(UPGRADE_DB, USER, PASSWORD);

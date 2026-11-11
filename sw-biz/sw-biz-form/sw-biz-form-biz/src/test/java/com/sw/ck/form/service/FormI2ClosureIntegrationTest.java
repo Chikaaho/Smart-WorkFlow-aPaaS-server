@@ -352,6 +352,34 @@ class FormI2ClosureIntegrationTest {
         return formDefMapper.selectById(dto.getId());
     }
 
+    @Test
+    @DisplayName("新版本：未变化的明细表随版本保留（打印模板可版本化），变更明细表仍被拒")
+    void publishNewVersion_shouldKeepUnchangedTableAndRejectChangedTable() {
+        String definition = """
+                {"fields":[
+                  {"name":"title","type":"TEXT"},
+                  {"name":"items","type":"TABLE","subFields":[
+                    {"name":"product","type":"TEXT"},
+                    {"name":"qty","type":"NUMBER"}
+                  ]}
+                ]}
+                """;
+        FormDefEntity form = createPublishedForm("i2_table_version", definition);
+        int firstVersion = form.getFormVersion();
+
+        formDefService.publishNewVersion(form.getId(), definition);
+        assertThat(formDefMapper.selectById(form.getId()).getFormVersion())
+                .isEqualTo(firstVersion + 1);
+
+        String changed = definition.replace(
+                "{\"name\":\"qty\",\"type\":\"NUMBER\"}",
+                "{\"name\":\"qty\",\"type\":\"TEXT\"}");
+        assertThatThrownBy(() -> formDefService.publishNewVersion(form.getId(), changed))
+                .isInstanceOf(BaseException.class)
+                .satisfies(e -> assertThat(((BaseException) e).getCode())
+                        .isEqualTo(FormErrorCode.DEFINITION_INVALID.getCode()));
+    }
+
     private FormDefEntity createPublishedForm(String formKey, String definition) {
         FormDefEntity draft = createDraft(formKey);
         formDefService.saveConfig(draft.getId(), definition);

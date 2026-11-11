@@ -81,6 +81,8 @@ public class SysUserServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public Long create(SysUser user, String plainPassword) {
         Objects.requireNonNull(plainPassword, "密码不能为空");
+        // 首登强制改密（1.0.0 F1-4）：管理员新建的账号必须首次登录后改密；SSO 准入不建号，不受影响
+        user.setMustChangePassword(1);
         user.setTenantId(resolveCreationTenant(user.getTenantId()));
         validateDepartment(user.getDeptId(), user.getTenantId());
         // 用户名唯一性前置校验：唯一索引兜底会以 DuplicateKeyException 形式漏出为 500
@@ -305,6 +307,8 @@ public class SysUserServiceImpl
         SysUser user = new SysUser();
         user.setId(userId);
         user.setPassword(passwordEncoder.encode(plainPassword));
+        // 改密成功即解除首登强制改密（1.0.0 F1-4）；后续请求按新身份装载
+        user.setMustChangePassword(0);
         updateById(user);
         kickOut(userId);
     }

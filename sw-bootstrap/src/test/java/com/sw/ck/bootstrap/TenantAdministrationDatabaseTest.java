@@ -737,7 +737,8 @@ class TenantAdministrationDatabaseTest {
                 departments = (com.sw.ck.system.service.SysDeptService) deptProxy.getProxy();
                 validity = new com.sw.ck.system.service.TenantValidityService(template.getMapper(SysTenantMapper.class));
                 management = new com.sw.ck.system.service.ManagementTenantContext(template.getMapper(SysTenantMapper.class), validity);
-                userController = new com.sw.ck.system.controller.UserController(users, null, management);
+                userController = new com.sw.ck.system.controller.UserController(users, null, management,
+                        new com.sw.ck.system.service.UserImportExportService(null, null, null, null, users, null));
                 deptController = new com.sw.ck.system.controller.DeptController(departments, management);
             } catch (Exception failure) {
                 if (postgres != null) postgres.close();

@@ -146,7 +146,7 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
     @Select({"<script>",
             "SELECT DISTINCT u.* FROM sys_user u WHERE u.deleted = 0 ",
             "<if test='q != null and q.tenantId != null'> AND u.tenant_id = #{q.tenantId} </if>",
-            "<if test='q != null and q.keyword != null and q.keyword != \"\"'> AND (u.username LIKE CONCAT(CONCAT('%', #{q.keyword}), '%') OR u.real_name LIKE CONCAT(CONCAT('%', #{q.keyword}), '%')) </if>",
+            "<if test='q != null and q.keywordLike != null'> AND (u.username LIKE #{q.keywordLike} OR u.real_name LIKE #{q.keywordLike}) </if>",
             "<if test='q != null and q.status != null'> AND u.status = #{q.status} </if>",
             "<if test='q != null and q.deptId != null'> AND (u.dept_id = #{q.deptId} OR u.dept_id IN (WITH RECURSIVE children(id) AS (SELECT id FROM sys_dept WHERE id = #{q.deptId} AND deleted = 0 UNION ALL SELECT d.id FROM sys_dept d JOIN children c ON d.parent_id = c.id WHERE d.deleted = 0) SELECT id FROM children)) </if>",
             "<if test='q != null and q.postId != null'> AND EXISTS (SELECT 1 FROM sys_user_post up JOIN sys_post p ON p.id = up.post_id AND p.tenant_id = up.tenant_id WHERE up.user_id = u.id AND up.post_id = #{q.postId} AND up.deleted = 0 AND up.tenant_id = u.tenant_id AND p.deleted = 0 AND p.status = 1) </if>",
