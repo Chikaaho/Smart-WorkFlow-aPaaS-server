@@ -52,6 +52,8 @@ public class BpmMyInstanceController {
     private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
     private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade;
     private final com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade;
+    /** 流转记录装配（1.0.0 迁出共用；服务端 PDF 复用同口径）。 */
+    private final com.sw.ck.bpm.process.service.ApprovalHistoryAssembler approvalHistoryAssembler;
 
     public BpmMyInstanceController(BpmInstanceService bpmInstanceService,
                                    BpmProcessDefService bpmProcessDefService,
@@ -91,6 +93,9 @@ public class BpmMyInstanceController {
         this.participantNameService = participantNameService;
         this.userQueryFacade = userQueryFacade;
         this.deptQueryFacade = deptQueryFacade;
+        this.approvalHistoryAssembler = new com.sw.ck.bpm.process.service.ApprovalHistoryAssembler(
+                bpmTaskFacade, taskActionService, approvalActionService, objectMapper,
+                participantNameService, userQueryFacade, deptQueryFacade);
     }
 
     /**
@@ -188,8 +193,8 @@ public class BpmMyInstanceController {
             item.setBusinessKey(record.getBusinessKey());
             item.setFormKey(record.getFormKey());
             item.setInitiatorId(record.getInitiatorId());
-            item.setInitiatorName(record.getInitiatorId() == null ? null
-                    : initiatorNames.get(record.getInitiatorId()));
+            item.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                    record.getInitiatorId(), initiatorNames));
             item.setStatus(record.getStatus());
             item.setCurrentNode(resolveCurrentNode(record, endNodeNames));
             item.setCreateTime(record.getCreateTime());
@@ -333,105 +338,15 @@ public class BpmMyInstanceController {
 
     /**
      * 实例流转记录装配（我发起的详情与统一详情关系端点共用同一口径，避免两处漂移）：
-     * 引擎历史 + 审批动作（意见/结果）合并，参与人快照/任务级覆盖与冻结名富化。
+     * 1.0.0 起实现迁至 {@link com.sw.ck.bpm.process.service.ApprovalHistoryAssembler}
+     * （服务端 PDF 共用），控制器仅委托。
      */
     List<ApprovalHistoryItemDTO> buildApprovalHistory(BpmInstance instance) {
-        // 流转记录：引擎历史 + 审批动作（意见/结果）合并。
-        // A1/C1 修复：已办理节点必须回显真实动作/结果/意见（否则前端对 null 结果
-        // 一律显示"进行中"，流程已结束的终审节点仍显示进行中）；无动作记录的
-        // 节点（如取消成员）不伪造动作。
-        // empty = 实例标识缺失：无历史（响应字段保持原列表形状，不漂移为 Optional）
-        List<BpmTaskDTO> historyTasks =
-                bpmTaskFacade.queryHistoryByProcessInstance(instance.getProcessInstanceId())
-                        .orElse(List.of());
-        Map<String, com.sw.ck.bpm.process.entity.ApprovalActionRecord> actionByTask =
-                approvalActionService == null ? Map.of()
-                        : approvalActionService
-                                .findByProcessInstanceId(instance.getProcessInstanceId())
-                                .stream()
-                                .filter(record -> record.getTaskId() != null)
-                                .collect(Collectors.toMap(
-                                        com.sw.ck.bpm.process.entity.ApprovalActionRecord::getTaskId,
-                                        record -> record,
-                                        (first, second) -> first));
-        List<ApprovalHistoryItemDTO> history = new java.util.ArrayList<>();
-        for (BpmTaskDTO h : historyTasks) {
-            ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
-            item.setTaskId(h.getTaskId());
-            item.setTaskName(h.getName());
-            item.setNodeKey(h.getTaskDefinitionKey());
-            item.setAssignee(h.getAssignee());
-            if (h.getCreateTime() != null) {
-                item.setCreateTime(LocalDateTime.ofInstant(
-                        h.getCreateTime().toInstant(), ZoneId.systemDefault()));
-            }
-            if (h.getEndTime() != null) {
-                item.setEndTime(LocalDateTime.ofInstant(
-                        h.getEndTime().toInstant(), ZoneId.systemDefault()));
-            }
-            com.sw.ck.bpm.process.entity.ApprovalActionRecord action = actionByTask.get(h.getTaskId());
-            if (action != null) {
-                item.setAction(action.getAction());
-                item.setActionRecordId(action.getId());
-                item.setApprovalResult(action.getSettlementStatus());
-                item.setOpinionData(parseOpinionData(action.getOpinionData()));
-                item.setOpinionFormId(action.getOpinionFormId());
-                item.setOpinionFormVersion(action.getOpinionFormVersion());
-            }
-            history.add(item);
-        }
-        if (participantNameService != null) {
-            // 候选模式任务在引擎历史中可能被 approver 兜底误填为发起人：
-            // 快照命中即覆盖为权威参与人（I1 G5b），再做冻结名富化。
-            // 任务级快照优先：动态并行多分支共用同一 node_key，节点级覆盖会把多条
-            // 分支改写为同一办理人（I4 G1a），taskId 命中才回退节点级。
-            Map<String, Long> nodeAssignees =
-                    participantNameService.resolveNodeAssignees(instance.getProcessInstanceId());
-            Map<String, Long> taskAssignees =
-                    participantNameService.resolveTaskAssignees(instance.getProcessInstanceId());
-            for (ApprovalHistoryItemDTO item : history) {
-                Long pid = item.getTaskId() != null ? taskAssignees.get(item.getTaskId()) : null;
-                if (pid == null && item.getNodeKey() != null) {
-                    pid = nodeAssignees.get(item.getNodeKey());
-                }
-                if (pid != null) {
-                    item.setAssignee(String.valueOf(pid));
-                }
-            }
-            // 冻结快照名优先：流转记录身份不随后续改名/停用重写（I1）
-            Map<Long, String> names = participantNameService.resolveDisplayNames(
-                    instance.getProcessInstanceId(),
-                    history.stream()
-                    .map(ApprovalHistoryItemDTO::getAssignee)
-                    .filter(a -> a != null && a.matches("\\d+"))
-                    .map(Long::valueOf)
-                    .collect(Collectors.toSet()));
-            for (ApprovalHistoryItemDTO item : history) {
-                if (item.getAssignee() != null && item.getAssignee().matches("\\d+")) {
-                    item.setAssigneeName(names.get(Long.valueOf(item.getAssignee())));
-                }
-            }
-        } else if (taskActionService != null) {
-            Map<Long, String> names = taskActionService.resolveUserNames(history.stream()
-                    .map(ApprovalHistoryItemDTO::getAssignee)
-                    .filter(a -> a != null && a.matches("\\d+"))
-                    .map(Long::valueOf)
-                    .collect(Collectors.toSet()));
-            for (ApprovalHistoryItemDTO item : history) {
-                if (item.getAssignee() != null && item.getAssignee().matches("\\d+")) {
-                    item.setAssigneeName(names.get(Long.valueOf(item.getAssignee())));
-                }
-            }
-        }
-        resolveOpinionFields(history, actionByTask);
-        com.sw.ck.bpm.process.service.ApprovalHistoryEnricher.enrichAssigneeDept(
-                history, userQueryFacade, deptQueryFacade);
-        return history;
+        return approvalHistoryAssembler.build(instance);
     }
 
     /**
-     * 意见字段展示视图：复用 {@link com.sw.ck.bpm.process.service.ApprovalHistoryEnricher}，
-     * 与任务详情保持同一解析口径。
+     * 意见字段展示视图（存量测试口径）：委托 {@link com.sw.ck.bpm.process.service.ApprovalHistoryEnricher}。
      */
     void resolveOpinionFields(List<ApprovalHistoryItemDTO> history,
                               Map<String, com.sw.ck.bpm.process.entity.ApprovalActionRecord> actionByTask) {
@@ -504,13 +419,13 @@ public class BpmMyInstanceController {
             BpmProcessDef processDef = bpmProcessDefService.findByProcessKey(instance.getProcessDefKey());
             processName = processDef == null ? null : processDef.getName();
         }
-        String initiatorName = null;
-        if (userQueryFacade != null && instance.getInitiatorId() != null) {
-            initiatorName = userQueryFacade
-                    .getUserDisplayNames(java.util.Set.of(instance.getInitiatorId()))
-                    .orElse(Map.of())
-                    .get(instance.getInitiatorId());
-        }
+        String initiatorName = com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                instance.getInitiatorId(),
+                userQueryFacade == null || instance.getInitiatorId() == null
+                        ? Map.of()
+                        : userQueryFacade
+                                .getUserDisplayNames(java.util.Set.of(instance.getInitiatorId()))
+                                .orElse(Map.of()));
 
         Map<String, Object> instanceInfo = new java.util.HashMap<>();
         instanceInfo.put("id", instance.getId());

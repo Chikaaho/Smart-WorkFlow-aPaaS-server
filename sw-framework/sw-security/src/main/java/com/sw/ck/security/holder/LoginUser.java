@@ -35,4 +35,11 @@ public class LoginUser implements Serializable {
      * 超管短路标识：true 时数据权限/权限校验均应直接放行，由调用方（Prompt 4）判断短路。
      */
     private boolean superAdmin;
+
+    /**
+     * 首次登录强制改密标记（1.0.0 F1-4）：导入/管理员新建的账号在完成首次改密前，
+     * 服务端拒绝除改密链路（refresh/logout/改密/自身信息）外的全部业务请求。
+     * 由身份装载从 sys_user.must_change_password 回查填充，改密成功后随缓存刷新失效为 false。
+     */
+    private boolean mustChangePassword;
 }

@@ -68,7 +68,8 @@ create table sys_user (
     last_login_time timestamp,
     last_login_ip   varchar(50),
     remark          clob,
-    is_admin        smallint        not null default 0
+    is_admin        smallint        not null default 0,
+    must_change_password smallint   not null default 0
 );
 create unique index uk_sys_user_username on sys_user (username);
 create index idx_sys_user_dept_id on sys_user (dept_id);

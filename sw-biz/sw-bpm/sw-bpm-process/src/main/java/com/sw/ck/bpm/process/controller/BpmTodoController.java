@@ -310,11 +310,11 @@ public class BpmTodoController {
                     dto.setInstanceId(instance.getId());
                     dto.setInitiatorId(instance.getInitiatorId());
                     dto.setInstanceStatus(instance.getStatus());
-                    dto.setInitiatorName(taskActionService.resolveUserNames(
-                            instance.getInitiatorId() == null
-                                    ? java.util.Set.of()
-                                    : java.util.Set.of(instance.getInitiatorId()))
-                            .get(instance.getInitiatorId()));
+                    dto.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                            instance.getInitiatorId(), taskActionService.resolveUserNames(
+                                    instance.getInitiatorId() == null
+                                            ? java.util.Set.of()
+                                            : java.util.Set.of(instance.getInitiatorId()))));
                 });
 
         // 任务创建时间

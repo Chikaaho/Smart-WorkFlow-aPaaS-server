@@ -9,6 +9,7 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.jwt.JwtProperties;
 import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.spi.UserDetailsProvider;
+import com.sw.ck.system.entity.SysAuditLog;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.model.TokenResponse;
 import com.sw.ck.system.security.AuthErrorCode;
@@ -16,6 +17,7 @@ import com.sw.ck.system.security.LoginChallengeService;
 import com.sw.ck.system.security.LoginChallengeStore;
 import com.sw.ck.system.security.RsaLoginKeyManager;
 import com.sw.ck.system.security.SystemErrorKeys;
+import com.sw.ck.system.service.AuditLogService;
 import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.util.CookieUtils;
@@ -53,6 +55,10 @@ public class AuthController {
     private final LoginChallengeService loginChallengeService;
     private final RsaLoginKeyManager rsaLoginKeyManager;
     private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
+    private final com.sw.ck.system.service.AuditLogService auditLogService;
+
+    /** 首登改密的新密码最小长度（1.0.0 F1-4）。 */
+    private static final int FIRST_CHANGE_MIN_PASSWORD_LENGTH = 8;
 
     @Value("${sw.security.cookie.secure:false}")
     private boolean cookieSecure;
@@ -70,7 +76,8 @@ public class AuthController {
                           LoginUserLoader loginUserLoader,
                           LoginChallengeService loginChallengeService,
                           RsaLoginKeyManager rsaLoginKeyManager,
-                          com.sw.ck.system.service.TenantValidityService tenantValidityService) {
+                          com.sw.ck.system.service.TenantValidityService tenantValidityService,
+                          com.sw.ck.system.service.AuditLogService auditLogService) {
         this.userDetailsProvider = userDetailsProvider;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
@@ -81,6 +88,7 @@ public class AuthController {
         this.loginChallengeService = loginChallengeService;
         this.rsaLoginKeyManager = rsaLoginKeyManager;
         this.tenantValidityService = tenantValidityService;
+        this.auditLogService = auditLogService;
     }
 
     /**
@@ -113,6 +121,7 @@ public class AuthController {
      */
     @PostMapping("/login")
     public R<TokenResponse> login(@RequestBody LoginRequest request,
+                                   HttpServletRequest httpRequest,
                                    HttpServletResponse response) {
         // 1. 验证码记录与内容（UUID 缺失/挑战不存在/内容不匹配 → 验证码错误）
         LoginChallengeStore.LoginChallengeRecord record;
@@ -121,7 +130,8 @@ public class AuthController {
         } catch (LoginChallengeService.AuthException e) {
             log.warn("登录前置校验失败(1): code={}, captchaIdHash={}", e.getCode(),
                     RsaLoginKeyManager.sha256Hex(String.valueOf(request.getCaptchaId())));
-            return authFail(e.getCode(), e.getErrorKey(), e.getMessage());
+            return loginFailed(httpRequest, request.getUsername(), null,
+                    "验证码校验未通过", authFail(e.getCode(), e.getErrorKey(), e.getMessage()));
         }
 
         // 2. 验证码有效期（已在 verifyCaptcha 内按生成时间 + TTL 判定，异常同样收敛到 2102）
@@ -132,7 +142,8 @@ public class AuthController {
             loginChallengeService.verifyClientTime(request.getTimestamp());
         } catch (LoginChallengeService.AuthException e) {
             log.warn("登录前置校验失败(3): code={}", e.getCode());
-            return authFail(e.getCode(), e.getErrorKey(), e.getMessage());
+            return loginFailed(httpRequest, request.getUsername(), null,
+                    "机器时间异常", authFail(e.getCode(), e.getErrorKey(), e.getMessage()));
         }
 
         // 4. 原子消费挑战：并发/重复提交下最多一个请求进入密码认证；无论密码最终正确与否，
@@ -140,7 +151,8 @@ public class AuthController {
         if (!loginChallengeService.consume(request.getCaptchaId())) {
             log.warn("登录挑战已被消费或并发落败, captchaIdHash={}",
                     RsaLoginKeyManager.sha256Hex(String.valueOf(request.getCaptchaId())));
-            return authFail(AuthErrorCode.CAPTCHA_ERROR);
+            return loginFailed(httpRequest, request.getUsername(), null,
+                    "登录挑战已消费", authFail(AuthErrorCode.CAPTCHA_ERROR));
         }
 
         // 5. RSA 解密（按挑战绑定的密钥版本；失败统一收敛“密码错误”，不暴露差异）
@@ -149,40 +161,47 @@ public class AuthController {
             plainPassword = rsaLoginKeyManager.decrypt(record.keyVersion(), request.getPassword());
         } catch (RsaLoginKeyManager.PasswordDecryptException e) {
             log.warn("密码解密失败: {}", e.getMessage());
-            return authFail(AuthErrorCode.PASSWORD_ERROR);
+            return loginFailed(httpRequest, request.getUsername(), null,
+                    "密码解密失败", authFail(AuthErrorCode.PASSWORD_ERROR));
         }
         if (plainPassword.length() > rsaLoginKeyManager.maxPlaintextBytes()) {
-            return authFail(AuthErrorCode.PASSWORD_ERROR);
+            return loginFailed(httpRequest, request.getUsername(), null,
+                    "密码解密失败", authFail(AuthErrorCode.PASSWORD_ERROR));
         }
 
         // 6. 账号与密码认证（沿用既有语义：账号不存在/密码不匹配统一“密码错误”）
         if (request.getUsername() == null || request.getUsername().isBlank()) {
-            return authFail(AuthErrorCode.PASSWORD_ERROR);
+            return loginFailed(httpRequest, request.getUsername(), null,
+                    "账号为空", authFail(AuthErrorCode.PASSWORD_ERROR));
         }
         log.info("用户登录: {}", request.getUsername());
         SysUser user = request.getTenantName() != null && !request.getTenantName().isBlank()
                 ? sysUserService.findByTenantNameAndUsername(request.getTenantName(), request.getUsername())
                 : sysUserService.getByUsername(request.getUsername());
         if (user == null) {
-            return authFail(AuthErrorCode.PASSWORD_ERROR);
+            return loginFailed(httpRequest, request.getUsername(), null,
+                    "账号不存在或密码不匹配", authFail(AuthErrorCode.PASSWORD_ERROR));
         }
         if (!passwordEncoder.matches(plainPassword, user.getPassword())) {
-            return authFail(AuthErrorCode.PASSWORD_ERROR);
+            return loginFailed(httpRequest, request.getUsername(), user,
+                    "账号不存在或密码不匹配", authFail(AuthErrorCode.PASSWORD_ERROR));
         }
 
         // 7. 校验账号状态（0=正常 1=停用 2=锁定；null/未知值按停用处理，拒绝签发 token）
         String statusDenyMessage = statusDenyMessage(user.getStatus());
         if (statusDenyMessage != null) {
             log.warn("用户 {} 登录被拒绝: {}", request.getUsername(), statusDenyMessage);
-            return authFail(401, statusDenyKey(user.getStatus()), statusDenyMessage);
+            return loginFailed(httpRequest, request.getUsername(), user,
+                    statusDenyMessage, authFail(401, statusDenyKey(user.getStatus()), statusDenyMessage));
         }
 
         // 7b. 租户有效性（I5 §3.2）：租户不存在/停用/过期不得建立新会话
         if (!tenantValidityService.isValid(user.getTenantId())) {
             log.warn("用户 {} 登录被拒绝: 租户无效或已停用/过期, tenantId={}",
                     request.getUsername(), user.getTenantId());
-            return authFail(401, SystemErrorKeys.TENANT_UNAVAILABLE,
-                    "所属企业当前不可用，无法登录，请联系管理员");
+            return loginFailed(httpRequest, request.getUsername(), user,
+                    "租户不可用", authFail(401, SystemErrorKeys.TENANT_UNAVAILABLE,
+                            "所属企业当前不可用，无法登录，请联系管理员"));
         }
 
         // 8. 签发 access token
@@ -195,7 +214,47 @@ public class AuthController {
                 (int) jwtProperties.getRefreshExpireSeconds(), cookieSecure, cookiePath);
 
         log.info("用户 {} 登录成功, userId={}", request.getUsername(), user.getId());
-        return R.ok(new TokenResponse(accessToken, jwtProperties.getAccessExpireSeconds()));
+        writeLoginAudit(httpRequest, "登录", request.getUsername(),
+                user != null ? user.getId() : null,
+                user != null ? user.getTenantId() : null,
+                SysAuditLog.RESULT_SUCCESS, null);
+        boolean mustChangePassword = user.getMustChangePassword() != null
+                && user.getMustChangePassword() == 1;
+        return R.ok(new TokenResponse(accessToken, jwtProperties.getAccessExpireSeconds(),
+                mustChangePassword));
+    }
+
+    /**
+     * 登录失败审计（1.0.0 F3-1）：各失败阶段同步落一条 LOGIN/FAIL 记录，
+     * 记录尝试账号、命中的用户租户（未解析到用户时 0）、IP 与浏览器信息；
+     * 审计写入失败不影响拒绝响应（AuditLogService 吞错）。
+     */
+    private R<TokenResponse> loginFailed(HttpServletRequest httpRequest, String username,
+                                         SysUser user, String reason, R<TokenResponse> response) {
+        writeLoginAudit(httpRequest, "登录", username,
+                user != null ? user.getId() : null,
+                user != null ? user.getTenantId() : null,
+                SysAuditLog.RESULT_FAIL, reason);
+        return response;
+    }
+
+    /** 写登录链路审计（登录/登出/改密共用）；所有异常在 AuditLogService 内收敛。 */
+    private void writeLoginAudit(HttpServletRequest httpRequest, String action, String username,
+                                 Long userId, Long tenantId, String result, String reason) {
+        SysAuditLog entry = new SysAuditLog();
+        entry.setLogType(SysAuditLog.TYPE_LOGIN);
+        entry.setAction(action);
+        // 登录类日志面向业务用户可读：模块固定「认证」，对象由账号列承载（不写接口路径）
+        entry.setModule("认证");
+        entry.setUsername(username);
+        entry.setUserId(userId);
+        entry.setTenantId(tenantId != null ? tenantId : 0L);
+        entry.setResult(result);
+        entry.setFailReason(reason);
+        entry.setTarget(null);
+        entry.setIp(AuditLogService.clientIp(httpRequest));
+        entry.setUserAgent(httpRequest.getHeader("User-Agent"));
+        auditLogService.record(entry);
     }
 
     /**
@@ -244,10 +303,13 @@ public class AuthController {
             // 4. 下发新 refresh cookie
             CookieUtils.setRefreshCookie(response, rotation.newRawToken(),
                     (int) jwtProperties.getRefreshExpireSeconds(), cookieSecure, cookiePath);
-            // 5. 签发新 access token
+            // 5. 签发新 access token（首登改密标记随用户行实时回读：改密成功后即刻消失）
             String newAccessToken = jwtTokenProvider.generateToken(rotation.userId());
+            boolean mustChangePassword = user.getMustChangePassword() != null
+                    && user.getMustChangePassword() == 1;
             // 6. 返回
-            return R.ok(new TokenResponse(newAccessToken, jwtProperties.getAccessExpireSeconds()));
+            return R.ok(new TokenResponse(newAccessToken, jwtProperties.getAccessExpireSeconds(),
+                    mustChangePassword));
         } catch (BaseException e) {
             // 轮换失败（无效/过期/重放）→ 清 cookie
             CookieUtils.clearRefreshCookie(response, cookiePath);
@@ -270,13 +332,20 @@ public class AuthController {
         // 3. 清除 cookie
         CookieUtils.clearRefreshCookie(response, cookiePath);
         // 4. 如果有当前登录用户，踢出缓存
+        LoginUser currentUser = null;
         try {
-            LoginUser currentUser = LoginUserHolder.get();
+            currentUser = LoginUserHolder.get();
             if (currentUser != null) {
                 loginUserLoader.kickOut(currentUser.getUserId());
             }
         } catch (Exception ignored) {
             // 用户可能未认证（access token 已过期），忽略
+        }
+        // 5. 登出审计（1.0.0 F3-1）：已认证会话记一条 LOGOUT；未认证（过期登出）不记
+        if (currentUser != null) {
+            writeLoginAudit(request, "登出", currentUser.getUsername(),
+                    currentUser.getUserId(), currentUser.getTenantId(),
+                    SysAuditLog.RESULT_SUCCESS, null);
         }
         return R.ok();
     }
@@ -291,7 +360,8 @@ public class AuthController {
      * @return 成功返回 R.ok
      */
     @PostMapping("/password")
-    public R<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+    public R<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
+                                  HttpServletRequest httpRequest) {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
             return authFail(401, SystemErrorKeys.SESSION_REQUIRED, "登录状态已失效，请重新登录");
@@ -301,11 +371,28 @@ public class AuthController {
             return authFail(401, SystemErrorKeys.SESSION_REQUIRED, "登录状态已失效，请重新登录");
         }
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
+            writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
+                    user.getId(), user.getTenantId(), SysAuditLog.RESULT_FAIL, "旧密码不正确");
             return authFail(400, SystemErrorKeys.CREDENTIAL_MISMATCH, "当前密码不正确");
+        }
+        // 首登改密强度（1.0.0 F1-4）：新密码至少 8 位，且不能等于当前（初始）密码
+        if (request.getNewPassword() == null || request.getNewPassword().length() < FIRST_CHANGE_MIN_PASSWORD_LENGTH) {
+            writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
+                    user.getId(), user.getTenantId(), SysAuditLog.RESULT_FAIL, "新密码过短");
+            return authFail(400, SystemErrorKeys.REQUEST_INVALID,
+                    "新密码长度至少 " + FIRST_CHANGE_MIN_PASSWORD_LENGTH + " 位");
+        }
+        if (request.getNewPassword().equals(request.getOldPassword())) {
+            writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
+                    user.getId(), user.getTenantId(), SysAuditLog.RESULT_FAIL, "新密码与当前密码相同");
+            return authFail(400, SystemErrorKeys.REQUEST_INVALID,
+                    "新密码不能与当前密码相同");
         }
         sysUserService.updatePassword(user.getId(), request.getNewPassword());
         loginUserLoader.kickOut(user.getId());
         log.info("用户 {} 已修改密码, userId={}", user.getUsername(), user.getId());
+        writeLoginAudit(httpRequest, "修改密码", user.getUsername(),
+                user.getId(), user.getTenantId(), SysAuditLog.RESULT_SUCCESS, null);
         return R.ok();
     }
 

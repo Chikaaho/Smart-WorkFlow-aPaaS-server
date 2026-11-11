@@ -22,7 +22,7 @@ import java.util.TreeSet;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * U1：以 PG 0.4.0 终态为基准，对比每个实测库的表集合、每表列集合、每列可空性。
+ * U1：以 PG 1.0.0 终态为基准，对比每个实测库的表集合、每表列集合、每列可空性。
  * <p>
  * 白名单仅两项：
  * <ul>

@@ -52,6 +52,10 @@ public class SysUser extends BaseEntity {
     @TableField("is_admin")
     private Integer isAdmin;
 
+    /** 首次登录强制改密：0=否 1=是（1.0.0 F1-4；导入/管理员新建置 1，改密成功后归 0） */
+    @TableField("must_change_password")
+    private Integer mustChangePassword;
+
     /** 头像 URL（V1 DDL 已有 `avatar varchar(200)` 列，此处补映射） */
     @TableField("avatar")
     private String avatar;

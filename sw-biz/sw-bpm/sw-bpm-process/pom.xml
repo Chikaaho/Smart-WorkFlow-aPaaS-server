@@ -95,6 +95,15 @@
             <artifactId>fastjson2</artifactId>
         </dependency>
         <!--
+            1.0.0 F2 服务端打印 PDF：PDFBox 3 生成 A4 文档并嵌入随产物打包的
+            Noto Sans SC Regular（OFL，resources/fonts）。版本随 sw-dependencies
+            集中管理（3.0.4，知识库/存储模块既有解析值，不新增版本源）。
+        -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+        </dependency>
+        <!--
             P64 受控判断脚本运行时经 sw-bpm-api 的 BpmScriptEvaluatePort 消费，
             GraalJS 重型依赖随实现留在引擎侧模块，不进入本模块类路径
             （IotContractBoundaryIsolationTest 门禁；ADR-P64-001 §3）。

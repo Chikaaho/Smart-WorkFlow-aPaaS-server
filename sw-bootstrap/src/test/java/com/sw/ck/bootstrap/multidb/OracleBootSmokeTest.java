@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Oracle 21c XE 启动冒烟（未配置 {@code oracle.url} 时跳过）。
  * <p>
  * 前置：先运行 {@link com.sw.ck.bootstrap.migration.FlywayFullChainOracleTest} 让目标 schema
- * 完成 30 条迁移。本测试启动完整应用，断言 Flyway 零新增、MyBatis、中文、CLOB、分页与
+ * 完成 31 条迁移。本测试启动完整应用，断言 Flyway 零新增、MyBatis、中文、CLOB、分页与
  * Flowable 建表可用。
  * </p>
  */
@@ -99,19 +99,19 @@ class OracleBootSmokeTest {
     }
 
     @Test
-    @DisplayName("启动：Flyway 零新增到 0.4.0，MyBatis/中文/CLOB/分页/Flowable 可用")
+    @DisplayName("启动：Flyway 零新增到 1.0.0，MyBatis/中文/CLOB/分页/Flowable 可用")
     void smoke() throws Exception {
         Integer migrations = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM \"flyway_schema_history\" WHERE \"success\" = 1", Integer.class);
-        assertThat(migrations).isEqualTo(30);
+        assertThat(migrations).isEqualTo(31);
         String version = jdbc.queryForObject(
                 "SELECT \"version\" FROM \"flyway_schema_history\" WHERE \"success\" = 1 "
                         + "AND \"version\" IS NOT NULL ORDER BY \"installed_rank\" DESC "
                         + "FETCH FIRST 1 ROWS ONLY", String.class);
-        assertThat(version).isEqualTo("0.4.0");
+        assertThat(version).isEqualTo("1.0.0");
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_tenant", Integer.class)).isEqualTo(4);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(143);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(146);
 
         List<SysTenant> tenants;
         LoginUser loginUser = new LoginUser();

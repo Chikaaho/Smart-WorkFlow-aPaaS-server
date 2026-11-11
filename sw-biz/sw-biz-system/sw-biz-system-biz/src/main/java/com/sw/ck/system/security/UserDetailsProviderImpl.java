@@ -203,6 +203,9 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
         loginUser.setRoles(roleCodes);
         loginUser.setDataScope(dataScope);
         loginUser.setCustomDeptIds(customDeptIds);
+        // 首次登录强制改密（F1-4）：存量账号与 SSO 置备账号该列恒为 0，不受影响
+        loginUser.setMustChangePassword(
+                user.getMustChangePassword() != null && user.getMustChangePassword() == 1);
 
         // 5. 租户有效性（I5 §3.2）：租户不存在/停用/过期时身份装载失败，
         //    登录与既有会话在下一次权威装载时统一收敛拒绝

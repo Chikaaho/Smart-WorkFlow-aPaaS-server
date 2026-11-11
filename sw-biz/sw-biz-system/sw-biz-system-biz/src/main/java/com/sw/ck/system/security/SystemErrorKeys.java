@@ -90,4 +90,7 @@ public final class SystemErrorKeys {
 
     /** 请求体校验失败（通用输入可修正）。 */
     public static final String REQUEST_INVALID = "system.request_invalid";
+
+    /** 首次登录必须修改密码（1.0.0 F1-4）：改密前服务端拒绝其余业务接口。 */
+    public static final String MUST_CHANGE_PASSWORD = "system.must_change_password";
 }

@@ -267,9 +267,9 @@ public class BpmInstanceController {
         dto.setBusinessKey(entity.getBusinessKey());
         dto.setFormKey(entity.getFormKey());
         dto.setInitiatorId(entity.getInitiatorId());
-        dto.setInitiatorName(resolveUserNames(
-                entity.getInitiatorId() == null ? List.of() : List.of(entity.getInitiatorId()))
-                .get(entity.getInitiatorId()));
+        dto.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                entity.getInitiatorId(), resolveUserNames(
+                        entity.getInitiatorId() == null ? List.of() : List.of(entity.getInitiatorId()))));
         dto.setStatus(entity.getStatus());
         dto.setCreateTime(entity.getCreateTime());
 
@@ -308,9 +308,9 @@ public class BpmInstanceController {
         dto.setBusinessKey(instance.getBusinessKey());
         dto.setFormKey(instance.getFormKey());
         dto.setInitiatorId(instance.getInitiatorId());
-        dto.setInitiatorName(resolveUserNames(
-                instance.getInitiatorId() == null ? List.of() : List.of(instance.getInitiatorId()))
-                .get(instance.getInitiatorId()));
+        dto.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                instance.getInitiatorId(), resolveUserNames(
+                        instance.getInitiatorId() == null ? List.of() : List.of(instance.getInitiatorId()))));
         dto.setStatus(instance.getStatus());
         dto.setCreateTime(instance.getCreateTime());
 

@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DmOracleScriptParityTest {
 
     @Test
-    @DisplayName("30 个脚本文件名与内容一一对应，差异仅为 VARCHAR2 的 CHAR 单位")
+    @DisplayName("31 个脚本文件名与内容一一对应，差异仅为 VARCHAR2 的 CHAR 单位")
     void dmScriptsAreOracleScriptsWithoutCharUnit() throws IOException {
         Path base = Path.of(System.getProperty("basedir", "."))
                 .resolve("src/main/resources/db/migration");
@@ -34,7 +34,7 @@ class DmOracleScriptParityTest {
         Set<String> oracleFiles = sqlFiles(oracle);
         Set<String> dmFiles = sqlFiles(dm);
         assertEquals(oracleFiles, dmFiles, "DM 与 Oracle 脚本文件名必须一致");
-        assertEquals(30, dmFiles.size(), "迁移脚本应为 30 条");
+        assertEquals(31, dmFiles.size(), "迁移脚本应为 31 条");
 
         int charUnits = 0;
         for (String file : oracleFiles) {
