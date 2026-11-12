@@ -51,6 +51,38 @@ public interface AgentGraphExecutionService {
     }
 
     /**
+     * 单节点运行（G1-8）：在已发布快照上单独执行一个 LLM/TOOL/KNOWLEDGE 节点。
+     * 调试语义——不修改图定义、不产生正式执行记录。
+     *
+     * @param graphDefId 图定义 id
+     * @param nodeId     目标节点 id
+     * @param inputs     调试变量表（变量名 → 值）
+     */
+    default com.sw.ck.agent.dto.AgentNodeRunRespDTO runNode(Long graphDefId, String nodeId,
+                                                            java.util.Map<String, String> inputs) {
+        throw new UnsupportedOperationException("当前实现不支持单节点运行");
+    }
+
+    /** 生命周期执行结果（G3）：普通终态或人工暂停（pauseState/humanTask 非空）。 */
+    class ExecutionOutcome {
+        public AgentGraphExecuteRespDTO response;
+        public com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState pauseState;
+        public com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanTaskSpec humanTask;
+        public Long executionId;
+    }
+
+    /**
+     * 生命周期执行入口（G3）：按固定版本快照执行，支持从人工暂停状态恢复与人工决策。
+     * 普通终态写执行记录终态；人工暂停返回 pauseState/humanTask 且执行记录保持等待态。
+     */
+    default ExecutionOutcome runLifecycle(Long graphDefId, Integer graphDefVersion, String input,
+                                          java.util.Map<String, String> inputs,
+                                          com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState resumeState,
+                                          java.util.List<com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanDecision> decisions) {
+        throw new UnsupportedOperationException("当前实现不支持生命周期执行入口");
+    }
+
+    /**
      * 执行历史列表（Step12，分页，create_time 倒序；可按图定义过滤）。
      * 租户隔离经租户拦截器自动生效；不做用户级过滤（设计器/运维视角的租户内全部执行）。
      */

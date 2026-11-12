@@ -33,6 +33,14 @@ public interface AgentGraphExecutionRequestMapper extends BaseMapper<AgentGraphE
 
     @Update("""
             UPDATE sw_agent_graph_execution_request
+               SET status = 'CANCELLED', cancel_requested_at = COALESCE(cancel_requested_at, CURRENT_TIMESTAMP),
+                   finished_at = CURRENT_TIMESTAMP, update_time = CURRENT_TIMESTAMP, version = version + 1
+             WHERE id = #{id} AND status = 'WAITING_HUMAN' AND deleted = 0
+            """)
+    int cancelWaiting(@Param("id") Long id);
+
+    @Update("""
+            UPDATE sw_agent_graph_execution_request
                SET status = #{terminal}, error_category = #{category}, error_message = #{message},
                    result_execution_id = #{resultId}, latency_ms = #{latencyMs},
                    outputs_json = #{outputsJson},

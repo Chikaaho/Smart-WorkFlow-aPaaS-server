@@ -3,6 +3,7 @@ package com.sw.ck.agent.service;
 import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
+import com.sw.ck.agent.dto.AgentHumanTaskDTO;
 
 import java.util.List;
 
@@ -25,4 +26,18 @@ public interface AgentGraphExecutionLifecycleService {
     AgentGraphExecutionLifecycleDTO get(Long executionId);
     AgentGraphExecutionLifecycleDTO cancel(Long executionId);
     List<AgentGraphExecutionEventDTO> listEvents(Long executionId, long afterSequence);
+
+    /** 提交人工任务（G3-2）：处理人填写并选择决策后继续执行。 */
+    AgentGraphExecutionLifecycleDTO submitHumanTask(Long executionId, Long taskId,
+                                                    java.util.Map<String, String> values,
+                                                    String decision);
+
+    /** 待我处理列表（G3-2：按当前用户/角色匹配的 PENDING 人工任务）。 */
+    List<AgentHumanTaskDTO> listMyHumanTasks();
+
+    /** 指定执行的人工任务列表（执行详情展示等待/已处理）。 */
+    List<AgentHumanTaskDTO> listExecutionHumanTasks(Long executionId);
+
+    /** 人工任务超时扫描（G3-3：由定时器周期调用）。 */
+    void scanHumanTaskTimeouts();
 }

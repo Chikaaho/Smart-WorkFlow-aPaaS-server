@@ -2,9 +2,13 @@
 ALTER TABLE sw_agent_graph_execution_request ADD (
     inputs_json CLOB,
     outputs_json CLOB,
+    pause_state_json CLOB,
     parent_execution_id NUMBER(19)
 );
 CREATE INDEX idx_sw_agent_exec_req_parent ON sw_agent_graph_execution_request (parent_execution_id);
+
+ALTER TABLE sw_agent_graph_execution ADD (parent_execution_id NUMBER(19));
+ALTER TABLE sw_agent_graph_execution_node ADD (child_execution_id NUMBER(19));
 
 create table sw_agent_graph_human_task (
     id NUMBER(19) NOT NULL PRIMARY KEY,
@@ -12,7 +16,7 @@ create table sw_agent_graph_human_task (
     node_id VARCHAR2(100 CHAR) NOT NULL,
     status VARCHAR2(32 CHAR) NOT NULL,
     assignee_user_id NUMBER(19),
-    assignee_role_id NUMBER(19),
+    assignee_role_code VARCHAR2(64 CHAR),
     payload_json CLOB,
     result_json CLOB,
     submitted_by NUMBER(19),

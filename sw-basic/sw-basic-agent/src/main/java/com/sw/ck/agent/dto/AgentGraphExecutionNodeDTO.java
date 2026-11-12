@@ -54,6 +54,9 @@ public class AgentGraphExecutionNodeDTO {
     /** 节点执行状态：SUCCESS / FAILED */
     private String status;
 
+    /** 子图节点：子执行记录 id（G3-4 父子跳转） */
+    private Long childExecutionId;
+
     /** 节点失败原因（成功时为 null） */
     private String errorMessage;
 }

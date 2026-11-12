@@ -31,6 +31,9 @@ public class AgentGraphExecution extends BaseEntity {
     /** 执行时图定义版本快照（发布锚点） */
     private Integer graphDefVersion;
 
+    /** 父执行记录 id（G3 子图节点；顶层执行为 null） */
+    private Long parentExecutionId;
+
     /** 执行状态：RUNNING（执行前建行）/ SUCCESS / FAILED */
     private String status;
 

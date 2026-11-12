@@ -489,6 +489,132 @@ class AgentGraphDefServiceImplTest {
         }
     }
 
+    // ==================== G3：人工节点 / 子图节点发布校验 ====================
+
+    private ProcessGraph withHumanNode(Long id, Map<String, Object> humanConfig, boolean withOutEdge) {
+        ProcessGraph graph = service.getGraph(id);
+        java.util.List<GraphElement> elements = new java.util.ArrayList<>(graph.getElements());
+        elements.add(GraphElement.builder().id("human-1").kind("node").type("HUMAN")
+                .config(humanConfig).build());
+        elements.add(GraphElement.builder().id("edge-human-in").kind("edge")
+                .source("node_start").target("human-1").config(Map.of()).build());
+        if (withOutEdge) {
+            elements.add(GraphElement.builder().id("edge-human-out").kind("edge")
+                    .source("human-1").target("node_end")
+                    .config(Map.of("keyword", "approve")).build());
+            Object timeoutKeyword = humanConfig.get("timeoutKeyword");
+            if (timeoutKeyword != null) {
+                elements.add(GraphElement.builder().id("edge-human-timeout").kind("edge")
+                        .source("human-1").target("node_end")
+                        .config(Map.of("keyword", String.valueOf(timeoutKeyword))).build());
+            }
+        }
+        graph.setElements(elements);
+        service.saveDraftGraph(id, graph);
+        return graph;
+    }
+
+    private ProcessGraph withSubgraphNode(Long id, Long subId, Integer version) {
+        ProcessGraph graph = service.getGraph(id);
+        java.util.List<GraphElement> elements = new java.util.ArrayList<>(graph.getElements());
+        elements.add(GraphElement.builder().id("sub-1").kind("node").type("SUBGRAPH")
+                .config(Map.of("graphDefId", subId, "graphDefVersion", version)).build());
+        elements.add(GraphElement.builder().id("edge-sub-in").kind("edge")
+                .source("node_start").target("sub-1").config(Map.of()).build());
+        elements.add(GraphElement.builder().id("edge-sub-out").kind("edge")
+                .source("sub-1").target("node_end").config(Map.of()).build());
+        graph.setElements(elements);
+        service.saveDraftGraph(id, graph);
+        return graph;
+    }
+
+    @Test
+    @DisplayName("G3: 人工节点未配置处理人 / 按钮无出边 / 字段重名 → 发布拦截")
+    void publish_humanNodeValidation_shouldThrow() {
+        Long noAssignee = service.create("人工-无处理人");
+        withHumanNode(noAssignee, Map.of(
+                "buttons", java.util.List.of(Map.of("keyword", "approve"))), true);
+        assertThatThrownBy(() -> service.publish(noAssignee))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("人工节点必须配置处理人");
+
+        Long noOutEdge = service.create("人工-按钮无出边");
+        withHumanNode(noOutEdge, Map.of(
+                "assigneeUserIds", java.util.List.of(7),
+                "buttons", java.util.List.of(Map.of("keyword", "approve"))), false);
+        assertThatThrownBy(() -> service.publish(noOutEdge))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("未连接到出边");
+
+        Long duplicateField = service.create("人工-字段重名");
+        withHumanNode(duplicateField, Map.of(
+                "assigneeUserIds", java.util.List.of(7),
+                "fields", java.util.List.of(Map.of("name", "comment"), Map.of("name", "comment")),
+                "buttons", java.util.List.of(Map.of("keyword", "approve"))), true);
+        assertThatThrownBy(() -> service.publish(duplicateField))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("字段名称重复");
+
+        Long valid = service.create("人工-合法");
+        withHumanNode(valid, Map.of(
+                "assigneeUserIds", java.util.List.of(7),
+                "fields", java.util.List.of(Map.of("name", "comment", "label", "意见", "type", "text")),
+                "buttons", java.util.List.of(Map.of("keyword", "approve")),
+                "timeoutSeconds", 60,
+                "timeoutKeyword", "timeout"), true);
+        assertThat(service.publish(valid).getStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    @DisplayName("G3: 子图未发布 / 自引用成环 / 缺固定版本 → 发布拦截")
+    void publish_subgraphValidation_shouldThrow() {
+        Long unpublished = service.create("子图-未发布");
+        Long parent = service.create("父图-引用草稿");
+        withSubgraphNode(parent, unpublished, 1);
+        assertThatThrownBy(() -> service.publish(parent))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("子图未发布或不存在");
+
+        Long selfRef = service.create("子图-自引用");
+        withSubgraphNode(selfRef, selfRef, 1);
+        assertThatThrownBy(() -> service.publish(selfRef))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("子图引用存在环");
+
+        Long noVersion = service.create("子图-缺版本");
+        ProcessGraph graph = service.getGraph(noVersion);
+        java.util.List<GraphElement> elements = new java.util.ArrayList<>(graph.getElements());
+        elements.add(GraphElement.builder().id("sub-1").kind("node").type("SUBGRAPH")
+                .config(Map.of("graphDefId", 999)).build());
+        graph.setElements(elements);
+        service.saveDraftGraph(noVersion, graph);
+        assertThatThrownBy(() -> service.publish(noVersion))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("必须绑定已发布图与固定版本");
+    }
+
+    @Test
+    @DisplayName("G3: 子图嵌套 3 层放行，第 4 层发布拦截")
+    void publish_subgraphDepthLimit() {
+        Long d4 = service.create("子图-第4层");
+        service.publish(d4);
+        Long d3 = service.create("子图-第3层");
+        withSubgraphNode(d3, d4, 2);
+        service.publish(d3);
+        Long d2 = service.create("子图-第2层");
+        withSubgraphNode(d2, d3, 2);
+        service.publish(d2);
+        Long d1 = service.create("子图-第1层");
+        withSubgraphNode(d1, d2, 2);
+        assertThat(service.publish(d1).getStatus()).isEqualTo("PUBLISHED");
+
+        Long d0 = service.create("子图-超深");
+        withSubgraphNode(d0, d1, 2);
+        assertThatThrownBy(() -> service.publish(d0))
+                .isInstanceOf(BaseException.class)
+                .hasMessageContaining("子图嵌套深度超过上限 3");
+    }
+
     // ==================== 组合测试配置 ====================
 
     @Configuration

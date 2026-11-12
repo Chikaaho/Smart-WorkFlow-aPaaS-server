@@ -3,6 +3,7 @@ package com.sw.ck.agent.controller;
 import com.sw.ck.agent.dto.AgentGraphExecuteReqDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
+import com.sw.ck.agent.dto.AgentHumanTaskDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
 import com.sw.ck.common.response.R;
@@ -48,6 +49,31 @@ public class AgentGraphExecutionLifecycleController {
             @PathVariable Long executionId,
             @RequestParam(defaultValue = "0") long afterSequence) {
         return R.ok(service.listEvents(executionId, afterSequence));
+    }
+
+    /** 人工任务：待我处理列表（G3-2） */
+    @GetMapping("/human-tasks/mine")
+    @PreAuthorize("@ss.hasPermi('agent:model:view')")
+    public R<List<AgentHumanTaskDTO>> myHumanTasks() {
+        return R.ok(service.listMyHumanTasks());
+    }
+
+    /** 人工任务：指定执行的任务列表（执行详情展示） */
+    @GetMapping("/executions/{executionId}/human-tasks")
+    @PreAuthorize("@ss.hasPermi('agent:model:view')")
+    public R<List<AgentHumanTaskDTO>> executionHumanTasks(@PathVariable Long executionId) {
+        return R.ok(service.listExecutionHumanTasks(executionId));
+    }
+
+    /** 人工任务提交：填写值 + 决策动作（G3-2） */
+    @PostMapping("/executions/{executionId}/human-tasks/{taskId}/submit")
+    @PreAuthorize("@ss.hasPermi('agent:model:view')")
+    public R<AgentGraphExecutionLifecycleDTO> submitHumanTask(
+            @PathVariable Long executionId,
+            @PathVariable Long taskId,
+            @RequestBody com.sw.ck.agent.dto.AgentHumanTaskSubmitDTO request) {
+        return R.ok(service.submitHumanTask(executionId, taskId,
+                request.getValues(), request.getDecision()));
     }
 
     @PostMapping("/executions/{executionId}/cancel")

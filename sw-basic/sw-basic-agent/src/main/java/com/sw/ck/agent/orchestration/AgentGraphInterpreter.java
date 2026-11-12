@@ -122,6 +122,12 @@ public class AgentGraphInterpreter {
     /** 知识检索节点（F1 阶段 3：按知识库检索，结果写入变量供下游 LLM 使用） */
     public static final String NODE_TYPE_KNOWLEDGE = "KNOWLEDGE";
 
+    /** 人工节点（G3：运行到此处暂停，等待处理人提交表单/决策后继续） */
+    public static final String NODE_TYPE_HUMAN = "HUMAN";
+
+    /** 子图节点（G3：调用另一个已发布 Graph，绑定固定 defVersion） */
+    public static final String NODE_TYPE_SUBGRAPH = "SUBGRAPH";
+
     // ==================== 节点 config 键（本 Step 定义的执行契约） ====================
 
     /** LLM 节点 config 键：模型配置 id（Long） */
@@ -169,6 +175,39 @@ public class AgentGraphInterpreter {
     /** END 节点 config 键：输出参数声明（List&lt;Map&gt;，G1-4：name/source/description） */
     public static final String CONFIG_KEY_OUTPUT_PARAMS = "outputs";
 
+    /** HUMAN 节点 config 键：给处理人看的说明（String，支持 {{var}} 插值） */
+    public static final String CONFIG_KEY_INSTRUCTIONS = "instructions";
+
+    /** HUMAN 节点 config 键：要填写的字段（List&lt;Map&gt;：name/label/type/required/options） */
+    public static final String CONFIG_KEY_FIELDS = "fields";
+
+    /** HUMAN 节点 config 键：决策按钮（List&lt;Map&gt;：keyword/label；keyword = 出边关键词） */
+    public static final String CONFIG_KEY_BUTTONS = "buttons";
+
+    /** HUMAN 节点 config 键：指定处理人用户 id 列表（List&lt;Long&gt;/List&lt;Number&gt;） */
+    public static final String CONFIG_KEY_ASSIGNEE_USERS = "assigneeUserIds";
+
+    /** HUMAN 节点 config 键：指定处理人角色 code 列表（List&lt;String&gt;） */
+    public static final String CONFIG_KEY_ASSIGNEE_ROLES = "assigneeRoleCodes";
+
+    /** HUMAN 节点 config 键：超时时长（秒，Integer，可选；0/缺省 = 不超时） */
+    public static final String CONFIG_KEY_TIMEOUT_SECONDS = "timeoutSeconds";
+
+    /** HUMAN 节点 config 键：超时分支的出边关键词（String，可选；缺省超时即失败） */
+    public static final String CONFIG_KEY_TIMEOUT_KEYWORD = "timeoutKeyword";
+
+    /** SUBGRAPH 节点 config 键：子图定义 id（Long，必填） */
+    public static final String CONFIG_KEY_SUBGRAPH_ID = "graphDefId";
+
+    /** SUBGRAPH 节点 config 键：子图固定版本（Integer，必填） */
+    public static final String CONFIG_KEY_SUBGRAPH_VERSION = "graphDefVersion";
+
+    /** SUBGRAPH 节点 config 键：入参映射（List&lt;Map&gt;：name=子图开始参数名，source=父执行变量名） */
+    public static final String CONFIG_KEY_SUBGRAPH_INPUTS = "inputMappings";
+
+    /** SUBGRAPH 节点 config 键：出参映射（List&lt;Map&gt;：name=父执行变量名，source=子图输出名） */
+    public static final String CONFIG_KEY_SUBGRAPH_OUTPUTS = "outputMappings";
+
     /** LOOP 节点 config 键：迭代上限（Integer，可选，缺省 {@value #DEFAULT_MAX_ITERATIONS}；<1 由执行前校验拦截） */
     public static final String CONFIG_KEY_MAX_ITERATIONS = "maxIterations";
 
@@ -214,6 +253,12 @@ public class AgentGraphInterpreter {
 
     /** 缺少开始节点声明的必填入参（G1-4 结构化入参） */
     public static final String ERROR_CATEGORY_INPUT_MISSING = "INPUT_MISSING";
+
+    /** 运行到人工节点暂停（G3：携带可序列化恢复状态，由生命周期服务落库等待） */
+    public static final String ERROR_CATEGORY_HUMAN_PAUSE = "HUMAN_PAUSE";
+
+    /** 人工节点等待超时且未配置超时边（G3-3：失败结束并写明原因） */
+    public static final String ERROR_CATEGORY_HUMAN_TIMEOUT = "HUMAN_TIMEOUT";
 
     /** 条件分支无匹配且无默认边 */
     public static final String ERROR_CATEGORY_CONDITION_NO_MATCH = "CONDITION_NO_MATCH";
@@ -292,6 +337,119 @@ public class AgentGraphInterpreter {
         this.maxSteps = maxSteps;
     }
 
+    // ==================== G3：人工节点暂停/恢复与子图调用 ====================
+
+    /** 人工节点处理决策（按钮关键词或 TIMEOUT）。 */
+    public static class HumanDecision {
+        public String nodeId;
+        public String decision;
+        public Map<String, String> values;
+
+        public HumanDecision() {
+        }
+
+        public HumanDecision(String nodeId, String decision, Map<String, String> values) {
+            this.nodeId = nodeId;
+            this.decision = decision;
+            this.values = values;
+        }
+    }
+
+    /** 人工节点暂停时的可序列化恢复状态（落 request.pause_state_json）。 */
+    public static class PauseState {
+        /** 活跃执行点（人工节点为队首，恢复后从它继续） */
+        public List<ActivePointState> activePoints = new ArrayList<>();
+        public Map<String, String> variables = new HashMap<>();
+        public Map<String, Integer> loopCounts = new HashMap<>();
+        public Map<String, Integer> joinCounts = new HashMap<>();
+        /** 子图暂停链：父节点 id → 子图暂停状态（G3-5：父执行等待人工后恢复子图） */
+        public Map<String, PauseState> subgraphPauseStates = new HashMap<>();
+    }
+
+    /** 活跃执行点快照（nodeId + 分支路径）。 */
+    public static class ActivePointState {
+        public String nodeId;
+        public String branchPath;
+
+        public ActivePointState() {
+        }
+
+        public ActivePointState(String nodeId, String branchPath) {
+            this.nodeId = nodeId;
+            this.branchPath = branchPath;
+        }
+    }
+
+    /** 人工节点任务定义（暂停时交给生命周期服务落库/展示）。 */
+    public static class HumanTaskSpec {
+        public String humanNodeId;
+        public String instructions;
+        public List<Map<String, Object>> fields = new ArrayList<>();
+        public List<Map<String, Object>> buttons = new ArrayList<>();
+        public List<Long> assigneeUserIds = new ArrayList<>();
+        public List<String> assigneeRoleCodes = new ArrayList<>();
+        public Integer timeoutSeconds;
+        public String timeoutKeyword;
+    }
+
+    /** 人工节点暂停异常：携带恢复状态与任务定义，不属失败。 */
+    public static class HumanPauseException extends RuntimeException {
+        private final PauseState pauseState;
+        private final HumanTaskSpec taskSpec;
+
+        public HumanPauseException(PauseState pauseState, HumanTaskSpec taskSpec) {
+            super("运行到人工节点暂停: " + taskSpec.humanNodeId);
+            this.pauseState = pauseState;
+            this.taskSpec = taskSpec;
+        }
+
+        public PauseState getPauseState() {
+            return pauseState;
+        }
+
+        public HumanTaskSpec getTaskSpec() {
+            return taskSpec;
+        }
+    }
+
+    /** 子图调用入参。 */
+    public static class SubgraphCall {
+        public Long graphDefId;
+        public Integer graphDefVersion;
+        public Map<String, String> inputs = new HashMap<>();
+        /** 子图暂停恢复状态（父执行恢复时传递；null = 从头执行子图） */
+        public PauseState resumeState;
+        /** 人工决策（含子图内人工节点的决策） */
+        public List<HumanDecision> decisions;
+
+        public SubgraphCall(Long graphDefId, Integer graphDefVersion, Map<String, String> inputs) {
+            this.graphDefId = graphDefId;
+            this.graphDefVersion = graphDefVersion;
+            this.inputs = inputs;
+        }
+    }
+
+    /** 子图调用结果（outputs = 子图 END 输出声明解析结果；childExecutionId 供父子跳转）。 */
+    public static class SubgraphResult {
+        public Map<String, String> outputs = new HashMap<>();
+        public Long childExecutionId;
+    }
+
+    /** 子图运行器（由执行服务实现：加载固定版本快照、落子执行记录、递归解释执行）。 */
+    @FunctionalInterface
+    public interface SubgraphRunner {
+        SubgraphResult run(SubgraphCall call);
+    }
+
+    /** 恢复选项：暂停状态 + 已提交决策 + 子图运行器（null = 从头执行/不支持子图）。 */
+    public static class RunOptions {
+        public PauseState resumeState;
+        public List<HumanDecision> decisions = new ArrayList<>();
+        public SubgraphRunner subgraphRunner;
+        /** 当前嵌套深度（0 = 顶层；上限由运行器校验） */
+        public int depth;
+    }
+
     /**
      * 解释执行整图：从唯一 START 出发维护一组活跃执行点，每轮取队首活跃点执行一步
      * （FORK 扇出多分支并存、JOIN 聚合、LOOP 迭代计数），任一活跃点到达 END 即终止
@@ -319,14 +477,30 @@ public class AgentGraphInterpreter {
      * @return 最先到达的 END 节点处最终输出
      */
     public String run(ProcessGraph graph, Map<String, String> inputs) {
+        return run(graph, inputs, null);
+    }
+
+    /**
+     * 解释执行整图（G3 扩展）：支持从人工节点暂停状态恢复（{@code options.resumeState}）
+     * 与子图调用（{@code options.subgraphRunner}）。
+     *
+     * @param graph   已发布图
+     * @param inputs  初始入参（恢复执行时以暂停状态中的变量表为准，inputs 忽略）
+     * @param options 恢复选项；null = 从头执行
+     * @throws HumanPauseException 运行到人工节点且无已提交决策（携带恢复状态）
+     */
+    public String run(ProcessGraph graph, Map<String, String> inputs, RunOptions options) {
         List<GraphElement> elements = graph.getElements();
         validateRequiredInputs(elements, inputs);
+        PauseState resume = options == null ? null : options.resumeState;
         // 命名变量表（Step10）：初始为结构化入参（旧接口 = 仅默认变量 input）。
         // 未指定变量名的节点读写默认变量，旧图（无变量名字段）行为与 Step8 一致。
         // 并行分支写同一变量名 = 最后写入覆盖（用户已决策，不拦截不告警；单线程交错
         // 推进下即按图推进顺序覆盖，行为可预期）。
         Map<String, String> variables = new HashMap<>();
-        if (inputs != null) {
+        if (resume != null && resume.variables != null) {
+            variables.putAll(resume.variables);
+        } else if (inputs != null) {
             inputs.forEach((key, value) -> {
                 if (key != null && value != null) variables.put(key, value);
             });
@@ -338,10 +512,22 @@ public class AgentGraphInterpreter {
         // Step12 起活跃点携带分支路径（branchPath，FORK 按出边出现顺序追加下标）——
         // FORK 分支复用同一节点 id，靠 branchPath 区分"哪个分支的第几次访问"。
         List<ActiveExecutionPoint> activePoints = new ArrayList<>();
-        activePoints.add(new ActiveExecutionPoint(findStart(elements).getId(), ROOT_BRANCH_ID));
+        if (resume != null && resume.activePoints != null && !resume.activePoints.isEmpty()) {
+            for (ActivePointState saved : resume.activePoints) {
+                activePoints.add(new ActiveExecutionPoint(saved.nodeId, saved.branchPath));
+            }
+        } else {
+            activePoints.add(new ActiveExecutionPoint(findStart(elements).getId(), ROOT_BRANCH_ID));
+        }
         // LOOP 迭代计数（按节点 id）与 JOIN 到达计数（按节点 id）
         Map<String, Integer> loopIterationCounts = new HashMap<>();
+        if (resume != null && resume.loopCounts != null) {
+            loopIterationCounts.putAll(resume.loopCounts);
+        }
         Map<String, Integer> joinArrivalCounts = new HashMap<>();
+        if (resume != null && resume.joinCounts != null) {
+            joinArrivalCounts.putAll(resume.joinCounts);
+        }
         // Step12 轨迹采集：节点出队即分配全局步序（1-based），节点执行/路由完成后补
         // 节点级耗时与变量快照；成功/失败路径都完整留痕（失败节点在 catch 中补录后
         // 上抛）。轨迹由调用方（执行 Service）经 getTraces() 读取落库——解释器只采集
@@ -390,6 +576,10 @@ public class AgentGraphInterpreter {
                     case NODE_TYPE_KNOWLEDGE -> writeOutput(current, variables,
                             retrieveKnowledge(knowledgeRetrievalService, current,
                                     readInput(current, variables), trace));
+                    case NODE_TYPE_HUMAN -> executeHumanNode(current, variables, options, trace,
+                            activePoints, point, loopIterationCounts, joinArrivalCounts);
+                    case NODE_TYPE_SUBGRAPH -> executeSubgraphNode(current, variables, options, trace,
+                            activePoints, point, loopIterationCounts, joinArrivalCounts);
                     // START/CONDITION 为纯路由点：START 不写变量（入参已在初始变量表），
                     // CONDITION 只读匹配文本（inputVar）不写变量
                     case NODE_TYPE_START, NODE_TYPE_CONDITION -> { }
@@ -423,11 +613,20 @@ public class AgentGraphInterpreter {
                         activePoints.add(new ActiveExecutionPoint(edge.getTarget(),
                                 point.branchPath + "-" + branchIndex++));
                     }
+                } else if (NODE_TYPE_HUMAN.equals(current.getType())) {
+                    // G3：人工节点按决策按钮的出边关键词路由（TIMEOUT 走超时关键词）
+                    HumanDecision decision = findDecision(options, current.getId());
+                    activePoints.add(new ActiveExecutionPoint(
+                            routeHumanNode(current, decision, elements), point.branchPath));
                 } else {
                     activePoints.add(new ActiveExecutionPoint(
                             nextNodeId(current, elements, variables), point.branchPath));
                 }
                 finishTrace(trace, stepStartNanos, variables);
+            } catch (HumanPauseException pause) {
+                // G3 暂停不是失败：轨迹保留 WAITING 状态后上抛，由生命周期服务落等待态
+                finishTrace(trace, stepStartNanos, variables);
+                throw pause;
             } catch (RuntimeException e) {
                 // 本步失败：节点轨迹仍完整留痕（耗时 + 失败时点变量快照），再上抛
                 trace.setStatus("FAILED");
@@ -479,6 +678,9 @@ public class AgentGraphInterpreter {
             payload.put("input", truncateForEvent(trace.getInputText(), 2000));
             payload.put("output", truncateForEvent(trace.getOutputText(), 2000));
             payload.put("errorMessage", truncateForEvent(trace.getErrorMessage(), 1000));
+            if (trace.getChildExecutionId() != null) {
+                payload.put("childExecutionId", trace.getChildExecutionId());
+            }
         }
         try {
             AgentExecutionEventContext.emitNode(type, trace.getNodeId(), JSON.writeValueAsString(payload));
@@ -537,6 +739,246 @@ public class AgentGraphInterpreter {
     public Map<String, String> getNodeOutputVariables(String nodeId) {
         Map<String, String> outputs = nodeOutputs == null ? null : nodeOutputs.get(nodeId);
         return outputs == null ? Map.of() : Map.copyOf(outputs);
+    }
+
+    // ==================== G3 人工节点 / 子图节点 ====================
+
+    /** 人工超时决策标记（生命周期服务提交；解释器匹配 timeoutKeyword 边）。 */
+    public static final String HUMAN_TIMEOUT_DECISION = "__TIMEOUT__";
+
+    private HumanDecision findDecision(RunOptions options, String nodeId) {
+        if (options == null || options.decisions == null) return null;
+        for (HumanDecision decision : options.decisions) {
+            if (decision != null && nodeId.equals(decision.nodeId)) return decision;
+        }
+        return null;
+    }
+
+    /** HUMAN 节点执行：无决策 → 构造暂停状态抛 HumanPauseException；有决策 → 应用填写内容。 */
+    private void executeHumanNode(GraphElement node, Map<String, String> variables,
+                                  RunOptions options, NodeExecutionTrace trace,
+                                  List<ActiveExecutionPoint> activePoints,
+                                  ActiveExecutionPoint point,
+                                  Map<String, Integer> loopCounts,
+                                  Map<String, Integer> joinCounts) {
+        HumanDecision decision = findDecision(options, node.getId());
+        if (decision == null) {
+            trace.setStatus("WAITING");
+            PauseState state = new PauseState();
+            state.activePoints.add(new ActivePointState(point.nodeId, point.branchPath));
+            for (ActiveExecutionPoint remaining : activePoints) {
+                state.activePoints.add(new ActivePointState(remaining.nodeId, remaining.branchPath));
+            }
+            state.variables = new HashMap<>(variables);
+            state.loopCounts = new HashMap<>(loopCounts);
+            state.joinCounts = new HashMap<>(joinCounts);
+            throw new HumanPauseException(state, buildHumanTaskSpec(node, variables));
+        }
+        if (decision.values != null) {
+            decision.values.forEach((key, value) -> {
+                if (key != null && value != null) variables.put(key, value);
+            });
+        }
+        trace.setInputText(decision.decision);
+        trace.setOutputText(decision.decision);
+    }
+
+    /** HUMAN 节点路由：按钮 keyword = 出边关键词；TIMEOUT 走 timeoutKeyword；无匹配抛错。 */
+    private String routeHumanNode(GraphElement node, HumanDecision decision,
+                                  List<GraphElement> elements) {
+        String keyword = decision == null || decision.decision == null ? "" : decision.decision;
+        if (HUMAN_TIMEOUT_DECISION.equals(keyword)) {
+            String timeoutKeyword = configString(node, CONFIG_KEY_TIMEOUT_KEYWORD);
+            if (timeoutKeyword == null || timeoutKeyword.isBlank()) {
+                throw new GraphExecutionException(ERROR_CATEGORY_HUMAN_TIMEOUT,
+                        "人工节点等待超时且未配置超时分支: " + node.getId());
+            }
+            keyword = timeoutKeyword;
+        }
+        GraphElement defaultEdge = null;
+        for (GraphElement edge : outgoingEdges(node, elements)) {
+            String edgeKeyword = keywordOf(edge);
+            if (edgeKeyword == null || edgeKeyword.isBlank()) {
+                if (defaultEdge == null) defaultEdge = edge;
+                continue;
+            }
+            if (edgeKeyword.equals(keyword)) return edge.getTarget();
+        }
+        if (defaultEdge != null) return defaultEdge.getTarget();
+        throw new GraphExecutionException(ERROR_CATEGORY_CONDITION_NO_MATCH,
+                "人工节点无匹配决策分支: " + keyword + "（节点 " + node.getId() + "）");
+    }
+
+    /** 构造人工任务定义（说明按当前变量插值）。 */
+    private HumanTaskSpec buildHumanTaskSpec(GraphElement node, Map<String, String> variables) {
+        HumanTaskSpec spec = new HumanTaskSpec();
+        spec.humanNodeId = node.getId();
+        String instructions = configString(node, CONFIG_KEY_INSTRUCTIONS);
+        spec.instructions = instructions == null ? ""
+                : interpolateTemplate(instructions, node, variables);
+        spec.fields = configMapList(node, CONFIG_KEY_FIELDS);
+        spec.buttons = configMapList(node, CONFIG_KEY_BUTTONS);
+        spec.assigneeUserIds = configLongList(node, CONFIG_KEY_ASSIGNEE_USERS);
+        spec.assigneeRoleCodes = configStringValues(node, CONFIG_KEY_ASSIGNEE_ROLES);
+        spec.timeoutSeconds = configInteger(node, CONFIG_KEY_TIMEOUT_SECONDS);
+        spec.timeoutKeyword = configString(node, CONFIG_KEY_TIMEOUT_KEYWORD);
+        return spec;
+    }
+
+    /** SUBGRAPH 节点执行：调用子图（固定版本）并按映射回写父变量。 */
+    private void executeSubgraphNode(GraphElement node, Map<String, String> variables,
+                                     RunOptions options, NodeExecutionTrace trace,
+                                     List<ActiveExecutionPoint> activePoints,
+                                     ActiveExecutionPoint point,
+                                     Map<String, Integer> loopCounts,
+                                     Map<String, Integer> joinCounts) {
+        if (options == null || options.subgraphRunner == null) {
+            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "子图运行器未配置: " + node.getId());
+        }
+        Long graphDefId = configLong(node, CONFIG_KEY_SUBGRAPH_ID);
+        Integer version = configInteger(node, CONFIG_KEY_SUBGRAPH_VERSION);
+        if (graphDefId == null || version == null) {
+            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "子图节点缺少 graphDefId/graphDefVersion: " + node.getId());
+        }
+        Map<String, String> subInputs = new java.util.LinkedHashMap<>();
+        List<Map<String, Object>> inputMappings = configMapList(node, CONFIG_KEY_SUBGRAPH_INPUTS);
+        if (!inputMappings.isEmpty()) {
+            for (Map<String, Object> mapping : inputMappings) {
+                String name = stringValue(mapping.get("name"));
+                String source = stringValue(mapping.get("source"));
+                if (name.isEmpty() || source.isEmpty()) continue;
+                String value = variables.get(source);
+                if (value == null) {
+                    throw new GraphExecutionException(ERROR_CATEGORY_UNDEFINED_VARIABLE,
+                            "子图入参映射引用了未定义变量: " + source + "（节点 " + node.getId() + "）");
+                }
+                subInputs.put(name, value);
+            }
+        } else {
+            subInputs.put(DEFAULT_VARIABLE_NAME,
+                    variables.getOrDefault(DEFAULT_VARIABLE_NAME, ""));
+        }
+        SubgraphCall call = new SubgraphCall(graphDefId, version, subInputs);
+        if (options.resumeState != null && options.resumeState.subgraphPauseStates != null) {
+            call.resumeState = options.resumeState.subgraphPauseStates.get(node.getId());
+        }
+        call.decisions = options.decisions;
+        SubgraphResult result;
+        try {
+            result = options.subgraphRunner.run(call);
+        } catch (HumanPauseException childPause) {
+            // G3-5：子图内人工节点暂停——父执行同样进入等待，保存子图暂停链
+            trace.setStatus("WAITING");
+            PauseState parentState = new PauseState();
+            parentState.activePoints.add(new ActivePointState(point.nodeId, point.branchPath));
+            for (ActiveExecutionPoint remaining : activePoints) {
+                parentState.activePoints.add(new ActivePointState(remaining.nodeId, remaining.branchPath));
+            }
+            parentState.variables = new HashMap<>(variables);
+            parentState.loopCounts = new HashMap<>(loopCounts);
+            parentState.joinCounts = new HashMap<>(joinCounts);
+            if (options.resumeState != null && options.resumeState.subgraphPauseStates != null) {
+                parentState.subgraphPauseStates.putAll(options.resumeState.subgraphPauseStates);
+            }
+            parentState.subgraphPauseStates.put(node.getId(), childPause.getPauseState());
+            throw new HumanPauseException(parentState, childPause.getTaskSpec());
+        }
+        if (result == null) {
+            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "子图运行无返回: " + node.getId());
+        }
+        List<Map<String, Object>> outputMappings = configMapList(node, CONFIG_KEY_SUBGRAPH_OUTPUTS);
+        if (!outputMappings.isEmpty()) {
+            for (Map<String, Object> mapping : outputMappings) {
+                String name = stringValue(mapping.get("name"));
+                String source = stringValue(mapping.get("source"));
+                if (name.isEmpty() || source.isEmpty()) continue;
+                String value = result.outputs.get(source);
+                if (value != null) variables.put(name, value);
+            }
+        } else {
+            result.outputs.forEach((key, value) -> {
+                if (key != null && value != null) variables.put(key, value);
+            });
+        }
+        try {
+            trace.setInputText(JSON.writeValueAsString(subInputs));
+            trace.setOutputText(JSON.writeValueAsString(result.outputs));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+            // 轨迹文本仅展示用途，序列化失败不阻断执行
+        }
+        trace.setChildExecutionId(result.childExecutionId);
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private List<Map<String, Object>> configMapList(GraphElement node, String key) {
+        if (node.getConfig() == null) return List.of();
+        Object raw = node.getConfig().get(key);
+        if (!(raw instanceof List<?> list)) return List.of();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) {
+                Map<String, Object> copy = new java.util.LinkedHashMap<>();
+                map.forEach((k, v) -> {
+                    if (k != null) copy.put(String.valueOf(k), v);
+                });
+                result.add(copy);
+            }
+        }
+        return result;
+    }
+
+    private List<Long> configLongList(GraphElement node, String key) {
+        if (node.getConfig() == null) return List.of();
+        Object raw = node.getConfig().get(key);
+        if (!(raw instanceof List<?> list)) return List.of();
+        List<Long> result = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Number number) result.add(number.longValue());
+            else if (item instanceof String text && !text.isBlank()) {
+                try {
+                    result.add(Long.parseLong(text.trim()));
+                } catch (NumberFormatException ignore) {
+                    // 非法项忽略（发布校验负责拦截）
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<String> configStringValues(GraphElement node, String key) {
+        if (node.getConfig() == null) return List.of();
+        Object raw = node.getConfig().get(key);
+        if (!(raw instanceof List<?> list)) return List.of();
+        List<String> result = new ArrayList<>();
+        for (Object item : list) {
+            if (item != null && !String.valueOf(item).isBlank()) result.add(String.valueOf(item).trim());
+        }
+        return result;
+    }
+
+    private Long configLong(GraphElement node, String key) {
+        if (node.getConfig() == null) return null;
+        Object value = node.getConfig().get(key);
+        if (value instanceof Number number) return number.longValue();
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Long.parseLong(text.trim());
+            } catch (NumberFormatException ignore) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Integer configInteger(GraphElement node, String key) {
+        Long value = configLong(node, key);
+        return value == null ? null : value.intValue();
     }
 
     // ==================== LLM 节点 ====================
@@ -1229,6 +1671,9 @@ public class AgentGraphInterpreter {
         /** 该节点 LLM 调用的输出 Token（非 LLM 节点或供应商未返回时为 null） */
         private Long outputTokens;
 
+        /** 子图节点：子执行记录 id（G3-4 父子跳转；非子图节点为 null） */
+        private Long childExecutionId;
+
         /** 该节点内 LLM 工具调用轨迹（阶段 2；非工具调用节点为空列表） */
         private final java.util.List<ToolCallTrace> toolCalls = new java.util.ArrayList<>();
 
@@ -1330,6 +1775,15 @@ public class AgentGraphInterpreter {
 
         public void setOutputTokens(Long outputTokens) {
             this.outputTokens = outputTokens;
+        }
+
+        /** 子图节点：子执行记录 id（G3-4 父子跳转；非子图节点为 null）。 */
+        public Long getChildExecutionId() {
+            return childExecutionId;
+        }
+
+        public void setChildExecutionId(Long childExecutionId) {
+            this.childExecutionId = childExecutionId;
         }
 
         public java.util.List<ToolCallTrace> getToolCalls() {

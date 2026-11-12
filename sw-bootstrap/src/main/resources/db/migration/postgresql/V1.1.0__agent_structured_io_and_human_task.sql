@@ -2,8 +2,12 @@
 -- request 表加 3 列（旧行 NULL 兼容）；人工任务表新增。
 ALTER TABLE sw_agent_graph_execution_request ADD COLUMN inputs_json TEXT;
 ALTER TABLE sw_agent_graph_execution_request ADD COLUMN outputs_json TEXT;
+ALTER TABLE sw_agent_graph_execution_request ADD COLUMN pause_state_json TEXT;
 ALTER TABLE sw_agent_graph_execution_request ADD COLUMN parent_execution_id BIGINT;
 CREATE INDEX idx_sw_agent_exec_req_parent ON sw_agent_graph_execution_request (parent_execution_id);
+
+ALTER TABLE sw_agent_graph_execution ADD COLUMN parent_execution_id BIGINT;
+ALTER TABLE sw_agent_graph_execution_node ADD COLUMN child_execution_id BIGINT;
 
 CREATE TABLE IF NOT EXISTS sw_agent_graph_human_task (
     id BIGINT NOT NULL PRIMARY KEY,
@@ -11,7 +15,7 @@ CREATE TABLE IF NOT EXISTS sw_agent_graph_human_task (
     node_id VARCHAR(100) NOT NULL,
     status VARCHAR(32) NOT NULL,
     assignee_user_id BIGINT,
-    assignee_role_id BIGINT,
+    assignee_role_code VARCHAR(64),
     payload_json TEXT,
     result_json TEXT,
     submitted_by BIGINT,

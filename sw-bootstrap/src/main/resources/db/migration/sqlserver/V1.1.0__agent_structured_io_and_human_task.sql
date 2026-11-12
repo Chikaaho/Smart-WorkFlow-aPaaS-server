@@ -1,8 +1,12 @@
 -- 1.1.0：图执行结构化入参/出参（G1-4）、父子执行关联（G3 子图节点）、人工节点任务表（G3）。
 ALTER TABLE [dbo].[sw_agent_graph_execution_request] ADD [inputs_json] NVARCHAR(MAX);
 ALTER TABLE [dbo].[sw_agent_graph_execution_request] ADD [outputs_json] NVARCHAR(MAX);
+ALTER TABLE [dbo].[sw_agent_graph_execution_request] ADD [pause_state_json] NVARCHAR(MAX);
 ALTER TABLE [dbo].[sw_agent_graph_execution_request] ADD [parent_execution_id] BIGINT;
 CREATE INDEX [idx_sw_agent_exec_req_parent] ON [dbo].[sw_agent_graph_execution_request] ([parent_execution_id]);
+
+ALTER TABLE [dbo].[sw_agent_graph_execution] ADD [parent_execution_id] BIGINT;
+ALTER TABLE [dbo].[sw_agent_graph_execution_node] ADD [child_execution_id] BIGINT;
 
 CREATE TABLE [dbo].[sw_agent_graph_human_task] (
     [id] BIGINT NOT NULL,

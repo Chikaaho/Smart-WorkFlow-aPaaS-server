@@ -1,8 +1,12 @@
 -- 1.1.0：图执行结构化入参/出参（G1-4）、父子执行关联（G3 子图节点）、人工节点任务表（G3）。
 ALTER TABLE sw_agent_graph_execution_request ADD COLUMN inputs_json longtext;
 ALTER TABLE sw_agent_graph_execution_request ADD COLUMN outputs_json longtext;
+ALTER TABLE sw_agent_graph_execution_request ADD COLUMN pause_state_json longtext;
 ALTER TABLE sw_agent_graph_execution_request ADD COLUMN parent_execution_id BIGINT;
 CREATE INDEX idx_sw_agent_exec_req_parent ON sw_agent_graph_execution_request (parent_execution_id);
+
+ALTER TABLE sw_agent_graph_execution ADD COLUMN parent_execution_id BIGINT;
+ALTER TABLE sw_agent_graph_execution_node ADD COLUMN child_execution_id BIGINT;
 
 CREATE TABLE sw_agent_graph_human_task (
     id BIGINT NOT NULL PRIMARY KEY,
@@ -10,7 +14,7 @@ CREATE TABLE sw_agent_graph_human_task (
     node_id VARCHAR(100) NOT NULL,
     status VARCHAR(32) NOT NULL,
     assignee_user_id BIGINT,
-    assignee_role_id BIGINT,
+    assignee_role_code VARCHAR(64),
     payload_json longtext,
     result_json longtext,
     submitted_by BIGINT,
