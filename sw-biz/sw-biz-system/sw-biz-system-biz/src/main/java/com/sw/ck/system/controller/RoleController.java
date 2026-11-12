@@ -7,6 +7,7 @@ import com.sw.ck.system.entity.SysRole;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.service.SysRoleService;
 import jakarta.validation.Valid;
+import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
@@ -37,6 +38,25 @@ public class RoleController {
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
         return R.ok(sysRoleService.page(pageParam, query));
+    }
+
+    /**
+     * 角色选项（登录即可调用的最小角色选项，供智能体人工节点处理人选择等场景）。
+     * 仅返回启用角色的 id/code/name，租户隔离经租户拦截器生效；不暴露菜单/数据范围。
+     */
+    @GetMapping("/options")
+    public R<List<RoleOptionDTO>> options() {
+        List<SysRole> roles = sysRoleService.lambdaQuery()
+                .eq(SysRole::getStatus, 1)
+                .orderByAsc(SysRole::getSort)
+                .list();
+        return R.ok(roles.stream().map(r -> {
+            RoleOptionDTO dto = new RoleOptionDTO();
+            dto.setId(r.getId());
+            dto.setCode(r.getCode());
+            dto.setName(r.getName());
+            return dto;
+        }).toList());
     }
 
     /**
@@ -102,5 +122,13 @@ public class RoleController {
     public R<Void> updateMenus(@PathVariable Long id, @RequestBody List<Long> menuIds) {
         sysRoleService.updateMenuIds(id, menuIds);
         return R.ok();
+    }
+
+    /** 角色选项 DTO：id/code/name 最小面 */
+    @Data
+    public static class RoleOptionDTO {
+        private Long id;
+        private String code;
+        private String name;
     }
 }

@@ -49,6 +49,7 @@ class AgentHumanTaskLifecycleTest {
     private AgentGraphExecutionRequestMapper requestMapper;
     private AgentGraphExecutionEventMapper eventMapper;
     private AgentGraphHumanTaskMapper humanTaskMapper;
+    private com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper;
     private AgentGraphDefMapper graphDefMapper;
     private AgentGraphExecutionService executionService;
     private LoginContextProvider loginContext;
@@ -64,12 +65,13 @@ class AgentHumanTaskLifecycleTest {
         requestMapper = mock(AgentGraphExecutionRequestMapper.class);
         eventMapper = mock(AgentGraphExecutionEventMapper.class);
         humanTaskMapper = mock(AgentGraphHumanTaskMapper.class);
+        executionMapper = mock(com.sw.ck.agent.mapper.AgentGraphExecutionMapper.class);
         graphDefMapper = mock(AgentGraphDefMapper.class);
         executionService = mock(AgentGraphExecutionService.class);
         loginContext = mock(LoginContextProvider.class);
         when(loginContext.getUserId()).thenReturn(1L);
         service = new AgentGraphExecutionLifecycleServiceImpl(
-                requestMapper, eventMapper, humanTaskMapper, graphDefMapper, executionService,
+                requestMapper, eventMapper, humanTaskMapper, executionMapper, graphDefMapper, executionService,
                 loginContext, mock(PlatformTransactionManager.class),
                 mock(ApplicationEventPublisher.class), 2, 8);
     }
@@ -154,7 +156,7 @@ class AgentHumanTaskLifecycleTest {
         when(requestMapper.transition(5L, "QUEUED", "RUNNING")).thenReturn(1);
         when(requestMapper.selectById(5L)).thenReturn(running);
         when(requestMapper.updateById((AgentGraphExecutionRequest) any())).thenReturn(1);
-        when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any()))
+        when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
                 .thenReturn(pausedOutcome());
 
         invokeRun(5L);
@@ -198,7 +200,7 @@ class AgentHumanTaskLifecycleTest {
         graph.setStatus("PUBLISHED");
         when(graphDefMapper.selectById(21L)).thenReturn(graph);
         CountDownLatch resumed = new CountDownLatch(1);
-        when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any()))
+        when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
                 .thenAnswer(inv -> {
                     resumed.countDown();
                     return successOutcome();
@@ -284,7 +286,7 @@ class AgentHumanTaskLifecycleTest {
         AtomicReference<List<AgentGraphInterpreter.HumanDecision>> decisions =
                 new AtomicReference<>();
         CountDownLatch resumed = new CountDownLatch(1);
-        when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any()))
+        when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
                 .thenAnswer(inv -> {
                     decisions.set(inv.getArgument(5));
                     resumed.countDown();
@@ -300,5 +302,91 @@ class AgentHumanTaskLifecycleTest {
                 .isEqualTo(AgentGraphInterpreter.HUMAN_TIMEOUT_DECISION);
         verify(humanTaskMapper).claimTimeout(eq(88L), any());
         verify(humanTaskMapper).timeoutSiblings(6L, "human-1");
+    }
+
+    @Test
+    @DisplayName("V3（planning-review-110-02）：提交恢复复用暂停前执行记录，同一 executionId")
+    void submitResumesSameExecutionRecord() throws Exception {
+        AgentGraphExecutionRequest waiting = waitingRequest(5L);
+        waiting.setResultExecutionId(900L);
+        java.util.concurrent.atomic.AtomicReference<AgentGraphExecutionRequest> current =
+                new java.util.concurrent.atomic.AtomicReference<>(waiting);
+        when(requestMapper.selectById(5L)).thenAnswer(inv -> current.get());
+        AgentGraphHumanTask task = new AgentGraphHumanTask();
+        task.setId(77L);
+        task.setExecutionId(5L);
+        task.setNodeId("human-1");
+        task.setStatus("PENDING");
+        task.setAssigneeUserId(1L);
+        when(humanTaskMapper.selectById(77L)).thenReturn(task);
+        when(humanTaskMapper.claimSubmitted(eq(77L), any(), eq(1L))).thenReturn(1);
+        when(humanTaskMapper.completeSiblings(5L, "human-1")).thenReturn(1);
+        when(requestMapper.transition(5L, "WAITING_HUMAN", "RUNNING")).thenAnswer(inv -> {
+            AgentGraphExecutionRequest running = waitingRequest(5L);
+            running.setStatus("RUNNING");
+            running.setResultExecutionId(900L);
+            current.set(running);
+            return 1;
+        });
+        AgentGraphDef graph = new AgentGraphDef();
+        graph.setId(21L);
+        graph.setDefVersion(1);
+        graph.setStatus("PUBLISHED");
+        when(graphDefMapper.selectById(21L)).thenReturn(graph);
+        CountDownLatch resumed = new CountDownLatch(1);
+        // 恢复执行返回与暂停前相同的执行记录 id（runInternal 复用该行）
+        when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(),
+                eq(900L)))
+                .thenAnswer(inv -> {
+                    AgentGraphExecutionService.ExecutionOutcome outcome = successOutcome();
+                    outcome.executionId = 900L;
+                    outcome.response.setExecutionId(900L);
+                    resumed.countDown();
+                    return outcome;
+                });
+        when(requestMapper.finish(eq(5L), eq("SUCCESS"), any(), any(), eq(900L), anyLong(), any()))
+                .thenReturn(1);
+        when(executionService.getExecution(900L))
+                .thenReturn(new com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO());
+
+        LoginUser user = new LoginUser();
+        user.setUserId(1L);
+        user.setTenantId(100L);
+        LoginUserHolder.set(user);
+        service.submitHumanTask(5L, 77L, Map.of("comment", "同意"), "approve");
+
+        assertThat(resumed.await(5, TimeUnit.SECONDS)).isTrue();
+        // 恢复调用必须携带暂停前执行记录 id；终态回执仍是同一 id
+        verify(executionService).runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(),
+                eq(900L));
+        verify(requestMapper).finish(eq(5L), eq("SUCCESS"), any(), any(), eq(900L), anyLong(),
+                any());
+    }
+
+    @Test
+    @DisplayName("G3-3：等待人工中取消——任务关闭、执行转 CANCELLED")
+    void cancelWhileWaitingHumanCancelsTasks() {
+        java.util.concurrent.atomic.AtomicReference<AgentGraphExecutionRequest> current =
+                new java.util.concurrent.atomic.AtomicReference<>(waitingRequest(5L));
+        when(requestMapper.selectById(5L)).thenAnswer(inv -> current.get());
+        when(requestMapper.cancelQueued(5L)).thenReturn(0);
+        when(requestMapper.cancelWaiting(5L)).thenAnswer(inv -> {
+            AgentGraphExecutionRequest cancelled = waitingRequest(5L);
+            cancelled.setStatus("CANCELLED");
+            current.set(cancelled);
+            return 1;
+        });
+        when(humanTaskMapper.cancelPending(5L)).thenReturn(2);
+
+        LoginUser user = new LoginUser();
+        user.setUserId(1L);
+        user.setTenantId(100L);
+        LoginUserHolder.set(user);
+        var dto = service.cancel(5L);
+
+        assertThat(dto.getStatus()).isEqualTo("CANCELLED");
+        verify(humanTaskMapper).cancelPending(5L);
+        verify(eventMapper).insertNext(anyLong(), eq(100L), eq("1"), eq(5L), eq("STATE"), any(),
+                eq("CANCELLED"));
     }
 }

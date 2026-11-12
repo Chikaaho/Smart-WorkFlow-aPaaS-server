@@ -66,6 +66,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     private final AgentGraphExecutionRequestMapper requestMapper;
     private final AgentGraphExecutionEventMapper eventMapper;
     private final AgentGraphHumanTaskMapper humanTaskMapper;
+    private final com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper;
     private final AgentGraphDefMapper graphDefMapper;
     private final AgentGraphExecutionService executionService;
     private final LoginContextProvider loginContext;
@@ -80,6 +81,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             AgentGraphExecutionRequestMapper requestMapper,
             AgentGraphExecutionEventMapper eventMapper,
             AgentGraphHumanTaskMapper humanTaskMapper,
+            com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
             AgentGraphDefMapper graphDefMapper,
             AgentGraphExecutionService executionService,
             LoginContextProvider loginContext,
@@ -90,6 +92,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         this.requestMapper = requestMapper;
         this.eventMapper = eventMapper;
         this.humanTaskMapper = humanTaskMapper;
+        this.executionMapper = executionMapper;
         this.graphDefMapper = graphDefMapper;
         this.executionService = executionService;
         this.loginContext = loginContext;
@@ -222,6 +225,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         } else if (WAITING_HUMAN.equals(current.getStatus())) {
             if (requestMapper.cancelWaiting(executionId) == 1) {
                 humanTaskMapper.cancelPending(executionId);
+                cancelChildWaitingExecutions(current.getResultExecutionId());
                 appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCELLED);
             }
         } else if (RUNNING.equals(current.getStatus())) {
@@ -274,13 +278,14 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             if (request.getPauseStateJson() != null && !request.getPauseStateJson().isBlank()) {
                 AgentGraphInterpreter.PauseState pauseState = JSON.readValue(
                         request.getPauseStateJson(), AgentGraphInterpreter.PauseState.class);
+                // V3（planning-review-110-02）：恢复复用暂停前的执行记录 id，用户看到同一条执行
                 outcome = executionService.runLifecycle(request.getGraphDefId(),
                         request.getGraphDefVersion(), request.getInput(), structuredInputs,
-                        pauseState, latestHumanDecision(executionId));
+                        pauseState, latestHumanDecision(executionId), request.getResultExecutionId());
             } else {
                 outcome = executionService.runLifecycle(request.getGraphDefId(),
                         request.getGraphDefVersion(), request.getInput(), structuredInputs,
-                        null, null);
+                        null, null, null);
             }
             if (outcome.pauseState != null) {
                 enterWaitingHuman(executionId, request, outcome);
@@ -602,9 +607,39 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                         long started, String outputsJson) {
         if (requestMapper.finish(id, status, category, message, resultId,
                 System.currentTimeMillis() - started, outputsJson) == 1) {
+            // G3 返修：父执行取消时级联取消仍等待人工的子执行（行 + 待处理任务）
+            if (CANCELLED.equals(status) && resultId != null) {
+                cancelChildWaitingExecutions(resultId);
+            }
             AgentGraphExecutionRequest terminal = requestMapper.selectById(id);
             appendEvent(terminal, "STATE", null, status);
             publishTerminalEvent(terminal);
+        }
+    }
+
+    /**
+     * 级联取消仍等待人工的子执行（G3 返修）：子执行行不在请求簿上，人工任务又挂在
+     * 子执行行 id 上；父取消若只关请求簿与首层任务，子执行会永远停在 WAITING_HUMAN
+     * 且其待办仍可提交。统一在此把等待中的子执行置 CANCELLED 并关闭其待处理任务。
+     */
+    private void cancelChildWaitingExecutions(Long resultExecutionId) {
+        if (resultExecutionId == null) {
+            return;
+        }
+        try {
+            List<com.sw.ck.agent.entity.AgentGraphExecution> waitingChildren = executionMapper.selectList(
+                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.agent.entity.AgentGraphExecution>lambdaQuery()
+                            .eq(com.sw.ck.agent.entity.AgentGraphExecution::getParentExecutionId, resultExecutionId)
+                            .eq(com.sw.ck.agent.entity.AgentGraphExecution::getStatus, WAITING_HUMAN));
+            for (com.sw.ck.agent.entity.AgentGraphExecution child : waitingChildren) {
+                humanTaskMapper.cancelPending(child.getId());
+                child.setStatus(CANCELLED);
+                executionMapper.updateById(child);
+            }
+        } catch (Exception cascadeFailure) {
+            // 级联失败不回滚父取消（父已终态）；留日志排障
+            log.warn("子执行级联取消失败: parentExecutionId={}, error={}",
+                    resultExecutionId, cascadeFailure.getMessage());
         }
     }
 

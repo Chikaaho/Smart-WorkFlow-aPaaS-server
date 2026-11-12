@@ -65,7 +65,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         AtomicInteger sideEffects = new AtomicInteger();
-        when(f.executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any()))
+        when(f.executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
                 .thenAnswer(inv -> {
                     sideEffects.incrementAndGet();
                     entered.countDown();
@@ -103,7 +103,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.selectById(anyLong())).thenReturn(request(30L, "RUNNING"));
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(f.executionService.runLifecycle(anyLong(), any(), any(), any(), any(), any()))
+        when(f.executionService.runLifecycle(anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenAnswer(inv -> {
             entered.countDown(); release.await(30, TimeUnit.SECONDS);
             return new AgentGraphExecuteRespDTO();
@@ -145,7 +145,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.finish(eq(13L), eq("SUCCESS"), any(), any(), any(), anyLong(), any())).thenReturn(1);
         CountDownLatch executed = new CountDownLatch(1);
         AtomicInteger sideEffects = new AtomicInteger();
-        when(f.executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any()))
+        when(f.executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
                 .thenAnswer(inv -> {
             sideEffects.incrementAndGet(); executed.countDown();
             AgentGraphExecuteRespDTO dto = new AgentGraphExecuteRespDTO(); dto.setSuccess(true); return dto;
@@ -156,7 +156,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         assertThat(sideEffects).hasValue(1);
         verify(f.requestMapper, times(1)).update(isNull(), any());
         verify(f.executionService, times(1)).runLifecycle(eq(21L), eq(1), eq("input"),
-                any(), any(), any());
+                any(), any(), any(), any());
     }
 
     private Fixture fixture() {
@@ -169,6 +169,8 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
                 AgentGraphExecutionRequest.class);
         AgentGraphExecutionRequestMapper requests = mock(AgentGraphExecutionRequestMapper.class);
         AgentGraphExecutionEventMapper events = mock(AgentGraphExecutionEventMapper.class);
+        com.sw.ck.agent.mapper.AgentGraphExecutionMapper execRows =
+                org.mockito.Mockito.mock(com.sw.ck.agent.mapper.AgentGraphExecutionMapper.class);
         com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper humanTasks =
                 mock(com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper.class);
         AgentGraphDefMapper graphs = mock(AgentGraphDefMapper.class);
@@ -177,7 +179,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(login.getUserId()).thenReturn(1L);
         PlatformTransactionManager tx = mock(PlatformTransactionManager.class);
         service = new AgentGraphExecutionLifecycleServiceImpl(
-                requests, events, humanTasks, graphs, executions, login, tx,
+                requests, events, humanTasks, execRows, graphs, executions, login, tx,
                 org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class),
                 workers, queueCapacity);
         return new Fixture(requests, events, graphs, executions);

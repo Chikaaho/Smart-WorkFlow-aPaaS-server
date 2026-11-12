@@ -30,13 +30,13 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 class LastLimitCorpusTest {
 
-    private static final int EXPECTED_SITES = 133;
+    private static final int EXPECTED_SITES = 134;
     private static final Pattern LIMIT_WITH_NUMBER = Pattern.compile("(?i)^limit\\s+\\d+$");
     private static final Pattern LIMIT_PREFIX = Pattern.compile("(?i)^limit\\s+$");
     private static final Pattern OFFSET_PREFIX = Pattern.compile("(?i)^\\s*offset\\s*$");
 
     @Test
-    @DisplayName("133 处 .last 均为 LIMIT [OFFSET] 写法，Oracle / SQL Server 改写不抛异常")
+    @DisplayName("134 处 .last 均为 LIMIT [OFFSET] 写法，Oracle / SQL Server 改写不抛异常")
     void lastSitesArePortable() throws IOException {
         Path root = serverRoot();
         List<Site> sites = new ArrayList<>();

@@ -74,11 +74,14 @@ public interface AgentGraphExecutionService {
     /**
      * 生命周期执行入口（G3）：按固定版本快照执行，支持从人工暂停状态恢复与人工决策。
      * 普通终态写执行记录终态；人工暂停返回 pauseState/humanTask 且执行记录保持等待态。
+     * {@code resumeExecutionId}（V3，planning-review-110-02）：恢复执行时复用暂停前的
+     * 执行记录 id，保证用户看到暂停前后是同一条执行；首次运行传 null。
      */
     default ExecutionOutcome runLifecycle(Long graphDefId, Integer graphDefVersion, String input,
                                           java.util.Map<String, String> inputs,
                                           com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState resumeState,
-                                          java.util.List<com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanDecision> decisions) {
+                                          java.util.List<com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanDecision> decisions,
+                                          Long resumeExecutionId) {
         throw new UnsupportedOperationException("当前实现不支持生命周期执行入口");
     }
 
