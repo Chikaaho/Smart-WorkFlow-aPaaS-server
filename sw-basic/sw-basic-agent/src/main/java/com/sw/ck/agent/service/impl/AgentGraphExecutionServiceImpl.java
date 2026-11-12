@@ -622,6 +622,8 @@ public class AgentGraphExecutionServiceImpl
             node.setBranchId(trace.getBranchId());
             node.setNodeId(trace.getNodeId());
             node.setNodeType(trace.getNodeType());
+            // G3-4：SUBGRAPH 节点持久化子执行 id，执行详情可跳转父子执行
+            node.setChildExecutionId(trace.getChildExecutionId());
             node.setNodeLatencyMs(trace.getNodeLatencyMs());
             node.setVariableSnapshot(toJson(trace.getVariableSnapshot()));
             // M07-F04-02: 设置 token 字段
@@ -735,6 +737,8 @@ public class AgentGraphExecutionServiceImpl
         dto.setBranchId(node.getBranchId());
         dto.setNodeId(node.getNodeId());
         dto.setNodeType(node.getNodeType());
+        // G3-4：子图节点子执行 id（父子执行详情跳转）
+        dto.setChildExecutionId(node.getChildExecutionId());
         dto.setNodeLatencyMs(node.getNodeLatencyMs());
         dto.setVariableSnapshot(node.getVariableSnapshot());
         // M07-F04-02: 添加 token 字段

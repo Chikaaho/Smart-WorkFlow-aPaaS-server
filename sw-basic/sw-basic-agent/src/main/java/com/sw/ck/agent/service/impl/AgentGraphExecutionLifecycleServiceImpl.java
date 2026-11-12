@@ -479,31 +479,45 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
      */
     @Override
     public void scanHumanTaskTimeouts() {
-        List<AgentGraphHumanTask> pending = humanTaskMapper.selectList(
-                Wrappers.<AgentGraphHumanTask>lambdaQuery()
-                        .eq(AgentGraphHumanTask::getStatus, "PENDING")
-                        .last("LIMIT 200"));
+        // 调度线程无登录身份：跨租户扫描时显式挂起租户拦截器，逐任务恢复所属租户上下文
+        List<AgentGraphHumanTask> pending;
+        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
+                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            pending = humanTaskMapper.selectList(
+                    Wrappers.<AgentGraphHumanTask>lambdaQuery()
+                            .eq(AgentGraphHumanTask::getStatus, "PENDING")
+                            .last("LIMIT 200"));
+        }
         for (AgentGraphHumanTask task : pending) {
-            AgentGraphExecutionRequest request = requestMapper.selectById(task.getExecutionId());
-            if (request == null || !WAITING_HUMAN.equals(request.getStatus())) continue;
-            Integer timeoutSeconds = payloadTimeoutSeconds(task.getPayloadJson());
-            if (timeoutSeconds == null || timeoutSeconds <= 0 || task.getCreateTime() == null) {
-                continue;
-            }
-            if (task.getCreateTime().plusSeconds(timeoutSeconds).isAfter(LocalDateTime.now())) {
-                continue;
-            }
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("decision", AgentGraphInterpreter.HUMAN_TIMEOUT_DECISION);
-            result.put("values", Map.of());
-            if (humanTaskMapper.claimTimeout(task.getId(), toJsonObject(result)) != 1) {
-                continue;
-            }
-            humanTaskMapper.timeoutSiblings(task.getExecutionId(), task.getNodeId());
-            if (requestMapper.transition(task.getExecutionId(), WAITING_HUMAN, RUNNING) == 1) {
-                appendEvent(requestMapper.selectById(task.getExecutionId()),
-                        "STATE", task.getNodeId(), "HUMAN_TIMEOUT");
-                dispatch(task.getExecutionId(), LoginUserHolder.get());
+            LoginUser scanner = new LoginUser();
+            scanner.setTenantId(task.getTenantId());
+            scanner.setUserId(0L);
+            LoginUserHolder.set(scanner);
+            try {
+                AgentGraphExecutionRequest request = requestMapper.selectById(task.getExecutionId());
+                if (request == null || !WAITING_HUMAN.equals(request.getStatus())) continue;
+                if (request.getCreateBy() != null) scanner.setUserId(request.getCreateBy());
+                Integer timeoutSeconds = payloadTimeoutSeconds(task.getPayloadJson());
+                if (timeoutSeconds == null || timeoutSeconds <= 0 || task.getCreateTime() == null) {
+                    continue;
+                }
+                if (task.getCreateTime().plusSeconds(timeoutSeconds).isAfter(LocalDateTime.now())) {
+                    continue;
+                }
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("decision", AgentGraphInterpreter.HUMAN_TIMEOUT_DECISION);
+                result.put("values", Map.of());
+                if (humanTaskMapper.claimTimeout(task.getId(), toJsonObject(result)) != 1) {
+                    continue;
+                }
+                humanTaskMapper.timeoutSiblings(task.getExecutionId(), task.getNodeId());
+                if (requestMapper.transition(task.getExecutionId(), WAITING_HUMAN, RUNNING) == 1) {
+                    appendEvent(requestMapper.selectById(task.getExecutionId()),
+                            "STATE", task.getNodeId(), "HUMAN_TIMEOUT");
+                    dispatch(task.getExecutionId(), scanner);
+                }
+            } finally {
+                LoginUserHolder.clear();
             }
         }
     }
