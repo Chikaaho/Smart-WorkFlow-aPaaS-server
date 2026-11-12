@@ -206,9 +206,10 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
 
     @Override
     public List<AgentGraphExecutionEventDTO> listEvents(Long executionId, long afterSequence) {
-        requireOwned(executionId);
+        // W5：事件按受理行 id 落库；入参可为执行编号（结果行）
+        Long requestId = requireOwned(executionId).getId();
         return eventMapper.selectList(Wrappers.<AgentGraphExecutionEvent>lambdaQuery()
-                        .eq(AgentGraphExecutionEvent::getExecutionId, executionId)
+                        .eq(AgentGraphExecutionEvent::getExecutionId, requestId)
                         .gt(AgentGraphExecutionEvent::getSequenceNo, Math.max(0, afterSequence))
                         .orderByAsc(AgentGraphExecutionEvent::getSequenceNo)
                         .last("LIMIT 500"))
@@ -396,6 +397,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                                                            Map<String, String> values,
                                                            String decision) {
         AgentGraphExecutionRequest request = requireOwned(executionId);
+        // W5：入参可为执行编号（结果行）——后续一律用受理行 id 操作任务与状态
+        Long requestId = request.getId();
         if (!WAITING_HUMAN.equals(request.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "该执行不在等待人工状态");
         }
@@ -403,7 +406,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "taskId 不能为空");
         }
         AgentGraphHumanTask task = humanTaskMapper.selectById(taskId);
-        if (task == null || !executionId.equals(task.getExecutionId())) {
+        if (task == null || !requestId.equals(task.getExecutionId())) {
             throw new BaseException(CommonErrorCode.NOT_FOUND, "人工任务不存在");
         }
         if (!"PENDING".equals(task.getStatus())) {
@@ -420,12 +423,12 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         if (humanTaskMapper.claimSubmitted(taskId, resultJson, requireUserId()) != 1) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "该等待已处理，不能重复提交");
         }
-        humanTaskMapper.completeSiblings(executionId, task.getNodeId());
-        if (requestMapper.transition(executionId, WAITING_HUMAN, RUNNING) != 1) {
+        humanTaskMapper.completeSiblings(requestId, task.getNodeId());
+        if (requestMapper.transition(requestId, WAITING_HUMAN, RUNNING) != 1) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "执行状态已变化，请刷新后重试");
         }
-        dispatch(executionId, LoginUserHolder.get());
-        return get(executionId);
+        dispatch(requestId, LoginUserHolder.get());
+        return get(requestId);
     }
 
     /** 处理人校验：超管 / 指定用户 / 指定角色 code（任务未指定处理人时超管可处理）。 */
@@ -471,9 +474,10 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
 
     /** 指定执行的人工任务列表（执行详情页展示等待/已处理）。 */
     public List<AgentHumanTaskDTO> listExecutionHumanTasks(Long executionId) {
-        requireOwned(executionId);
+        // W5：入参可为受理编号或执行编号，任务行始终按受理编号查询
+        Long requestId = requireOwned(executionId).getId();
         return humanTaskMapper.selectList(Wrappers.<AgentGraphHumanTask>lambdaQuery()
-                        .eq(AgentGraphHumanTask::getExecutionId, executionId)
+                        .eq(AgentGraphHumanTask::getExecutionId, requestId)
                         .orderByAsc(AgentGraphHumanTask::getId))
                 .stream().map(this::toHumanTaskDto).toList();
     }
@@ -552,6 +556,9 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         AgentHumanTaskDTO dto = new AgentHumanTaskDTO();
         dto.setId(task.getId());
         dto.setExecutionId(task.getExecutionId());
+        // W5：任务行 executionId 是受理编号，回链受理行取结果执行 id，前端统一展示执行编号
+        AgentGraphExecutionRequest linkedRequest = requestMapper.selectById(task.getExecutionId());
+        dto.setResultExecutionId(linkedRequest == null ? null : linkedRequest.getResultExecutionId());
         dto.setNodeId(task.getNodeId());
         dto.setStatus(task.getStatus());
         dto.setAssigneeUserId(task.getAssigneeUserId());
@@ -678,6 +685,13 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     private AgentGraphExecutionRequest requireOwned(Long id) {
         if (id == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "executionId 不能为空");
         AgentGraphExecutionRequest request = requestMapper.selectById(id);
+        if (request == null) {
+            // W5：读取/取消入口同时接受结果执行 id（详情/列表统一展示执行编号）
+            request = requestMapper.selectOne(Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
+                    .eq(AgentGraphExecutionRequest::getResultExecutionId, id)
+                    .orderByDesc(AgentGraphExecutionRequest::getId)
+                    .last("LIMIT 1"));
+        }
         if (request == null) throw new BaseException(CommonErrorCode.NOT_FOUND, "执行记录不存在");
         Long userId = requireUserId();
         if (!loginContext.isSuperAdmin() && !Objects.equals(request.getCreateBy(), userId)) {

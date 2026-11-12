@@ -17,6 +17,9 @@ public class AgentHumanTaskDTO {
 
     private Long executionId;
 
+    /** 结果执行记录 id（W5：待办与详情统一展示执行编号；executionId 保留为受理编号） */
+    private Long resultExecutionId;
+
     private Long graphDefId;
 
     private String nodeId;
