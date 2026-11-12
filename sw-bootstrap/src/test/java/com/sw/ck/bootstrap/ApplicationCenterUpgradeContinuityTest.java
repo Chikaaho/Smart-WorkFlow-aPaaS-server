@@ -198,7 +198,7 @@ class ApplicationCenterUpgradeContinuityTest {
                 .load()
                 .migrate();
         assertTrue(upgrade.success, "主链衔接验证应成功");
-        assertEquals(10, upgrade.migrationsExecuted,
+        assertEquals(11, upgrade.migrationsExecuted,
                 "0.2.0 存量升级脚本衔接后仅执行新增 V0.2.2—V0.2.9/V0.4.0/V1.0.0/V1.1.0 迁移，不重放已登记的 versioned 与 R__");
         Flyway.configure()
                 .dataSource(URL, USER, PASSWORD)

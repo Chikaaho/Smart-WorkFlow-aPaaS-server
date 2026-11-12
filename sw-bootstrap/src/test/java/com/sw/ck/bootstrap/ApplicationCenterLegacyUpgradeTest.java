@@ -135,7 +135,7 @@ class ApplicationCenterLegacyUpgradeTest {
                 .load();
         MigrateResult result = upgrade.migrate();
         assertTrue(result.success, "主链衔接验证应成功");
-        assertEquals(10, result.migrationsExecuted,
+        assertEquals(11, result.migrationsExecuted,
                 "0.2.0 存量升级脚本衔接后仅执行新增 V0.2.2—V0.2.9/V0.4.0/V1.0.0/V1.1.0 迁移，不重放已登记的 versioned 与 R__");
         upgrade.validate();
     }
@@ -294,7 +294,7 @@ class ApplicationCenterLegacyUpgradeTest {
         MigrateResult upgrade = after.migrate();
         assertTrue(upgrade.success, "衔接后主链应迁移成功");
         // V0.2.0 已由升级脚本登记，仅执行快照（12 支 R__）之外新增的 8 支 R__ 与新增 V0.2.2—V0.2.9/V0.4.0/V1.0.0/V1.1.0；历史版本化迁移不得重放。
-        assertEquals(18, upgrade.migrationsExecuted,
+        assertEquals(19, upgrade.migrationsExecuted,
                 "衔接后应执行快照外新增的 8 支 R__ 对账与 V0.2.2—V0.2.9/V0.4.0/V1.0.0/V1.1.0，不得重放历史版本化迁移");
         after.validate();
         MigrateResult again = after.migrate();
