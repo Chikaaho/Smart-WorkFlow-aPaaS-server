@@ -140,10 +140,52 @@ public class AgentGraphExecutionServiceImpl
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public AgentGraphExecuteRespDTO execute(Long graphDefId, String input) {
-        // 参数校验（对齐 F01 run() 校验惯例：Service 层手动校验）
-        if (input == null || input.isBlank()) {
+        return execute(graphDefId, input, null);
+    }
+
+    /** G1-4 END outputs 解析：source=nodeId.var 取节点作用域输出，否则取全局变量。 */
+    private java.util.Map<String, String> resolveOutputs(ProcessGraph graph,
+                                                         AgentGraphInterpreter interpreter) {
+        java.util.Map<String, String> outputs = new java.util.LinkedHashMap<>();
+        for (GraphElement element : graph.getElements()) {
+            if (!"node".equals(element.getKind())
+                    || !AgentGraphInterpreter.NODE_TYPE_END.equals(element.getType())) {
+                continue;
+            }
+            Object raw = element.getConfig() == null ? null
+                    : element.getConfig().get(AgentGraphInterpreter.CONFIG_KEY_OUTPUT_PARAMS);
+            if (!(raw instanceof List<?> params)) continue;
+            for (Object item : params) {
+                if (!(item instanceof java.util.Map<?, ?> param)) continue;
+                String name = param.get("name") == null ? ""
+                        : String.valueOf(param.get("name")).trim();
+                String source = param.get("source") == null ? ""
+                        : String.valueOf(param.get("source")).trim();
+                if (name.isEmpty() || source.isEmpty()) continue;
+                String value;
+                int dot = source.indexOf('.');
+                if (dot > 0) {
+                    value = interpreter.getNodeOutputVariables(source.substring(0, dot))
+                            .get(source.substring(dot + 1));
+                } else {
+                    value = interpreter.getFinalVariables().get(source);
+                }
+                if (value != null) {
+                    outputs.put(name, value);
+                }
+            }
+        }
+        return outputs;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public AgentGraphExecuteRespDTO execute(Long graphDefId, String input,
+                                            java.util.Map<String, String> inputs) {
+        boolean structured = inputs != null && !inputs.isEmpty();
+        // 参数校验（对齐 F01 run() 校验惯例：Service 层手动校验；G1-4 允许结构化入参替代单文本）
+        if ((input == null || input.isBlank()) && !structured) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "input 不能为空");
         }
         // NOT_FOUND（selectById 经租户拦截器自动过滤 tenant_id，同 Step7 requireEntity）
@@ -167,7 +209,7 @@ public class AgentGraphExecutionServiceImpl
         exec.setGraphDefId(entity.getId());
         exec.setGraphDefVersion(entity.getDefVersion());
         exec.setStatus(STATUS_RUNNING);
-        exec.setInput(input);
+        exec.setInput(input == null ? "" : input);
         executionMapper.insert(exec);
 
         // Step11 死循环防护预算（方案 §2.3）：maxSteps = 2 × 节点数 +
@@ -207,7 +249,8 @@ public class AgentGraphExecutionServiceImpl
                         com.sw.ck.security.holder.LoginUserHolder.set(loginUser);
                     }
                     try {
-                        return interpreter.run(graph, input);
+                        // G1-4：结构化入参优先；无结构化入参走旧单文本契约
+                        return structured ? interpreter.run(graph, inputs) : interpreter.run(graph, input);
                     } finally {
                         com.sw.ck.security.holder.LoginUserHolder.clear();
                     }
@@ -245,6 +288,10 @@ public class AgentGraphExecutionServiceImpl
         long latency = System.currentTimeMillis() - start;
         resp.setLatencyMs(latency);
         resp.setExecutionId(exec.getId());
+        // G1-4：按 END 节点 outputs 声明解析结构化出参（成功路径；无声明为空 map）
+        if (resp.isSuccess()) {
+            resp.setOutputs(resolveOutputs(graph, interpreter));
+        }
 
         // —— 终态回写（成功/失败统一路径；DB 异常位于运行时 catch 之外，上抛不吞） ——
         exec.setStatus(resp.isSuccess() ? STATUS_SUCCESS : STATUS_FAILED);

@@ -31,8 +31,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -42,6 +45,10 @@ import java.util.concurrent.TimeUnit;
 public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecutionLifecycleService {
     private static final org.slf4j.Logger log =
             org.slf4j.LoggerFactory.getLogger(AgentGraphExecutionLifecycleServiceImpl.class);
+
+    /** 结构化入参/出参 JSON 编解码（inputs_json / outputs_json 列）。 */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     static final String QUEUED = "QUEUED";
     static final String RUNNING = "RUNNING";
@@ -127,12 +134,15 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     @Override
-    public AgentGraphExecutionAcceptedDTO submit(Long graphDefId, String input, String idempotencyKey) {
-        if (graphDefId == null || input == null || input.isBlank()) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR, "graphDefId 和 input 不能为空");
+    public AgentGraphExecutionAcceptedDTO submit(Long graphDefId, String input,
+                                                 Map<String, String> inputs, String idempotencyKey) {
+        boolean hasStructuredInputs = inputs != null && !inputs.isEmpty();
+        if (graphDefId == null || ((input == null || input.isBlank()) && !hasStructuredInputs)) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "graphDefId 和入参不能为空");
         }
         String key = normalizeKey(idempotencyKey);
-        String fingerprint = fingerprint(graphDefId, input);
+        String inputsJson = toJson(inputs);
+        String fingerprint = fingerprint(graphDefId, input, inputsJson);
         Long userId = requireUserId();
         LoginUser loginUser = LoginUserHolder.get();
 
@@ -167,7 +177,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             request.setIdempotencyKey(key);
             request.setRequestFingerprint(fingerprint);
             request.setStatus(QUEUED);
-            request.setInput(input);
+            request.setInput(input == null ? "" : input);
+            request.setInputsJson(inputsJson);
             requestMapper.insert(request);
             return request;
         });
@@ -237,24 +248,28 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         requestMapper.updateById(request);
         long started = System.currentTimeMillis();
         try {
-            AgentExecutionEventContext.set((type, payload) -> appendEvent(request, type, null, payload));
+            AgentExecutionEventContext.set((type, nodeId, payload) ->
+                    appendEvent(request, type, nodeId, payload));
             appendEvent(request, "STATE", null, RUNNING);
-            AgentGraphExecuteRespDTO result = executionService.execute(request.getGraphDefId(), request.getInput());
+            Map<String, String> structuredInputs = fromJson(request.getInputsJson());
+            AgentGraphExecuteRespDTO result = executionService.execute(
+                    request.getGraphDefId(), request.getInput(), structuredInputs);
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
+            String outputsJson = result.isSuccess() ? toJson(result.getOutputs()) : null;
             if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
-                finish(executionId, CANCELLED, null, "执行已取消", result.getExecutionId(), started);
+                finish(executionId, CANCELLED, null, "执行已取消", result.getExecutionId(), started, null);
             } else if (result.isSuccess()) {
-                finish(executionId, SUCCESS, null, null, result.getExecutionId(), started);
+                finish(executionId, SUCCESS, null, null, result.getExecutionId(), started, outputsJson);
             } else {
                 finish(executionId, FAILED, "GRAPH_EXECUTION_FAILED", result.getErrorMessage(),
-                        result.getExecutionId(), started);
+                        result.getExecutionId(), started, null);
             }
         } catch (Exception error) {
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
             if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
-                finish(executionId, CANCELLED, null, "执行已取消", null, started);
+                finish(executionId, CANCELLED, null, "执行已取消", null, started, null);
             } else {
-                finish(executionId, FAILED, "EXECUTION_ERROR", "图执行失败，请查看节点记录", null, started);
+                finish(executionId, FAILED, "EXECUTION_ERROR", "图执行失败，请查看节点记录", null, started, null);
             }
         } finally {
             AgentExecutionEventContext.clear();
@@ -263,9 +278,10 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         }
     }
 
-    private void finish(Long id, String status, String category, String message, Long resultId, long started) {
+    private void finish(Long id, String status, String category, String message, Long resultId,
+                        long started, String outputsJson) {
         if (requestMapper.finish(id, status, category, message, resultId,
-                System.currentTimeMillis() - started) == 1) {
+                System.currentTimeMillis() - started, outputsJson) == 1) {
             AgentGraphExecutionRequest terminal = requestMapper.selectById(id);
             appendEvent(terminal, "STATE", null, status);
             publishTerminalEvent(terminal);
@@ -331,6 +347,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         dto.setErrorCategory(request.getErrorCategory());
         dto.setErrorMessage(request.getErrorMessage());
         dto.setLatencyMs(request.getLatencyMs());
+        dto.setResultExecutionId(request.getResultExecutionId());
+        dto.setOutputs(fromJson(request.getOutputsJson()));
         dto.setCreateTime(request.getCreateTime());
         dto.setStartedAt(request.getStartedAt());
         dto.setFinishedAt(request.getFinishedAt());
@@ -352,12 +370,37 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         return normalized;
     }
 
-    private String fingerprint(Long graphDefId, String input) {
+    private String fingerprint(Long graphDefId, String input, String inputsJson) {
         try {
+            String normalized = graphDefId + "\n" + (input == null ? "" : input)
+                    + "\n" + (inputsJson == null ? "" : inputsJson);
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest((graphDefId + "\n" + input).getBytes(StandardCharsets.UTF_8)));
+                    .digest(normalized.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception impossible) {
             throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** Map → JSON（键排序保证幂等指纹稳定；空 map/null 返回 null）。 */
+    private String toJson(Map<String, String> map) {
+        if (map == null || map.isEmpty()) return null;
+        try {
+            return JSON.writeValueAsString(new TreeMap<>(map));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "入参序列化失败");
+        }
+    }
+
+    /** JSON → Map（空/null/损坏返回空 map，不阻断执行）。 */
+    private Map<String, String> fromJson(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            Map<String, String> parsed = JSON.readValue(json,
+                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, String>>() {
+                    });
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception malformed) {
+            return Map.of();
         }
     }
 }

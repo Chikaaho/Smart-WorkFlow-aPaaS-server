@@ -61,11 +61,11 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.selectById(12L)).thenAnswer(inv -> current.get());
         when(f.requestMapper.updateById(any(AgentGraphExecutionRequest.class))).thenReturn(1);
         when(f.requestMapper.requestRunningCancellation(12L)).thenAnswer(inv -> { current.set(requested); return 1; });
-        when(f.requestMapper.finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong())).thenAnswer(inv -> { current.set(request(12L, "CANCELLED")); return 1; });
+        when(f.requestMapper.finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong(), any())).thenAnswer(inv -> { current.set(request(12L, "CANCELLED")); return 1; });
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         AtomicInteger sideEffects = new AtomicInteger();
-        when(f.executionService.execute(21L, "input")).thenAnswer(inv -> {
+        when(f.executionService.execute(eq(21L), eq("input"), any())).thenAnswer(inv -> {
             sideEffects.incrementAndGet();
             entered.countDown();
             try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
@@ -84,7 +84,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
 
         assertThat(worker.isAlive()).isFalse();
         assertThat(sideEffects).hasValue(1);
-        verify(f.requestMapper, times(1)).finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong());
+        verify(f.requestMapper, times(1)).finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong(), any());
     }
 
     @Test
@@ -102,7 +102,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.selectById(anyLong())).thenReturn(request(30L, "RUNNING"));
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(f.executionService.execute(anyLong(), any())).thenAnswer(inv -> {
+        when(f.executionService.execute(anyLong(), any(), any())).thenAnswer(inv -> {
             entered.countDown(); release.await(30, TimeUnit.SECONDS);
             return new AgentGraphExecuteRespDTO();
         });
@@ -140,10 +140,10 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.transition(13L, "QUEUED", "RUNNING")).thenReturn(1);
         when(f.requestMapper.selectById(13L)).thenReturn(queued, request(13L, "RUNNING"), request(13L, "SUCCESS"));
         when(f.requestMapper.updateById(any(AgentGraphExecutionRequest.class))).thenReturn(1);
-        when(f.requestMapper.finish(eq(13L), eq("SUCCESS"), any(), any(), any(), anyLong())).thenReturn(1);
+        when(f.requestMapper.finish(eq(13L), eq("SUCCESS"), any(), any(), any(), anyLong(), any())).thenReturn(1);
         CountDownLatch executed = new CountDownLatch(1);
         AtomicInteger sideEffects = new AtomicInteger();
-        when(f.executionService.execute(21L, "input")).thenAnswer(inv -> {
+        when(f.executionService.execute(eq(21L), eq("input"), any())).thenAnswer(inv -> {
             sideEffects.incrementAndGet(); executed.countDown();
             AgentGraphExecuteRespDTO dto = new AgentGraphExecuteRespDTO(); dto.setSuccess(true); return dto;
         });
@@ -152,7 +152,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         assertThat(executed.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(sideEffects).hasValue(1);
         verify(f.requestMapper, times(1)).update(isNull(), any());
-        verify(f.executionService, times(1)).execute(21L, "input");
+        verify(f.executionService, times(1)).execute(eq(21L), eq("input"), any());
     }
 
     private Fixture fixture() {

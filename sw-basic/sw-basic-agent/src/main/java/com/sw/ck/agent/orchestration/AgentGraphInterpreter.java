@@ -163,6 +163,12 @@ public class AgentGraphInterpreter {
     /** LLM/TOOL 节点 config 键：结果写入的变量名（String，缺失/空白 = 默认变量） */
     public static final String CONFIG_KEY_OUTPUT_VAR = "outputVar";
 
+    /** START 节点 config 键：输入参数声明（List&lt;Map&gt;，G1-4：name/type/required/description） */
+    public static final String CONFIG_KEY_INPUT_PARAMS = "params";
+
+    /** END 节点 config 键：输出参数声明（List&lt;Map&gt;，G1-4：name/source/description） */
+    public static final String CONFIG_KEY_OUTPUT_PARAMS = "outputs";
+
     /** LOOP 节点 config 键：迭代上限（Integer，可选，缺省 {@value #DEFAULT_MAX_ITERATIONS}；<1 由执行前校验拦截） */
     public static final String CONFIG_KEY_MAX_ITERATIONS = "maxIterations";
 
@@ -205,6 +211,9 @@ public class AgentGraphInterpreter {
 
     /** 引用了未定义的变量 */
     public static final String ERROR_CATEGORY_UNDEFINED_VARIABLE = "UNDEFINED_VARIABLE";
+
+    /** 缺少开始节点声明的必填入参（G1-4 结构化入参） */
+    public static final String ERROR_CATEGORY_INPUT_MISSING = "INPUT_MISSING";
 
     /** 条件分支无匹配且无默认边 */
     public static final String ERROR_CATEGORY_CONDITION_NO_MATCH = "CONDITION_NO_MATCH";
@@ -249,6 +258,12 @@ public class AgentGraphInterpreter {
     /** 本次执行的节点轨迹（Step12 采集，每次 run 重建；由调用方读取落库，本类不持 Mapper） */
     private List<NodeExecutionTrace> traces;
 
+    /** 节点作用域输出变量表（G1-4：nodeId → 变量名 → 值，供 END 输出声明解析） */
+    private Map<String, Map<String, String>> nodeOutputs;
+
+    /** 执行结束时的全局变量表快照（END 输出声明中全局写法解析用） */
+    private Map<String, String> finalVariables;
+
     /**
      * @param modelRuntimeService 模型运行时（LangChain4j 装配 + 单例复用 + 启停校验）
      * @param toolCallbackFactory 工具工厂（只读复用；null 时 TOOL 节点抛错）
@@ -289,13 +304,35 @@ public class AgentGraphInterpreter {
      *                                 步数超限 / 循环迭代超限 / 拓扑非法等运行时错误
      */
     public String run(ProcessGraph graph, String input) {
+        Map<String, String> inputs = new HashMap<>();
+        inputs.put(DEFAULT_VARIABLE_NAME, input);
+        return run(graph, inputs);
+    }
+
+    /**
+     * 解释执行整图（G1-4 结构化入参）：{@code inputs} 为开始节点参数名 → 值。
+     * 缺少开始节点声明的必填参数时抛 {@link GraphExecutionException}
+     * （{@link #ERROR_CATEGORY_INPUT_MISSING}，消息含缺失参数名）。
+     *
+     * @param graph  已发布图
+     * @param inputs 结构化入参（参数名 → 值；可为空 map，旧图兼容）
+     * @return 最先到达的 END 节点处最终输出
+     */
+    public String run(ProcessGraph graph, Map<String, String> inputs) {
         List<GraphElement> elements = graph.getElements();
-        // 命名变量表（Step10）：初始仅含默认变量（= 请求入参）。未指定变量名的节点
-        // 读写默认变量，旧图（无变量名字段）行为与 Step8 单一 currentText 语义一致。
+        validateRequiredInputs(elements, inputs);
+        // 命名变量表（Step10）：初始为结构化入参（旧接口 = 仅默认变量 input）。
+        // 未指定变量名的节点读写默认变量，旧图（无变量名字段）行为与 Step8 一致。
         // 并行分支写同一变量名 = 最后写入覆盖（用户已决策，不拦截不告警；单线程交错
         // 推进下即按图推进顺序覆盖，行为可预期）。
         Map<String, String> variables = new HashMap<>();
-        variables.put(DEFAULT_VARIABLE_NAME, input);
+        if (inputs != null) {
+            inputs.forEach((key, value) -> {
+                if (key != null && value != null) variables.put(key, value);
+            });
+        }
+        nodeOutputs = new HashMap<>();
+        finalVariables = Map.of();
         // 活跃执行点集合（Step11）：FORK 扇出后多分支并存，每轮取队首活跃点执行一步，
         // 产出 0/1/N 个后继活跃点（FIFO 交替推进，确定性顺序；逻辑并发非线程级并行）。
         // Step12 起活跃点携带分支路径（branchPath，FORK 按出边出现顺序追加下标）——
@@ -324,11 +361,14 @@ public class AgentGraphInterpreter {
             NodeExecutionTrace trace = new NodeExecutionTrace(++traceSeq, point.branchPath,
                     current.getId(), current.getType());
             traces.add(trace);
+            // G1-7：节点开始事件（生命周期执行经 AgentExecutionEventContext 实时落事件表）
+            emitNodeEvent("NODE_STARTED", trace);
             try {
                 // 任一活跃点到达 END → 立即终止全部执行（其余分支停止推进），返回该 END
                 // 节点 config.inputVar 读取值（缺失/空白 = 默认变量，Step8 语义）
                 if (NODE_TYPE_END.equals(current.getType())) {
                     finishTrace(trace, stepStartNanos, variables);
+                    finalVariables = new HashMap<>(variables);
                     return readVariable(current, variables, CONFIG_KEY_INPUT_VAR);
                 }
                 // 全局步数上限（跨所有活跃点累计）：死循环 / JOIN 挂起死锁统一由超限兜底
@@ -420,6 +460,83 @@ public class AgentGraphInterpreter {
         trace.nodeLatencyMs = (System.nanoTime() - stepStartNanos) / 1_000_000;
         trace.endTime = LocalDateTime.now();
         trace.variableSnapshot = new HashMap<>(variables);
+        // G1-7：节点结束事件（耗时/入参/出参摘要/失败原因，大字段截断）
+        emitNodeEvent("NODE_FINISHED", trace);
+    }
+
+    /** G1-7 节点事件载荷：STARTED 只带身份，FINISHED 带状态、耗时与出入参摘要。 */
+    private void emitNodeEvent(String type, NodeExecutionTrace trace) {
+        if (AgentExecutionEventContext.get() == null) {
+            return;
+        }
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("nodeId", trace.getNodeId());
+        payload.put("nodeType", trace.getNodeType());
+        payload.put("branchId", trace.getBranchId());
+        if ("NODE_FINISHED".equals(type)) {
+            payload.put("status", trace.getStatus());
+            payload.put("latencyMs", trace.getNodeLatencyMs());
+            payload.put("input", truncateForEvent(trace.getInputText(), 2000));
+            payload.put("output", truncateForEvent(trace.getOutputText(), 2000));
+            payload.put("errorMessage", truncateForEvent(trace.getErrorMessage(), 1000));
+        }
+        try {
+            AgentExecutionEventContext.emitNode(type, trace.getNodeId(), JSON.writeValueAsString(payload));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+            AgentExecutionEventContext.emitNode(type, trace.getNodeId(), null);
+        }
+    }
+
+    /** 事件载荷大字段截断（避免事件表/轮询被长文本拖慢）。 */
+    private static String truncateForEvent(String value, int max) {
+        if (value == null) return null;
+        return value.length() <= max ? value : value.substring(0, max) + "…(truncated)";
+    }
+
+    /**
+     * G1-4 必填入参校验：开始节点 config.params 中 required=true 的参数必须在
+     * {@code inputs} 中存在且非空白；缺失抛 INPUT_MISSING 并列出全部缺失参数名。
+     * 未声明参数（旧图）= 不校验，行为不变。
+     */
+    private void validateRequiredInputs(List<GraphElement> elements, Map<String, String> inputs) {
+        GraphElement start;
+        try {
+            start = findStart(elements);
+        } catch (GraphExecutionException noStart) {
+            return; // 拓扑错误由执行前校验/主循环统一报出
+        }
+        Map<String, Object> config = start.getConfig();
+        if (config == null) return;
+        Object raw = config.get(CONFIG_KEY_INPUT_PARAMS);
+        if (!(raw instanceof List<?> params)) return;
+        List<String> missing = new ArrayList<>();
+        for (Object item : params) {
+            if (!(item instanceof Map<?, ?> param)) continue;
+            boolean required = Boolean.TRUE.equals(param.get("required"));
+            if (!required) continue;
+            Object nameValue = param.get("name");
+            String name = nameValue == null ? "" : String.valueOf(nameValue).trim();
+            if (name.isEmpty()) continue;
+            String value = inputs == null ? null : inputs.get(name);
+            if (value == null || value.isBlank()) {
+                missing.add(name);
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new GraphExecutionException(ERROR_CATEGORY_INPUT_MISSING,
+                    "缺少必填参数: " + String.join(", ", missing));
+        }
+    }
+
+    /** 执行结束时的全局变量表快照（G1-4 END 输出声明解析用；未完成执行时为空）。 */
+    public Map<String, String> getFinalVariables() {
+        return finalVariables == null ? Map.of() : Map.copyOf(finalVariables);
+    }
+
+    /** 指定节点的作用域输出变量（G1-4：nodeId → 变量名 → 值；未执行/无输出时为空）。 */
+    public Map<String, String> getNodeOutputVariables(String nodeId) {
+        Map<String, String> outputs = nodeOutputs == null ? null : nodeOutputs.get(nodeId);
+        return outputs == null ? Map.of() : Map.copyOf(outputs);
     }
 
     // ==================== LLM 节点 ====================
@@ -602,12 +719,12 @@ public class AgentGraphInterpreter {
         while (true) {
             // 增量回调在 langchain4j 传输线程触发，读取线程绑定上下文取不到生命周期监听器；
             // 在解释器线程先捕获监听器，增量到达时直接投递，避免线程本地查找静默丢失。
-            final java.util.function.BiConsumer<String, String> lifecycleListener =
+            final AgentExecutionEventContext.Listener lifecycleListener =
                     AgentExecutionEventContext.get();
             ChatResponse response = lifecycleListener == null
                     ? runtime.chatWithRotation(modelConfigId, messages, specs)
                     : runtime.chatStreamingWithRotation(modelConfigId, messages, specs,
-                            delta -> lifecycleListener.accept("MODEL_DELTA", delta));
+                            delta -> lifecycleListener.accept("MODEL_DELTA", null, delta));
             dev.langchain4j.model.output.TokenUsage usage =
                     response.metadata() != null ? response.metadata().tokenUsage() : null;
             if (usage != null && usage.inputTokenCount() != null) {
@@ -773,7 +890,11 @@ public class AgentGraphInterpreter {
      * 非空文本，变量值类型全为 String（非文本类型不在本 Step 范围）。
      */
     private void writeOutput(GraphElement node, Map<String, String> variables, String output) {
-        variables.put(resolveVarName(node, CONFIG_KEY_OUTPUT_VAR), output);
+        String varName = resolveVarName(node, CONFIG_KEY_OUTPUT_VAR);
+        variables.put(varName, output);
+        // G1-4：节点作用域输出留档（END 输出声明 source = nodeId.var 解析用；
+        // 全局变量表仍是最后写入覆盖语义，作用域表按节点独立记录）
+        nodeOutputs.computeIfAbsent(node.getId(), key -> new HashMap<>()).put(varName, output);
     }
 
     /**

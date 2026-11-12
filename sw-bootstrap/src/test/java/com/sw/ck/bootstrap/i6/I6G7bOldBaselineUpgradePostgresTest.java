@@ -99,15 +99,15 @@ class I6G7bOldBaselineUpgradePostgresTest {
         var result = Flyway.configure().dataSource(dbUrl, dbUser, dbPassword)
                 .locations(APP_LOCATIONS).load().migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(31, result.migrationsExecuted,
-                "全新库应执行 31 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0 + 20 个 R__，"
+        assertEquals(32, result.migrationsExecuted,
+                "全新库应执行 32 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0/V1.1.0 + 20 个 R__，"
                         + "含 0.2.0 用户组菜单 R__u020_user_group_menu）");
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
                      "SELECT version FROM flyway_schema_history WHERE success = true AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")) {
             assertTrue(rs.next());
-            assertEquals("1.0.0", rs.getString(1), "升级终点应为最后一个 versioned 迁移");
+            assertEquals("1.1.0", rs.getString(1), "升级终点应为最后一个 versioned 迁移");
         }
     }
 
@@ -184,8 +184,8 @@ class I6G7bOldBaselineUpgradePostgresTest {
             try (ResultSet rs = stmt.executeQuery(
                     "SELECT COUNT(*) FROM flyway_schema_history WHERE success = true")) {
                 assertTrue(rs.next());
-                assertEquals(31, rs.getInt(1),
-                        "历史表应恰有 31 条成功记录（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0 + 20 个 R__，"
+                assertEquals(32, rs.getInt(1),
+                        "历史表应恰有 32 条成功记录（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0/V1.1.0 + 20 个 R__，"
                                 + "含 0.2.0 用户组菜单）");
             }
         }

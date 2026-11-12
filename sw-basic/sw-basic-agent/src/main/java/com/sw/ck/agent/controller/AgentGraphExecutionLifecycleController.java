@@ -33,7 +33,7 @@ public class AgentGraphExecutionLifecycleController {
             @PathVariable Long graphDefId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody AgentGraphExecuteReqDTO request) {
-        return R.ok(service.submit(graphDefId, request.getInput(), idempotencyKey));
+        return R.ok(service.submit(graphDefId, request.getInput(), request.getInputs(), idempotencyKey));
     }
 
     @GetMapping("/executions/{executionId}")

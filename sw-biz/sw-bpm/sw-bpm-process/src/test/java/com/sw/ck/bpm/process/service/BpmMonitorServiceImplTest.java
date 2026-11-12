@@ -66,7 +66,8 @@ class BpmMonitorServiceImplTest {
                 mock(BpmTaskFacade.class),
                 bpmRuntimeFacade,
                 loginContextProvider,
-                mock(com.sw.ck.common.datascope.DeptScopeProvider.class));
+                mock(com.sw.ck.common.datascope.DeptScopeProvider.class),
+                mock(com.sw.ck.bpm.process.service.BpmProcessDefService.class));
     }
 
     @Test

@@ -34,7 +34,7 @@ class SqlServerScriptStaticTest {
         try (var stream = Files.list(dir)) {
             scripts = stream.filter(p -> p.toString().endsWith(".sql")).sorted().toList();
         }
-        assertEquals(32, scripts.size(), "SQL Server 应有 32 个迁移脚本");
+        assertEquals(33, scripts.size(), "SQL Server 应有 33 个迁移脚本");
 
         String schema = Files.readString(dir.resolve("V0.2.0__baseline_seed.sql"), StandardCharsets.UTF_8);
         String upper = schema.toUpperCase(Locale.ROOT);

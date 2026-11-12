@@ -34,6 +34,23 @@ public interface AgentGraphExecutionService {
     AgentGraphExecuteRespDTO execute(Long graphDefId, String input);
 
     /**
+     * 执行一次已发布图（G1-4 结构化入参/出参）。
+     * <p>
+     * {@code inputs} 为开始节点参数名 → 值；缺必填参数时在执行记录落库前以
+     * {@code success=false} + 明确参数名返回。出参按 END 节点 outputs 声明解析
+     * （source = nodeId.var 或全局变量名）。
+     * </p>
+     *
+     * @param graphDefId 图定义 id
+     * @param input      旧契约文本入参（可为 null/空白，此时以 inputs 为准）
+     * @param inputs     结构化入参（null/空 = 旧契约路径）
+     */
+    default AgentGraphExecuteRespDTO execute(Long graphDefId, String input,
+                                             java.util.Map<String, String> inputs) {
+        return execute(graphDefId, input);
+    }
+
+    /**
      * 执行历史列表（Step12，分页，create_time 倒序；可按图定义过滤）。
      * 租户隔离经租户拦截器自动生效；不做用户级过滤（设计器/运维视角的租户内全部执行）。
      */

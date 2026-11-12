@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Oracle 21c XE 启动冒烟（未配置 {@code oracle.url} 时跳过）。
  * <p>
  * 前置：先运行 {@link com.sw.ck.bootstrap.migration.FlywayFullChainOracleTest} 让目标 schema
- * 完成 31 条迁移。本测试启动完整应用，断言 Flyway 零新增、MyBatis、中文、CLOB、分页与
+ * 完成 32 条迁移。本测试启动完整应用，断言 Flyway 零新增、MyBatis、中文、CLOB、分页与
  * Flowable 建表可用。
  * </p>
  */
@@ -103,7 +103,7 @@ class OracleBootSmokeTest {
     void smoke() throws Exception {
         Integer migrations = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM \"flyway_schema_history\" WHERE \"success\" = 1", Integer.class);
-        assertThat(migrations).isEqualTo(31);
+        assertThat(migrations).isEqualTo(32);
         String version = jdbc.queryForObject(
                 "SELECT \"version\" FROM \"flyway_schema_history\" WHERE \"success\" = 1 "
                         + "AND \"version\" IS NOT NULL ORDER BY \"installed_rank\" DESC "
