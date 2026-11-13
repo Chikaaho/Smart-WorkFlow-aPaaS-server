@@ -4,7 +4,7 @@
 
 Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端服务（Java 21 / Spring Boot 3.4）。CH-aPaaS 是一个可以自己搭建业务应用的低代码平台：把业务做成表单和流程，就能在工作台上发起、审批和跟进；在这个基础上，还带 AI 智能体、设备接入和消息通知。
 
-![Version](https://img.shields.io/badge/version-1.0.0-2563EB)
+![Version](https://img.shields.io/badge/version-1.1.0-2563EB)
 ![License](https://img.shields.io/badge/license-MIT-2563EB)
 ![Java](https://img.shields.io/badge/Java-21-6DB33F)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-6DB33F)
