@@ -201,12 +201,14 @@ class AgentHumanTaskLifecycleTest {
         when(graphDefMapper.selectById(21L)).thenReturn(graph);
         CountDownLatch resumed = new CountDownLatch(1);
         when(executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
+                .thenAnswer(inv -> successOutcome());
+        // CI 稳定性：闩锁挂在 finish 上——恢复线程在 runLifecycle 返回后还要走 finish 收尾，
+        // 若在 runLifecycle 处放行，verify(finish) 与异步收尾存在竞态（本地快、runner 慢时必现）。
+        when(requestMapper.finish(eq(5L), eq("SUCCESS"), any(), any(), eq(901L), anyLong(), any()))
                 .thenAnswer(inv -> {
                     resumed.countDown();
-                    return successOutcome();
+                    return 1;
                 });
-        when(requestMapper.finish(eq(5L), eq("SUCCESS"), any(), any(), eq(901L), anyLong(), any()))
-                .thenReturn(1);
 
         LoginUser user = new LoginUser();
         user.setUserId(1L);
@@ -341,11 +343,14 @@ class AgentHumanTaskLifecycleTest {
                     AgentGraphExecutionService.ExecutionOutcome outcome = successOutcome();
                     outcome.executionId = 900L;
                     outcome.response.setExecutionId(900L);
-                    resumed.countDown();
                     return outcome;
                 });
+        // 闩锁挂在 finish 上，保证 verify(finish) 前异步收尾已完成（同 CI flake 修复）
         when(requestMapper.finish(eq(5L), eq("SUCCESS"), any(), any(), eq(900L), anyLong(), any()))
-                .thenReturn(1);
+                .thenAnswer(inv -> {
+                    resumed.countDown();
+                    return 1;
+                });
         when(executionService.getExecution(900L))
                 .thenReturn(new com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO());
 
