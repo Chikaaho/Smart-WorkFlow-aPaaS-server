@@ -49,6 +49,12 @@ public class BpmInstance extends BaseEntity {
     private Long initiatorId;
 
     /**
+     * 流程定义名称（G4-3：监控页展示用，按 processDefKey 运行时解析；不落库）。
+     */
+    @TableField(exist = false)
+    private String processDefName;
+
+    /**
      * 实例状态：RUNNING / APPROVED / REJECTED / FAILED / WITHDRAWN / DISCARDED。
      * <p>
      * 落库 VARCHAR，接收入 {@link InstanceStatusEnum#getCode()}。

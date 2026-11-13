@@ -61,18 +61,19 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.selectById(12L)).thenAnswer(inv -> current.get());
         when(f.requestMapper.updateById(any(AgentGraphExecutionRequest.class))).thenReturn(1);
         when(f.requestMapper.requestRunningCancellation(12L)).thenAnswer(inv -> { current.set(requested); return 1; });
-        when(f.requestMapper.finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong())).thenAnswer(inv -> { current.set(request(12L, "CANCELLED")); return 1; });
+        when(f.requestMapper.finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong(), any())).thenAnswer(inv -> { current.set(request(12L, "CANCELLED")); return 1; });
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         AtomicInteger sideEffects = new AtomicInteger();
-        when(f.executionService.execute(21L, "input")).thenAnswer(inv -> {
-            sideEffects.incrementAndGet();
-            entered.countDown();
-            try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-            AgentGraphExecuteRespDTO dto = new AgentGraphExecuteRespDTO();
-            dto.setSuccess(true);
-            return dto;
-        });
+        when(f.executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
+                .thenAnswer(inv -> {
+                    sideEffects.incrementAndGet();
+                    entered.countDown();
+                    try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                    AgentGraphExecuteRespDTO dto = new AgentGraphExecuteRespDTO();
+                    dto.setSuccess(true);
+                    return outcome(dto);
+                });
 
         Thread worker = Thread.ofVirtual().start(() -> invokeRun(12L));
         assertThat(entered.await(30, TimeUnit.SECONDS)).isTrue();
@@ -84,7 +85,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
 
         assertThat(worker.isAlive()).isFalse();
         assertThat(sideEffects).hasValue(1);
-        verify(f.requestMapper, times(1)).finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong());
+        verify(f.requestMapper, times(1)).finish(eq(12L), eq("CANCELLED"), any(), any(), any(), anyLong(), any());
     }
 
     @Test
@@ -102,7 +103,8 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.selectById(anyLong())).thenReturn(request(30L, "RUNNING"));
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(f.executionService.execute(anyLong(), any())).thenAnswer(inv -> {
+        when(f.executionService.runLifecycle(anyLong(), any(), any(), any(), any(), any(), any()))
+                .thenAnswer(inv -> {
             entered.countDown(); release.await(30, TimeUnit.SECONDS);
             return new AgentGraphExecuteRespDTO();
         });
@@ -140,10 +142,11 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         when(f.requestMapper.transition(13L, "QUEUED", "RUNNING")).thenReturn(1);
         when(f.requestMapper.selectById(13L)).thenReturn(queued, request(13L, "RUNNING"), request(13L, "SUCCESS"));
         when(f.requestMapper.updateById(any(AgentGraphExecutionRequest.class))).thenReturn(1);
-        when(f.requestMapper.finish(eq(13L), eq("SUCCESS"), any(), any(), any(), anyLong())).thenReturn(1);
+        when(f.requestMapper.finish(eq(13L), eq("SUCCESS"), any(), any(), any(), anyLong(), any())).thenReturn(1);
         CountDownLatch executed = new CountDownLatch(1);
         AtomicInteger sideEffects = new AtomicInteger();
-        when(f.executionService.execute(21L, "input")).thenAnswer(inv -> {
+        when(f.executionService.runLifecycle(eq(21L), eq(1), eq("input"), any(), any(), any(), any()))
+                .thenAnswer(inv -> {
             sideEffects.incrementAndGet(); executed.countDown();
             AgentGraphExecuteRespDTO dto = new AgentGraphExecuteRespDTO(); dto.setSuccess(true); return dto;
         });
@@ -152,7 +155,8 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         assertThat(executed.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(sideEffects).hasValue(1);
         verify(f.requestMapper, times(1)).update(isNull(), any());
-        verify(f.executionService, times(1)).execute(21L, "input");
+        verify(f.executionService, times(1)).runLifecycle(eq(21L), eq(1), eq("input"),
+                any(), any(), any(), any());
     }
 
     private Fixture fixture() {
@@ -165,16 +169,28 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
                 AgentGraphExecutionRequest.class);
         AgentGraphExecutionRequestMapper requests = mock(AgentGraphExecutionRequestMapper.class);
         AgentGraphExecutionEventMapper events = mock(AgentGraphExecutionEventMapper.class);
+        com.sw.ck.agent.mapper.AgentGraphExecutionMapper execRows =
+                org.mockito.Mockito.mock(com.sw.ck.agent.mapper.AgentGraphExecutionMapper.class);
+        com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper humanTasks =
+                mock(com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper.class);
         AgentGraphDefMapper graphs = mock(AgentGraphDefMapper.class);
         AgentGraphExecutionService executions = mock(AgentGraphExecutionService.class);
         LoginContextProvider login = mock(LoginContextProvider.class);
         when(login.getUserId()).thenReturn(1L);
         PlatformTransactionManager tx = mock(PlatformTransactionManager.class);
         service = new AgentGraphExecutionLifecycleServiceImpl(
-                requests, events, graphs, executions, login, tx,
+                requests, events, humanTasks, execRows, graphs, executions, login, tx,
                 org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class),
                 workers, queueCapacity);
         return new Fixture(requests, events, graphs, executions);
+    }
+
+    private static AgentGraphExecutionService.ExecutionOutcome outcome(AgentGraphExecuteRespDTO dto) {
+        AgentGraphExecutionService.ExecutionOutcome outcome =
+                new AgentGraphExecutionService.ExecutionOutcome();
+        outcome.response = dto;
+        outcome.executionId = 9001L;
+        return outcome;
     }
 
     private AgentGraphExecutionRequest request(long id, String status) {

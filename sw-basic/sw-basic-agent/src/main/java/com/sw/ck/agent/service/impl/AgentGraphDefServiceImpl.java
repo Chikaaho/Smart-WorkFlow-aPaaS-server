@@ -67,6 +67,143 @@ public class AgentGraphDefServiceImpl
         this.snapshotService = snapshotService;
     }
 
+    // ==================== G3 发布校验 ====================
+
+    /** 人工节点：必须配置处理人、字段名称非空唯一、按钮关键词唯一且与出边关键词对应。 */
+    private void validateHumanNodes(ProcessGraph graph) {
+        for (GraphElement element : graph.getElements()) {
+            if (!"node".equals(element.getKind())
+                    || !"HUMAN".equals(element.getType())) {
+                continue;
+            }
+            Map<String, Object> config = element.getConfig() == null
+                    ? Map.of() : element.getConfig();
+            Object users = config.get("assigneeUserIds");
+            Object roles = config.get("assigneeRoleCodes");
+            boolean hasUsers = users instanceof List<?> list && !list.isEmpty();
+            boolean hasRoles = roles instanceof List<?> list && !list.isEmpty();
+            if (!hasUsers && !hasRoles) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "人工节点必须配置处理人: " + element.getId());
+            }
+            java.util.Set<String> fieldNames = new java.util.HashSet<>();
+            if (config.get("fields") instanceof List<?> fields) {
+                for (Object item : fields) {
+                    if (!(item instanceof Map<?, ?> field)) continue;
+                    String name = field.get("name") == null ? ""
+                            : String.valueOf(field.get("name")).trim();
+                    if (name.isEmpty()) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "人工节点字段名称不能为空: " + element.getId());
+                    }
+                    if (!fieldNames.add(name)) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "人工节点字段名称重复: " + name);
+                    }
+                }
+            }
+            java.util.Set<String> edgeKeywords = new java.util.HashSet<>();
+            for (GraphElement edge : graph.getElements()) {
+                if (!"edge".equals(edge.getKind())
+                        || !element.getId().equals(edge.getSource())) continue;
+                Object keyword = edge.getConfig() == null ? null : edge.getConfig().get("keyword");
+                if (keyword != null && !String.valueOf(keyword).isBlank()) {
+                    edgeKeywords.add(String.valueOf(keyword).trim());
+                }
+            }
+            java.util.Set<String> buttonKeywords = new java.util.HashSet<>();
+            int buttons = 0;
+            if (config.get("buttons") instanceof List<?> list) {
+                for (Object item : list) {
+                    if (!(item instanceof Map<?, ?> button)) continue;
+                    String keyword = button.get("keyword") == null ? ""
+                            : String.valueOf(button.get("keyword")).trim();
+                    if (keyword.isEmpty()) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "人工节点决策按钮缺少关键词: " + element.getId());
+                    }
+                    if (!buttonKeywords.add(keyword)) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "人工节点决策按钮关键词重复: " + keyword);
+                    }
+                    buttons++;
+                    if (!edgeKeywords.contains(keyword)) {
+                        throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                                "人工节点决策按钮未连接到出边: " + keyword);
+                    }
+                }
+            }
+            if (buttons == 0) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "人工节点必须配置决策按钮: " + element.getId());
+            }
+            Object timeoutKeyword = config.get("timeoutKeyword");
+            if (timeoutKeyword != null && !String.valueOf(timeoutKeyword).isBlank()
+                    && !edgeKeywords.contains(String.valueOf(timeoutKeyword).trim())) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "人工节点超时分支关键词未连接到出边: " + timeoutKeyword);
+            }
+        }
+    }
+
+    /** 子图节点：引用已发布图、固定版本、无引用环、嵌套深度 ≤ 3。 */
+    private void validateSubgraphNodes(ProcessGraph graph, Long currentDefId, int depth,
+                                       java.util.Set<Long> chain) {
+        java.util.Set<Long> nextChain = new java.util.HashSet<>(chain);
+        if (currentDefId != null) nextChain.add(currentDefId);
+        for (GraphElement element : graph.getElements()) {
+            if (!"node".equals(element.getKind())
+                    || !"SUBGRAPH".equals(element.getType())) {
+                continue;
+            }
+            Map<String, Object> config = element.getConfig() == null
+                    ? Map.of() : element.getConfig();
+            Long subId = longValue(config.get("graphDefId"));
+            Integer version = intValue(config.get("graphDefVersion"));
+            if (subId == null || version == null) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "子图节点必须绑定已发布图与固定版本: " + element.getId());
+            }
+            if (nextChain.contains(subId)) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "子图引用存在环: " + subId);
+            }
+            if (depth + 1 > 3) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "子图嵌套深度超过上限 3: " + element.getId());
+            }
+            AgentGraphDef child = getBaseMapper().selectById(subId);
+            if (child == null || !STATUS_PUBLISHED.equals(child.getStatus())) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "子图未发布或不存在: " + subId);
+            }
+            ProcessGraph childGraph = snapshotService.loadGraphByVersion(child, version);
+            if (childGraph == null) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "子图版本快照不存在: " + subId + " v" + version);
+            }
+            validateHumanNodes(childGraph);
+            validateSubgraphNodes(childGraph, child.getId(), depth + 1, nextChain);
+        }
+    }
+
+    private Long longValue(Object value) {
+        if (value instanceof Number number) return number.longValue();
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Long.parseLong(text.trim());
+            } catch (NumberFormatException ignore) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Integer intValue(Object value) {
+        Long parsed = longValue(value);
+        return parsed == null ? null : parsed.intValue();
+    }
+
     // ==================== 创建 ====================
 
     @Override
@@ -153,6 +290,10 @@ public class AgentGraphDefServiceImpl
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "graphKey 已冻结，不可变更");
             }
         }
+
+        // —— ②b G3 节点配置校验：人工节点处理人/按钮/字段，子图引用环与嵌套深度 ——
+        validateHumanNodes(graph);
+        validateSubgraphNodes(graph, entity.getId(), 0, new java.util.HashSet<>());
 
         // —— ③ 版本递增 + 状态（版本递增取 sw-biz-form 语义：每次发布 +1） ——
         entity.setDefVersion(entity.getDefVersion() == null ? 1 : entity.getDefVersion() + 1);

@@ -107,7 +107,9 @@ class AgentGraphInterpreterTest {
         }).when(modelRuntimeService).chatStreamingWithRotation(eq(9L), anyList(), any(), any());
 
         List<String> delivered = new java.util.concurrent.CopyOnWriteArrayList<>();
-        AgentExecutionEventContext.set((type, payload) -> delivered.add(type + ":" + payload));
+        AgentExecutionEventContext.set((type, nodeId, payload) -> {
+            if ("MODEL_DELTA".equals(type)) delivered.add(type + ":" + payload);
+        });
         try {
             String output = interpreter(10).run(graphOf(
                     node("node_start", "START", Map.of()),

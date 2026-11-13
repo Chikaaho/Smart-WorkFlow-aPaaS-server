@@ -32,7 +32,7 @@ class KingbasePostgresParityTest {
         Set<String> pgFiles = sqlFiles(pg);
         Set<String> kbFiles = sqlFiles(kb);
         assertEquals(pgFiles, kbFiles, "Kingbase 与 PostgreSQL 脚本文件名必须一致");
-        assertEquals(31, kbFiles.size(), "迁移脚本应为 31 条");
+        assertEquals(32, kbFiles.size(), "迁移脚本应为 32 条");
 
         for (String file : pgFiles) {
             String pgSql = Files.readString(pg.resolve(file), StandardCharsets.UTF_8);

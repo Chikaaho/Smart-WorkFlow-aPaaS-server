@@ -45,6 +45,9 @@ public class JavaSubprocessExecutor {
 
     private static final Pattern CLASS_NAME = Pattern.compile("public\\s+class\\s+(\\w+)");
     private static final long CHILD_XMX_MB = 128;
+
+    /** G4-4：子进程正常退出后等待 RPC 读取线程收尾的有界时长（毫秒）。 */
+    private static final long OUTPUT_WAIT_MILLIS = 2000;
     private static final String SECURITY_POLICY = """
             // 受控脚本子进程最小权限策略：仅允许读取自身类目录与只读系统属性
             grant {
@@ -135,7 +138,15 @@ public class JavaSubprocessExecutor {
                 return ScriptRunResult.failure(detail,
                         System.currentTimeMillis() - begin, host.getLogs());
             }
-            return ScriptRunResult.success(outcome[0],
+            // G4-4：子进程正常退出后，RPC 读取线程可能尚未读到 RESULT 行（原竞态：
+            // 主线程先醒、outcome 仍为 null → 曾出现「成功但输出为空」并致测试空指针）。
+            // 有界等待读取线程收尾；仍未拿到结果按明确失败返回，不允许 SUCCESS+null。
+            String output = awaitChildOutput(outcome, rpcThread);
+            if (output == null) {
+                return ScriptRunResult.failure("子进程未返回输出",
+                        System.currentTimeMillis() - begin, host.getLogs());
+            }
+            return ScriptRunResult.success(output,
                     System.currentTimeMillis() - begin, host.getLogs());
         } catch (Exception e) {
             if (process != null && process.isAlive()) {
@@ -178,6 +189,21 @@ public class JavaSubprocessExecutor {
 
     // ---------------- RPC ----------------
 
+    /**
+     * G4-4：子进程正常退出后有界等待 RPC 读取线程收尾，返回读取到的结果 JSON
+     * （线程已结束/超时仍未读到 → null，由调用方按明确失败处理）。
+     */
+    String awaitChildOutput(String[] outcome, Thread rpcThread) {
+        if (rpcThread != null && rpcThread.isAlive()) {
+            try {
+                rpcThread.join(OUTPUT_WAIT_MILLIS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return outcome[0];
+    }
+
     private void handleRpcLoop(Process process, ScriptHostFunctions host, String[] outcome)
             throws IOException {
         BufferedReader stdout = new BufferedReader(
@@ -208,8 +234,7 @@ public class JavaSubprocessExecutor {
         }
     }
 
-    private String drainStderr(Process process) {
-        try {
+    private String drainStderr(Process process) {        try {
             byte[] bytes = process.getErrorStream().readAllBytes();
             String text = new String(bytes, StandardCharsets.UTF_8).trim();
             return text.isEmpty() ? "脚本子进程异常退出" : truncate(text, 500);

@@ -21,7 +21,7 @@ class MariaDbSeedMigrationTest {
     private static final String DATABASE = "swmdb_mariadb_seed";
 
     @Test
-    @DisplayName("空库执行 31 条 MariaDB 迁移，保留库供 SeedComparisonTest 比对")
+    @DisplayName("空库执行 32 条 MariaDB 迁移，保留库供 SeedComparisonTest 比对")
     void migrateSeedDatabase() throws Exception {
         String url = System.getProperty("mariadb.url");
         Assumptions.assumeTrue(url != null && !url.isBlank(),
@@ -50,6 +50,6 @@ class MariaDbSeedMigrationTest {
                 .locations("classpath:db/migration/mariadb")
                 .load()
                 .migrate();
-        assertThat(result.migrationsExecuted).isEqualTo(31);
+        assertThat(result.migrationsExecuted).isEqualTo(32);
     }
 }

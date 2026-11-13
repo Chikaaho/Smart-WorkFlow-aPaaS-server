@@ -34,7 +34,7 @@ class DmOracleScriptParityTest {
         Set<String> oracleFiles = sqlFiles(oracle);
         Set<String> dmFiles = sqlFiles(dm);
         assertEquals(oracleFiles, dmFiles, "DM 与 Oracle 脚本文件名必须一致");
-        assertEquals(31, dmFiles.size(), "迁移脚本应为 31 条");
+        assertEquals(32, dmFiles.size(), "迁移脚本应为 32 条");
 
         int charUnits = 0;
         for (String file : oracleFiles) {
