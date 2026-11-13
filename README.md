@@ -14,7 +14,7 @@ Smart-WorkFlow-aPaaS-server 是 **CH-aPaaS** 的后端服务（Java 21 / Spring 
 
 ![智能体编排（Web 界面截图）](docs/assets/readme/agent-graph.png)
 
-配套前端：[Smart-WorkFlow-aPaaS-Web](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-Web)（当前 1.0.0，本服务 1.0.0）
+配套前端：[Smart-WorkFlow-aPaaS-Web](https://github.com/Chikaaho/Smart-WorkFlow-aPaaS-Web)（当前 1.1.1，本服务 1.1.0）
 
 ## 能做什么
 
