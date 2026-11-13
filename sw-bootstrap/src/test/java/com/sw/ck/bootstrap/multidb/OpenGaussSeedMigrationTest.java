@@ -24,7 +24,7 @@ class OpenGaussSeedMigrationTest {
     private static final String DATABASE = "swmdb_og_seed";
 
     @Test
-    @DisplayName("空库执行 31 条 openGauss 迁移，保留库供 SeedComparisonTest 比对")
+    @DisplayName("空库执行 32 条 openGauss 迁移，保留库供 SeedComparisonTest 比对")
     void migrateSeedDatabase() throws Exception {
         String url = System.getProperty("opengauss.url");
         Assumptions.assumeTrue(url != null && !url.isBlank(),
@@ -47,7 +47,7 @@ class OpenGaussSeedMigrationTest {
 
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sw_schema_history", Integer.class))
-                .isEqualTo(31);
+                .isEqualTo(32);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_tenant", Integer.class)).isEqualTo(4);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu", Integer.class)).isEqualTo(146);
     }

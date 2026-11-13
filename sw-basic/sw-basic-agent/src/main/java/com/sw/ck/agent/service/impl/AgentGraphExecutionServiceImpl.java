@@ -91,6 +91,15 @@ public class AgentGraphExecutionServiceImpl
     /** 执行记录状态：执行失败（运行时错误，含第三方异常） */
     private static final String STATUS_FAILED = "FAILED";
 
+    /** 人工节点等待中的执行记录状态（G3） */
+    private static final String STATUS_WAITING_HUMAN = "WAITING_HUMAN";
+
+    /** 人工等待被取消/子图取消时的执行记录状态 */
+    private static final String STATUS_CANCELLED = "CANCELLED";
+
+    /** 子图嵌套深度上限（G3-5） */
+    private static final int MAX_SUBGRAPH_DEPTH = 3;
+
     /** 图级执行超时默认值（秒，与 V0.2.3 列默认一致） */
     private static final int DEFAULT_EXECUTION_TIMEOUT_SECONDS = 300;
 
@@ -140,15 +149,156 @@ public class AgentGraphExecutionServiceImpl
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public AgentGraphExecuteRespDTO execute(Long graphDefId, String input) {
-        // 参数校验（对齐 F01 run() 校验惯例：Service 层手动校验）
-        if (input == null || input.isBlank()) {
-            throw new BaseException(CommonErrorCode.PARAM_ERROR, "input 不能为空");
+        return execute(graphDefId, input, null);
+    }
+
+    /** G1-4 END outputs 解析：source=nodeId.var 取节点作用域输出，否则取全局变量。 */
+    private java.util.Map<String, String> resolveOutputs(ProcessGraph graph,
+                                                         AgentGraphInterpreter interpreter) {
+        java.util.Map<String, String> outputs = new java.util.LinkedHashMap<>();
+        for (GraphElement element : graph.getElements()) {
+            if (!"node".equals(element.getKind())
+                    || !AgentGraphInterpreter.NODE_TYPE_END.equals(element.getType())) {
+                continue;
+            }
+            Object raw = element.getConfig() == null ? null
+                    : element.getConfig().get(AgentGraphInterpreter.CONFIG_KEY_OUTPUT_PARAMS);
+            if (!(raw instanceof List<?> params)) continue;
+            for (Object item : params) {
+                if (!(item instanceof java.util.Map<?, ?> param)) continue;
+                String name = param.get("name") == null ? ""
+                        : String.valueOf(param.get("name")).trim();
+                String source = param.get("source") == null ? ""
+                        : String.valueOf(param.get("source")).trim();
+                if (name.isEmpty() || source.isEmpty()) continue;
+                String value;
+                int dot = source.indexOf('.');
+                if (dot > 0) {
+                    value = interpreter.getNodeOutputVariables(source.substring(0, dot))
+                            .get(source.substring(dot + 1));
+                } else {
+                    value = interpreter.getFinalVariables().get(source);
+                }
+                if (value != null) {
+                    outputs.put(name, value);
+                }
+            }
         }
-        // NOT_FOUND（selectById 经租户拦截器自动过滤 tenant_id，同 Step7 requireEntity）
+        return outputs;
+    }
+
+    @Override
+    public com.sw.ck.agent.dto.AgentNodeRunRespDTO runNode(Long graphDefId, String nodeId,
+                                                           java.util.Map<String, String> inputs) {
         AgentGraphDef entity = requireEntity(graphDefId);
-        // 执行只认发布版本（草稿不可执行，对齐"发布版本是执行引用的稳定锚点"）
+        if (!STATUS_PUBLISHED.equals(entity.getStatus())) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "图未发布，无法运行节点");
+        }
+        ProcessGraph graph = snapshotService.loadPublishedGraph(entity);
+        GraphElement target = graph == null || graph.getElements() == null ? null
+                : graph.getElements().stream()
+                        .filter(el -> "node".equals(el.getKind()) && nodeId != null
+                                && nodeId.equals(el.getId()))
+                        .findFirst().orElse(null);
+        if (target == null) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "节点不存在: " + nodeId);
+        }
+        String type = target.getType();
+        boolean runnable = AgentGraphInterpreter.NODE_TYPE_LLM.equals(type)
+                || AgentGraphInterpreter.NODE_TYPE_TOOL.equals(type)
+                || AgentGraphInterpreter.NODE_TYPE_KNOWLEDGE.equals(type);
+        if (!runnable) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "该节点类型不支持单独运行");
+        }
+        validateForExecution(graph);
+        String outputVar = resolveOutputVar(target);
+        ProcessGraph debugGraph = ProcessGraph.builder()
+                .graphKey("debug-single-node")
+                .name("debug-single-node")
+                .version(entity.getDefVersion())
+                .elements(java.util.List.of(
+                        GraphElement.builder().id("debug-start").kind("node")
+                                .type(AgentGraphInterpreter.NODE_TYPE_START)
+                                .config(java.util.Map.of()).build(),
+                        target,
+                        GraphElement.builder().id("debug-end").kind("node")
+                                .type(AgentGraphInterpreter.NODE_TYPE_END)
+                                .config(java.util.Map.of(
+                                        AgentGraphInterpreter.CONFIG_KEY_INPUT_VAR, outputVar))
+                                .build(),
+                        GraphElement.builder().id("debug-e1").kind("edge")
+                                .source("debug-start").target(nodeId).build(),
+                        GraphElement.builder().id("debug-e2").kind("edge")
+                                .source(nodeId).target("debug-end").build()))
+                .canvas(java.util.Map.of())
+                .build();
+        AgentGraphInterpreter interpreter = new AgentGraphInterpreter(modelRuntimeService,
+                agentToolCallbackFactory, knowledgeRetrievalService,
+                loginContextProvider.getTenantId(),
+                Math.max(8, graph.getElements().size() * 2));
+        long start = System.currentTimeMillis();
+        com.sw.ck.agent.dto.AgentNodeRunRespDTO resp = new com.sw.ck.agent.dto.AgentNodeRunRespDTO();
+        try {
+            String output = interpreter.run(debugGraph,
+                    inputs == null ? java.util.Map.of() : inputs);
+            resp.setSuccess(true);
+            resp.setStatus("SUCCESS");
+            resp.setOutput(output);
+        } catch (RuntimeException failure) {
+            resp.setSuccess(false);
+            resp.setStatus("FAILED");
+            resp.setErrorMessage(summarizeError(failure));
+        }
+        resp.setLatencyMs(System.currentTimeMillis() - start);
+        return resp;
+    }
+
+    /** 节点输出变量名（config.outputVar，缺省默认变量）。 */
+    private String resolveOutputVar(GraphElement node) {
+        Object configured = node.getConfig() == null ? null
+                : node.getConfig().get(AgentGraphInterpreter.CONFIG_KEY_OUTPUT_VAR);
+        return configured instanceof String s && !s.isBlank()
+                ? s : AgentGraphInterpreter.DEFAULT_VARIABLE_NAME;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public AgentGraphExecuteRespDTO execute(Long graphDefId, String input,
+                                            java.util.Map<String, String> inputs) {
+        AgentGraphDef entity = requireEntity(graphDefId);
+        ProcessGraph graph = requireExecutableGraph(entity);
+        validateForExecution(graph);
+        ExecutionOutcome outcome = runInternal(entity, entity.getDefVersion(), input, inputs,
+                null, null, 0, new java.util.HashSet<>(), null);
+        if (outcome.pauseState != null) {
+            // 同步接口不支持人工等待：把本次执行标为失败并给出明确原因
+            markExecutionFailed(outcome.executionId, AgentGraphInterpreter.ERROR_CATEGORY_HUMAN_PAUSE,
+                    "运行到人工节点，需通过异步执行与运行页处理");
+            AgentGraphExecuteRespDTO resp = outcome.response;
+            resp.setSuccess(false);
+            resp.setErrorMessage("运行到人工节点，需通过异步执行与运行页处理");
+            return resp;
+        }
+        return outcome.response;
+    }
+
+    @Override
+    public ExecutionOutcome runLifecycle(Long graphDefId, Integer graphDefVersion, String input,
+                                         java.util.Map<String, String> inputs,
+                                         AgentGraphInterpreter.PauseState resumeState,
+                                         java.util.List<AgentGraphInterpreter.HumanDecision> decisions,
+                                         Long resumeExecutionId) {
+        AgentGraphDef entity = requireEntity(graphDefId);
+        Integer version = graphDefVersion == null ? entity.getDefVersion() : graphDefVersion;
+        ProcessGraph graph = graphByVersion(entity, version);
+        validateForExecution(graph);
+        return runInternal(entity, version, input, inputs, resumeState, decisions, 0,
+                new java.util.HashSet<>(), resumeExecutionId);
+    }
+
+    /** 校验可执行：已发布 + 图数据非空（快照按当前版本）。 */
+    private ProcessGraph requireExecutableGraph(AgentGraphDef entity) {
         if (!STATUS_PUBLISHED.equals(entity.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图未发布，无法执行");
         }
@@ -157,29 +307,74 @@ public class AgentGraphExecutionServiceImpl
         if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图数据为空，无法执行");
         }
-        // 执行前校验（§2-D）：任一失败即 PARAM_ERROR，不做部分执行；返回校验通过的
-        // 模型配置映射（LLM 节点执行数据，解释器直接消费）。校验失败发生在执行阶段
-        // 之前 → 不产生执行历史记录（对齐 F04"配置非法不落脏数据"先例）
-        validateForExecution(graph);
+        return graph;
+    }
 
-        // —— Step12 执行历史：进入执行阶段即建 RUNNING 记录（成功/失败两路径均落库） ——
-        AgentGraphExecution exec = new AgentGraphExecution();
-        exec.setGraphDefId(entity.getId());
-        exec.setGraphDefVersion(entity.getDefVersion());
-        exec.setStatus(STATUS_RUNNING);
-        exec.setInput(input);
-        executionMapper.insert(exec);
+    /** 按固定版本读取图快照（G3：恢复执行与子图绑定固定 defVersion）。 */
+    private ProcessGraph graphByVersion(AgentGraphDef entity, Integer defVersion) {
+        if (!STATUS_PUBLISHED.equals(entity.getStatus())) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "图未发布，无法执行");
+        }
+        ProcessGraph graph = snapshotService.loadGraphByVersion(entity, defVersion);
+        if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "图数据为空，无法执行");
+        }
+        return graph;
+    }
 
-        // Step11 死循环防护预算（方案 §2.3）：maxSteps = 2 × 节点数 +
-        // Σ(maxIterations of 所有 LOOP 节点) × 节点数。LOOP config 缺省 maxIterations
-        // 用 DEFAULT_MAX_ITERATIONS 参与预算；无 LOOP 时退化为现状 2 × 节点数（回归
-        // 安全）。给显式循环留足预算（近似最坏情况：每个循环跑满配置次数 × 全图节点
-        // 数），避免"循环刚跑 1-2 次被误判死循环"；意外死循环 / JOIN 挂起死锁仍由
-        // 全局兜底统一拦截（执行步数超限）。
+    /** 同步路径人工暂停：已创建的等待执行记录按失败收尾，避免悬挂等待。 */
+    private void markExecutionFailed(Long executionId, String category, String message) {
+        if (executionId == null) return;
+        AgentGraphExecution exec = executionMapper.selectById(executionId);
+        if (exec == null) return;
+        exec.setStatus(STATUS_FAILED);
+        exec.setErrorCategory(category);
+        exec.setErrorMessage(message);
+        executionMapper.updateById(exec);
+    }
+
+    /**
+     * 执行核心（G3）：建执行记录 → 解释执行（支持恢复状态/人工决策/子图运行器）→
+     * 终态回写与节点轨迹落库。人工节点暂停时返回携带暂停状态与任务定义的结果，
+     * 不写终态（执行记录保持 WAITING_HUMAN，由生命周期服务接续）。
+     */
+    private ExecutionOutcome runInternal(AgentGraphDef entity, Integer defVersion, String input,
+                                         java.util.Map<String, String> inputs,
+                                         AgentGraphInterpreter.PauseState resumeState,
+                                         java.util.List<AgentGraphInterpreter.HumanDecision> decisions,
+                                         int depth, java.util.Set<Long> graphChain,
+                                         Long resumeExecutionId) {
+        boolean structured = inputs != null && !inputs.isEmpty();
+        if (resumeState == null && (input == null || input.isBlank()) && !structured) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "input 不能为空");
+        }
+        ProcessGraph graph = depth == 0 ? requireExecutableGraph(entity)
+                : graphByVersion(entity, defVersion);
+        if (depth == 0) {
+            validateForExecution(graph);
+        }
+        // V3（planning-review-110-02）：人工恢复复用暂停前的执行记录，暂停前后同一条执行
+        AgentGraphExecution exec = null;
+        boolean resumedExecution = false;
+        if (resumeExecutionId != null && depth == 0 && resumeState != null) {
+            exec = executionMapper.selectById(resumeExecutionId);
+            if (exec != null) {
+                resumedExecution = true;
+                exec.setStatus(STATUS_RUNNING);
+            }
+        }
+        if (exec == null) {
+            exec = new AgentGraphExecution();
+            exec.setGraphDefId(entity.getId());
+            exec.setGraphDefVersion(defVersion == null ? entity.getDefVersion() : defVersion);
+            exec.setStatus(STATUS_RUNNING);
+            exec.setInput(input == null ? "" : input);
+            executionMapper.insert(exec);
+        }
+        final AgentGraphExecution currentExec = exec;
+
         List<GraphElement> elements = graph.getElements();
-        int nodeCount = (int) elements.stream()
-                .filter(e -> "node".equals(e.getKind()))
-                .count();
+        int nodeCount = (int) elements.stream().filter(e -> "node".equals(e.getKind())).count();
         int loopBudget = 0;
         for (GraphElement element : elements) {
             if ("node".equals(element.getKind())
@@ -192,32 +387,56 @@ public class AgentGraphExecutionServiceImpl
                 agentToolCallbackFactory, knowledgeRetrievalService,
                 loginContextProvider.getTenantId(), maxSteps);
 
+        // V3 返修（planning-review-110-02 G3-4）：顶层新执行同样需要 subgraphRunner，
+        // 否则含子图节点的图在生命周期首跑必然报「子图运行器未配置」。恢复/决策/子调用
+        // 场景仅在字段取值上有差异，统一在此构建 RunOptions。
+        AgentGraphInterpreter.RunOptions options = new AgentGraphInterpreter.RunOptions();
+        options.resumeState = resumeState;
+        options.decisions = decisions == null ? java.util.List.of() : decisions;
+        options.depth = depth;
+        options.subgraphRunner = call -> runSubgraph(call, currentExec.getId(), depth, graphChain);
+
         long start = System.currentTimeMillis();
         AgentGraphExecuteRespDTO resp = new AgentGraphExecuteRespDTO();
         List<AgentGraphInterpreter.NodeExecutionTrace> traces;
         Throwable failure = null;
+        AgentGraphInterpreter.HumanPauseException pause = null;
         int timeoutSeconds = entity.getExecutionTimeoutSeconds() == null
                 ? DEFAULT_EXECUTION_TIMEOUT_SECONDS : entity.getExecutionTimeoutSeconds();
-        // 执行转移到工作线程后必须复制认证上下文：模型/工具运行时查询依赖租户拦截器
         com.sw.ck.security.holder.LoginUser loginUser =
                 com.sw.ck.security.holder.LoginUserHolder.get();
+        final AgentGraphInterpreter.RunOptions runOptions = options;
         java.util.concurrent.Future<String> future =
                 timeoutExecutor.submit(() -> {
                     if (loginUser != null) {
                         com.sw.ck.security.holder.LoginUserHolder.set(loginUser);
                     }
                     try {
-                        return interpreter.run(graph, input);
+                        // G1-4：结构化入参优先；无结构化入参走旧单文本契约（写入默认变量）
+                        java.util.Map<String, String> effectiveInputs = structured
+                                ? inputs
+                                : java.util.Map.of(AgentGraphInterpreter.DEFAULT_VARIABLE_NAME, input == null ? "" : input);
+                        return interpreter.run(graph, effectiveInputs, runOptions);
                     } finally {
                         com.sw.ck.security.holder.LoginUserHolder.clear();
                     }
                 });
         try {
-            // 阶段 2：图级执行超时。超时后取消工作线程，主线程仍完成 RUNNING→FAILED 收尾
             String output = future.get(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
             resp.setSuccess(true);
             resp.setOutput(output);
             traces = interpreter.getTraces();
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            traces = interpreter.getTraces();
+            if (cause instanceof AgentGraphInterpreter.HumanPauseException humanPause) {
+                pause = humanPause;
+                resp.setSuccess(false);
+            } else {
+                failure = cause;
+                resp.setSuccess(false);
+                resp.setErrorMessage(summarizeError(failure));
+            }
         } catch (java.util.concurrent.TimeoutException timeout) {
             future.cancel(true);
             failure = new AgentGraphInterpreter.GraphExecutionException(
@@ -225,14 +444,6 @@ public class AgentGraphExecutionServiceImpl
                     "图执行超时（超过 " + timeoutSeconds + " 秒）");
             resp.setSuccess(false);
             resp.setErrorMessage(failure.getMessage());
-            traces = interpreter.getTraces();
-        } catch (java.util.concurrent.ExecutionException e) {
-            // 运行时错误（GraphExecutionException / 模型或工具调用异常）：不上抛，
-            // success=false + 异常摘要（与 F01 run() success=false 语义一致）；
-            // 节点轨迹在解释器 catch 中已完整留痕，此处读取
-            failure = e.getCause() != null ? e.getCause() : e;
-            resp.setSuccess(false);
-            resp.setErrorMessage(summarizeError(failure));
             traces = interpreter.getTraces();
         } catch (InterruptedException e) {
             future.cancel(true);
@@ -246,17 +457,121 @@ public class AgentGraphExecutionServiceImpl
         resp.setLatencyMs(latency);
         resp.setExecutionId(exec.getId());
 
-        // —— 终态回写（成功/失败统一路径；DB 异常位于运行时 catch 之外，上抛不吞） ——
+        ExecutionOutcome outcome = new ExecutionOutcome();
+        outcome.response = resp;
+        outcome.executionId = exec.getId();
+        outcome.pauseState = pause == null ? null : pause.getPauseState();
+        outcome.humanTask = pause == null ? null : pause.getTaskSpec();
+        if (pause != null) {
+            // 暂停：执行记录保持等待态，轨迹落库；不写终态
+            exec.setStatus(STATUS_WAITING_HUMAN);
+            exec.setLatencyMs(latency);
+            executionMapper.updateById(exec);
+            persistNodeTraces(exec.getId(), traces, resumedExecution);
+            return outcome;
+        }
+
+        // G1-4：按 END 节点 outputs 声明解析结构化出参（成功路径；无声明为空 map）
+        if (resp.isSuccess()) {
+            resp.setOutputs(resolveOutputs(graph, interpreter));
+        }
         exec.setStatus(resp.isSuccess() ? STATUS_SUCCESS : STATUS_FAILED);
         exec.setResultText(resp.getOutput());
-        exec.setErrorCategory(failure == null ? null : classifyError(failure));
+        String errorCategory = failure == null ? null : classifyError(failure);
+        exec.setErrorCategory(errorCategory);
+        // X3：分类随响应返回，生命周期受理行与执行行保持同一分类（如 HUMAN_TIMEOUT）
+        resp.setErrorCategory(errorCategory);
         exec.setErrorMessage(resp.getErrorMessage());
         exec.setLatencyMs(latency);
         executionMapper.updateById(exec);
+        persistNodeTraces(exec.getId(), traces, resumedExecution);
+        return outcome;
+    }
 
-        // —— 节点级轨迹明细批量落库 ——
-        persistNodeTraces(exec.getId(), traces);
-        return resp;
+    /** G3-4/5：子图执行器（固定版本、父子执行记录关联、嵌套深度与引用链防环、取消透传）。 */
+    private AgentGraphInterpreter.SubgraphResult runSubgraph(AgentGraphInterpreter.SubgraphCall call,
+                                                             Long parentExecutionId, int depth,
+                                                             java.util.Set<Long> graphChain) {
+        if (depth + 1 > MAX_SUBGRAPH_DEPTH) {
+            throw new AgentGraphInterpreter.GraphExecutionException(
+                    AgentGraphInterpreter.ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "子图嵌套深度超过上限 " + MAX_SUBGRAPH_DEPTH);
+        }
+        if (graphChain.contains(call.graphDefId)) {
+            throw new AgentGraphInterpreter.GraphExecutionException(
+                    AgentGraphInterpreter.ERROR_CATEGORY_TOPOLOGY_INVALID,
+                    "检测到子图引用环: graphDefId=" + call.graphDefId);
+        }
+        AgentGraphDef child = requireEntity(call.graphDefId);
+        if (!STATUS_PUBLISHED.equals(child.getStatus())) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "子图未发布: " + call.graphDefId);
+        }
+        Integer version = call.graphDefVersion == null ? child.getDefVersion() : call.graphDefVersion;
+        ProcessGraph childGraph = snapshotService.loadGraphByVersion(child, version);
+        if (childGraph == null || childGraph.getElements() == null
+                || childGraph.getElements().isEmpty()) {
+            throw new BaseException(CommonErrorCode.PARAM_ERROR, "子图数据为空: " + call.graphDefId);
+        }
+        validateForExecution(childGraph);
+
+        AgentGraphExecution childExec = new AgentGraphExecution();
+        childExec.setGraphDefId(child.getId());
+        childExec.setGraphDefVersion(version);
+        childExec.setParentExecutionId(parentExecutionId);
+        childExec.setStatus(STATUS_RUNNING);
+        try {
+            childExec.setInput(objectMapper.writeValueAsString(call.inputs));
+        } catch (Exception ignored) {
+            childExec.setInput("{}");
+        }
+        executionMapper.insert(childExec);
+
+        int childNodeCount = (int) childGraph.getElements().stream()
+                .filter(e -> "node".equals(e.getKind())).count();
+        AgentGraphInterpreter childInterpreter = new AgentGraphInterpreter(modelRuntimeService,
+                agentToolCallbackFactory, knowledgeRetrievalService,
+                loginContextProvider.getTenantId(), Math.max(8, childNodeCount * 2));
+        AgentGraphInterpreter.RunOptions childOptions = new AgentGraphInterpreter.RunOptions();
+        childOptions.depth = depth + 1;
+        childOptions.resumeState = call.resumeState;
+        childOptions.decisions = call.decisions == null ? java.util.List.of() : call.decisions;
+        java.util.Set<Long> childChain = new java.util.HashSet<>(graphChain);
+        childChain.add(call.graphDefId);
+        childOptions.subgraphRunner = nested -> runSubgraph(nested, childExec.getId(), depth + 1,
+                childChain);
+
+        long start = System.currentTimeMillis();
+        try {
+            String output = childInterpreter.run(childGraph, call.inputs, childOptions);
+            long latency = System.currentTimeMillis() - start;
+            childExec.setStatus(STATUS_SUCCESS);
+            childExec.setResultText(output);
+            childExec.setLatencyMs(latency);
+            executionMapper.updateById(childExec);
+            persistNodeTraces(childExec.getId(), childInterpreter.getTraces());
+            AgentGraphInterpreter.SubgraphResult result = new AgentGraphInterpreter.SubgraphResult();
+            result.outputs = resolveOutputs(childGraph, childInterpreter);
+            result.childExecutionId = childExec.getId();
+            return result;
+        } catch (AgentGraphInterpreter.HumanPauseException pause) {
+            long latency = System.currentTimeMillis() - start;
+            childExec.setStatus(STATUS_WAITING_HUMAN);
+            childExec.setLatencyMs(latency);
+            executionMapper.updateById(childExec);
+            persistNodeTraces(childExec.getId(), childInterpreter.getTraces());
+            // 父执行通过异常链感知子图人工暂停（父级会合并自身暂停状态）
+            throw pause;
+        } catch (RuntimeException failure) {
+            long latency = System.currentTimeMillis() - start;
+            boolean cancelled = Thread.currentThread().isInterrupted();
+            childExec.setStatus(cancelled ? STATUS_CANCELLED : STATUS_FAILED);
+            childExec.setErrorCategory(cancelled ? "CANCELLED" : classifyError(failure));
+            childExec.setErrorMessage(cancelled ? "父执行取消，子执行一并取消" : summarizeError(failure));
+            childExec.setLatencyMs(latency);
+            executionMapper.updateById(childExec);
+            persistNodeTraces(childExec.getId(), childInterpreter.getTraces());
+            throw failure;
+        }
     }
 
     // ==================== 执行历史查询（Step12，只读端点） ====================
@@ -308,8 +623,31 @@ public class AgentGraphExecutionServiceImpl
      */
     private void persistNodeTraces(Long executionId,
                                    List<AgentGraphInterpreter.NodeExecutionTrace> traces) {
+        persistNodeTraces(executionId, traces, false);
+    }
+
+    private void persistNodeTraces(Long executionId,
+                                   List<AgentGraphInterpreter.NodeExecutionTrace> traces,
+                                   boolean resumed) {
         if (traces == null || traces.isEmpty()) {
             return;
+        }
+        // V3（planning-review-110-02）：恢复执行在同一执行记录上续写轨迹——
+        // 清掉暂停期遗留的 WAITING 行（人工节点在恢复轮会重新产生完成态记录），
+        // 新轨迹步序接在已有记录之后，保证轨迹从开始到结束完整连续。
+        int seqOffset = 0;
+        if (resumed) {
+            executionNodeMapper.delete(Wrappers.<AgentGraphExecutionNode>lambdaQuery()
+                    .eq(AgentGraphExecutionNode::getExecutionId, executionId)
+                    .eq(AgentGraphExecutionNode::getStatus, "WAITING"));
+            List<AgentGraphExecutionNode> lastSeq = executionNodeMapper.selectList(
+                    Wrappers.<AgentGraphExecutionNode>lambdaQuery()
+                            .eq(AgentGraphExecutionNode::getExecutionId, executionId)
+                            .orderByDesc(AgentGraphExecutionNode::getNodeSeq)
+                            .last("LIMIT 1"));
+            if (!lastSeq.isEmpty() && lastSeq.get(0).getNodeSeq() != null) {
+                seqOffset = lastSeq.get(0).getNodeSeq();
+            }
         }
         // M07-F04-02: 汇总 token 数据（每侧独立：无数据侧保持 null，不得写成 0——
         // 部分 usage 场景"输出未知"必须与"输出 0"区分，贯穿 DB→DTO）
@@ -317,14 +655,30 @@ public class AgentGraphExecutionServiceImpl
         long totalOutputTokens = 0;
         boolean hasInputData = false;
         boolean hasOutputData = false;
+        // V3：恢复执行时在既有汇总上累加，不覆盖暂停前的 token 统计
+        if (resumed) {
+            AgentGraphExecution existing = executionMapper.selectById(executionId);
+            if (existing != null) {
+                if (existing.getInputTokens() != null) {
+                    totalInputTokens += existing.getInputTokens();
+                    hasInputData = true;
+                }
+                if (existing.getOutputTokens() != null) {
+                    totalOutputTokens += existing.getOutputTokens();
+                    hasOutputData = true;
+                }
+            }
+        }
 
         for (AgentGraphInterpreter.NodeExecutionTrace trace : traces) {
             AgentGraphExecutionNode node = new AgentGraphExecutionNode();
             node.setExecutionId(executionId);
-            node.setNodeSeq((int) trace.getNodeSeq());
+            node.setNodeSeq(seqOffset + (int) trace.getNodeSeq());
             node.setBranchId(trace.getBranchId());
             node.setNodeId(trace.getNodeId());
             node.setNodeType(trace.getNodeType());
+            // G3-4：SUBGRAPH 节点持久化子执行 id，执行详情可跳转父子执行
+            node.setChildExecutionId(trace.getChildExecutionId());
             node.setNodeLatencyMs(trace.getNodeLatencyMs());
             node.setVariableSnapshot(toJson(trace.getVariableSnapshot()));
             // M07-F04-02: 设置 token 字段
@@ -438,6 +792,8 @@ public class AgentGraphExecutionServiceImpl
         dto.setBranchId(node.getBranchId());
         dto.setNodeId(node.getNodeId());
         dto.setNodeType(node.getNodeType());
+        // G3-4：子图节点子执行 id（父子执行详情跳转）
+        dto.setChildExecutionId(node.getChildExecutionId());
         dto.setNodeLatencyMs(node.getNodeLatencyMs());
         dto.setVariableSnapshot(node.getVariableSnapshot());
         // M07-F04-02: 添加 token 字段

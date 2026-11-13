@@ -34,6 +34,58 @@ public interface AgentGraphExecutionService {
     AgentGraphExecuteRespDTO execute(Long graphDefId, String input);
 
     /**
+     * 执行一次已发布图（G1-4 结构化入参/出参）。
+     * <p>
+     * {@code inputs} 为开始节点参数名 → 值；缺必填参数时在执行记录落库前以
+     * {@code success=false} + 明确参数名返回。出参按 END 节点 outputs 声明解析
+     * （source = nodeId.var 或全局变量名）。
+     * </p>
+     *
+     * @param graphDefId 图定义 id
+     * @param input      旧契约文本入参（可为 null/空白，此时以 inputs 为准）
+     * @param inputs     结构化入参（null/空 = 旧契约路径）
+     */
+    default AgentGraphExecuteRespDTO execute(Long graphDefId, String input,
+                                             java.util.Map<String, String> inputs) {
+        return execute(graphDefId, input);
+    }
+
+    /**
+     * 单节点运行（G1-8）：在已发布快照上单独执行一个 LLM/TOOL/KNOWLEDGE 节点。
+     * 调试语义——不修改图定义、不产生正式执行记录。
+     *
+     * @param graphDefId 图定义 id
+     * @param nodeId     目标节点 id
+     * @param inputs     调试变量表（变量名 → 值）
+     */
+    default com.sw.ck.agent.dto.AgentNodeRunRespDTO runNode(Long graphDefId, String nodeId,
+                                                            java.util.Map<String, String> inputs) {
+        throw new UnsupportedOperationException("当前实现不支持单节点运行");
+    }
+
+    /** 生命周期执行结果（G3）：普通终态或人工暂停（pauseState/humanTask 非空）。 */
+    class ExecutionOutcome {
+        public AgentGraphExecuteRespDTO response;
+        public com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState pauseState;
+        public com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanTaskSpec humanTask;
+        public Long executionId;
+    }
+
+    /**
+     * 生命周期执行入口（G3）：按固定版本快照执行，支持从人工暂停状态恢复与人工决策。
+     * 普通终态写执行记录终态；人工暂停返回 pauseState/humanTask 且执行记录保持等待态。
+     * {@code resumeExecutionId}（V3，planning-review-110-02）：恢复执行时复用暂停前的
+     * 执行记录 id，保证用户看到暂停前后是同一条执行；首次运行传 null。
+     */
+    default ExecutionOutcome runLifecycle(Long graphDefId, Integer graphDefVersion, String input,
+                                          java.util.Map<String, String> inputs,
+                                          com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState resumeState,
+                                          java.util.List<com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanDecision> decisions,
+                                          Long resumeExecutionId) {
+        throw new UnsupportedOperationException("当前实现不支持生命周期执行入口");
+    }
+
+    /**
      * 执行历史列表（Step12，分页，create_time 倒序；可按图定义过滤）。
      * 租户隔离经租户拦截器自动生效；不做用户级过滤（设计器/运维视角的租户内全部执行）。
      */

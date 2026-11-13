@@ -96,6 +96,7 @@ class AgentDataScopeTest {
                     id                BIGINT NOT NULL PRIMARY KEY,
                     graph_def_id      BIGINT NOT NULL,
                     graph_def_version INT NOT NULL,
+                    parent_execution_id BIGINT,
                     status            VARCHAR(20) NOT NULL,
                     input             CLOB,
                     result_text       CLOB,

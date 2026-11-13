@@ -220,6 +220,29 @@ class JavaSubprocessSandboxTest {
         assertTrue(result.getOutputJson().contains("blocked"), result.getOutputJson());
     }
 
+    // ---------------- G4-4：子进程输出竞态保障 ----------------
+
+    @Test
+    void awaitChildOutputReturnsNullWhenReaderExitedWithoutResult() {
+        String[] outcome = new String[1];
+        Thread reader = new Thread(() -> { });
+        reader.start();
+        try {
+            reader.join();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+        assertTrue(executor.awaitChildOutput(outcome, reader) == null);
+    }
+
+    @Test
+    void awaitChildOutputSeesResultWrittenByReaderThread() {
+        String[] outcome = new String[1];
+        Thread reader = new Thread(() -> outcome[0] = "{\"ok\":true}");
+        reader.start();
+        assertEquals("{\"ok\":true}", executor.awaitChildOutput(outcome, reader));
+    }
+
     @Test
     void testProcessExecBlocked() {
         String source = HEADER + """

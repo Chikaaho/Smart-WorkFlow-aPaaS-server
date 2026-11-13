@@ -61,6 +61,8 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
     private final BpmRuntimeFacade bpmRuntimeFacade;
     private final LoginContextProvider loginContextProvider;
     private final DeptScopeProvider deptScopeProvider;
+    /** 流程定义服务（G4-3：监控行解析流程名称，失败降级 null 不阻断列表）。 */
+    private final com.sw.ck.bpm.process.service.BpmProcessDefService bpmProcessDefService;
 
     public BpmMonitorServiceImpl(BpmMonitorMapper monitorMapper,
                                  BpmInstanceService bpmInstanceService,
@@ -71,7 +73,8 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
                                  BpmTaskFacade bpmTaskFacade,
                                  BpmRuntimeFacade bpmRuntimeFacade,
                                  LoginContextProvider loginContextProvider,
-                                 DeptScopeProvider deptScopeProvider) {
+                                 DeptScopeProvider deptScopeProvider,
+                                 com.sw.ck.bpm.process.service.BpmProcessDefService bpmProcessDefService) {
         this.monitorMapper = monitorMapper;
         this.bpmInstanceService = bpmInstanceService;
         this.interventionMapper = interventionMapper;
@@ -82,6 +85,7 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         this.bpmRuntimeFacade = bpmRuntimeFacade;
         this.loginContextProvider = loginContextProvider;
         this.deptScopeProvider = deptScopeProvider;
+        this.bpmProcessDefService = bpmProcessDefService;
     }
 
     @Override
@@ -97,7 +101,15 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
                 q.initiatorId(), q.status(), q.timeFrom(), q.timeTo(), instanceIds, scope,
                 (int) pageParam.getPageSize(), offset);
         // empty = 实例标识缺失，或该实例无运行期记录：无活跃节点可展示（原空列表口径）
+        java.util.Map<String, String> defNames = new java.util.HashMap<>();
         List<InstanceMonitorView> views = records.stream().map(instance -> {
+            if (instance.getProcessDefKey() != null) {
+                instance.setProcessDefName(defNames.computeIfAbsent(instance.getProcessDefKey(), key -> {
+                    com.sw.ck.bpm.process.entity.BpmProcessDef definition =
+                            bpmProcessDefService.findByProcessKey(key);
+                    return definition == null ? null : definition.getName();
+                }));
+            }
             List<String> activeNodeIds = bpmRuntimeFacade
                     .getActiveActivityIds(instance.getProcessInstanceId())
                     .orElse(List.of());

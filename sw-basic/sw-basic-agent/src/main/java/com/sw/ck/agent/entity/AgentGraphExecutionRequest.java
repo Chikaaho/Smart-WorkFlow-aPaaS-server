@@ -16,6 +16,14 @@ public class AgentGraphExecutionRequest extends BaseEntity {
     private String requestFingerprint;
     private String status;
     private String input;
+    /** 结构化入参 JSON（G1-4：开始节点参数名 → 值；旧契约请求为 null） */
+    private String inputsJson;
+    /** 结构化出参 JSON（G1-4：END 输出声明解析结果；未声明/失败为 null） */
+    private String outputsJson;
+    /** 父执行 id（G3 子图节点：父执行 → 子执行关联；顶层执行为 null） */
+    private Long parentExecutionId;
+    /** 人工节点暂停状态 JSON（G3：等待期间持久化恢复点） */
+    private String pauseStateJson;
     private Long resultExecutionId;
     private String errorCategory;
     private String errorMessage;

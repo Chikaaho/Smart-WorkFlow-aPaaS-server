@@ -66,6 +66,19 @@ public class AgentGraphSnapshotServiceImpl {
         return repaired;
     }
 
+    /** 解析指定版本的快照为图对象（G3：恢复执行/子图按固定 defVersion 绑定）。 */
+    public ProcessGraph loadGraphByVersion(AgentGraphDef def, Integer defVersion) {
+        AgentGraphSnapshot snapshot = requireSnapshot(def, defVersion == null ? def.getDefVersion() : defVersion);
+        if (snapshot.getGraphJson() == null || snapshot.getGraphJson().isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(snapshot.getGraphJson(), ProcessGraph.class);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+
     /** 解析指定版本的快照为图对象。 */
     public ProcessGraph loadPublishedGraph(AgentGraphDef def) {
         AgentGraphSnapshot snapshot = requireSnapshot(def, def.getDefVersion());

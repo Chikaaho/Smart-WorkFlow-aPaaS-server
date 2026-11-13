@@ -3,6 +3,8 @@ package com.sw.ck.agent.controller;
 import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
+import com.sw.ck.agent.dto.AgentNodeRunReqDTO;
+import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -10,6 +12,8 @@ import com.sw.ck.common.response.R;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -53,5 +57,21 @@ public class AgentGraphExecutionController {
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
     public R<List<AgentGraphExecutionNodeDTO>> nodes(@PathVariable Long executionId) {
         return R.ok(agentGraphExecutionService.listExecutionNodes(executionId));
+    }
+
+    /**
+     * 单节点运行（G1-8 调试语义）：对已发布图快照中的 LLM/TOOL/KNOWLEDGE 节点
+     * 单独执行一次，不产生正式执行记录、不修改图定义。
+     */
+    @PostMapping("/node-run")
+    @PreAuthorize("@ss.hasPermi('agent:model:manage')")
+    public R<AgentNodeRunRespDTO> runNode(@RequestBody AgentNodeRunReqDTO request) {
+        Long graphDefId = request.getGraphDefId();
+        if (graphDefId == null) {
+            throw new com.sw.ck.common.exception.BaseException(
+                    com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "graphDefId 不能为空");
+        }
+        return R.ok(agentGraphExecutionService.runNode(graphDefId, request.getNodeId(),
+                request.getInputs()));
     }
 }

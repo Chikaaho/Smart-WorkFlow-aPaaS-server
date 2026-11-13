@@ -21,7 +21,7 @@ class MySqlSeedMigrationTest {
     private static final String DATABASE = "swmdb_mysql_seed";
 
     @Test
-    @DisplayName("空库执行 31 条 MySQL 迁移，保留库供 SeedComparisonTest 比对")
+    @DisplayName("空库执行 32 条 MySQL 迁移，保留库供 SeedComparisonTest 比对")
     void migrateSeedDatabase() throws Exception {
         String url = System.getProperty("mysql.url");
         Assumptions.assumeTrue(url != null && !url.isBlank(),
@@ -50,6 +50,6 @@ class MySqlSeedMigrationTest {
                 .locations("classpath:db/migration/mysql")
                 .load()
                 .migrate();
-        assertThat(result.migrationsExecuted).isEqualTo(31);
+        assertThat(result.migrationsExecuted).isEqualTo(32);
     }
 }

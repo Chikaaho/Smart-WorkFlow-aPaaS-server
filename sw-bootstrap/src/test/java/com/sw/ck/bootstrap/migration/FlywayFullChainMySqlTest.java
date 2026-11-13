@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 通过系统属性指定服务器连接，例如：
  * {@code -Dmysql.url=jdbc:mysql://127.0.0.1:13306/mysql -Dmysql.user=root -Dmysql.password=...}。
  * 测试自行创建/删除临时库 {@code swmdb_flyway}；位置固定为 {@code classpath:db/migration/mysql}。
- * 断言 31 条迁移、终点 V1.0.0、重复 migrate 零执行、{@code opinion_comment} 与向量表存在。
+ * 断言 32 条迁移、终点 V1.1.0、重复 migrate 零执行、{@code opinion_comment} 与向量表存在。
  * </p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -41,7 +41,7 @@ class FlywayFullChainMySqlTest {
     private String password;
 
     @Test
-    @DisplayName("空库执行 31 条迁移到 V1.0.0，重复 migrate 零执行，关键对象存在")
+    @DisplayName("空库执行 32 条迁移到 V1.1.0，重复 migrate 零执行，关键对象存在")
     void migrateEmptyDatabase() throws Exception {
         String url = System.getProperty("mysql.url");
         Assumptions.assumeTrue(url != null && !url.isBlank(),
@@ -63,10 +63,10 @@ class FlywayFullChainMySqlTest {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "MySQL 全链迁移应成功");
-        assertEquals(31, result.migrationsExecuted,
-                "全新 MySQL 库应执行 31 条（V0.2.0 基线 + V0.2.2—V0.2.9 + V0.4.0/V1.0.0 + 20 个 R__）");
-        assertEquals("1.0.0", flyway.info().current().getVersion().getVersion(),
-                "MySQL 迁移终点应为 V1.0.0");
+        assertEquals(32, result.migrationsExecuted,
+                "全新 MySQL 库应执行 32 条（V0.2.0 基线 + V0.2.2—V0.2.9 + V0.4.0/V1.0.0/V1.1.0 + 20 个 R__）");
+        assertEquals("1.1.0", flyway.info().current().getVersion().getVersion(),
+                "MySQL 迁移终点应为 V1.1.0");
         assertEquals(0, flyway.migrate().migrationsExecuted, "重复 migrate 应零执行");
         flyway.validate();
 

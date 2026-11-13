@@ -2,6 +2,8 @@ package com.sw.ck.agent.dto;
 
 import lombok.Data;
 
+import java.util.Map;
+
 /**
  * 图执行响应 DTO（M07-F02 Step8 + Step12 执行历史）。
  * <p>
@@ -27,9 +29,15 @@ public class AgentGraphExecuteRespDTO {
     /** 失败原因摘要（不含明文 API Key） */
     private String errorMessage;
 
+    /** 失败分类（X3：与执行记录 error_category 同源，如 HUMAN_TIMEOUT；成功为空） */
+    private String errorCategory;
+
     /** 执行耗时（毫秒） */
     private long latencyMs;
 
     /** 执行历史记录 id（Step12，sw_agent_graph_execution 雪花 id，成功/失败均返回） */
     private Long executionId;
+
+    /** 结构化出参（G1-4：END 节点 outputs 声明解析结果；未声明时为空 map） */
+    private Map<String, String> outputs;
 }

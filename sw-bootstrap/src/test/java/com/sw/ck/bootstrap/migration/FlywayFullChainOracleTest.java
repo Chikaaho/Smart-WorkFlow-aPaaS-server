@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 通过系统属性指定连接，例如：
  * {@code -Doracle.url=jdbc:oracle:thin:@//127.0.0.1:11521/XEPDB1 -Doracle.user=swmdb
  * -Doracle.password=...}。测试会先清空当前用户 schema（仅用于专用验证容器/账号），
- * 再执行 {@code classpath:db/migration/oracle} 的 31 条迁移，断言终点 V1.0.0、
+ * 再执行 {@code classpath:db/migration/oracle} 的 32 条迁移，断言终点 V1.1.0、
  * 重复 migrate 零执行、{@code opinion_comment} 与向量表存在。
  * </p>
  */
@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FlywayFullChainOracleTest {
 
     @Test
-    @DisplayName("空库执行 31 条迁移到 V1.0.0，重复 migrate 零执行，关键对象存在")
+    @DisplayName("空库执行 32 条迁移到 V1.1.0，重复 migrate 零执行，关键对象存在")
     void migrateEmptyDatabase() throws Exception {
         String url = System.getProperty("oracle.url");
         Assumptions.assumeTrue(url != null && !url.isBlank(),
@@ -75,10 +75,10 @@ class FlywayFullChainOracleTest {
                 .load();
         MigrateResult result = flyway.migrate();
         assertTrue(result.success, "Oracle 全链迁移应成功");
-        assertEquals(31, result.migrationsExecuted,
-                "全新 Oracle schema 应执行 31 条（V0.2.0 + V0.2.2—V0.2.9 + V0.4.0/V1.0.0 + 19 个 R__）");
-        assertEquals("1.0.0", flyway.info().current().getVersion().getVersion(),
-                "Oracle 迁移终点应为 V1.0.0");
+        assertEquals(32, result.migrationsExecuted,
+                "全新 Oracle schema 应执行 32 条（V0.2.0 + V0.2.2—V0.2.9 + V0.4.0/V1.0.0/V1.1.0 + 19 个 R__）");
+        assertEquals("1.1.0", flyway.info().current().getVersion().getVersion(),
+                "Oracle 迁移终点应为 V1.1.0");
         assertEquals(0, flyway.migrate().migrationsExecuted, "重复 migrate 应零执行");
         flyway.validate();
 
