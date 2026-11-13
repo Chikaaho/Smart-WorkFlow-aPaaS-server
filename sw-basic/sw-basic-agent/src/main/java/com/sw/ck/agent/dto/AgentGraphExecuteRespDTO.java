@@ -29,6 +29,9 @@ public class AgentGraphExecuteRespDTO {
     /** 失败原因摘要（不含明文 API Key） */
     private String errorMessage;
 
+    /** 失败分类（X3：与执行记录 error_category 同源，如 HUMAN_TIMEOUT；成功为空） */
+    private String errorCategory;
+
     /** 执行耗时（毫秒） */
     private long latencyMs;
 

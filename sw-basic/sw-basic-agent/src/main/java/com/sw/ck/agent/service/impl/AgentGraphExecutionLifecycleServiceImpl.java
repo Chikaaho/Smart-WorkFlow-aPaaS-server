@@ -300,7 +300,12 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             } else if (result.isSuccess()) {
                 finish(executionId, SUCCESS, null, null, result.getExecutionId(), started, outputsJson);
             } else {
-                finish(executionId, FAILED, "GRAPH_EXECUTION_FAILED", result.getErrorMessage(),
+                // X3：沿用执行结果的分类（如 HUMAN_TIMEOUT），未知时才回退通用分类
+                String category = result.getErrorCategory();
+                if (category == null || category.isBlank()) {
+                    category = "GRAPH_EXECUTION_FAILED";
+                }
+                finish(executionId, FAILED, category, result.getErrorMessage(),
                         result.getExecutionId(), started, null);
             }
         } catch (Exception error) {

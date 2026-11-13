@@ -477,7 +477,10 @@ public class AgentGraphExecutionServiceImpl
         }
         exec.setStatus(resp.isSuccess() ? STATUS_SUCCESS : STATUS_FAILED);
         exec.setResultText(resp.getOutput());
-        exec.setErrorCategory(failure == null ? null : classifyError(failure));
+        String errorCategory = failure == null ? null : classifyError(failure);
+        exec.setErrorCategory(errorCategory);
+        // X3：分类随响应返回，生命周期受理行与执行行保持同一分类（如 HUMAN_TIMEOUT）
+        resp.setErrorCategory(errorCategory);
         exec.setErrorMessage(resp.getErrorMessage());
         exec.setLatencyMs(latency);
         executionMapper.updateById(exec);
