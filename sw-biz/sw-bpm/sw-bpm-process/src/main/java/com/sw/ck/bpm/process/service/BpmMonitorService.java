@@ -31,9 +31,9 @@ public interface BpmMonitorService {
     /** 实例办理时限原始行（超时可查）。 */
     List<Map<String, Object>> deadlines(String processInstanceId);
 
-    /** 分页监控行：实例 + 当前节点 + 挂起态。 */
+    /** 分页监控行：实例 + 当前节点（id 与名称映射，名称缺省回退 id） + 挂起态。 */
     record InstanceMonitorView(BpmInstance instance, List<String> activeNodeIds,
-                               boolean suspended) {
+                               Map<String, String> activeNodeNames, boolean suspended) {
     }
 
     /** 七类条件（§3.3）：定义/实例/发起人/状态/节点/办理人/时间范围。 */

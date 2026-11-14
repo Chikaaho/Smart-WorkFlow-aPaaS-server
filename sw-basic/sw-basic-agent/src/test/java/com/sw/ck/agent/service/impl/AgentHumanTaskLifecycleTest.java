@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -393,5 +394,51 @@ class AgentHumanTaskLifecycleTest {
         verify(humanTaskMapper).cancelPending(5L);
         verify(eventMapper).insertNext(anyLong(), eq(100L), eq("1"), eq(5L), eq("STATE"), any(),
                 eq("CANCELLED"));
+    }
+
+    @Test
+    @DisplayName("P71/B1：按执行编号取消——变更落在受理行，接口不再静默无效")
+    void cancelByResultExecutionIdResolvesRequestRow() {
+        AgentGraphExecutionRequest waiting = waitingRequest(5L);
+        waiting.setResultExecutionId(900L);
+        AtomicReference<AgentGraphExecutionRequest> current = new AtomicReference<>(waiting);
+        // 入参为执行编号：按 id 直查无受理行，经 resultExecutionId 反查命中受理行 5L
+        when(requestMapper.selectById(900L)).thenReturn(null);
+        when(requestMapper.selectOne(any())).thenAnswer(inv -> current.get());
+        when(requestMapper.selectById(5L)).thenAnswer(inv -> current.get());
+        when(requestMapper.cancelWaiting(5L)).thenAnswer(inv -> {
+            AgentGraphExecutionRequest cancelled = waitingRequest(5L);
+            cancelled.setResultExecutionId(900L);
+            cancelled.setStatus("CANCELLED");
+            current.set(cancelled);
+            return 1;
+        });
+        when(humanTaskMapper.cancelPending(5L)).thenReturn(2);
+        when(executionService.getExecution(900L))
+                .thenReturn(new com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO());
+        // G1：结果执行行同步取消
+        com.sw.ck.agent.entity.AgentGraphExecution resultRow =
+                new com.sw.ck.agent.entity.AgentGraphExecution();
+        resultRow.setId(900L);
+        resultRow.setStatus("WAITING_HUMAN");
+        when(executionMapper.selectById(900L)).thenReturn(resultRow);
+
+        LoginUser user = new LoginUser();
+        user.setUserId(1L);
+        user.setTenantId(100L);
+        LoginUserHolder.set(user);
+        var dto = service.cancel(900L);
+
+        assertThat(dto.getStatus()).isEqualTo("CANCELLED");
+        // 变更必须落在受理行 id 上，而不是原始入参执行编号（旧缺陷：900L 命中 0 行静默返回）
+        verify(requestMapper).cancelWaiting(5L);
+        verify(humanTaskMapper).cancelPending(5L);
+        verify(requestMapper, never()).cancelWaiting(900L);
+        verify(requestMapper, never()).cancelQueued(anyLong());
+        verify(requestMapper, never()).requestRunningCancellation(anyLong());
+        // G1：执行列表读执行行——取消必须同步把结果执行行置 CANCELLED
+        org.mockito.ArgumentMatcher<com.sw.ck.agent.entity.AgentGraphExecution> cancelledRow =
+                row -> "CANCELLED".equals(row.getStatus());
+        verify(executionMapper).updateById(argThat(cancelledRow));
     }
 }

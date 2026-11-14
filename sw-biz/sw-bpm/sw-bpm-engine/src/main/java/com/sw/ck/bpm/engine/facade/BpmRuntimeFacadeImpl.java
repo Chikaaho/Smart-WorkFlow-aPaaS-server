@@ -92,6 +92,62 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
     }
 
     @Override
+    public Optional<Map<String, String>> getActiveActivityNames(String processInstanceId) {
+        if (processInstanceId == null || processInstanceId.isBlank()) {
+            // 实例标识缺失：无法给出活跃节点名称
+            return Optional.empty();
+        }
+        try {
+            List<String> ids = runtimeService.getActiveActivityIds(processInstanceId);
+            if (ids == null || ids.isEmpty()) {
+                return Optional.of(Map.of());
+            }
+            ProcessInstance instance = runtimeService.createProcessInstanceQuery()
+                    .processInstanceId(processInstanceId)
+                    .singleResult();
+            if (instance == null) {
+                // 实例不存在运行期记录（已结束/不存在）：无法给出活跃节点名称
+                return Optional.empty();
+            }
+            org.flowable.bpmn.model.BpmnModel model =
+                    repositoryService.getBpmnModel(instance.getProcessDefinitionId());
+            Map<String, String> names = new java.util.HashMap<>();
+            for (String id : ids) {
+                org.flowable.bpmn.model.FlowElement element =
+                        findFlowElement(model.getMainProcess(), id);
+                String name = element == null ? null : element.getName();
+                if (name != null && !name.isBlank()) {
+                    names.put(id, name);
+                }
+            }
+            return Optional.of(names);
+        } catch (Exception e) {
+            // 与 getActiveActivityIds 同口径：实例不存在/模型不可读时不给名称，调用方回退展示 id
+            log.warn("Failed to get active activity names: processInstanceId={}, error={}",
+                    processInstanceId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** 递归查找 BPMN 元素（含子流程容器）。 */
+    private org.flowable.bpmn.model.FlowElement findFlowElement(
+            org.flowable.bpmn.model.FlowElementsContainer container, String id) {
+        org.flowable.bpmn.model.FlowElement element = container.getFlowElement(id);
+        if (element != null) {
+            return element;
+        }
+        for (org.flowable.bpmn.model.FlowElement child : container.getFlowElements()) {
+            if (child instanceof org.flowable.bpmn.model.SubProcess sub) {
+                org.flowable.bpmn.model.FlowElement nested = findFlowElement(sub, id);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Override
     public Optional<List<BpmActivityDTO>> queryHistoricActivities(String processInstanceId) {
         if (processInstanceId == null || processInstanceId.isBlank()) {
             return Optional.empty();

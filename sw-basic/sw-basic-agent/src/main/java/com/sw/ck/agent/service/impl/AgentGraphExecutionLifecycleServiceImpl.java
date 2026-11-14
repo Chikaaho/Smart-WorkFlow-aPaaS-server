@@ -219,24 +219,28 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @Override
     public AgentGraphExecutionLifecycleDTO cancel(Long executionId) {
         AgentGraphExecutionRequest current = requireOwned(executionId);
+        // W5/P71：入参可为执行编号（结果行）——取消变更一律落在受理行 id 上，
+        // 否则按执行编号取消时 UPDATE 命中 0 行，接口 200 却静默无效
+        Long requestId = current.getId();
         if (QUEUED.equals(current.getStatus())) {
-            if (requestMapper.cancelQueued(executionId) == 1) {
-                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCELLED);
+            if (requestMapper.cancelQueued(requestId) == 1) {
+                appendEvent(requestMapper.selectById(requestId), "STATE", null, CANCELLED);
             }
         } else if (WAITING_HUMAN.equals(current.getStatus())) {
-            if (requestMapper.cancelWaiting(executionId) == 1) {
-                humanTaskMapper.cancelPending(executionId);
+            if (requestMapper.cancelWaiting(requestId) == 1) {
+                humanTaskMapper.cancelPending(requestId);
                 cancelChildWaitingExecutions(current.getResultExecutionId());
-                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCELLED);
+                markResultExecutionCancelled(current.getResultExecutionId());
+                appendEvent(requestMapper.selectById(requestId), "STATE", null, CANCELLED);
             }
         } else if (RUNNING.equals(current.getStatus())) {
-            if (requestMapper.requestRunningCancellation(executionId) == 1) {
-                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCEL_REQUESTED);
-                Thread thread = runningThreads.get(executionId);
+            if (requestMapper.requestRunningCancellation(requestId) == 1) {
+                appendEvent(requestMapper.selectById(requestId), "STATE", null, CANCEL_REQUESTED);
+                Thread thread = runningThreads.get(requestId);
                 if (thread != null) thread.interrupt();
             }
         }
-        return toDto(requireOwned(executionId));
+        return toDto(requireOwned(requestId));
     }
 
     private void dispatch(Long executionId, LoginUser loginUser) {
@@ -634,6 +638,35 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
      * 子执行行 id 上；父取消若只关请求簿与首层任务，子执行会永远停在 WAITING_HUMAN
      * 且其待办仍可提交。统一在此把等待中的子执行置 CANCELLED 并关闭其待处理任务。
      */
+    /**
+     * G1（112-01 审查）：取消受理行时同步取消其结果执行行。执行列表读的是执行行，
+     * 详情读的是受理行；只改受理行会让列表停留 WAITING_HUMAN 与详情「已取消」不一致。
+     * 执行行不存在（排队取消尚未落执行行）或已是终态时不动。
+     */
+    private void markResultExecutionCancelled(Long resultExecutionId) {
+        if (resultExecutionId == null) {
+            return;
+        }
+        try {
+            com.sw.ck.agent.entity.AgentGraphExecution execution =
+                    executionMapper.selectById(resultExecutionId);
+            if (execution != null && !isTerminalExecutionStatus(execution.getStatus())) {
+                execution.setStatus(CANCELLED);
+                execution.setUpdateTime(LocalDateTime.now());
+                executionMapper.updateById(execution);
+            }
+        } catch (Exception markFailure) {
+            // 受理行已终态，执行行同步失败不回滚取消；留日志排障
+            log.warn("取消执行行状态同步失败: resultExecutionId={}, error={}",
+                    resultExecutionId, markFailure.getMessage());
+        }
+    }
+
+    private boolean isTerminalExecutionStatus(String status) {
+        return SUCCESS.equals(status) || FAILED.equals(status)
+                || CANCELLED.equals(status) || INTERRUPTED.equals(status);
+    }
+
     private void cancelChildWaitingExecutions(Long resultExecutionId) {
         if (resultExecutionId == null) {
             return;
