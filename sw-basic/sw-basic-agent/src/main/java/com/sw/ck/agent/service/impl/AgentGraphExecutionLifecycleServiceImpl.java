@@ -219,24 +219,27 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @Override
     public AgentGraphExecutionLifecycleDTO cancel(Long executionId) {
         AgentGraphExecutionRequest current = requireOwned(executionId);
+        // W5/P71：入参可为执行编号（结果行）——取消变更一律落在受理行 id 上，
+        // 否则按执行编号取消时 UPDATE 命中 0 行，接口 200 却静默无效
+        Long requestId = current.getId();
         if (QUEUED.equals(current.getStatus())) {
-            if (requestMapper.cancelQueued(executionId) == 1) {
-                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCELLED);
+            if (requestMapper.cancelQueued(requestId) == 1) {
+                appendEvent(requestMapper.selectById(requestId), "STATE", null, CANCELLED);
             }
         } else if (WAITING_HUMAN.equals(current.getStatus())) {
-            if (requestMapper.cancelWaiting(executionId) == 1) {
-                humanTaskMapper.cancelPending(executionId);
+            if (requestMapper.cancelWaiting(requestId) == 1) {
+                humanTaskMapper.cancelPending(requestId);
                 cancelChildWaitingExecutions(current.getResultExecutionId());
-                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCELLED);
+                appendEvent(requestMapper.selectById(requestId), "STATE", null, CANCELLED);
             }
         } else if (RUNNING.equals(current.getStatus())) {
-            if (requestMapper.requestRunningCancellation(executionId) == 1) {
-                appendEvent(requestMapper.selectById(executionId), "STATE", null, CANCEL_REQUESTED);
-                Thread thread = runningThreads.get(executionId);
+            if (requestMapper.requestRunningCancellation(requestId) == 1) {
+                appendEvent(requestMapper.selectById(requestId), "STATE", null, CANCEL_REQUESTED);
+                Thread thread = runningThreads.get(requestId);
                 if (thread != null) thread.interrupt();
             }
         }
-        return toDto(requireOwned(executionId));
+        return toDto(requireOwned(requestId));
     }
 
     private void dispatch(Long executionId, LoginUser loginUser) {
