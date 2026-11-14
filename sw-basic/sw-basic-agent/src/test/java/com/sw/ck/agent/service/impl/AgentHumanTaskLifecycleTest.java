@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -415,6 +416,12 @@ class AgentHumanTaskLifecycleTest {
         when(humanTaskMapper.cancelPending(5L)).thenReturn(2);
         when(executionService.getExecution(900L))
                 .thenReturn(new com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO());
+        // G1：结果执行行同步取消
+        com.sw.ck.agent.entity.AgentGraphExecution resultRow =
+                new com.sw.ck.agent.entity.AgentGraphExecution();
+        resultRow.setId(900L);
+        resultRow.setStatus("WAITING_HUMAN");
+        when(executionMapper.selectById(900L)).thenReturn(resultRow);
 
         LoginUser user = new LoginUser();
         user.setUserId(1L);
@@ -429,5 +436,9 @@ class AgentHumanTaskLifecycleTest {
         verify(requestMapper, never()).cancelWaiting(900L);
         verify(requestMapper, never()).cancelQueued(anyLong());
         verify(requestMapper, never()).requestRunningCancellation(anyLong());
+        // G1：执行列表读执行行——取消必须同步把结果执行行置 CANCELLED
+        org.mockito.ArgumentMatcher<com.sw.ck.agent.entity.AgentGraphExecution> cancelledRow =
+                row -> "CANCELLED".equals(row.getStatus());
+        verify(executionMapper).updateById(argThat(cancelledRow));
     }
 }
