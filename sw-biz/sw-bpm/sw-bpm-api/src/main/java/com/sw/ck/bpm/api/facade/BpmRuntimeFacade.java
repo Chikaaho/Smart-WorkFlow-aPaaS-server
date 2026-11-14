@@ -53,6 +53,20 @@ public interface BpmRuntimeFacade {
     Optional<List<String>> getActiveActivityIds(String processInstanceId);
 
     /**
+     * 获取流程实例当前活跃节点的名称映射（监控列表按名称展示，未登记名称的节点不进入映射）。
+     * <p>
+     * 名称取自该实例部署版本的 BPMN 模型（与 {@link #getActiveActivityIds(String)} 同源），
+     * 键为 activityId、值为节点 name；递归覆盖子流程容器内节点。
+     * </p>
+     *
+     * @param processInstanceId Flowable 流程实例 ID
+     * @return present = activityId → 名称映射（实例存在但当前无活跃节点时为空 Map，属合法零匹配；
+     *         未配置 name 的节点不放入映射，调用方回退展示 id）；empty = 实例标识缺失，
+     *         或该实例不存在运行期记录/模型不可读
+     */
+    Optional<Map<String, String>> getActiveActivityNames(String processInstanceId);
+
+    /**
      * 查询流程实例的全部历史活动节点（含已完成 + 进行中）。
      * <p>
      * 按结束时间升序排列（配流转时间线从上到下展示）。

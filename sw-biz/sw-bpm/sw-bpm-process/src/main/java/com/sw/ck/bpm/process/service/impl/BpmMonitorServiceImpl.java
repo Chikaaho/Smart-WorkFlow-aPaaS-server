@@ -113,11 +113,15 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
             List<String> activeNodeIds = bpmRuntimeFacade
                     .getActiveActivityIds(instance.getProcessInstanceId())
                     .orElse(List.of());
+            // P70：当前节点按名称展示；模型不可读/节点无 name 时映射缺项，前端回退展示 id
+            java.util.Map<String, String> activeNodeNames = bpmRuntimeFacade
+                    .getActiveActivityNames(instance.getProcessInstanceId())
+                    .orElse(java.util.Map.of());
             // empty = 实例标识缺失（此处标识非空，契约不产生）：按未挂起展示
             java.util.Optional<Boolean> suspendedDecision = bpmTaskFacade
                     .isProcessInstanceSuspended(instance.getProcessInstanceId());
             boolean suspended = suspendedDecision.isPresent() && suspendedDecision.get();
-            return new InstanceMonitorView(instance, activeNodeIds, suspended);
+            return new InstanceMonitorView(instance, activeNodeIds, activeNodeNames, suspended);
         }).toList();
         PageResult<InstanceMonitorView> result = new PageResult<>();
         result.setRecords(views);

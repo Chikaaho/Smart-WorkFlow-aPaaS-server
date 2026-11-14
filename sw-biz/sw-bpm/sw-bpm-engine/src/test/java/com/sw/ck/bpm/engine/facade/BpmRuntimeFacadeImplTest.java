@@ -1,10 +1,17 @@
 package com.sw.ck.bpm.engine.facade;
 
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.UserTask;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricActivityInstanceQuery;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.runtime.ProcessInstanceQuery;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -15,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -23,7 +31,8 @@ import static org.mockito.Mockito.*;
  * {@link BpmRuntimeFacadeImpl} 单元测试。
  * <p>
  * 纯 Mockito + {@link MockitoExtension}，不装载 Spring 上下文。
- * 覆盖 {@link BpmRuntimeFacadeImpl#getActiveActivityIds(String)}
+ * 覆盖 {@link BpmRuntimeFacadeImpl#getActiveActivityIds(String)}、
+ * {@link BpmRuntimeFacadeImpl#getActiveActivityNames(String)}
  * 和 {@link BpmRuntimeFacadeImpl#queryHistoricActivities(String)}。
  * </p>
  */
@@ -36,6 +45,9 @@ class BpmRuntimeFacadeImplTest {
 
     @Mock
     private HistoryService historyService;
+
+    @Mock
+    private RepositoryService repositoryService;
 
     @InjectMocks
     private BpmRuntimeFacadeImpl facade;
@@ -242,6 +254,91 @@ class BpmRuntimeFacadeImplTest {
             when(query.list()).thenThrow(new RuntimeException("Flowable error"));
 
             assertThat(facade.queryHistoricActivities("pi-error")).isEmpty();
+        }
+    }
+
+    // ==================== getActiveActivityNames（P70/B5） ====================
+
+    @Nested
+    @DisplayName("getActiveActivityNames 方法")
+    class GetActiveActivityNamesTests {
+
+        @Test
+        @DisplayName("正常：按部署模型解析活跃节点名称；未配置 name 的节点不进映射；子流程内节点递归可达")
+        void getActiveActivityNames_shouldResolveNamesFromDeployedModel() {
+            when(runtimeService.getActiveActivityIds("pi-1"))
+                    .thenReturn(List.of("Activity_1", "Activity_noname", "Sub_Task"));
+
+            ProcessInstance instance = mock(ProcessInstance.class);
+            when(instance.getProcessDefinitionId()).thenReturn("pd-1");
+            ProcessInstanceQuery query = mock(ProcessInstanceQuery.class);
+            when(runtimeService.createProcessInstanceQuery()).thenReturn(query);
+            when(query.processInstanceId("pi-1")).thenReturn(query);
+            when(query.singleResult()).thenReturn(instance);
+
+            UserTask named = new UserTask();
+            named.setId("Activity_1");
+            named.setName("经理审批");
+            UserTask unnamed = new UserTask();
+            unnamed.setId("Activity_noname");
+            SubProcess sub = new SubProcess();
+            sub.setId("sub-1");
+            UserTask nested = new UserTask();
+            nested.setId("Sub_Task");
+            nested.setName("部门审批");
+            sub.addFlowElement(nested);
+            Process process = new Process();
+            process.setId("pd-1");
+            process.addFlowElement(named);
+            process.addFlowElement(unnamed);
+            process.addFlowElement(sub);
+            BpmnModel model = new BpmnModel();
+            model.addProcess(process);
+            when(repositoryService.getBpmnModel("pd-1")).thenReturn(model);
+
+            Map<String, String> names = facade.getActiveActivityNames("pi-1").orElseThrow();
+
+            assertThat(names).containsOnlyKeys("Activity_1", "Sub_Task");
+            assertThat(names).containsEntry("Activity_1", "经理审批");
+            assertThat(names).containsEntry("Sub_Task", "部门审批");
+        }
+
+        @Test
+        @DisplayName("边界：实例存在但当前无活跃节点 → present 空 Map（合法零匹配）")
+        void getActiveActivityNames_noActiveNodes_shouldReturnPresentEmptyMap() {
+            when(runtimeService.getActiveActivityIds("pi-finished")).thenReturn(List.of());
+
+            assertThat(facade.getActiveActivityNames("pi-finished")).contains(Map.of());
+        }
+
+        @Test
+        @DisplayName("上下文缺失：null 或空字符串实例标识 → empty")
+        void getActiveActivityNames_nullOrBlank_shouldReturnEmpty() {
+            assertThat(facade.getActiveActivityNames(null)).isEmpty();
+            assertThat(facade.getActiveActivityNames("")).isEmpty();
+            assertThat(facade.getActiveActivityNames("  ")).isEmpty();
+        }
+
+        @Test
+        @DisplayName("上下文缺失：实例不存在运行期记录 → empty")
+        void getActiveActivityNames_instanceMissing_shouldReturnEmpty() {
+            when(runtimeService.getActiveActivityIds("pi-gone")).thenReturn(List.of("Activity_1"));
+
+            ProcessInstanceQuery query = mock(ProcessInstanceQuery.class);
+            when(runtimeService.createProcessInstanceQuery()).thenReturn(query);
+            when(query.processInstanceId("pi-gone")).thenReturn(query);
+            when(query.singleResult()).thenReturn(null);
+
+            assertThat(facade.getActiveActivityNames("pi-gone")).isEmpty();
+        }
+
+        @Test
+        @DisplayName("异常：引擎查询抛异常 → empty + 不向外抛（与 getActiveActivityIds 同口径）")
+        void getActiveActivityNames_exception_shouldReturnEmpty() {
+            when(runtimeService.getActiveActivityIds("pi-error"))
+                    .thenThrow(new RuntimeException("Flowable error"));
+
+            assertThat(facade.getActiveActivityNames("pi-error")).isEmpty();
         }
     }
 }
