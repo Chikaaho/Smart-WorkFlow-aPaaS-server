@@ -126,6 +126,18 @@ public interface BpmProcessDefService {
      */
     PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey, Long tenantIdFilter);
 
+    /**
+     * 判定表单是否绑定已发布流程定义（与是否已产生实例无关）。
+     * <p>
+     * 统一详情关系端点据此决定是否渲染流程信息区：纯数据表单恒 false，
+     * 有流程但尚未发起时为 true。formKey 空白视为未绑定（fail closed）。
+     * </p>
+     *
+     * @param formKey 表单业务标识
+     * @return true=存在 {@code PUBLISHED} 的流程定义绑定该表单
+     */
+    boolean hasPublishedDefByFormKey(String formKey);
+
     // 0.1.7 #21：流程定义不提供删除（发布/运行/历史引用不可逆，禁删）。
 
     /**

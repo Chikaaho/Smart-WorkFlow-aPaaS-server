@@ -244,6 +244,17 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     // 0.1.7 #21：流程定义禁删——删除入口整体移除，不存在条件放行。
 
     @Override
+    public boolean hasPublishedDefByFormKey(String formKey) {
+        if (formKey == null || formKey.isBlank()) {
+            return false;
+        }
+        Long count = mapper.selectCount(Wrappers.<BpmProcessDef>lambdaQuery()
+                .eq(BpmProcessDef::getFormKey, formKey.trim())
+                .eq(BpmProcessDef::getStatus, STATUS_PUBLISHED));
+        return count != null && count > 0;
+    }
+
+    @Override
     public String getBpmnXml(Long id) {
         BpmProcessDef def = getExisting(id);
         if (!STATUS_PUBLISHED.equals(def.getStatus()) || def.getProcessDefinitionId() == null) {

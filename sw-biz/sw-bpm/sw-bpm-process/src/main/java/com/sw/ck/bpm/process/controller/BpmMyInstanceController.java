@@ -337,6 +337,24 @@ public class BpmMyInstanceController {
     }
 
     /**
+     * 表单是否绑定已发布流程定义（与是否已有实例无关）。
+     * <p>
+     * 详情页据此决定是否渲染流程信息区；解析失败按未绑定处理，不阻断关系查询主链。
+     * </p>
+     */
+    boolean formHasProcess(String formKey) {
+        if (formKey == null || formKey.isBlank()) {
+            return false;
+        }
+        try {
+            return bpmProcessDefService.hasPublishedDefByFormKey(formKey);
+        } catch (Exception ex) {
+            log.warn("表单流程绑定判定失败，按未绑定处理: formKey={}, reason={}", formKey, ex.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * 实例流转记录装配（我发起的详情与统一详情关系端点共用同一口径，避免两处漂移）：
      * 1.0.0 起实现迁至 {@link com.sw.ck.bpm.process.service.ApprovalHistoryAssembler}
      * （服务端 PDF 共用），控制器仅委托。
@@ -373,6 +391,10 @@ public class BpmMyInstanceController {
      * 历史任务经办人；NONE=与本实例无关系。NONE 时不回传实例任何信息（fail-closed，
      * 不向无关系者泄露实例存在性）。数据可见性仍由 form:data:query 行权限独立把关。
      * </p>
+     * <p>
+     * {@code formHasProcess} 表示该表单是否绑定已发布流程定义，与实例是否已产生无关，
+     * 因此在实例查询之前写入——无实例提前返回的分支同样携带该标记。
+     * </p>
      */
     @GetMapping("/relations")
     public R<Map<String, Object>> instanceRelation(@RequestParam String formKey,
@@ -380,6 +402,10 @@ public class BpmMyInstanceController {
         LoginUser loginUser = LoginUserHolder.get();
         Long userId = loginUser.getUserId();
         Map<String, Object> result = new java.util.HashMap<>();
+
+        // formHasProcess 与实例存在性无关：必须先于「无实例提前返回」赋值，
+        // 否则尚未发起过的流程表单取不到该标记，流程信息区无法展示。
+        result.put("formHasProcess", formHasProcess(formKey));
 
         BpmInstance instance = findLatestInstance(formKey, businessKey);
         if (instance == null) {

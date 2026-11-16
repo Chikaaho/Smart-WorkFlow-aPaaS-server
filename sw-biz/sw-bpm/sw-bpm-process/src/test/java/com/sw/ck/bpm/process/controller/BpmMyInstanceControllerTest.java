@@ -334,6 +334,79 @@ class BpmMyInstanceControllerTest {
     }
 
     /**
+     * formHasProcess 与实例存在性无关：表单已绑定已发布流程但尚未发起时，
+     * 提前返回路径也必须带上 true，否则前端无法渲染流程信息区。
+     */
+    @Test
+    @DisplayName("formHasProcess：无实例但表单绑定已发布流程 → true 且 relation=NONE")
+    void instanceRelation_shouldReturnFormHasProcessWithoutInstance() {
+        when(bpmProcessDefService.hasPublishedDefByFormKey("leave_form")).thenReturn(true);
+        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
+        org.mockito.Mockito.doReturn(null)
+                .when(spy).findLatestInstance("leave_form", "rec-001");
+
+        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+
+        assertThat(result.get("formHasProcess")).isEqualTo(true);
+        assertThat(result.get("relation")).isEqualTo("NONE");
+        assertThat(result).doesNotContainKeys("instance", "approvalHistory");
+    }
+
+    /** 已有实例的表单同样要带 formHasProcess，与实例存在性解耦。 */
+    @Test
+    @DisplayName("formHasProcess：已有实例的表单仍返回 true")
+    void instanceRelation_shouldReturnFormHasProcessWithInstance() {
+        when(bpmProcessDefService.hasPublishedDefByFormKey("leave_form")).thenReturn(true);
+        when(bpmTaskFacade.queryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of(task("t-active", false))));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of()));
+        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
+        org.mockito.Mockito.doReturn(instance(2L))
+                .when(spy).findLatestInstance("leave_form", "rec-001");
+
+        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+
+        assertThat(result.get("formHasProcess")).isEqualTo(true);
+        assertThat(result.get("relation")).isEqualTo("PARTICIPANT");
+    }
+
+    /** 反向断言：纯数据表单（无任何已发布流程定义绑定）恒为 false，不因有实例而变 true。 */
+    @Test
+    @DisplayName("formHasProcess：纯数据表单即使有实例也恒为 false")
+    void instanceRelation_shouldReturnFalseForPureDataForm() {
+        when(bpmProcessDefService.hasPublishedDefByFormKey("pure_form")).thenReturn(false);
+        when(bpmTaskFacade.queryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
+                .thenReturn(java.util.Optional.of(List.of()));
+        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
+        org.mockito.Mockito.doReturn(instance(2L))
+                .when(spy).findLatestInstance("pure_form", "rec-001");
+
+        Map<String, Object> result = spy.instanceRelation("pure_form", "rec-001").getData();
+
+        assertThat(result.get("formHasProcess")).isEqualTo(false);
+        assertThat(result.get("relation")).isEqualTo("PARTICIPANT");
+    }
+
+    /** 判定异常不得中断关系查询主链：按未绑定降级。 */
+    @Test
+    @DisplayName("formHasProcess：绑定判定异常时降级为 false，不阻断关系查询")
+    void instanceRelation_shouldDegradeToFalseOnLookupFailure() {
+        when(bpmProcessDefService.hasPublishedDefByFormKey("leave_form"))
+                .thenThrow(new IllegalStateException("db down"));
+        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
+        org.mockito.Mockito.doReturn(null)
+                .when(spy).findLatestInstance("leave_form", "rec-001");
+
+        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+
+        assertThat(result.get("formHasProcess")).isEqualTo(false);
+        assertThat(result.get("relation")).isEqualTo("NONE");
+    }
+
+    /**
      * 提交后实例探测（用户态）：统计本人实例数，且不依赖工作流监控权限。
      * 反向断言：发起人 = 当前登录用户强制传入，不接受客户端指定他人身份。
      */
