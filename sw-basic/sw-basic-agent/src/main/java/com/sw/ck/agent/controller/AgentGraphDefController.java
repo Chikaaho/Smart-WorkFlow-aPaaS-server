@@ -3,11 +3,11 @@ package com.sw.ck.agent.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.agent.dto.AgentGraphCreateReqDTO;
-import com.sw.ck.agent.dto.AgentGraphDefDTO;
+import com.sw.ck.agent.vo.AgentGraphDefVO;
 import com.sw.ck.agent.dto.AgentGraphExecuteReqDTO;
-import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
+import com.sw.ck.agent.vo.AgentGraphExecuteRespVO;
 import com.sw.ck.agent.dto.AgentGraphSettingsReqDTO;
-import com.sw.ck.agent.dto.AgentGraphSnapshotDTO;
+import com.sw.ck.agent.vo.AgentGraphSnapshotVO;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
@@ -65,7 +65,7 @@ public class AgentGraphDefController {
     /** 发布图定义（defVersion 递增 + PUBLISHED + graphKey 冻结检查） */
     @PostMapping("/{id}/publish")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<AgentGraphDefDTO> publish(@PathVariable Long id) {
+    public R<AgentGraphDefVO> publish(@PathVariable Long id) {
         return R.ok(agentGraphDefService.publish(id));
     }
 
@@ -79,7 +79,7 @@ public class AgentGraphDefController {
     /** 分页列表（DTO 不含 graph_json 大字段） */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<PageResult<AgentGraphDefDTO>> pageDefs(PageParam pageParam) {
+    public R<PageResult<AgentGraphDefVO>> pageDefs(PageParam pageParam) {
         return R.ok(agentGraphDefService.pageDefs(pageParam));
     }
 
@@ -94,14 +94,14 @@ public class AgentGraphDefController {
     /** 历史发布版本列表（D022-06，新版本在前，不含 graph_json） */
     @GetMapping("/{id}/versions")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<AgentGraphSnapshotDTO>> versions(@PathVariable Long id) {
+    public R<List<AgentGraphSnapshotVO>> versions(@PathVariable Long id) {
         return R.ok(agentGraphDefService.listVersions(id));
     }
 
     /** 更新图级设置（当前为执行超时秒数） */
     @PutMapping("/{id}/settings")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<AgentGraphDefDTO> updateSettings(@PathVariable Long id,
+    public R<AgentGraphDefVO> updateSettings(@PathVariable Long id,
                                               @RequestBody AgentGraphSettingsReqDTO req) {
         return R.ok(agentGraphDefService.updateSettings(id, req.getExecutionTimeoutSeconds()));
     }
@@ -112,7 +112,7 @@ public class AgentGraphDefController {
      */
     @PostMapping("/{id}/execute")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<AgentGraphExecuteRespDTO> execute(@PathVariable Long id,
+    public R<AgentGraphExecuteRespVO> execute(@PathVariable Long id,
                                                @RequestBody AgentGraphExecuteReqDTO req) {
         return R.ok(agentGraphExecutionService.execute(id, req.getInput()));
     }

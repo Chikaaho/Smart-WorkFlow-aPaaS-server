@@ -371,12 +371,12 @@ class UserGroupDataScopeIntegrationTest {
         @Bean
         public SysUserGroupService sysUserGroupService(SysUserGroupMemberMapper memberMapper, SysUserMapper userMapper,
                                                        LoginContextProvider loginContextProvider) {
-            return new SysUserGroupServiceImpl(memberMapper, userMapper, loginContextProvider);
+            return new SysUserGroupServiceImpl();
         }
 
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean

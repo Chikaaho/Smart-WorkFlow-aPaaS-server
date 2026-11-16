@@ -6,9 +6,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.trace.DiagnosticText;
 import com.sw.ck.iot.config.IotCipherProperties;
-import com.sw.ck.iot.dto.IotConnectResultDTO;
-import com.sw.ck.iot.dto.IotConnectionDTO;
-import com.sw.ck.iot.dto.IotConnectionTestResultDTO;
+import com.sw.ck.iot.vo.IotConnectResultVO;
+import com.sw.ck.iot.vo.IotConnectionVO;
+import com.sw.ck.iot.vo.IotConnectionTestResultVO;
 import com.sw.ck.iot.entity.IotConnection;
 import com.sw.ck.iot.entity.IotTopic;
 import com.sw.ck.iot.mapper.IotConnectionMapper;
@@ -150,7 +150,7 @@ public class IotConnectionService {
     /**
      * 建立常驻连接并恢复订阅（幂等；失败抛出分类信息）。
      */
-    public IotConnectResultDTO connect(Long id) {
+    public IotConnectResultVO connect(Long id) {
         IotConnection conn = connectionMapper.selectById(id);
         if (conn == null) {
             throw new IllegalArgumentException("连接不存在: id=" + id);
@@ -175,7 +175,7 @@ public class IotConnectionService {
             healthPatch.setLastCheckTime(LocalDateTime.now());
             healthPatch.setLastCheckResult("CONNECT: 常驻连接已建立");
             connectionMapper.updateById(healthPatch);
-            IotConnectResultDTO result = new IotConnectResultDTO();
+            IotConnectResultVO result = new IotConnectResultVO();
             result.setConnected(true);
             result.setSubscriptions(subscriptions.size());
             return result;
@@ -206,7 +206,7 @@ public class IotConnectionService {
      * @return 分类结果（SUCCESS / DNS_UNREACHABLE / NETWORK_UNREACHABLE / AUTH_FAILED /
      *         TLS_FAILED / PROTOCOL_FAILED / UNSUPPORTED）
      */
-    public IotConnectionTestResultDTO testConnection(Long id) {
+    public IotConnectionTestResultVO testConnection(Long id) {
         IotConnection conn = connectionMapper.selectById(id);
         if (conn == null) {
             throw new IllegalArgumentException("连接不存在: id=" + id);
@@ -230,7 +230,7 @@ public class IotConnectionService {
         patch.setLastCheckTime(LocalDateTime.now());
         patch.setLastCheckResult(category + ": " + detail);
         connectionMapper.updateById(patch);
-        IotConnectionTestResultDTO result = new IotConnectionTestResultDTO();
+        IotConnectionTestResultVO result = new IotConnectionTestResultVO();
         result.setCategory(category);
         result.setDetail(detail);
         result.setHealthStatus(patch.getHealthStatus());
@@ -255,8 +255,8 @@ public class IotConnectionService {
     /**
      * 对外视图：凭证脱敏。
      */
-    public IotConnectionDTO toVO(IotConnection conn) {
-        IotConnectionDTO vo = JSON.parseObject(JSON.toJSONString(conn), IotConnectionDTO.class);
+    public IotConnectionVO toVO(IotConnection conn) {
+        IotConnectionVO vo = JSON.parseObject(JSON.toJSONString(conn), IotConnectionVO.class);
         vo.setPasswordMasked(PASSWORD_MASK);
         vo.setHasPassword(conn.getPasswordCipher() != null && !conn.getPasswordCipher().isBlank());
         return vo;

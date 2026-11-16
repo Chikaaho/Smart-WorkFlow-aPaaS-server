@@ -2,10 +2,10 @@ package com.sw.ck.bpm.process.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.bpm.process.dto.CatalogItemDTO;
+import com.sw.ck.bpm.process.vo.CatalogItemVO;
 import com.sw.ck.bpm.process.dto.CategoryAssignReq;
-import com.sw.ck.bpm.process.dto.CategoryCountsDTO;
-import com.sw.ck.bpm.process.dto.CategoryDTO;
+import com.sw.ck.bpm.process.vo.CategoryCountsVO;
+import com.sw.ck.bpm.process.vo.CategoryVO;
 import com.sw.ck.bpm.process.service.BpmCatalogService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -39,7 +39,7 @@ public class BpmCatalogController {
 
     /** 普通用户可发起事项目录（categoryId=0 表示未分类兜底）。 */
     @GetMapping("/items")
-    public R<PageResult<CatalogItemDTO>> items(PageParam pageParam,
+    public R<PageResult<CatalogItemVO>> items(PageParam pageParam,
                                                @RequestParam(required = false) String keyword,
                                                @RequestParam(required = false) Long categoryId) {
         return R.ok(catalogService.listPortalItems(keyword, categoryId, pageParam));
@@ -47,26 +47,26 @@ public class BpmCatalogController {
 
     /** 普通视角分类聚合数量（仅统计本人可见事项，未分类归入 key 0）。 */
     @GetMapping("/category-counts")
-    public R<CategoryCountsDTO> categoryCounts() {
+    public R<CategoryCountsVO> categoryCounts() {
         return R.ok(catalogService.portalCategoryCounts());
     }
 
     /** 普通视角分类列表（仅名称/排序，登录即可用；不泄漏事项级信息）。 */
     @GetMapping("/categories")
-    public R<List<CategoryDTO>> portalCategories() {
+    public R<List<CategoryVO>> portalCategories() {
         return R.ok(catalogService.portalCategories());
     }
 
     /** 普通视角事项详情（校验可见/发布/绑定后返回关联表单 formKey）。 */
     @GetMapping("/items/{processKey}")
-    public R<CatalogItemDTO> item(@PathVariable String processKey) {
+    public R<CatalogItemVO> item(@PathVariable String processKey) {
         return R.ok(catalogService.getPortalItem(processKey));
     }
 
     /** 管理视角事项列表（含未发布定义）。 */
     @GetMapping("/admin/items")
     @PreAuthorize("@ss.hasPermi('workflow:catalog:manage')")
-    public R<PageResult<CatalogItemDTO>> adminItems(PageParam pageParam,
+    public R<PageResult<CatalogItemVO>> adminItems(PageParam pageParam,
                                                     @RequestParam(required = false) String keyword,
                                                     @RequestParam(required = false) Long categoryId) {
         return R.ok(catalogService.listAdminItems(keyword, categoryId, pageParam));

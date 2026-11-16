@@ -231,19 +231,19 @@ class DeptGovernanceIntegrationTest {
 
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean
         public SysDeptService sysDeptService(SysUserService sysUserService) {
-            return new SysDeptServiceImpl(sysUserService);
+            return new SysDeptServiceImpl();
         }
 
         @Bean
         public SysUserService sysUserService(PasswordEncoder passwordEncoder, SysUserRoleMapper userRoleMapper,
                                              SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
                                              SysPostMapper postMapper) {
-            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper);
+            return new SysUserServiceImpl();
         }
 
         @Bean

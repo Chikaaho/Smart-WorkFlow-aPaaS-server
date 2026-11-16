@@ -206,7 +206,7 @@ class PermissionConvergenceFailSecureTest {
 
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean
@@ -214,8 +214,7 @@ class PermissionConvergenceFailSecureTest {
                                              SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
                                              SysPostMapper postMapper, SysDeptMapper deptMapper,
                                              LoginUserLoader loader) {
-            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper,
-                    deptMapper, loader);
+            return new SysUserServiceImpl();
         }
 
         @Bean
@@ -224,12 +223,12 @@ class PermissionConvergenceFailSecureTest {
                                              SysUserRoleMapper userRoleMapper,
                                              SysUserMapper userMapper,
                                              LoginUserLoader loader) {
-            return new SysRoleServiceImpl(roleDeptMapper, roleMenuMapper, userRoleMapper, userMapper, loader);
+            return new SysRoleServiceImpl();
         }
 
         @Bean
         public SysDeptService sysDeptService(SysUserService sysUserService) {
-            return new SysDeptServiceImpl(sysUserService);
+            return new SysDeptServiceImpl();
         }
 
         @Bean

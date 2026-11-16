@@ -2,7 +2,7 @@ package com.sw.ck.bootstrap.phase3;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.service.FormDataDeleteService;
 import com.sw.ck.form.service.FormDataQueryService;
@@ -173,7 +173,7 @@ class Phase3ReferenceConcurrencyPostgresTest {
 
     private void publishFormAs(Long tenantId, Long userId, String formKey, String definitionJson) {
         asTenant(tenantId, userId, () -> {
-            FormDefDTO draft = formDefService.createDraft(formKey, "P3-" + formKey, null, null);
+            FormDefVO draft = formDefService.createDraft(formKey, "P3-" + formKey, null, null);
             formDefService.saveConfig(draft.getId(), definitionJson);
             formDefService.publish(draft.getId());
             return null;

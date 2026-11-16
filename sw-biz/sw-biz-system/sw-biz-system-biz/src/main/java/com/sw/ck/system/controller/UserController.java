@@ -32,6 +32,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import com.sw.ck.system.vo.SysUserVO;
 
 /**
  * 用户管理控制器。
@@ -99,7 +100,7 @@ public class UserController {
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:user:list')")
-    public R<PageResult<SysUser>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysUserVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                         @RequestParam(defaultValue = "10") long pageSize,
                                         @RequestBody(required = false) UserPageQuery query) {
         PageParam pageParam = new PageParam();
@@ -112,7 +113,7 @@ public class UserController {
         }
         PageResult<SysUser> result = query == null ? sysUserService.page(pageParam) : sysUserService.page(pageParam, query);
         tenantContext.decorateUsers(result.getRecords());
-        return R.ok(result);
+        return R.ok(PageResult.map(result, SysUserVO::from));
     }
 
     /**
@@ -120,10 +121,10 @@ public class UserController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:user:list')")
-    public R<SysUser> get(@PathVariable Long id) {
+    public R<SysUserVO> get(@PathVariable Long id) {
         SysUser user = sysUserService.getById(id);
         if (user != null) tenantContext.decorateUsers(List.of(user));
-        return R.ok(user);
+        return R.ok(SysUserVO.from(user));
     }
 
     /**

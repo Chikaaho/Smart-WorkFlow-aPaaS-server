@@ -4,12 +4,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
-import com.sw.ck.form.api.dto.FormAppDTO;
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.dto.FormDataRecordDTO;
-import com.sw.ck.form.dto.WorkspaceAggregateDTO;
-import com.sw.ck.form.dto.WorkspaceFieldsDTO;
-import com.sw.ck.form.dto.WorkspaceSourceDTO;
+import com.sw.ck.form.api.vo.FormAppVO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.vo.FormDataRecordVO;
+import com.sw.ck.form.vo.WorkspaceAggregateVO;
+import com.sw.ck.form.vo.WorkspaceFieldsVO;
+import com.sw.ck.form.vo.WorkspaceSourceVO;
 import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
 import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
 import com.sw.ck.form.service.FormAppService;
@@ -55,14 +55,14 @@ public class FormWorkspaceAnalyticsController {
      * 口径的记录数，单个表单计数失败按 0 记录，不阻断候选列表。</p>
      */
     @GetMapping("/sources")
-    public R<List<WorkspaceSourceDTO>> sources() {
+    public R<List<WorkspaceSourceVO>> sources() {
         Map<String, String> appNameById = formAppService.listVisibleAppsForCurrentUser().stream()
-                .collect(Collectors.toMap(FormAppDTO::getId, FormAppDTO::getName, (a, b) -> a,
+                .collect(Collectors.toMap(FormAppVO::getId, FormAppVO::getName, (a, b) -> a,
                         LinkedHashMap::new));
         Function<String, String> appNameOf = appId -> appId == null ? null : appNameById.get(appId);
-        List<WorkspaceSourceDTO> list = formDefService.listPublishedForCurrentUser().stream()
+        List<WorkspaceSourceVO> list = formDefService.listPublishedForCurrentUser().stream()
                 .map(def -> {
-                    WorkspaceSourceDTO item = new WorkspaceSourceDTO();
+                    WorkspaceSourceVO item = new WorkspaceSourceVO();
                     item.setFormKey(def.getFormKey());
                     item.setName(def.getName());
                     item.setFormVersion(def.getFormVersion());
@@ -82,13 +82,13 @@ public class FormWorkspaceAnalyticsController {
 
     /** 指定表单当前账号可见的标量字段目录。 */
     @GetMapping("/forms/{formKey}/fields")
-    public R<WorkspaceFieldsDTO> fields(@PathVariable("formKey") String formKey) {
+    public R<WorkspaceFieldsVO> fields(@PathVariable("formKey") String formKey) {
         return R.ok(formDataQueryService.workspaceFields(formKey));
     }
 
     /** 分组聚合。 */
     @PostMapping("/aggregate")
-    public R<WorkspaceAggregateDTO> aggregate(@RequestBody WorkspaceAggregateReq req) {
+    public R<WorkspaceAggregateVO> aggregate(@RequestBody WorkspaceAggregateReq req) {
         if (req == null || req.getFormKey() == null || req.getFormKey().isBlank()) {
             return R.fail(1500, "聚合查询缺少表单标识");
         }
@@ -100,7 +100,7 @@ public class FormWorkspaceAnalyticsController {
 
     /** 数据列表。 */
     @PostMapping("/rows")
-    public R<PageResult<FormDataRecordDTO>> rows(@RequestBody WorkspaceRowsReq req) {
+    public R<PageResult<FormDataRecordVO>> rows(@RequestBody WorkspaceRowsReq req) {
         if (req == null || req.getFormKey() == null || req.getFormKey().isBlank()) {
             return R.fail(1500, "列表查询缺少表单标识");
         }

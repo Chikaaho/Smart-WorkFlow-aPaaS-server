@@ -3,7 +3,7 @@ package com.sw.ck.form.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.common.response.R;
-import com.sw.ck.form.dto.FormIntegrationCandidateDTO;
+import com.sw.ck.form.vo.FormIntegrationCandidateVO;
 import com.sw.ck.form.dto.FormIntegrationInvokeReq;
 import com.sw.ck.form.dto.FormIntegrationInvokeResult;
 import com.sw.ck.form.service.FormIntegrationService;
@@ -34,7 +34,7 @@ public class FormIntegrationController {
     /** 设计器可选择的、本租户启用且已分类的能力（不含 URL/方法）。 */
     @GetMapping("/candidates")
     @PreAuthorize("@ss.hasPermi('form:design') and @ss.hasPermi('agent:tool:view')")
-    public R<List<FormIntegrationCandidateDTO>> candidates() {
+    public R<List<FormIntegrationCandidateVO>> candidates() {
         return R.ok(formIntegrationService.listCandidates());
     }
 

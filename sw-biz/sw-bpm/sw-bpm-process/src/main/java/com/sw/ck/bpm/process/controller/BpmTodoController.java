@@ -2,14 +2,14 @@ package com.sw.ck.bpm.process.controller;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
-import com.sw.ck.bpm.process.dto.ProcessedTaskRespDTO;
-import com.sw.ck.bpm.process.dto.TaskDetailRespDTO;
-import com.sw.ck.bpm.process.dto.TodoTaskRespDTO;
+import com.sw.ck.bpm.process.vo.ApprovalHistoryItemVO;
+import com.sw.ck.bpm.process.vo.ProcessedTaskRespVO;
+import com.sw.ck.bpm.process.vo.TaskDetailRespVO;
+import com.sw.ck.bpm.process.vo.TodoTaskRespVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
@@ -57,6 +57,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.sw.ck.common.value.DynamicData;
 /**
  * 待办中心控制器（查询入口 + 审批动作 HTTP 入口）。
  * <p>
@@ -102,7 +103,7 @@ public class BpmTodoController {
      * 当前用户待办列表（分页）。
      */
     @GetMapping("/todo")
-    public R<PageResult<TodoTaskRespDTO>> todo(PageParam pageParam) {
+    public R<PageResult<TodoTaskRespVO>> todo(PageParam pageParam) {
         LoginUser loginUser = LoginUserHolder.get();
         String tenantId = String.valueOf(loginUser.getTenantId());
         String assignee = String.valueOf(loginUser.getUserId());
@@ -112,7 +113,7 @@ public class BpmTodoController {
 
         // empty = 租户/处理人上下文缺失，无法确定查询范围：
         // 对外保持原响应形状（空页 + 0），不把“无法查询”暴露为 500 或改变字段类型
-        List<BpmTaskDTO> tasks = bpmTaskFacade.queryTodoPage(tenantId, assignee, (int) offset, limit)
+        List<BpmTaskVO> tasks = bpmTaskFacade.queryTodoPage(tenantId, assignee, (int) offset, limit)
                 .orElse(List.of());
         long total = bpmTaskFacade.countTodo(tenantId, assignee)
                 .orElse(0L);
@@ -123,7 +124,7 @@ public class BpmTodoController {
         Map<String, LocalDateTime> dueByTask = new HashMap<>();
         if (deadlineMapper != null && !tasks.isEmpty()) {
             List<String> taskIds = tasks.stream()
-                    .map(BpmTaskDTO::getTaskId).filter(Objects::nonNull).toList();
+                    .map(BpmTaskVO::getTaskId).filter(Objects::nonNull).toList();
             if (!taskIds.isEmpty()) {
                 for (BpmTaskDeadline d : deadlineMapper.selectList(
                         Wrappers.<BpmTaskDeadline>lambdaQuery()
@@ -135,14 +136,14 @@ public class BpmTodoController {
                 }
             }
         }
-        List<TodoTaskRespDTO> dtos = tasks.stream()
+        List<TodoTaskRespVO> dtos = tasks.stream()
                 .map(task -> toTodoTaskDTO(task, dueByTask.get(task.getTaskId())))
                 .collect(Collectors.toList());
 
         log.debug("待办查询: tenantId={}, assignee={}, total={}, pageNum={}, pageSize={}",
                 tenantId, assignee, total, pageParam.getPageNum(), pageParam.getPageSize());
 
-        PageResult<TodoTaskRespDTO> pageResult = new PageResult<>();
+        PageResult<TodoTaskRespVO> pageResult = new PageResult<>();
         pageResult.setRecords(dtos);
         pageResult.setTotal(total);
         pageResult.setPageNum(pageParam.getPageNum());
@@ -230,9 +231,9 @@ public class BpmTodoController {
      * </p>
      */
     @GetMapping("/{taskId}")
-    public R<TaskDetailRespDTO> detail(@PathVariable String taskId) {
+    public R<TaskDetailRespVO> detail(@PathVariable String taskId) {
         // 运行期优先；empty 回落已完成历史（已办详情），两处均空仍为 404 语义，不改变错误码
-        Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(taskId);
+        Optional<BpmTaskVO> taskLookup = bpmTaskFacade.getTask(taskId);
         boolean finished = false;
         if (taskLookup.isEmpty()) {
             taskLookup = bpmTaskFacade.getHistoricTask(taskId);
@@ -241,7 +242,7 @@ public class BpmTodoController {
         if (taskLookup.isEmpty()) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
         }
-        BpmTaskDTO task = taskLookup.get();
+        BpmTaskVO task = taskLookup.get();
         // 对象权限（I4 §3.7：消息摘要与深链再次执行对象权限）：仅任务办理人（含历史办理人）、
         // 超级管理员或持有监控查看权限的运营身份可读，其余身份服务端拒绝
         var loginUser = LoginUserHolder.get();
@@ -257,7 +258,7 @@ public class BpmTodoController {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权查看该任务");
         }
 
-        TaskDetailRespDTO dto = new TaskDetailRespDTO();
+        TaskDetailRespVO dto = new TaskDetailRespVO();
         dto.setTaskId(task.getTaskId());
         dto.setTaskName(task.getName());
         dto.setProcessInstanceId(task.getProcessInstanceId());
@@ -311,14 +312,14 @@ public class BpmTodoController {
         if (variables.isEmpty() && task.getProcessInstanceId() != null) {
             variables = bpmTaskFacade.getHistoricVariables(task.getProcessInstanceId());
         }
-        variables.ifPresent(dto::setProcessVariables);
+        variables.ifPresent(v -> dto.setProcessVariables(DynamicData.of(v)));
 
         // 已办详情只读：无意见表单、canHandle 恒 false；待办按服务端办理权限判定
         if (finished) {
             dto.setCanHandle(false);
             dto.setAllowedActions(List.of());
         } else {
-            dto.setOpinionForm(taskActionService.resolveOpinionForm(task));
+            dto.setOpinionForm(DynamicData.of(taskActionService.resolveOpinionForm(task)));
             dto.setAllowedActions(taskActionService.resolveAllowedActions(task));
             dto.setCanHandle(bpmTaskFacade
                     .canHandle(taskId, String.valueOf(loginUser.getUserId()))
@@ -335,12 +336,12 @@ public class BpmTodoController {
 
         // 审批历史
         // empty = 实例标识缺失：无历史（响应字段保持原列表形状，不漂移为 Optional）
-        List<BpmTaskDTO> historyTasks = bpmTaskFacade
+        List<BpmTaskVO> historyTasks = bpmTaskFacade
                 .queryHistoryByProcessInstance(task.getProcessInstanceId())
                 .orElse(List.of());
-        List<ApprovalHistoryItemDTO> history = new ArrayList<>();
-        for (BpmTaskDTO h : historyTasks) {
-            ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
+        List<ApprovalHistoryItemVO> history = new ArrayList<>();
+        for (BpmTaskVO h : historyTasks) {
+            ApprovalHistoryItemVO item = new ApprovalHistoryItemVO();
             item.setTaskId(h.getTaskId());
             item.setTaskName(h.getName());
             item.setNodeKey(h.getTaskDefinitionKey());
@@ -361,7 +362,7 @@ public class BpmTodoController {
                     .findByProcessInstanceId(task.getProcessInstanceId()).stream()
                     .collect(Collectors.toMap(ApprovalActionRecord::getTaskId,
                             Function.identity(), (left, right) -> left));
-            for (ApprovalHistoryItemDTO item : history) {
+            for (ApprovalHistoryItemVO item : history) {
                 ApprovalActionRecord action = actions.get(item.getTaskId());
                 if (action == null) continue;
                 item.setAction(action.getAction());
@@ -372,9 +373,9 @@ public class BpmTodoController {
                 item.setOpinionFormVersion(action.getOpinionFormVersion());
                 if (action.getOpinionData() != null && objectMapper != null) {
                     try {
-                        item.setOpinionData(objectMapper.readValue(action.getOpinionData(), Map.class));
+                        item.setOpinionData(DynamicData.of(objectMapper.readValue(action.getOpinionData(), Map.class)));
                     } catch (Exception ignored) {
-                        item.setOpinionData(Map.of());
+                        item.setOpinionData(DynamicData.empty());
                     }
                 }
             }
@@ -382,16 +383,16 @@ public class BpmTodoController {
         // 审批人展示名富化（快照冻结名优先，历史身份不随后续改名重写；查询失败不阻断详情）
         Map<Long, String> historyNames = participantNameService != null
                 ? participantNameService.resolveDisplayNames(task.getProcessInstanceId(), historyTasks.stream()
-                .map(BpmTaskDTO::getAssignee)
+                .map(BpmTaskVO::getAssignee)
                 .filter(a -> a != null && a.matches("\\d+"))
                 .map(Long::valueOf)
                 .collect(Collectors.toSet()))
                 : taskActionService.resolveUserNames(historyTasks.stream()
-                .map(BpmTaskDTO::getAssignee)
+                .map(BpmTaskVO::getAssignee)
                 .filter(a -> a != null && a.matches("\\d+"))
                 .map(Long::valueOf)
                 .collect(Collectors.toSet()));
-        for (ApprovalHistoryItemDTO item : history) {
+        for (ApprovalHistoryItemVO item : history) {
             if (item.getAssignee() != null && item.getAssignee().matches("\\d+")) {
                 item.setAssigneeName(historyNames.get(Long.valueOf(item.getAssignee())));
             }
@@ -408,7 +409,7 @@ public class BpmTodoController {
      * 当前用户已办列表（分页）。
      */
     @GetMapping("/processed")
-    public R<PageResult<ProcessedTaskRespDTO>> processed(PageParam pageParam) {
+    public R<PageResult<ProcessedTaskRespVO>> processed(PageParam pageParam) {
         LoginUser loginUser = LoginUserHolder.get();
         String tenantId = String.valueOf(loginUser.getTenantId());
         String assignee = String.valueOf(loginUser.getUserId());
@@ -418,19 +419,19 @@ public class BpmTodoController {
 
         // empty = 租户/处理人上下文缺失，无法确定查询范围：
         // 对外保持原响应形状（空页 + 0），不把“无法查询”暴露为 500 或改变字段类型
-        List<BpmTaskDTO> tasks = bpmTaskFacade.queryProcessedPage(tenantId, assignee, (int) offset, limit)
+        List<BpmTaskVO> tasks = bpmTaskFacade.queryProcessedPage(tenantId, assignee, (int) offset, limit)
                 .orElse(List.of());
         long total = bpmTaskFacade.countProcessed(tenantId, assignee)
                 .orElse(0L);
 
-        List<ProcessedTaskRespDTO> dtos = tasks.stream()
+        List<ProcessedTaskRespVO> dtos = tasks.stream()
                 .map(this::toProcessedTaskDTO)
                 .collect(Collectors.toList());
 
         log.debug("已办查询: tenantId={}, assignee={}, total={}, pageNum={}, pageSize={}",
                 tenantId, assignee, total, pageParam.getPageNum(), pageParam.getPageSize());
 
-        PageResult<ProcessedTaskRespDTO> pageResult = new PageResult<>();
+        PageResult<ProcessedTaskRespVO> pageResult = new PageResult<>();
         pageResult.setRecords(dtos);
         pageResult.setTotal(total);
         pageResult.setPageNum(pageParam.getPageNum());
@@ -439,8 +440,8 @@ public class BpmTodoController {
         return R.ok(pageResult);
     }
 
-    private TodoTaskRespDTO toTodoTaskDTO(BpmTaskDTO task, LocalDateTime dueAt) {
-        TodoTaskRespDTO dto = new TodoTaskRespDTO();
+    private TodoTaskRespVO toTodoTaskDTO(BpmTaskVO task, LocalDateTime dueAt) {
+        TodoTaskRespVO dto = new TodoTaskRespVO();
         dto.setTaskId(task.getTaskId());
         dto.setDueAt(dueAt);
         dto.setProcessInstanceId(task.getProcessInstanceId());
@@ -481,8 +482,8 @@ public class BpmTodoController {
         return dto;
     }
 
-    private ProcessedTaskRespDTO toProcessedTaskDTO(BpmTaskDTO task) {
-        ProcessedTaskRespDTO dto = new ProcessedTaskRespDTO();
+    private ProcessedTaskRespVO toProcessedTaskDTO(BpmTaskVO task) {
+        ProcessedTaskRespVO dto = new ProcessedTaskRespVO();
         dto.setTaskId(task.getTaskId());
         dto.setTaskName(task.getName());
         dto.setProcessInstanceId(task.getProcessInstanceId());

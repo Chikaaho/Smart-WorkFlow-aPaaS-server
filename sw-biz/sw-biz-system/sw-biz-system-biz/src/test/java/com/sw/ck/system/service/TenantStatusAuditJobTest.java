@@ -28,7 +28,7 @@ class TenantStatusAuditJobTest {
         tenant.setExpireTime(LocalDateTime.now().minusMinutes(1));
         when(tenants.selectList(any())).thenReturn(List.of(tenant));
 
-        new TenantStatusAuditJob(tenants, audits).auditExpiredDue();
+        new TenantStatusAuditJob().auditExpiredDue();
 
         ArgumentCaptor<SysTenantStatusAudit> audit = ArgumentCaptor.forClass(SysTenantStatusAudit.class);
         verify(audits).insert(audit.capture());

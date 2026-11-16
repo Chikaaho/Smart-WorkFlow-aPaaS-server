@@ -1,8 +1,8 @@
 package com.sw.ck.bootstrap.multidb;
 
-import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolExternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
-import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolInternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
 import com.sw.ck.agent.integration.AgentExternalCapabilityFacade;
 import com.sw.ck.common.integration.ExternalCapability;
@@ -162,9 +162,9 @@ class AgentToolEnabledPgTest {
             internalQuery.setPageNum(1);
             internalQuery.setPageSize(10);
             internalQuery.setEnabled(true);
-            PageResult<AgentToolInternalConfigDTO> internalPage = toolService.pageInternalTools(internalQuery);
+            PageResult<AgentToolInternalConfigVO> internalPage = toolService.pageInternalTools(internalQuery);
             assertThat(internalPage.getRecords())
-                    .extracting(AgentToolInternalConfigDTO::getName)
+                    .extracting(AgentToolInternalConfigVO::getName)
                     .contains("p66_enabled_probe")
                     .doesNotContain("p66_disabled_probe");
 
@@ -172,9 +172,9 @@ class AgentToolEnabledPgTest {
             externalQuery.setPageNum(1);
             externalQuery.setPageSize(10);
             externalQuery.setEnabled(true);
-            PageResult<AgentToolExternalConfigDTO> externalPage = toolService.pageExternalTools(externalQuery);
+            PageResult<AgentToolExternalConfigVO> externalPage = toolService.pageExternalTools(externalQuery);
             assertThat(externalPage.getRecords())
-                    .extracting(AgentToolExternalConfigDTO::getName)
+                    .extracting(AgentToolExternalConfigVO::getName)
                     .contains("p66_ext_probe");
 
             // 9/10：服务层 listEnabled

@@ -1,7 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
 import com.sw.ck.bpm.api.dto.ApproverContext;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
@@ -283,10 +283,10 @@ public class ProcessStartService {
      */
     private void evaluateFirstNodeEntering(String processInstanceId) {
         try {
-            List<BpmTaskDTO> activeTasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+            List<BpmTaskVO> activeTasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
                     .orElse(Collections.emptyList());
             Set<String> nodeKeys = new LinkedHashSet<>();
-            for (BpmTaskDTO task : activeTasks) {
+            for (BpmTaskVO task : activeTasks) {
                 if (task.getTaskDefinitionKey() != null && !task.getTaskDefinitionKey().isBlank()) {
                     nodeKeys.add(task.getTaskDefinitionKey());
                 }
@@ -360,9 +360,9 @@ public class ProcessStartService {
     private void publishTodoCreatedEvent(String processInstanceId, StartCommand cmd) {
         // 经 Facade 按流程实例精确查询刚创建的任务
         // empty = 实例标识缺失（此处实例刚发起，标识已非空）：与“无待办 task”同为非预期但非阻断
-        List<BpmTaskDTO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+        List<BpmTaskVO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
                 .orElse(List.of());
-        BpmTaskDTO matchedTask = tasks.stream()
+        BpmTaskVO matchedTask = tasks.stream()
                 .findFirst()
                 .orElse(null);
 

@@ -3,14 +3,14 @@ package com.sw.ck.bootstrap.p63;
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.CommandAcceptService;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
@@ -171,7 +171,7 @@ class P63ReservationBoundaryPgTest {
         jdbc.update("UPDATE sw_iot_device SET product_ref_id = 91590 WHERE tenant_id = ? AND deleted = 0", TENANT);
 
         asUser(INITIATOR, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P63边界表单", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P63边界表单", null, null);
             formDefService.saveConfig(draft.getId(),
                     "{\"schemaVersion\":1,\"title\":\"P63边界表单\",\"fields\":["
                             + "{\"name\":\"topic\",\"type\":\"TEXT\",\"label\":\"主题\",\"required\":false},"
@@ -309,7 +309,7 @@ class P63ReservationBoundaryPgTest {
                 data("topic", topic, "plan_time", dueText), null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req("批准含非法本地时刻"), CommandChannelEnum.NORMAL));
         awaitCommandTerminalFailed(accepted.getCommandId());
         long tasks = app.getBean(TaskService.class)
@@ -350,7 +350,7 @@ class P63ReservationBoundaryPgTest {
                 null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req("批准无授权设备"), CommandChannelEnum.NORMAL));
         awaitCommandTerminalFailed(accepted.getCommandId());
         assertThat(jdbc.queryForObject(
@@ -588,7 +588,7 @@ class P63ReservationBoundaryPgTest {
                 data("topic", "边界场景", "plan_time", dueText), null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req("核准预约"), CommandChannelEnum.NORMAL));
         awaitCommandCompleted(accepted.getCommandId());
         return recordId;

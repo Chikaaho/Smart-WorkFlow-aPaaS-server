@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.engine.facade;
 
-import com.sw.ck.bpm.api.dto.BpmActivityDTO;
+import com.sw.ck.bpm.api.vo.BpmActivityVO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.result.BpmProcessStatus;
 import com.sw.ck.bpm.api.result.MutationOutcome;
@@ -157,7 +157,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
     }
 
     @Override
-    public Optional<List<BpmActivityDTO>> queryHistoricActivities(String processInstanceId) {
+    public Optional<List<BpmActivityVO>> queryHistoricActivities(String processInstanceId) {
         if (processInstanceId == null || processInstanceId.isBlank()) {
             return Optional.empty();
         }
@@ -238,15 +238,15 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
     // ==================== 内部方法 ====================
 
     /**
-     * 将 Flowable {@code HistoricActivityInstance} 转为我方 {@link BpmActivityDTO}。
+     * 将 Flowable {@code HistoricActivityInstance} 转为我方 {@link BpmActivityVO}。
      * <p>
      * 时间转换：使用系统默认时区 {@code LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault())}，
      * 与 {@code BpmTodoController.toTodoTaskDTO} 模式一致。
      * </p>
      */
-    private BpmActivityDTO toActivityDto(
+    private BpmActivityVO toActivityDto(
             HistoricActivityInstance ha) {
-        BpmActivityDTO dto = new BpmActivityDTO();
+        BpmActivityVO dto = new BpmActivityVO();
         dto.setActivityId(ha.getActivityId());
         dto.setActivityName(ha.getActivityName());
         dto.setActivityType(ha.getActivityType());

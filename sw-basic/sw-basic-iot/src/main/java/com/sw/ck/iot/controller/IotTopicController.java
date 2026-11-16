@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
+import com.sw.ck.iot.vo.IotTopicVO;
 
 /**
  * Topic 配置控制器。
@@ -22,27 +23,27 @@ public class IotTopicController {
     private IotTopicService topicService;
 
     @GetMapping
-    public R<List<IotTopic>> list() {
-        return R.ok(topicService.list());
+    public R<List<IotTopicVO>> list() {
+        return R.ok(topicService.list() == null ? List.of() : topicService.list().stream().map(IotTopicVO::from).toList());
     }
 
     @GetMapping("/{id}")
-    public R<IotTopic> detail(@PathVariable Long id) {
+    public R<IotTopicVO> detail(@PathVariable Long id) {
         IotTopic topic = topicService.getById(id);
         if (topic == null) {
             return R.fail(404, "Topic 不存在: id=" + id);
         }
-        return R.ok(topic);
+        return R.ok(IotTopicVO.from(topic));
     }
 
     @PostMapping
-    public R<IotTopic> create(@RequestBody IotTopic topic) {
-        return R.ok(topicService.create(topic));
+    public R<IotTopicVO> create(@RequestBody IotTopic topic) {
+        return R.ok(IotTopicVO.from(topicService.create(topic)));
     }
 
     @PutMapping("/{id}")
-    public R<IotTopic> update(@PathVariable Long id, @RequestBody IotTopic patch) {
-        return R.ok(topicService.update(id, patch));
+    public R<IotTopicVO> update(@PathVariable Long id, @RequestBody IotTopic patch) {
+        return R.ok(IotTopicVO.from(topicService.update(id, patch)));
     }
 
     @PostMapping("/{id}/enabled/{flag}")

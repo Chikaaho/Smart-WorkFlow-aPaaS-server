@@ -8,7 +8,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyChannelAdapter;
-import com.sw.ck.notify.dto.NotifyChannelStatusDTO;
+import com.sw.ck.notify.vo.NotifyChannelStatusVO;
 import com.sw.ck.notify.entity.NotifyChannelConfig;
 import com.sw.ck.notify.mapper.NotifyChannelConfigMapper;
 import com.sw.ck.notify.service.NotifyChannelConfigService;
@@ -44,16 +44,16 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
     private String cipherKey;
 
     @Override
-    public List<NotifyChannelStatusDTO> listChannelStatus() {
+    public List<NotifyChannelStatusVO> listChannelStatus() {
         Set<String> live = new HashSet<>();
         for (NotifyChannelAdapter a : adapters) {
             live.add(channelOf(a).name());
         }
         Set<String> tenantRows = new HashSet<>();
-        List<NotifyChannelStatusDTO> list = new ArrayList<>();
+        List<NotifyChannelStatusVO> list = new ArrayList<>();
         for (NotifyChannelConfig row : configMapper.selectList(Wrappers.emptyWrapper())) {
             tenantRows.add(row.getChannel());
-            NotifyChannelStatusDTO dto = new NotifyChannelStatusDTO();
+            NotifyChannelStatusVO dto = new NotifyChannelStatusVO();
             dto.setChannel(row.getChannel());
             dto.setSystemConfigured(live.contains(row.getChannel()) || NotifyChannel.IN_APP.name().equalsIgnoreCase(row.getChannel()));
             dto.setTenantEnabled(Boolean.TRUE.equals(row.getEnabled()));

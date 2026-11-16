@@ -6,9 +6,9 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.system.dto.SsoAuditListDTO;
-import com.sw.ck.system.dto.SsoAuthorizeStartDTO;
-import com.sw.ck.system.dto.SsoBindingListDTO;
+import com.sw.ck.system.vo.SsoAuditListVO;
+import com.sw.ck.system.vo.SsoAuthorizeStartVO;
+import com.sw.ck.system.vo.SsoBindingListVO;
 import com.sw.ck.system.model.TokenResponse;
 import com.sw.ck.common.i18n.LocalizedMessages;
 import com.sw.ck.system.security.SystemErrorKeys;
@@ -93,10 +93,10 @@ public class SsoAuthController {
      * 返回 Provider 授权 URL 与 state；state 同时落库（摘要）限时一次性。
      */
     @GetMapping("/{provider}/authorize")
-    public R<SsoAuthorizeStartDTO> authorize(@PathVariable("provider") String provider,
+    public R<SsoAuthorizeStartVO> authorize(@PathVariable("provider") String provider,
                                              @RequestParam(value = "redirect", required = false) String redirect) {
         SsoAuthService.AuthorizeStart start = ssoAuthService.startAuthorize(provider, redirect);
-        SsoAuthorizeStartDTO result = new SsoAuthorizeStartDTO();
+        SsoAuthorizeStartVO result = new SsoAuthorizeStartVO();
         result.setAuthorizeUrl(start.authorizeUrl());
         result.setState(start.state());
         return R.ok(result);
@@ -109,12 +109,12 @@ public class SsoAuthController {
      * 启用后才签发 state；不授予任何权限。不再接受手填数值租户 ID。
      */
     @GetMapping("/{provider}/authorize-login")
-    public R<SsoAuthorizeStartDTO> authorizeLogin(@PathVariable("provider") String provider,
+    public R<SsoAuthorizeStartVO> authorizeLogin(@PathVariable("provider") String provider,
                                                   @RequestParam(value = "tenantName", required = false) String tenantName,
                                                   @RequestParam(value = "redirect", required = false) String redirect) {
         try {
             SsoAuthService.AuthorizeStart start = ssoAuthService.startAuthorizeLogin(provider, tenantName, redirect);
-            SsoAuthorizeStartDTO result = new SsoAuthorizeStartDTO();
+            SsoAuthorizeStartVO result = new SsoAuthorizeStartVO();
             result.setAuthorizeUrl(start.authorizeUrl());
             result.setState(start.state());
             return R.ok(result);
@@ -242,7 +242,7 @@ public class SsoAuthController {
     /** SSO 审计查询（I5 复验 G7）：权限守卫 + 租户隔离；无权与跨租户查询被拒绝。 */
     @PreAuthorize("@ss.hasPermi('system:sso:audit:query')")
     @GetMapping("/audit")
-    public R<SsoAuditListDTO> audit(@RequestParam(value = "provider", required = false) String provider,
+    public R<SsoAuditListVO> audit(@RequestParam(value = "provider", required = false) String provider,
                                         @RequestParam(value = "eventType", required = false) String eventType,
                                         @RequestParam(value = "result", required = false) String result,
                                         @RequestParam(value = "localUserId", required = false) Long localUserId,
@@ -253,7 +253,7 @@ public class SsoAuthController {
 
     /** 当前用户绑定状态（个人中心）。 */
     @GetMapping("/bindings")
-    public R<SsoBindingListDTO> bindings() {
+    public R<SsoBindingListVO> bindings() {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
             return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,

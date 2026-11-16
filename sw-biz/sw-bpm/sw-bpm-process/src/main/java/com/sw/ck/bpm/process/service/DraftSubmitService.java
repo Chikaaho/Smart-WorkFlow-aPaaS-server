@@ -5,7 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -14,7 +14,7 @@ import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUser;
@@ -58,7 +58,7 @@ public class DraftSubmitService {
      * 受理中/已提交重复调用返回既有受理（duplicated=true）。
      */
     @Transactional
-    public CommandAcceptRespDTO submit(Long id) {
+    public CommandAcceptRespVO submit(Long id) {
         return submit(id, CommandChannelEnum.NORMAL);
     }
 
@@ -66,7 +66,7 @@ public class DraftSubmitService {
      * 正式提交草稿并指定受理通道。通道仅由受信任的控制器传入，业务校验和幂等规则不变。
      */
     @Transactional
-    public CommandAcceptRespDTO submit(Long id, CommandChannelEnum channel) {
+    public CommandAcceptRespVO submit(Long id, CommandChannelEnum channel) {
         LoginUser loginUser = LoginUserHolder.get();
         requireConsumableTenant(loginUser);
         BpmDraft draft = loadOwned(id);
@@ -76,7 +76,7 @@ public class DraftSubmitService {
             CommandEnvelope existing = draft.getCommandId() == null ? null
                     : commandQueue.findById(draft.getCommandId()).orElse(null);
             if (existing != null) {
-                CommandAcceptRespDTO resp = new CommandAcceptRespDTO();
+                CommandAcceptRespVO resp = new CommandAcceptRespVO();
                 resp.setCommandId(existing.getCommandId());
                 resp.setCommandKey(existing.getCommandKey());
                 resp.setCommandType(existing.getCommandType().getCode());
@@ -89,7 +89,7 @@ public class DraftSubmitService {
         requireEditable(draft);
 
         // D3 提交校验：表单仍发布 + 版本仍可用
-        FormDefDTO formDef = requirePublishedForm(draft.getFormKey());
+        FormDefVO formDef = requirePublishedForm(draft.getFormKey());
         if (draft.getFormVersion() != null && formDef.getFormVersion() != null
                 && !draft.getFormVersion().equals(Long.valueOf(formDef.getFormVersion()))) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
@@ -146,7 +146,7 @@ public class DraftSubmitService {
         draft.setCommandId(envelope.getCommandId());
         draftService.updateById(draft);
 
-        CommandAcceptRespDTO resp = new CommandAcceptRespDTO();
+        CommandAcceptRespVO resp = new CommandAcceptRespVO();
         resp.setCommandId(envelope.getCommandId());
         resp.setCommandKey(envelope.getCommandKey());
         resp.setCommandType(envelope.getCommandType().getCode());
@@ -215,16 +215,16 @@ public class DraftSubmitService {
     }
 
     /** 已发布表单校验（保存/提交共用）。 */
-    public FormDefDTO requirePublishedForm(String formKey) {
+    public FormDefVO requirePublishedForm(String formKey) {
         if (formKey == null || formKey.isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "formKey 不能为空");
         }
         // empty = 该 formKey 无表单定义（原 null 返回路径）：与“表单不存在”同判
-        Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+        Optional<FormDefVO> formDefLookup = formDefinitionService.getFormDef(formKey);
         if (formDefLookup.isEmpty()) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "表单 '" + formKey + "' 不存在");
         }
-        FormDefDTO formDef = formDefLookup.get();
+        FormDefVO formDef = formDefLookup.get();
         if (!"PUBLISHED".equals(formDef.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     "表单 '" + formKey + "' 未发布，不能保存/提交草稿");

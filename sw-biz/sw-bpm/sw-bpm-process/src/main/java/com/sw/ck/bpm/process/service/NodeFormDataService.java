@@ -17,7 +17,7 @@ import com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper;
 import com.sw.ck.bpm.process.mapper.BpmTaskFormDataMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.i18n.LocalizedMessages;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
@@ -111,7 +111,7 @@ public class NodeFormDataService {
             return Optional.empty();
         }
         String formKey = String.valueOf(formKeyObj).trim();
-        Optional<FormDefDTO> def = formDefinitionService.getFormDef(formKey);
+        Optional<FormDefVO> def = formDefinitionService.getFormDef(formKey);
         if (def.isEmpty()) {
             // 配置存在但表单已不可用：fail closed（2432），不静默按未绑定处理
             throw new BaseException(BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),

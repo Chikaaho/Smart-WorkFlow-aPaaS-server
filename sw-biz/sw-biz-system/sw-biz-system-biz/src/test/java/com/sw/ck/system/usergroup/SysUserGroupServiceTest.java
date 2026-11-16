@@ -53,7 +53,7 @@ class SysUserGroupServiceTest {
         groupMapper = mock(SysUserGroupMapper.class);
         memberMapper = mock(SysUserGroupMemberMapper.class);
         userMapper = mock(SysUserMapper.class);
-        service = new SysUserGroupServiceImpl(memberMapper, userMapper);
+        service = new SysUserGroupServiceImpl();
         // 反射注入 baseMapper：字段实际位于 MP ServiceImpl 父类（继承链查找，名称含 baseMapper）
         Field baseMapperField = null;
         Class<?> clazz = ServiceImpl.class;

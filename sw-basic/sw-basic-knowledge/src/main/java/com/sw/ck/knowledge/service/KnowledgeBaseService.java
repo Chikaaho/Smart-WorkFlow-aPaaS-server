@@ -3,15 +3,15 @@ package com.sw.ck.knowledge.service;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.knowledge.dto.KnowledgeBaseCreateReqDTO;
-import com.sw.ck.knowledge.dto.KnowledgeBaseDTO;
+import com.sw.ck.knowledge.vo.KnowledgeBaseVO;
 
 public interface KnowledgeBaseService {
 
-    PageResult<KnowledgeBaseDTO> page(PageParam pageParam, String nameKeyword);
+    PageResult<KnowledgeBaseVO> page(PageParam pageParam, String nameKeyword);
 
-    KnowledgeBaseDTO get(Long id);
+    KnowledgeBaseVO get(Long id);
 
-    KnowledgeBaseDTO create(KnowledgeBaseCreateReqDTO req);
+    KnowledgeBaseVO create(KnowledgeBaseCreateReqDTO req);
 
     void delete(Long id);
 }

@@ -54,9 +54,7 @@ class TenantAdminServiceTest {
     private final SysUserRoleMapper userRoleMapper = mock(SysUserRoleMapper.class);
     private final SysTenantStatusAuditMapper statusAuditMapper = mock(SysTenantStatusAuditMapper.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
-    private final TenantAdminService service = new TenantAdminService(
-            tenantMapper, deptMapper, userMapper, roleMapper, roleMenuMapper, userRoleMapper, statusAuditMapper, passwordEncoder,
-            mock(PlatformTransactionManager.class));
+    private final TenantAdminService service = new TenantAdminService();
 
     @BeforeEach
     void setUp() {

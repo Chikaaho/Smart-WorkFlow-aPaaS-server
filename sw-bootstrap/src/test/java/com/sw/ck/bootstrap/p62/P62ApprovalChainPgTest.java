@@ -3,7 +3,7 @@ package com.sw.ck.bootstrap.p62;
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
@@ -12,7 +12,7 @@ import com.sw.ck.bpm.process.service.CommandAcceptService;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.TxnActionConfig;
@@ -203,14 +203,14 @@ class P62ApprovalChainPgTest {
                 String.class, recordId)).as("审批挂起时实例仍 RUNNING").isEqualTo("RUNNING");
 
         // 4. 审批人经受控命令通道真实受理通过
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> {
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> {
             ApprovalActionRequest req = new ApprovalActionRequest();
             req.setComment("库存申请核准");
             return acceptService.acceptTaskAction(taskId, ApprovalAction.APPROVE, req,
                     CommandChannelEnum.NORMAL);
         });
         assertThat(accepted.getCommandId()).isNotNull();
-        assertThat(accepted.isDuplicated()).as("duplicated=true=本次新建受理（CommandAcceptRespDTO 合同）").isTrue();
+        assertThat(accepted.isDuplicated()).as("duplicated=true=本次新建受理（CommandAcceptRespVO 合同）").isTrue();
 
         // 5. 命令消费完成：命令 COMPLETED、审批动作与命令关联、实例 APPROVED
         awaitCommandCompleted(accepted.getCommandId());
@@ -284,7 +284,7 @@ class P62ApprovalChainPgTest {
         // 2. 审批人拒绝（真实命令通道）
         String processInstanceId = awaitInstanceStarted(recordId);
         String taskId = awaitTask(processInstanceId);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> {
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> {
             ApprovalActionRequest req = new ApprovalActionRequest();
             req.setComment("申请不满足出库条件，驳回");
             return acceptService.acceptTaskAction(taskId, ApprovalAction.REJECT, req,
@@ -457,12 +457,12 @@ class P62ApprovalChainPgTest {
 
     private void seedStockForm() {
         asUser(INITIATOR, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P62贯穿链库存", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P62贯穿链库存", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return null;
         });
-        FormDefDTO def = asUser(INITIATOR, () -> formDefService.getFormDefByKey(FORM_KEY));
+        FormDefVO def = asUser(INITIATOR, () -> formDefService.getFormDefByKey(FORM_KEY));
         stockTable = def.getPhysicalTableName();
         assertThat(stockTable).isNotBlank();
     }

@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
+import com.sw.ck.system.vo.SysUserVO;
+import com.sw.ck.system.vo.SysRoleVO;
 
 /**
  * 角色管理控制器。
@@ -30,13 +32,13 @@ public class RoleController {
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:role:list')")
-    public R<PageResult<SysRole>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysRoleVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                         @RequestParam(defaultValue = "10") long pageSize,
                                         @RequestBody(required = false) SysRole query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysRoleService.page(pageParam, query));
+        return R.ok(PageResult.map(sysRoleService.page(pageParam, query), SysRoleVO::from));
     }
 
     /**
@@ -63,8 +65,8 @@ public class RoleController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:role:list')")
-    public R<SysRole> get(@PathVariable Long id) {
-        return R.ok(sysRoleService.getById(id));
+    public R<SysRoleVO> get(@PathVariable Long id) {
+        return R.ok(SysRoleVO.from(sysRoleService.getById(id)));
     }
 
     /**
@@ -101,13 +103,13 @@ public class RoleController {
      */
     @GetMapping("/{id}/users")
     @PreAuthorize("@ss.hasPermi('system:role:list')")
-    public R<PageResult<SysUser>> members(@PathVariable Long id,
+    public R<PageResult<SysUserVO>> members(@PathVariable Long id,
                                           @RequestParam(defaultValue = "1") long pageNum,
                                           @RequestParam(defaultValue = "10") long pageSize) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysRoleService.pageMembers(id, pageParam));
+        return R.ok(PageResult.map(sysRoleService.pageMembers(id, pageParam), SysUserVO::from));
     }
 
     @GetMapping("/{id}/menus")

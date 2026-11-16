@@ -2,7 +2,7 @@ package com.sw.ck.iot.agentbridge;
 
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
-import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
+import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
@@ -91,10 +91,8 @@ class IotAgentBridgeTest {
                 .channel(NotifyChannel.IN_APP).status("SUCCESS").build()));
         // 升级路径在显式事务模板内插入并发布；测试中直接同步执行回调
         when(transactionManager.getTransaction(any())).thenReturn(null);
-        triggerListener = new AgentGraphTriggerListener(graphDefServiceProvider,
-                lifecycleServiceProvider, triggerMapper, tenantWorkAdmission);
-        outcomeListener = new AgentExecutionOutcomeListener(triggerMapper, ruleMapper,
-                deviceMapper, eventPublisher, transactionManagerProvider, notifyFacadeProvider);
+        triggerListener = new AgentGraphTriggerListener();
+        outcomeListener = new AgentExecutionOutcomeListener();
         when(tenantWorkAdmission.claim(eq(1L), any())).thenReturn(1);
         LoginUserHolder.clear();
     }
@@ -123,7 +121,7 @@ class IotAgentBridgeTest {
         when(graphDefService.resolvePublishedGraphId("agent_gate_judge"))
                 .thenReturn(Optional.of(88L));
         when(lifecycleService.submit(eq(88L), any(), eq("iotag-55")))
-                .thenReturn(new AgentGraphExecutionAcceptedDTO(666L, "QUEUED"));
+                .thenReturn(new AgentGraphExecutionAcceptedVO(666L, "QUEUED"));
         when(triggerMapper.update(any(IotProcessTrigger.class), any())).thenReturn(1);
 
         triggerListener.onIotTrigger(agentEvent());

@@ -9,9 +9,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.integration.ExternalCapability;
 import com.sw.ck.common.integration.ExternalCapabilityFacade;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dto.FormIntegrationCandidateDTO;
+import com.sw.ck.form.vo.FormIntegrationCandidateVO;
 import com.sw.ck.form.dto.FormIntegrationInvokeReq;
 import com.sw.ck.form.dto.FormIntegrationInvokeResult;
 import com.sw.ck.form.entity.FormIntegrationInvocationEntity;
@@ -82,14 +82,14 @@ public class FormIntegrationService {
     private ObjectMapper objectMapper;
 
     /** 当前租户内可供表单设计者选择的已分类启用能力（不含 URL/方法）。 */
-    public List<FormIntegrationCandidateDTO> listCandidates() {
+    public List<FormIntegrationCandidateVO> listCandidates() {
         LoginUser user = requireLogin();
         ExternalCapabilityFacade facade = capabilityFacade.getIfAvailable();
         if (facade == null) return List.of();
-        List<FormIntegrationCandidateDTO> result = new ArrayList<>();
+        List<FormIntegrationCandidateVO> result = new ArrayList<>();
         for (ExternalCapability capability : facade.listEnabled(user.getTenantId())) {
             if (capability.effectScope() == null) continue;
-            result.add(new FormIntegrationCandidateDTO(capability.name(), capability.description(),
+            result.add(new FormIntegrationCandidateVO(capability.name(), capability.description(),
                     capability.effectScope(), capability.timeoutSeconds()));
         }
         return result;
@@ -105,7 +105,7 @@ public class FormIntegrationService {
         if (!formDefService.isCurrentUserVisible(formKey)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
         }
-        FormDefDTO def = formDefService.getFormDefByKey(formKey);
+        FormDefVO def = formDefService.getFormDefByKey(formKey);
         if (def == null || def.getId() == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
         }

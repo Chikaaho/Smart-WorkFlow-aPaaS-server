@@ -3,7 +3,7 @@ package com.sw.ck.bpm.process.service.impl;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.BatchActionResultDTO;
+import com.sw.ck.bpm.process.vo.BatchActionResultVO;
 import com.sw.ck.bpm.process.service.BpmBatchService;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.common.exception.BaseException;
@@ -34,16 +34,16 @@ public class BpmBatchServiceImpl implements BpmBatchService {
     private TaskActionService taskActionService;
 
     @Override
-    public List<BatchActionResultDTO> batchAction(List<BatchItem> items) {
+    public List<BatchActionResultVO> batchAction(List<BatchItem> items) {
         if (items == null || items.isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     "批量审批至少包含一个任务项");
         }
-        List<BatchActionResultDTO> results = new ArrayList<>();
+        List<BatchActionResultVO> results = new ArrayList<>();
         int success = 0;
         int failed = 0;
         for (BatchItem item : items) {
-            BatchActionResultDTO row = new BatchActionResultDTO();
+            BatchActionResultVO row = new BatchActionResultVO();
             row.setTaskId(item.taskId());
             row.setAction(item.action() == null ? null : item.action().name());
             try {

@@ -1,6 +1,6 @@
 package com.sw.ck.notify.service;
 
-import com.sw.ck.notify.dto.NotifyChannelStatusDTO;
+import com.sw.ck.notify.vo.NotifyChannelStatusVO;
 
 import java.util.List;
 import java.util.Map;
@@ -9,7 +9,7 @@ import java.util.Optional;
 /** 租户级渠道启停服务（I6）。 */
 public interface NotifyChannelConfigService {
 
-    List<NotifyChannelStatusDTO> listChannelStatus();
+    List<NotifyChannelStatusVO> listChannelStatus();
 
     void updateTenantChannel(String channel, boolean enabled, String senderDisplay, String configSummary);
 

@@ -1,7 +1,7 @@
 package com.sw.ck.bootstrap.phase4;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -291,7 +291,7 @@ abstract class Phase4PgSupport {
 
     /** 发布一张最小表单（供流程绑定/提交校验使用）。 */
     protected void publishForm(String formKey) {
-        FormDefDTO draft =
+        FormDefVO draft =
                 app.getBean(FormDefService.class)
                         .createDraft(formKey, "P4-" + formKey, null, null);
         FormDefService service = app.getBean(FormDefService.class);

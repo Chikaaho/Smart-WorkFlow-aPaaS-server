@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bpm.process.queue.CommandDispatcher;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.txn.model.C1PolicyModel;
 import com.sw.ck.form.txn.service.C1PolicyService;
@@ -281,14 +281,14 @@ class P62UpperEntryC1PgTest {
 
     private void seed() {
         protectedFormId = asTenant(TENANT, USER_ID, () -> {
-            FormDefDTO draft = formDefService().createDraft(PROTECTED_KEY, "P62上层入口受保护表", null, null);
+            FormDefVO draft = formDefService().createDraft(PROTECTED_KEY, "P62上层入口受保护表", null, null);
             formDefService().saveConfig(draft.getId(), stockDefinition());
             formDefService().publish(draft.getId());
             return draft.getId();
         });
         protectedTable = asTenant(TENANT, USER_ID, () -> formDefService().getFormDefByKey(PROTECTED_KEY).getPhysicalTableName());
         asTenant(TENANT, USER_ID, () -> {
-            FormDefDTO draft = formDefService().createDraft(PLAIN_KEY, "P62上层入口未保护表", null, null);
+            FormDefVO draft = formDefService().createDraft(PLAIN_KEY, "P62上层入口未保护表", null, null);
             formDefService().saveConfig(draft.getId(), stockDefinition());
             formDefService().publish(draft.getId());
             return draft.getId();

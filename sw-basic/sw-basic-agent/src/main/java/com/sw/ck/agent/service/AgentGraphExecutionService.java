@@ -1,10 +1,10 @@
 package com.sw.ck.agent.service;
 
-import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
-import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
+import com.sw.ck.agent.vo.AgentGraphExecuteRespVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionDetailVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionNodeVO;
+import com.sw.ck.agent.vo.AgentNodeRunRespVO;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanDecision;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanTaskSpec;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState;
@@ -36,7 +36,7 @@ public interface AgentGraphExecutionService {
      * @param input      执行入参文本（初始累积文本，空白 → PARAM_ERROR）
      * @return 执行结果（success/output/errorMessage/latencyMs + 新增 executionId）
      */
-    AgentGraphExecuteRespDTO execute(Long graphDefId, String input);
+    AgentGraphExecuteRespVO execute(Long graphDefId, String input);
 
     /**
      * 执行一次已发布图（G1-4 结构化入参/出参）。
@@ -50,7 +50,7 @@ public interface AgentGraphExecutionService {
      * @param input      旧契约文本入参（可为 null/空白，此时以 inputs 为准）
      * @param inputs     结构化入参（null/空 = 旧契约路径）
      */
-    default AgentGraphExecuteRespDTO execute(Long graphDefId, String input,
+    default AgentGraphExecuteRespVO execute(Long graphDefId, String input,
                                              Map<String, String> inputs) {
         return execute(graphDefId, input);
     }
@@ -63,14 +63,14 @@ public interface AgentGraphExecutionService {
      * @param nodeId     目标节点 id
      * @param inputs     调试变量表（变量名 → 值）
      */
-    default AgentNodeRunRespDTO runNode(Long graphDefId, String nodeId,
+    default AgentNodeRunRespVO runNode(Long graphDefId, String nodeId,
                                                             Map<String, String> inputs) {
         throw new UnsupportedOperationException("当前实现不支持单节点运行");
     }
 
     /** 生命周期执行结果（G3）：普通终态或人工暂停（pauseState/humanTask 非空）。 */
     class ExecutionOutcome {
-        public AgentGraphExecuteRespDTO response;
+        public AgentGraphExecuteRespVO response;
         public PauseState pauseState;
         public HumanTaskSpec humanTask;
         public Long executionId;
@@ -94,15 +94,15 @@ public interface AgentGraphExecutionService {
      * 执行历史列表（Step12，分页，create_time 倒序；可按图定义过滤）。
      * 租户隔离经租户拦截器自动生效；不做用户级过滤（设计器/运维视角的租户内全部执行）。
      */
-    PageResult<AgentGraphExecutionDTO> pageExecutions(PageParam pageParam, Long graphDefId);
+    PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId);
 
     /**
      * 执行详情（Step12，含 input/output 大字段；不存在/跨租户 → NOT_FOUND）。
      */
-    AgentGraphExecutionDetailDTO getExecution(Long executionId);
+    AgentGraphExecutionDetailVO getExecution(Long executionId);
 
     /**
      * 节点执行明细（Step12，nodeSeq 升序；执行记录不存在/跨租户 → NOT_FOUND）。
      */
-    List<AgentGraphExecutionNodeDTO> listExecutionNodes(Long executionId);
+    List<AgentGraphExecutionNodeVO> listExecutionNodes(Long executionId);
 }

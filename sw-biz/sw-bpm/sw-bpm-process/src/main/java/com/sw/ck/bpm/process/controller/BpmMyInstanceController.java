@@ -1,17 +1,17 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
-import com.sw.ck.bpm.process.dto.InstanceRelationDTO;
-import com.sw.ck.bpm.process.dto.MyInstanceCountDTO;
-import com.sw.ck.bpm.process.dto.MyInstanceDetailDTO;
-import com.sw.ck.bpm.process.dto.MyInstanceItemDTO;
-import com.sw.ck.bpm.process.dto.MyInstanceProgressNodeDTO;
-import com.sw.ck.bpm.process.dto.MyInstanceRelationInstanceDTO;
+import com.sw.ck.bpm.process.vo.ApprovalHistoryItemVO;
+import com.sw.ck.bpm.process.vo.InstanceRelationVO;
+import com.sw.ck.bpm.process.vo.MyInstanceCountVO;
+import com.sw.ck.bpm.process.vo.MyInstanceDetailVO;
+import com.sw.ck.bpm.process.vo.MyInstanceItemVO;
+import com.sw.ck.bpm.process.vo.MyInstanceProgressNodeVO;
+import com.sw.ck.bpm.process.vo.MyInstanceRelationInstanceVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -50,6 +50,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.sw.ck.common.value.DynamicData;
 /**
  * 我发起的控制器（个人入口，非流程监控）。
  * <p>
@@ -90,7 +91,7 @@ public class BpmMyInstanceController {
      * @param keyword 匹配 businessKey 或 formKey（可选）
      */
     @GetMapping
-    public R<PageResult<MyInstanceItemDTO>> myInstances(PageParam pageParam,
+    public R<PageResult<MyInstanceItemVO>> myInstances(PageParam pageParam,
                                                   @RequestParam(required = false) String status,
                                                   @RequestParam(required = false) String keyword) {
         LoginUser loginUser = LoginUserHolder.get();
@@ -115,8 +116,8 @@ public class BpmMyInstanceController {
         page.setPageNum(pageParam.getPageNum());
         page.setPageSize(pageParam.getPageSize());
         log.debug("我发起的查询: userId={}, total={}", loginUser.getUserId(), total);
-        List<MyInstanceItemDTO> items = enrichInstanceItems(records);
-        PageResult<MyInstanceItemDTO> enrichedPage = new PageResult<>();
+        List<MyInstanceItemVO> items = enrichInstanceItems(records);
+        PageResult<MyInstanceItemVO> enrichedPage = new PageResult<>();
         enrichedPage.setRecords(items);
         enrichedPage.setTotal(total);
         enrichedPage.setPageNum(pageParam.getPageNum());
@@ -132,12 +133,12 @@ public class BpmMyInstanceController {
      * 「我发起的」的强制发起人口径：只统计本人实例，他人实例恒为 0（不泄露存在性）。</p>
      */
     @GetMapping("/count")
-    public R<MyInstanceCountDTO> myInstanceCount(@RequestParam String formKey,
+    public R<MyInstanceCountVO> myInstanceCount(@RequestParam String formKey,
                                                  @RequestParam String businessKey) {
         LoginUser loginUser = LoginUserHolder.get();
         Long userId = loginUser == null ? null : loginUser.getUserId();
         long count = bpmInstanceService.countByFormKeyAndBusinessKeyAndInitiator(formKey, businessKey, userId);
-        MyInstanceCountDTO result = new MyInstanceCountDTO();
+        MyInstanceCountVO result = new MyInstanceCountVO();
         result.setCount(count);
         result.setFormKey(formKey);
         result.setBusinessKey(businessKey);
@@ -149,7 +150,7 @@ public class BpmMyInstanceController {
      * （批量解析）；解析失败降级 null，不阻断列表。
      * 0.2.0（4:2）：补充 currentNode —— RUNNING 取活动任务名，APPROVED 取定义 END 节点名。
      */
-    List<MyInstanceItemDTO> enrichInstanceItems(List<BpmInstance> records) {
+    List<MyInstanceItemVO> enrichInstanceItems(List<BpmInstance> records) {
         Map<String, String> defNames = new HashMap<>();
         Map<String, String> endNodeNames = new HashMap<>();
         Set<Long> initiatorIds = new HashSet<>();
@@ -169,7 +170,7 @@ public class BpmMyInstanceController {
                 ? Map.of()
                 : userQueryFacade.getUserDisplayNames(initiatorIds).orElse(Map.of());
         return records.stream().map(record -> {
-            MyInstanceItemDTO item = new MyInstanceItemDTO();
+            MyInstanceItemVO item = new MyInstanceItemVO();
             item.setId(record.getId());
             item.setProcessInstanceId(record.getProcessInstanceId());
             item.setProcessDefKey(record.getProcessDefKey());
@@ -196,13 +197,13 @@ public class BpmMyInstanceController {
             if (bpmTaskFacade == null || record.getProcessInstanceId() == null) {
                 return null;
             }
-            Optional<List<BpmTaskDTO>> tasks =
+            Optional<List<BpmTaskVO>> tasks =
                     bpmTaskFacade.queryByProcessInstance(record.getProcessInstanceId());
             if (tasks == null || tasks.isEmpty()) {
                 return null;
             }
             return tasks.get().stream()
-                    .map(BpmTaskDTO::getName)
+                    .map(BpmTaskVO::getName)
                     .filter(name -> name != null && !name.isBlank())
                     .findFirst().orElse(null);
         }
@@ -251,7 +252,7 @@ public class BpmMyInstanceController {
      * 我发起的实例详情：实例状态 + 当前进度（活动任务）+ 流转记录。
      */
     @GetMapping("/{id}")
-    public R<MyInstanceDetailDTO> myInstanceDetail(@PathVariable Long id) {
+    public R<MyInstanceDetailVO> myInstanceDetail(@PathVariable Long id) {
         LoginUser loginUser = LoginUserHolder.get();
         BpmInstance instance = bpmInstanceService.getById(id);
         if (instance == null) {
@@ -271,14 +272,14 @@ public class BpmMyInstanceController {
 
         // 当前进度：活动任务
         // empty = 实例标识缺失：无活动任务（响应字段保持原列表形状，不漂移为 Optional）
-        List<BpmTaskDTO> activeTasks = bpmTaskFacade
+        List<BpmTaskVO> activeTasks = bpmTaskFacade
                 .queryByProcessInstance(instance.getProcessInstanceId())
                 .orElse(List.of());
-        List<MyInstanceProgressNodeDTO> progress = activeTasks.stream()
+        List<MyInstanceProgressNodeVO> progress = activeTasks.stream()
                 .map(this::toProgressNode)
                 .collect(Collectors.toList());
 
-        MyInstanceDetailDTO result = new MyInstanceDetailDTO();
+        MyInstanceDetailVO result = new MyInstanceDetailVO();
         result.setInstance(instance);
         result.setProcessName(processName);
         result.setFormKey(instance.getFormKey());
@@ -286,13 +287,14 @@ public class BpmMyInstanceController {
         result.setStatus(instance.getStatus());
         result.setProgress(progress);
         result.setHistory(buildApprovalHistory(instance));
-        result.setFormData(historicFormData(instance));
+        Object formData = historicFormData(instance);
+        result.setFormData(formData == null ? null : DynamicData.of(formData));
         return R.ok(result);
     }
 
     /** 活动任务 → 进度节点 DTO（null 展示字段按原契约转空串）。 */
-    private MyInstanceProgressNodeDTO toProgressNode(BpmTaskDTO task) {
-        MyInstanceProgressNodeDTO node = new MyInstanceProgressNodeDTO();
+    private MyInstanceProgressNodeVO toProgressNode(BpmTaskVO task) {
+        MyInstanceProgressNodeVO node = new MyInstanceProgressNodeVO();
         node.setTaskId(task.getTaskId());
         node.setTaskName(task.getName() == null ? "" : task.getName());
         node.setNodeKey(task.getTaskDefinitionKey() == null ? "" : task.getTaskDefinitionKey());
@@ -351,14 +353,14 @@ public class BpmMyInstanceController {
      * 1.0.0 起实现迁至 {@link com.sw.ck.bpm.process.service.ApprovalHistoryAssembler}
      * （服务端 PDF 共用），控制器仅委托。
      */
-    List<ApprovalHistoryItemDTO> buildApprovalHistory(BpmInstance instance) {
+    List<ApprovalHistoryItemVO> buildApprovalHistory(BpmInstance instance) {
         return approvalHistoryAssembler.build(instance);
     }
 
     /**
      * 意见字段展示视图（存量测试口径）：委托 {@link com.sw.ck.bpm.process.service.ApprovalHistoryEnricher}。
      */
-    void resolveOpinionFields(List<ApprovalHistoryItemDTO> history,
+    void resolveOpinionFields(List<ApprovalHistoryItemVO> history,
                               Map<String, ApprovalActionRecord> actionByTask) {
         ApprovalHistoryEnricher.enrichOpinionFields(
                 history, actionByTask, objectMapper, taskActionService);
@@ -389,11 +391,11 @@ public class BpmMyInstanceController {
      * </p>
      */
     @GetMapping("/relations")
-    public R<InstanceRelationDTO> instanceRelation(@RequestParam String formKey,
+    public R<InstanceRelationVO> instanceRelation(@RequestParam String formKey,
                                                    @RequestParam String businessKey) {
         LoginUser loginUser = LoginUserHolder.get();
         Long userId = loginUser.getUserId();
-        InstanceRelationDTO result = new InstanceRelationDTO();
+        InstanceRelationVO result = new InstanceRelationVO();
 
         // formHasProcess 与实例存在性无关：必须先于「无实例提前返回」赋值，
         // 否则尚未发起过的流程表单取不到该标记，流程信息区无法展示。
@@ -401,35 +403,35 @@ public class BpmMyInstanceController {
 
         BpmInstance instance = findLatestInstance(formKey, businessKey);
         if (instance == null) {
-            result.setRelation(InstanceRelationDTO.RELATION_NONE);
+            result.setRelation(InstanceRelationVO.RELATION_NONE);
             return R.ok(result);
         }
 
         // empty = 实例标识缺失：按无活动任务/无历史处理，不漂移为 Optional
-        List<BpmTaskDTO> activeTasks = bpmTaskFacade
+        List<BpmTaskVO> activeTasks = bpmTaskFacade
                 .queryByProcessInstance(instance.getProcessInstanceId())
                 .orElse(List.of());
         String pendingTaskId = activeTasks.stream()
                 .filter(task -> userId != null && userId.toString().equals(task.getAssignee()))
-                .map(BpmTaskDTO::getTaskId)
+                .map(BpmTaskVO::getTaskId)
                 .findFirst()
                 .orElse(null);
 
         boolean initiator = userId != null && userId.equals(instance.getInitiatorId());
         boolean historyParticipant = pendingTaskId != null || initiator;
         if (!historyParticipant) {
-            List<BpmTaskDTO> historyTasks = bpmTaskFacade
+            List<BpmTaskVO> historyTasks = bpmTaskFacade
                     .queryHistoryByProcessInstance(instance.getProcessInstanceId())
                     .orElse(List.of());
             historyParticipant = historyTasks.stream()
                     .anyMatch(task -> userId != null && userId.toString().equals(task.getAssignee()));
         }
 
-        String relation = pendingTaskId != null ? InstanceRelationDTO.RELATION_APPROVER
-                : historyParticipant ? InstanceRelationDTO.RELATION_PARTICIPANT
-                : InstanceRelationDTO.RELATION_NONE;
+        String relation = pendingTaskId != null ? InstanceRelationVO.RELATION_APPROVER
+                : historyParticipant ? InstanceRelationVO.RELATION_PARTICIPANT
+                : InstanceRelationVO.RELATION_NONE;
         result.setRelation(relation);
-        if (InstanceRelationDTO.RELATION_NONE.equals(relation)) {
+        if (InstanceRelationVO.RELATION_NONE.equals(relation)) {
             return R.ok(result);
         }
 
@@ -446,7 +448,7 @@ public class BpmMyInstanceController {
                                 .getUserDisplayNames(Set.of(instance.getInitiatorId()))
                                 .orElse(Map.of()));
 
-        MyInstanceRelationInstanceDTO instanceInfo = new MyInstanceRelationInstanceDTO();
+        MyInstanceRelationInstanceVO instanceInfo = new MyInstanceRelationInstanceVO();
         instanceInfo.setId(instance.getId());
         instanceInfo.setProcessInstanceId(instance.getProcessInstanceId());
         instanceInfo.setProcessDefKey(instance.getProcessDefKey());
@@ -461,7 +463,7 @@ public class BpmMyInstanceController {
                 .filter(name -> !name.isEmpty())
                 .collect(Collectors.toList()));
         instanceInfo.setCurrentNodeKeys(activeTasks.stream()
-                .map(BpmTaskDTO::getTaskDefinitionKey)
+                .map(BpmTaskVO::getTaskDefinitionKey)
                 .filter(key -> key != null && !key.isEmpty())
                 .collect(Collectors.toList()));
         result.setPendingTaskId(pendingTaskId);
@@ -469,7 +471,8 @@ public class BpmMyInstanceController {
         // 有流程的表单详情：流程信息（外挂组件）与我的详情同装配口径
         result.setApprovalHistory(buildApprovalHistory(instance));
         // 程序化发起实例（Agent/IoT/API）无独立表单记录，详情页按此回退渲染表单数据
-        result.setFormData(historicFormData(instance));
+        Object relationFormData = historicFormData(instance);
+        result.setFormData(relationFormData == null ? null : DynamicData.of(relationFormData));
         return R.ok(result);
     }
 

@@ -49,7 +49,7 @@ class PositionDelegateFacadeImplTest {
         delegateMapper = mock(SysPostDelegateMapper.class);
         postMapper = mock(SysPostMapper.class);
         userMapper = mock(SysUserMapper.class);
-        facade = new PositionDelegateFacadeImpl(delegateMapper, postMapper, userMapper);
+        facade = new PositionDelegateFacadeImpl();
         when(postMapper.selectOne(any())).thenAnswer(invocation -> null);
         when(postMapper.selectById(anyLong())).thenAnswer(invocation ->
                 switch (invocation.getArgument(0, Long.class).intValue()) {

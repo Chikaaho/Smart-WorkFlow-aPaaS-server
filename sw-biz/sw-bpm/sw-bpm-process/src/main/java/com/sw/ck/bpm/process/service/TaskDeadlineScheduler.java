@@ -2,7 +2,7 @@ package com.sw.ck.bpm.process.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
@@ -112,12 +112,12 @@ public class TaskDeadlineScheduler {
             // 任务已消失 → 时限随机失效，不再触发（幂等）。
             // 仅 PENDING→DONE 原子推进：不覆盖竞争胜者已写的 AUTO_APPROVE 等结果标注。
             // empty = 该任务不存在（原 null 返回路径）：与“任务已消失”同判
-            Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(record.getTaskId());
+            Optional<BpmTaskVO> taskLookup = bpmTaskFacade.getTask(record.getTaskId());
             if (taskLookup.isEmpty()) {
                 markDoneWithResult(record, "TASK_GONE");
                 return;
             }
-            BpmTaskDTO task = taskLookup.get();
+            BpmTaskVO task = taskLookup.get();
             if ("APPROVE".equalsIgnoreCase(record.getAutoAction())
                     || "DISAPPROVE".equalsIgnoreCase(record.getAutoAction())
                     || "TRANSFER".equalsIgnoreCase(record.getAutoAction())) {
@@ -147,7 +147,7 @@ public class TaskDeadlineScheduler {
         }
     }
 
-    private void runAutoAction(BpmTaskDeadline record, BpmTaskDTO task) {
+    private void runAutoAction(BpmTaskDeadline record, BpmTaskVO task) {
         // 候选任务（无人认领）不做自动动作——受控自动动作只作用于已有责任人
         if (task.getAssignee() == null || task.getAssignee().isBlank()) {
             notifyTx().executeWithoutResult(st -> {
@@ -215,7 +215,7 @@ public class TaskDeadlineScheduler {
         }
     }
 
-    private void notifyDeadline(BpmTaskDeadline record, BpmTaskDTO task, String phase) {
+    private void notifyDeadline(BpmTaskDeadline record, BpmTaskVO task, String phase) {
         try {
             Long recipient = task.getAssignee() == null || !task.getAssignee().matches("\\d+")
                     ? null : Long.valueOf(task.getAssignee());

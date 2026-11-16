@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.process.service;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.participant.NodeTriggerEventPort;
@@ -124,7 +124,7 @@ class ProcessStartServiceTest {
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
                 .thenReturn(Optional.of("instance-1"));
         when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(true));
-        BpmTaskDTO task = new BpmTaskDTO();
+        BpmTaskVO task = new BpmTaskVO();
         task.setTaskDefinitionKey("node_1");
         when(bpmTaskFacade.queryByProcessInstance("instance-1"))
                 .thenReturn(Optional.of(List.of(task)));

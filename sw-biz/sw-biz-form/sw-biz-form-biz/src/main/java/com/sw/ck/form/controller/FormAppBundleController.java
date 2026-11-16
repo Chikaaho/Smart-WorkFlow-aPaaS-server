@@ -28,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.form.vo.FormAppImportRecordEntityVO;
 /**
  * 应用整包导入导出（0.2.2 F2，D022-10～15）。
  * <p>
@@ -89,15 +90,15 @@ public class FormAppBundleController {
     /** 导入记录列表（当前租户，含报告 JSON 摘要）。 */
     @PreAuthorize("@ss.hasPermi('form:app:import')")
     @GetMapping("/import-records")
-    public R<List<FormAppImportRecordEntity>> importRecords() {
-        return R.ok(bundleService.listImportRecords());
+    public R<List<FormAppImportRecordEntityVO>> importRecords() {
+        return R.ok(bundleService.listImportRecords() == null ? List.of() : bundleService.listImportRecords().stream().map(FormAppImportRecordEntityVO::from).toList());
     }
 
     /** 单条导入记录。 */
     @PreAuthorize("@ss.hasPermi('form:app:import')")
     @GetMapping("/import-records/{id}")
-    public R<FormAppImportRecordEntity> importRecord(@PathVariable("id") String id) {
-        return R.ok(bundleService.getImportRecord(id));
+    public R<FormAppImportRecordEntityVO> importRecord(@PathVariable("id") String id) {
+        return R.ok(FormAppImportRecordEntityVO.from(bundleService.getImportRecord(id)));
     }
 
     /** 下载导入报告 JSON（随导入记录持久化的报告原文）。 */

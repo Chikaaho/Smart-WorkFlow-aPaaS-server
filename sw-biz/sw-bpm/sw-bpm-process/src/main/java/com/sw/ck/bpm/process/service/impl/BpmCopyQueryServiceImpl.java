@@ -2,10 +2,10 @@ package com.sw.ck.bpm.process.service.impl;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.process.dto.CopyItemDTO;
-import com.sw.ck.bpm.process.dto.MyCopyDetailDTO;
+import com.sw.ck.bpm.process.vo.CopyItemVO;
+import com.sw.ck.bpm.process.vo.MyCopyDetailVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.CopyRecord;
 import com.sw.ck.bpm.process.mapper.CopyRecordMapper;
@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.common.value.DynamicData;
 /** 抄送我的查询服务实现。 */
 @Service
 @Log4j2
@@ -40,7 +41,7 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
     private ApprovalActionService approvalActionService;
 
     @Override
-    public PageResult<CopyItemDTO> myCopies(String processInstanceId, String keyword,
+    public PageResult<CopyItemVO> myCopies(String processInstanceId, String keyword,
                                             LocalDateTime timeFrom, LocalDateTime timeTo,
                                             PageParam pageParam) {
         LoginUser loginUser = LoginUserHolder.get();
@@ -51,11 +52,11 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
                 normalizedProcessInstanceId,
                 normalizedKeyword, timeFrom, timeTo);
         int offset = (int) ((pageParam.getPageNum() - 1) * pageParam.getPageSize());
-        List<CopyItemDTO> records = total == 0 ? List.of()
+        List<CopyItemVO> records = total == 0 ? List.of()
                 : copyRecordMapper.selectMyCopies(loginUser.getTenantId(), recipientId,
                         normalizedProcessInstanceId, normalizedKeyword, timeFrom, timeTo,
                         (int) pageParam.getPageSize(), offset);
-        PageResult<CopyItemDTO> page = new PageResult<>();
+        PageResult<CopyItemVO> page = new PageResult<>();
         page.setRecords(records);
         page.setTotal(total);
         page.setPageNum(pageParam.getPageNum());
@@ -65,7 +66,7 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
     }
 
     @Override
-    public MyCopyDetailDTO myCopyDetail(Long copyId) {
+    public MyCopyDetailVO myCopyDetail(Long copyId) {
         LoginUser loginUser = LoginUserHolder.get();
         CopyRecord copy = copyRecordMapper.selectById(copyId);
         if (copy == null) {
@@ -77,7 +78,7 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅接收人可查看该抄送");
         }
 
-        MyCopyDetailDTO detail = new MyCopyDetailDTO();
+        MyCopyDetailVO detail = new MyCopyDetailVO();
         detail.setCopy(copy);
 
         BpmInstance instance = bpmInstanceService.lambdaQuery()
@@ -93,11 +94,11 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
                     .getHistoricVariables(instance.getProcessInstanceId())
                     .orElseThrow(() -> new IllegalStateException(
                             "历史变量查询未返回结果: processInstanceId=" + instance.getProcessInstanceId()));
-            detail.setFormData(variables.get("formData"));
+            detail.setFormData(DynamicData.of(variables.get("formData")));
 
             // 审批进度（活动任务）与流转记录（含审批意见），只读
             // empty = 实例标识缺失：无活动任务（对外响应字段保持原列表形状，不漂移为 Optional）
-            List<BpmTaskDTO> activeTasks = bpmTaskFacade
+            List<BpmTaskVO> activeTasks = bpmTaskFacade
                     .queryByProcessInstance(instance.getProcessInstanceId())
                     .orElse(List.of());
             detail.setProgress(activeTasks);

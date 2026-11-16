@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.sw.ck.bpm.api.common.SubjectTypeEnum;
-import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
+import com.sw.ck.bpm.process.vo.ApprovalHistoryItemVO;
 import com.sw.ck.form.api.print.FormPrintFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.dict.DictFacade;
@@ -86,7 +86,7 @@ public class FormPrintPdfService {
      * @throws IllegalStateException 无权读取或数据不可用时（安全结论，不含差异细节）
      */
     public byte[] render(String formKey, String recordId, LocalDateTime submittedAt,
-                         List<ApprovalHistoryItemDTO> history) {
+                         List<ApprovalHistoryItemVO> history) {
         FormPrintFacade.FormPrintData data = formPrintFacade
                 .recordDetail(formKey, recordId, submittedAt)
                 .orElseThrow(() -> new IllegalStateException("打印数据不可用或无权读取"));
@@ -100,7 +100,7 @@ public class FormPrintPdfService {
 
     private byte[] renderDocument(FormPrintFacade.FormPrintData data, JSONObject def,
                                   PrintTemplate template,
-                                  List<ApprovalHistoryItemDTO> history) {
+                                  List<ApprovalHistoryItemVO> history) {
         try (PDDocument doc = new PDDocument()) {
             // embedSubset=true：只嵌入用到的字形，避免整份 10MB CJK 字体进 PDF
             PDType0Font font = PDType0Font.load(doc, fontStream(), true);
@@ -170,7 +170,7 @@ public class FormPrintPdfService {
                         new Column("时间", "time", PAGE_WIDTH * 0.18f),
                         new Column("意见", "opinion", PAGE_WIDTH * 0.24f));
                 List<Map<String, Object>> rows = new ArrayList<>();
-                for (ApprovalHistoryItemDTO item : history) {
+                for (ApprovalHistoryItemVO item : history) {
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("node", nullSafe(item.getTaskName()));
                     row.put("assignee", nullSafe(item.getAssigneeName()));
@@ -199,14 +199,14 @@ public class FormPrintPdfService {
     }
 
     /** 意见摘要：意见字段展示文本拼接（不含完整快照 JSON）；缺省回退普通意见文本。 */
-    private String opinionSummary(ApprovalHistoryItemDTO item) {
+    private String opinionSummary(ApprovalHistoryItemVO item) {
         if (item.getOpinionFields() == null || item.getOpinionFields().isEmpty()) {
             Object comment = item.getOpinionData() == null ? null
-                    : item.getOpinionData().get("comment");
+                    : item.getOpinionData().asMap().get("comment");
             return comment == null ? "" : String.valueOf(comment);
         }
         List<String> parts = new ArrayList<>();
-        for (ApprovalHistoryItemDTO.OpinionFieldView view : item.getOpinionFields()) {
+        for (ApprovalHistoryItemVO.OpinionFieldView view : item.getOpinionFields()) {
             if (view.getDisplayValue() != null && !view.getDisplayValue().isBlank()) {
                 parts.add((view.getLabel() == null ? view.getName() : view.getLabel())
                         + "：" + view.getDisplayValue());

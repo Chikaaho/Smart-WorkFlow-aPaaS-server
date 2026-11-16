@@ -10,6 +10,7 @@ import com.sw.ck.system.service.SysPostService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import com.sw.ck.system.vo.SysPostVO;
 
 /**
  * 岗位管理控制器。
@@ -26,13 +27,13 @@ public class PostController {
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:post:list')")
-    public R<PageResult<SysPost>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysPostVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                         @RequestParam(defaultValue = "10") long pageSize,
                                         @RequestBody(required = false) SysPost query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysPostService.page(pageParam, query));
+        return R.ok(PageResult.map(sysPostService.page(pageParam, query), SysPostVO::from));
     }
 
     /**
@@ -40,8 +41,8 @@ public class PostController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:post:list')")
-    public R<SysPost> get(@PathVariable Long id) {
-        return R.ok(sysPostService.getById(id));
+    public R<SysPostVO> get(@PathVariable Long id) {
+        return R.ok(SysPostVO.from(sysPostService.getById(id)));
     }
 
     /**

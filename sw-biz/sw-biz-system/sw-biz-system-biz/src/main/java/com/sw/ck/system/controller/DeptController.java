@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.sw.ck.system.vo.SysDeptVO;
 
 /**
  * 部门管理控制器。
@@ -44,7 +45,7 @@ public class DeptController {
      */
     @GetMapping("/tree")
     @PreAuthorize("@ss.hasPermi('system:dept:list')")
-    public R<List<SysDept>> tree(@RequestParam(required = false) String name,
+    public R<List<SysDeptVO>> tree(@RequestParam(required = false) String name,
                                  @RequestParam(required = false) Integer status,
                                  @RequestParam(required = false) Long tenantId) {
         DeptQuery query = new DeptQuery();
@@ -53,7 +54,7 @@ public class DeptController {
         query.setTenantId(tenantContext.readTarget(tenantId));
         List<SysDept> rows = sysDeptService.listTree(query);
         tenantContext.decorateDepartments(rows);
-        return R.ok(rows);
+        return R.ok(rows.stream().map(SysDeptVO::from).toList());
     }
 
     /**
@@ -93,10 +94,10 @@ public class DeptController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:dept:list')")
-    public R<SysDept> get(@PathVariable Long id) {
+    public R<SysDeptVO> get(@PathVariable Long id) {
         SysDept dept = sysDeptService.getById(id);
         if (dept != null) tenantContext.decorateDepartments(List.of(dept));
-        return R.ok(dept);
+        return R.ok(SysDeptVO.from(dept));
     }
 
     /**

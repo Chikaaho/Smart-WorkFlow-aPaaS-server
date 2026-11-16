@@ -10,7 +10,7 @@ import com.sw.ck.bpm.process.job.BpmInstanceStateSyncJob;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.form.service.FormDefService;
@@ -379,12 +379,12 @@ class P62LightProcessE2ePgTest {
 
     private void seedStockForm() {
         asOperator(() -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P62轻流程库存", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P62轻流程库存", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return null;
         });
-        FormDefDTO def = asOperator(() -> formDefService.getFormDefByKey(FORM_KEY));
+        FormDefVO def = asOperator(() -> formDefService.getFormDefByKey(FORM_KEY));
         stockTable = def.getPhysicalTableName();
         assertThat(stockTable).isNotBlank();
     }

@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.engine.facade;
 
-import com.sw.ck.bpm.api.dto.BpmActivityDTO;
+import com.sw.ck.bpm.api.vo.BpmActivityVO;
 
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.Process;
@@ -164,7 +164,7 @@ class BpmRuntimeFacadeImplTest {
             when(varQuery.variableName("approver")).thenReturn(varQuery);
             when(varQuery.singleResult()).thenReturn(null);
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-1").orElseThrow();
+            List<BpmActivityVO> results = facade.queryHistoricActivities("pi-1").orElseThrow();
 
             assertThat(results).hasSize(3);
             assertThat(results.get(0).getActivityId()).isEqualTo("Activity_start");
@@ -212,7 +212,7 @@ class BpmRuntimeFacadeImplTest {
             when(var.getValue()).thenReturn("1");
             when(varQuery.singleResult()).thenReturn(var);
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-2").orElseThrow();
+            List<BpmActivityVO> results = facade.queryHistoricActivities("pi-2").orElseThrow();
 
             assertThat(results).hasSize(1);
             assertThat(results.get(0).getAssignee()).isEqualTo("1");

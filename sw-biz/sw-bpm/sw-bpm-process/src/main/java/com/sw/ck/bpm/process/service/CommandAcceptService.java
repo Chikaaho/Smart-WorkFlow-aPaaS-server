@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -61,7 +61,7 @@ public class CommandAcceptService {
      * @param channel 通道（NORMAL；P0 由 P0 同步入口受理）
      */
     @Transactional
-    public CommandAcceptRespDTO acceptTaskAction(String taskId, ApprovalAction action,
+    public CommandAcceptRespVO acceptTaskAction(String taskId, ApprovalAction action,
                                                  ApprovalActionRequest request,
                                                  CommandChannelEnum channel) {
         LoginUser loginUser = LoginUserHolder.get();
@@ -92,7 +92,7 @@ public class CommandAcceptService {
         }
     }
 
-    private CommandAcceptRespDTO acceptTaskActionLocked(String taskId, ApprovalAction action,
+    private CommandAcceptRespVO acceptTaskActionLocked(String taskId, ApprovalAction action,
                                                         ApprovalActionRequest request,
                                                         CommandChannelEnum channel,
                                                         LoginUser loginUser,
@@ -229,8 +229,8 @@ public class CommandAcceptService {
         }
     }
 
-    private CommandAcceptRespDTO toResp(CommandEnvelope envelope, boolean duplicated) {
-        CommandAcceptRespDTO resp = new CommandAcceptRespDTO();
+    private CommandAcceptRespVO toResp(CommandEnvelope envelope, boolean duplicated) {
+        CommandAcceptRespVO resp = new CommandAcceptRespVO();
         resp.setCommandId(envelope.getCommandId());
         resp.setCommandKey(envelope.getCommandKey());
         resp.setCommandType(envelope.getCommandType().getCode());

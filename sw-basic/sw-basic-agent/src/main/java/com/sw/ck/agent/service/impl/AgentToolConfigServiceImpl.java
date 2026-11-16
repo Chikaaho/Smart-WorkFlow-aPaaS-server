@@ -5,9 +5,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolExternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
-import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolInternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
@@ -57,7 +57,7 @@ public class AgentToolConfigServiceImpl
     // ==================== 内部工具 ====================
 
     @Override
-    public PageResult<AgentToolInternalConfigDTO> pageInternalTools(AgentToolInternalConfigQuery query) {
+    public PageResult<AgentToolInternalConfigVO> pageInternalTools(AgentToolInternalConfigQuery query) {
         LambdaQueryWrapper<AgentToolInternalConfig> wrapper = Wrappers.lambdaQuery();
         if (query.getNameKeyword() != null && !query.getNameKeyword().isBlank()) {
             wrapper.like(AgentToolInternalConfig::getName, query.getNameKeyword());
@@ -70,13 +70,13 @@ public class AgentToolConfigServiceImpl
     }
 
     @Override
-    public AgentToolInternalConfigDTO getInternalTool(Long id) {
+    public AgentToolInternalConfigVO getInternalTool(Long id) {
         return toInternalDTO(requireInternalEntity(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long createInternalTool(AgentToolInternalConfigDTO dto) {
+    public Long createInternalTool(AgentToolInternalConfigVO dto) {
         validateInternal(dto);
         AgentToolInternalConfig entity = toInternalEntity(dto);
         save(entity);
@@ -85,7 +85,7 @@ public class AgentToolConfigServiceImpl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updateInternalTool(Long id, AgentToolInternalConfigDTO dto) {
+    public void updateInternalTool(Long id, AgentToolInternalConfigVO dto) {
         requireInternalEntity(id);
         validateInternal(dto);
         AgentToolInternalConfig entity = toInternalEntity(dto);
@@ -120,7 +120,7 @@ public class AgentToolConfigServiceImpl
     // ==================== 外部工具 ====================
 
     @Override
-    public PageResult<AgentToolExternalConfigDTO> pageExternalTools(AgentToolExternalConfigQuery query) {
+    public PageResult<AgentToolExternalConfigVO> pageExternalTools(AgentToolExternalConfigQuery query) {
         LambdaQueryWrapper<AgentToolExternalConfig> wrapper = Wrappers.lambdaQuery();
         if (query.getNameKeyword() != null && !query.getNameKeyword().isBlank()) {
             wrapper.like(AgentToolExternalConfig::getName, query.getNameKeyword());
@@ -135,13 +135,13 @@ public class AgentToolConfigServiceImpl
     }
 
     @Override
-    public AgentToolExternalConfigDTO getExternalTool(Long id) {
+    public AgentToolExternalConfigVO getExternalTool(Long id) {
         return toExternalDTO(requireExternalEntity(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long createExternalTool(AgentToolExternalConfigDTO dto) {
+    public Long createExternalTool(AgentToolExternalConfigVO dto) {
         validateExternal(dto);
         AgentToolExternalConfig entity = toExternalEntity(dto);
         externalMapper.insert(entity);
@@ -150,7 +150,7 @@ public class AgentToolConfigServiceImpl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updateExternalTool(Long id, AgentToolExternalConfigDTO dto) {
+    public void updateExternalTool(Long id, AgentToolExternalConfigVO dto) {
         requireExternalEntity(id);
         validateExternal(dto);
         AgentToolExternalConfig entity = toExternalEntity(dto);
@@ -184,7 +184,7 @@ public class AgentToolConfigServiceImpl
 
     // ==================== 内部辅助 ====================
 
-    private void validateInternal(AgentToolInternalConfigDTO dto) {
+    private void validateInternal(AgentToolInternalConfigVO dto) {
         if (dto.getName() == null || dto.getName().isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "工具名不能为空");
         }
@@ -199,7 +199,7 @@ public class AgentToolConfigServiceImpl
         }
     }
 
-    private void validateExternal(AgentToolExternalConfigDTO dto) {
+    private void validateExternal(AgentToolExternalConfigVO dto) {
         if (dto.getName() == null || dto.getName().isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "工具名不能为空");
         }
@@ -247,7 +247,7 @@ public class AgentToolConfigServiceImpl
         return entity;
     }
 
-    private AgentToolInternalConfig toInternalEntity(AgentToolInternalConfigDTO dto) {
+    private AgentToolInternalConfig toInternalEntity(AgentToolInternalConfigVO dto) {
         AgentToolInternalConfig entity = new AgentToolInternalConfig();
         entity.setName(dto.getName());
         entity.setDescription(dto.getDescription());
@@ -259,8 +259,8 @@ public class AgentToolConfigServiceImpl
         return entity;
     }
 
-    private AgentToolInternalConfigDTO toInternalDTO(AgentToolInternalConfig entity) {
-        AgentToolInternalConfigDTO dto = new AgentToolInternalConfigDTO();
+    private AgentToolInternalConfigVO toInternalDTO(AgentToolInternalConfig entity) {
+        AgentToolInternalConfigVO dto = new AgentToolInternalConfigVO();
         dto.setId(entity.getId());
         dto.setName(entity.getName());
         dto.setDescription(entity.getDescription());
@@ -274,7 +274,7 @@ public class AgentToolConfigServiceImpl
         return dto;
     }
 
-    private AgentToolExternalConfig toExternalEntity(AgentToolExternalConfigDTO dto) {
+    private AgentToolExternalConfig toExternalEntity(AgentToolExternalConfigVO dto) {
         AgentToolExternalConfig entity = new AgentToolExternalConfig();
         entity.setName(dto.getName());
         entity.setDescription(dto.getDescription());
@@ -292,8 +292,8 @@ public class AgentToolConfigServiceImpl
         return entity;
     }
 
-    private AgentToolExternalConfigDTO toExternalDTO(AgentToolExternalConfig entity) {
-        AgentToolExternalConfigDTO dto = new AgentToolExternalConfigDTO();
+    private AgentToolExternalConfigVO toExternalDTO(AgentToolExternalConfig entity) {
+        AgentToolExternalConfigVO dto = new AgentToolExternalConfigVO();
         dto.setId(entity.getId());
         dto.setName(entity.getName());
         dto.setDescription(entity.getDescription());

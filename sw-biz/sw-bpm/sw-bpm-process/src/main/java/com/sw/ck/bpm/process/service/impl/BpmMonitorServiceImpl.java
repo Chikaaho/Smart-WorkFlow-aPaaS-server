@@ -1,12 +1,12 @@
 package com.sw.ck.bpm.process.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.bpm.api.dto.BpmActivityDTO;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmActivityVO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.process.dto.AnalyticsSummaryDTO;
-import com.sw.ck.bpm.process.dto.TaskDeadlineDTO;
+import com.sw.ck.bpm.process.vo.AnalyticsSummaryVO;
+import com.sw.ck.bpm.process.vo.TaskDeadlineVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmInstanceIntervention;
@@ -49,6 +49,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.sw.ck.bpm.process.entity.BpmInterventionStateEnum;
+import com.sw.ck.common.value.DynamicData;
 /**
  * 流程运营监控/干预/基础分析实现（I4 §3.3）。
  * <p>
@@ -139,21 +140,21 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         }
         String tenantId = LoginUserHolder.get() == null ? null
                 : String.valueOf(LoginUserHolder.get().getTenantId());
-        List<BpmTaskDTO> tasks;
+        List<BpmTaskVO> tasks;
         if (q.assignee() == null) {
             tasks = List.of();
         } else {
-            Optional<List<BpmTaskDTO>> todo =
+            Optional<List<BpmTaskVO>> todo =
                     bpmTaskFacade.queryTodo(tenantId, String.valueOf(q.assignee()));
             // empty = 租户或处理人上下文缺失，无法确定查询范围：按无可见任务处理（原空列表口径）
             tasks = todo.isEmpty() ? List.of() : todo.get();
         }
         if (q.assignee() != null && q.nodeKey() != null && !q.nodeKey().isBlank()) {
             return tasks.stream().filter(t -> q.nodeKey().equals(t.getTaskDefinitionKey()))
-                    .map(BpmTaskDTO::getProcessInstanceId).distinct().toList();
+                    .map(BpmTaskVO::getProcessInstanceId).distinct().toList();
         }
         if (q.assignee() != null) {
-            return tasks.stream().map(BpmTaskDTO::getProcessInstanceId).distinct().toList();
+            return tasks.stream().map(BpmTaskVO::getProcessInstanceId).distinct().toList();
         }
         // 仅 nodeKey 条件：逐实例判断代价高，返回 null 并由明细行富化比对——此处以
         // 办理人全集不可得为由，退化为「当前实例列表逐行过滤」不可取；改为对运行中
@@ -212,7 +213,7 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
             case "TERMINATE" -> {
                 record.setBeforeState(instance.getStatus());
                 // empty = 实例标识缺失：无运行任务（原空列表口径）
-                List<BpmTaskDTO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+                List<BpmTaskVO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId)
                         .orElse(List.of());
                 affected = active.size();
                 // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）
@@ -227,24 +228,24 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
                             "迁移办理人必须指定目标办理人");
                 }
                 // empty = 实例标识缺失：无运行任务（原空列表口径）
-                List<BpmTaskDTO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+                List<BpmTaskVO> active = bpmTaskFacade.queryByProcessInstance(processInstanceId)
                         .orElse(List.of());
                 // 可选迁移范围：提供 taskIds 时只迁移所选子集，未选任务保持原办理人（三级提示 R2）
-                List<BpmTaskDTO> selected = taskIds == null || taskIds.isEmpty() ? active
+                List<BpmTaskVO> selected = taskIds == null || taskIds.isEmpty() ? active
                         : active.stream()
                                 .filter(t -> taskIds.contains(t.getTaskId()))
                                 .toList();
                 record.setBeforeState(instance.getStatus());
                 record.setAfterState(instance.getStatus());
                 record.setToAssignee(toAssignee);
-                Map<Long, List<BpmTaskDTO>> byFromAssignee = new LinkedHashMap<>();
-                for (BpmTaskDTO task : selected) {
+                Map<Long, List<BpmTaskVO>> byFromAssignee = new LinkedHashMap<>();
+                for (BpmTaskVO task : selected) {
                     byFromAssignee.computeIfAbsent(parseLong(task.getAssignee()),
                             key -> new ArrayList<>()).add(task);
                 }
                 BpmInstanceIntervention last = record;
-                for (Map.Entry<Long, List<BpmTaskDTO>> group : byFromAssignee.entrySet()) {
-                    for (BpmTaskDTO task : group.getValue()) {
+                for (Map.Entry<Long, List<BpmTaskVO>> group : byFromAssignee.entrySet()) {
+                    for (BpmTaskVO task : group.getValue()) {
                         // present = APPLIED；任务不存在/已被处理继续抛原异常
                         bpmTaskFacade.setAssignee(task.getTaskId(), String.valueOf(toAssignee))
                         .orElseThrow(() -> new IllegalStateException(
@@ -294,10 +295,10 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
     }
 
     @Override
-    public AnalyticsSummaryDTO analyticsSummary(String processDefKey,
+    public AnalyticsSummaryVO analyticsSummary(String processDefKey,
                                                 LocalDateTime timeFrom, LocalDateTime timeTo) {
         DataScopeFilter scope = DataScopeFilter.resolve(loginContextProvider, deptScopeProvider);
-        AnalyticsSummaryDTO summary = new AnalyticsSummaryDTO();
+        AnalyticsSummaryVO summary = new AnalyticsSummaryVO();
         long launched = monitorMapper.monitorCount(processDefKey, null, null, null,
                 timeFrom, timeTo, null, scope);
         long completed = monitorMapper.monitorCount(processDefKey, null, null,
@@ -333,7 +334,7 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
                 returnedCount++;
             }
         }
-        summary.setHandlerWorkload(workload);
+        summary.setHandlerWorkload(DynamicData.of(workload));
         // 退回/驳回与超期（三级提示 R3：相关值非零且可复算）
         summary.setReturnedCount(returnedCount);
         summary.setRejectedActionCount(actionRecords.stream()
@@ -348,9 +349,9 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         for (BpmInstance instance : sampled) {
             endedDuration(instance, nodeDurations).ifPresent(durations::add);
         }
-        Map<String, AnalyticsSummaryDTO.NodeStatDTO> nodeStats = new LinkedHashMap<>();
+        Map<String, AnalyticsSummaryVO.NodeStatVO> nodeStats = new LinkedHashMap<>();
         nodeDurations.forEach((nodeKey, values) -> {
-            AnalyticsSummaryDTO.NodeStatDTO stat = new AnalyticsSummaryDTO.NodeStatDTO();
+            AnalyticsSummaryVO.NodeStatVO stat = new AnalyticsSummaryVO.NodeStatVO();
             stat.setCount(values.size());
             stat.setAvgStayMs(values.stream().mapToLong(Long::longValue).average().orElse(0));
             stat.setP90StayMs(percentile(values, 90));
@@ -370,11 +371,11 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         if (trendStart.isAfter(trendEnd)) {
             trendStart = trendEnd;
         }
-        List<AnalyticsSummaryDTO.DailyTrendDTO> dailyTrend = new ArrayList<>();
+        List<AnalyticsSummaryVO.DailyTrendVO> dailyTrend = new ArrayList<>();
         for (LocalDate day = trendStart; !day.isAfter(trendEnd); day = day.plusDays(1)) {
             long count = monitorMapper.monitorCount(processDefKey, null, null, null,
                     day.atStartOfDay(), day.plusDays(1).atStartOfDay().minusNanos(1), null, scope);
-            AnalyticsSummaryDTO.DailyTrendDTO point = new AnalyticsSummaryDTO.DailyTrendDTO();
+            AnalyticsSummaryVO.DailyTrendVO point = new AnalyticsSummaryVO.DailyTrendVO();
             point.setDate(String.format("%02d-%02d", day.getMonthValue(), day.getDayOfMonth()));
             point.setCount(count);
             dailyTrend.add(point);
@@ -403,10 +404,10 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
         try {
             LocalDateTime maxActivityEnd = null;
             // empty = 实例标识缺失或该实例无历史记录：无活动可统计
-            List<BpmActivityDTO> historicActivities = bpmRuntimeFacade
+            List<BpmActivityVO> historicActivities = bpmRuntimeFacade
                     .queryHistoricActivities(instance.getProcessInstanceId())
                     .orElse(List.of());
-            for (BpmActivityDTO activity : historicActivities) {
+            for (BpmActivityVO activity : historicActivities) {
                 if (activity.getEndTime() != null) {
                     maxActivityEnd = maxActivityEnd == null
                             ? activity.getEndTime()
@@ -453,15 +454,15 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
 
     /** 实例办理时限原始行（超时可查，I4 §3.3 方向口径）。 */
     @Override
-    public List<TaskDeadlineDTO> deadlines(String processInstanceId) {
-        List<TaskDeadlineDTO> rows = new ArrayList<>();
+    public List<TaskDeadlineVO> deadlines(String processInstanceId) {
+        List<TaskDeadlineVO> rows = new ArrayList<>();
         for (BpmTaskDeadline d : deadlineMapper.selectList(
                 Wrappers.<BpmTaskDeadline>lambdaQuery()
                         .eq(BpmTaskDeadline::getProcessInstanceId,
                                 processInstanceId)
                         .orderByAsc(BpmTaskDeadline::getDueAt))) {
             boolean handled = hasActionRecord(d.getTaskId());
-            TaskDeadlineDTO row = new TaskDeadlineDTO();
+            TaskDeadlineVO row = new TaskDeadlineVO();
             row.setTaskId(d.getTaskId());
             row.setNodeKey(d.getNodeKey());
             row.setDueAt(d.getDueAt());

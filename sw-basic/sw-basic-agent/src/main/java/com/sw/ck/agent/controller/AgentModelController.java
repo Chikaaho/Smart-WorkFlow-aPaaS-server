@@ -2,9 +2,9 @@ package com.sw.ck.agent.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.agent.dto.AgentModelDTO;
+import com.sw.ck.agent.vo.AgentModelVO;
 import com.sw.ck.agent.dto.AgentModelSaveReqDTO;
-import com.sw.ck.agent.dto.AgentModelTestConnectionRespDTO;
+import com.sw.ck.agent.vo.AgentModelTestConnectionRespVO;
 import com.sw.ck.agent.service.AgentModelService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -40,7 +40,7 @@ public class AgentModelController {
     /** 分页查询（可按供应商过滤） */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<PageResult<AgentModelDTO>> page(PageParam pageParam,
+    public R<PageResult<AgentModelVO>> page(PageParam pageParam,
                                              @RequestParam(required = false) Long providerId,
                                              @RequestParam(required = false) String nameKeyword) {
         return R.ok(agentModelService.pageModels(pageParam, providerId, nameKeyword));
@@ -49,7 +49,7 @@ public class AgentModelController {
     /** 启用中的模型列表（图设计器 LLM 节点选择用） */
     @GetMapping("/enabled")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<AgentModelDTO>> listEnabled(
+    public R<List<AgentModelVO>> listEnabled(
             @RequestParam(required = false) String capability) {
         return R.ok(agentModelService.listEnabled(capability));
     }
@@ -57,7 +57,7 @@ public class AgentModelController {
     /** 详情 */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<AgentModelDTO> get(@PathVariable Long id) {
+    public R<AgentModelVO> get(@PathVariable Long id) {
         return R.ok(agentModelService.getById(id));
     }
 
@@ -87,7 +87,7 @@ public class AgentModelController {
     /** 连通性测试（真实最小调用：成功才判可用） */
     @PostMapping("/{id}/test-connection")
     @PreAuthorize("@ss.hasPermi('agent:model:test')")
-    public R<AgentModelTestConnectionRespDTO> testConnection(@PathVariable Long id) {
+    public R<AgentModelTestConnectionRespVO> testConnection(@PathVariable Long id) {
         return R.ok(agentModelService.testConnection(id));
     }
 }

@@ -45,7 +45,7 @@ class UserWorkspaceServiceImplTest {
         todo.setDefaultSpan(1);
         todo.setStatus(0);
         when(cardTypeService.listAvailable()).thenReturn(List.of(todo));
-        service = new UserWorkspaceServiceImpl(workspaceMapper, objectMapper, cardTypeService);
+        service = new UserWorkspaceServiceImpl();
 
         LoginUser user = new LoginUser();
         user.setUserId(77L);

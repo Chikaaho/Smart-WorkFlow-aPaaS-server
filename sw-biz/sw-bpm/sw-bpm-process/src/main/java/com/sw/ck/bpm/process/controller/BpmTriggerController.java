@@ -2,17 +2,17 @@ package com.sw.ck.bpm.process.controller;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
-import com.sw.ck.bpm.process.dto.ActionRefDTO;
-import com.sw.ck.bpm.process.dto.ChildBatchDTO;
-import com.sw.ck.bpm.process.dto.RetryResultDTO;
-import com.sw.ck.bpm.process.dto.TriggerExecDTO;
-import com.sw.ck.bpm.process.dto.TriggerPreviewDTO;
+import com.sw.ck.bpm.process.vo.ActionRefVO;
+import com.sw.ck.bpm.process.vo.ChildBatchVO;
+import com.sw.ck.bpm.process.vo.RetryResultVO;
+import com.sw.ck.bpm.process.vo.TriggerExecVO;
+import com.sw.ck.bpm.process.vo.TriggerPreviewVO;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTriggerExec;
@@ -46,6 +46,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import com.sw.ck.bpm.process.entity.ActionRefStatusEnum;
+import com.sw.ck.common.value.DynamicData;
 
 /**
  * P64 触发器与动作回查控制器（A03/A04/A11）。
@@ -92,7 +93,7 @@ public class BpmTriggerController {
      * 受控预览：按真实实例上下文解析快照并评估脚本+匹配，不落任何行、不登记命令。
      */
     @PostMapping("/triggers/preview")
-    public R<TriggerPreviewDTO> preview(@RequestBody Map<String, Object> request) {
+    public R<TriggerPreviewVO> preview(@RequestBody Map<String, Object> request) {
         String instanceId = str(request.get("instanceId"));
         String triggerId = str(request.get("triggerId"));
         if (instanceId == null || triggerId == null) {
@@ -113,11 +114,11 @@ public class BpmTriggerController {
             throw new BaseException(BpmErrorCode.TRIGGER_INVALID.getCode(),
                     "触发器在实例冻结版本中不存在: " + triggerId);
         }
-        TriggerPreviewDTO result = new TriggerPreviewDTO();
+        TriggerPreviewVO result = new TriggerPreviewVO();
         BpmVariableSnapshotService.SnapshotResult snapshot = variableSnapshotService.buildSnapshot(
                 tenantId, instance, graph.getVariables(), trigger.getVariables(),
                 trigger.getNodeKey(), nodeFormDataService.currentRound(instanceId));
-        result.setVariables(snapshot.values());
+        result.setVariables(DynamicData.of(snapshot.values()));
         result.setTooLarge(snapshot.tooLarge());
         result.setMissingRequired(snapshot.missingRequired());
         result.setErrors(snapshot.errors());
@@ -135,18 +136,19 @@ public class BpmTriggerController {
                 .orElseThrow(() -> new IllegalStateException(
                         "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
         result.setKind(run.kind());
-        result.setValue(run.value());
+        result.setValue(DynamicData.of(run.value()));
         result.setResultType(run.typeName());
         result.setErrorMessage(run.errorMessage());
         result.setDurationMs(run.durationMs());
         // BF20261013-021：预览展示脚本会写入的变量（只读展示，不落库）
-        result.setVariableWrites(run.variableWrites() == null ? Map.of() : run.variableWrites());
+        result.setVariableWrites(DynamicData.of(
+                run.variableWrites() == null ? Map.of() : run.variableWrites()));
         if (run.ok() && run.value() != null) {
             TriggerConfig.TriggerBranch matched = matchPreview(trigger, run.typeName(), run.value());
             result.setMatchedBranchId(matched == null ? null : matched.getBranchId());
             result.setMatchedActions(matched == null || matched.getActions() == null ? List.of()
                     : matched.getActions().stream()
-                            .map(action -> new TriggerPreviewDTO.MatchedActionDTO(
+                            .map(action -> new TriggerPreviewVO.MatchedActionVO(
                                     nullSafe(action.getActionId()),
                                     nullSafe(action.getType()),
                                     nullSafe(action.getTargetProcessDefKey())))
@@ -175,7 +177,7 @@ public class BpmTriggerController {
     }
 
     @GetMapping("/instances/{instanceId}/trigger-execs")
-    public R<List<TriggerExecDTO>> listTriggerExecs(@PathVariable String instanceId) {
+    public R<List<TriggerExecVO>> listTriggerExecs(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
         String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         List<BpmTriggerExec> rows = triggerExecMapper.selectList(
@@ -187,7 +189,7 @@ public class BpmTriggerController {
     }
 
     @GetMapping("/instances/{instanceId}/action-refs")
-    public R<List<ActionRefDTO>> listActionRefs(@PathVariable String instanceId) {
+    public R<List<ActionRefVO>> listActionRefs(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
         String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         List<BpmActionRef> rows = actionRefMapper.selectList(
@@ -205,7 +207,7 @@ public class BpmTriggerController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:instance:view')")
     @PostMapping("/action-refs/{refId}/retry")
-    public R<RetryResultDTO> retryActionRef(@PathVariable Long refId) {
+    public R<RetryResultVO> retryActionRef(@PathVariable Long refId) {
         Long tenantId = requireTenantId();
         BpmActionRef ref = actionRefMapper.selectById(refId);
         if (ref == null || !tenantId.equals(ref.getTenantId())) {
@@ -217,7 +219,7 @@ public class BpmTriggerController {
                     "动作意图已成功启动，无需重试");
         }
         ActionRefRecoveryService.RetryOutcome outcome = actionRefRecoveryService.retry(ref);
-        RetryResultDTO result = new RetryResultDTO();
+        RetryResultVO result = new RetryResultVO();
         result.setCommandId(outcome.commandId());
         result.setStatus(outcome.status());
         result.setMessage(outcome.message());
@@ -230,7 +232,7 @@ public class BpmTriggerController {
      * 实例的子流程派发批次/批次项/回写与等待结果回查（父子单据、来源行、等待原因可追溯）。
      */
     @GetMapping("/instances/{instanceId}/child-batches")
-    public R<List<ChildBatchDTO>> listChildBatches(@PathVariable String instanceId) {
+    public R<List<ChildBatchVO>> listChildBatches(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
         if (childOrchestrationService == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "子流程编排能力未装配");
@@ -238,7 +240,7 @@ public class BpmTriggerController {
         String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         return R.ok(childOrchestrationService.listBatches(tenantId, processInstanceId).stream()
                 .map(batch -> {
-                    ChildBatchDTO item = new ChildBatchDTO();
+                    ChildBatchVO item = new ChildBatchVO();
                     item.setId(batch.id());
                     item.setBatchKey(batch.batchKey());
                     item.setParentInstanceId(batch.parentInstanceId());
@@ -265,7 +267,7 @@ public class BpmTriggerController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:instance:view')")
     @PostMapping("/child-items/{itemId}/retry-writeback")
-    public R<RetryResultDTO> retryChildWriteback(@PathVariable Long itemId) {
+    public R<RetryResultVO> retryChildWriteback(@PathVariable Long itemId) {
         Long tenantId = requireTenantId();
         if (childOrchestrationService == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "子流程编排能力未装配");
@@ -273,7 +275,7 @@ public class BpmTriggerController {
         Long actorId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
         ChildOrchestrationService.WritebackRetryOutcome outcome =
                 childOrchestrationService.retryWriteback(tenantId, itemId, actorId);
-        RetryResultDTO result = new RetryResultDTO();
+        RetryResultVO result = new RetryResultVO();
         result.setStatus(outcome.status());
         result.setMessage(outcome.message());
         return R.ok(result);
@@ -308,8 +310,8 @@ public class BpmTriggerController {
         return null;
     }
 
-    private TriggerExecDTO toExecView(BpmTriggerExec row) {
-        TriggerExecDTO item = new TriggerExecDTO();
+    private TriggerExecVO toExecView(BpmTriggerExec row) {
+        TriggerExecVO item = new TriggerExecVO();
         item.setId(row.getId());
         item.setProcessInstanceId(row.getProcessInstanceId());
         item.setTriggerId(row.getTriggerId());
@@ -329,8 +331,8 @@ public class BpmTriggerController {
         return item;
     }
 
-    private ActionRefDTO toRefView(BpmActionRef row) {
-        ActionRefDTO item = new ActionRefDTO();
+    private ActionRefVO toRefView(BpmActionRef row) {
+        ActionRefVO item = new ActionRefVO();
         item.setId(row.getId());
         item.setExecId(row.getExecId());
         item.setProcessInstanceId(row.getProcessInstanceId());

@@ -23,6 +23,8 @@ import java.util.Optional;
 import java.util.UUID;
 import com.sw.ck.iot.entity.IotPublishStatusEnum;
 import com.sw.ck.iot.entity.IotRuleTypeEnum;
+import com.sw.ck.iot.vo.IotEventRuleVO;
+import com.sw.ck.iot.vo.IotProcessTriggerVO;
 
 /**
  * 事件规则控制器：条件/阈值/防抖/冷却/流程模板/表单映射与发布。
@@ -42,21 +44,21 @@ public class IotEventRuleController {
     private IotAuditService auditService;
 
     @GetMapping
-    public R<List<IotEventRule>> list(@RequestParam(required = false) Long deviceId) {
+    public R<List<IotEventRuleVO>> list(@RequestParam(required = false) Long deviceId) {
         LambdaQueryWrapper<IotEventRule> wrapper = new LambdaQueryWrapper<>();
         if (deviceId != null) {
             wrapper.eq(IotEventRule::getDeviceId, deviceId);
         }
-        return R.ok(ruleMapper.selectList(wrapper));
+        return R.ok(ruleMapper.selectList(wrapper) == null ? List.of() : ruleMapper.selectList(wrapper).stream().map(IotEventRuleVO::from).toList());
     }
 
     @GetMapping("/{id}")
-    public R<IotEventRule> detail(@PathVariable Long id) {
-        return R.ok(ruleMapper.selectById(id));
+    public R<IotEventRuleVO> detail(@PathVariable Long id) {
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     @PostMapping
-    public R<IotEventRule> create(@RequestBody IotEventRule rule) {
+    public R<IotEventRuleVO> create(@RequestBody IotEventRule rule) {
         validate(rule);
         rule.setId(null);
         rule.setStatus(IotPublishStatusEnum.DRAFT.getCode());
@@ -68,11 +70,11 @@ public class IotEventRuleController {
             rule.setAgentEnabled(0);
         }
         ruleMapper.insert(rule);
-        return R.ok(rule);
+        return R.ok(IotEventRuleVO.from(rule));
     }
 
     @PutMapping("/{id}")
-    public R<IotEventRule> update(@PathVariable Long id, @RequestBody IotEventRule patch) {
+    public R<IotEventRuleVO> update(@PathVariable Long id, @RequestBody IotEventRule patch) {
         IotEventRule existing = ruleMapper.selectById(id);
         if (existing == null) {
             return R.fail(404, "规则不存在: id=" + id);
@@ -82,7 +84,7 @@ public class IotEventRuleController {
         patch.setStatus(null);
         patch.setRuleVersion(null);
         ruleMapper.updateById(patch);
-        return R.ok(ruleMapper.selectById(id));
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     /**
@@ -90,7 +92,7 @@ public class IotEventRuleController {
      * 发布动作锁定版本。
      */
     @PostMapping("/{id}/publish")
-    public R<IotEventRule> publish(@PathVariable Long id) {
+    public R<IotEventRuleVO> publish(@PathVariable Long id) {
         IotEventRule existing = ruleMapper.selectById(id);
         if (existing == null) {
             return R.fail(404, "规则不存在: id=" + id);
@@ -118,27 +120,28 @@ public class IotEventRuleController {
         auditService.recordAction(existing.getTenantId(), null, "system:iot-rule-publish",
                 "RULE_PUBLISH", "RULE", String.valueOf(id), "PUBLISHED",
                 UUID.randomUUID().toString(), "ruleVersion=" + existing.getRuleVersion());
-        return R.ok(ruleMapper.selectById(id));
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     @PostMapping("/{id}/disable")
-    public R<IotEventRule> disable(@PathVariable Long id) {
+    public R<IotEventRuleVO> disable(@PathVariable Long id) {
         IotEventRule patch = new IotEventRule();
         patch.setId(id);
         patch.setStatus("DISABLED");
         ruleMapper.updateById(patch);
-        return R.ok(ruleMapper.selectById(id));
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     /**
      * 规则触发记录（含流程发起结果）。
      */
     @GetMapping("/{id}/triggers")
-    public R<List<IotProcessTrigger>> triggers(@PathVariable Long id) {
+    public R<List<IotProcessTriggerVO>> triggers(@PathVariable Long id) {
         return R.ok(triggerMapper.selectList(new LambdaQueryWrapper<IotProcessTrigger>()
-                .eq(IotProcessTrigger::getRuleId, id)
-                .orderByDesc(IotProcessTrigger::getCreateTime)
-                .last("limit 100")));
+                        .eq(IotProcessTrigger::getRuleId, id)
+                        .orderByDesc(IotProcessTrigger::getCreateTime)
+                        .last("limit 100"))
+                .stream().map(IotProcessTriggerVO::from).toList());
     }
 
     private void validate(IotEventRule rule) {

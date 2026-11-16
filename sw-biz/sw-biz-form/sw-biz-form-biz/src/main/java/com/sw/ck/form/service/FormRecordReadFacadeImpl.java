@@ -3,7 +3,7 @@ package com.sw.ck.form.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
 import com.sw.ck.form.dynamic.ColumnValidation;
@@ -52,7 +52,7 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
                 || recordId == null || recordId.isBlank()) {
             return Optional.empty();
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             return Optional.empty();
         }

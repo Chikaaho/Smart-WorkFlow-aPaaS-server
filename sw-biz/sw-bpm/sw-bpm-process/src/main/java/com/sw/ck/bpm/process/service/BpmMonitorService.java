@@ -1,7 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
-import com.sw.ck.bpm.process.dto.AnalyticsSummaryDTO;
-import com.sw.ck.bpm.process.dto.TaskDeadlineDTO;
+import com.sw.ck.bpm.process.vo.AnalyticsSummaryVO;
+import com.sw.ck.bpm.process.vo.TaskDeadlineVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmInstanceIntervention;
 import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
@@ -28,11 +28,11 @@ public interface BpmMonitorService {
     /** 动态并行分支冻结快照回读（I4 §3.1 运营勾稽）。 */
     List<DynamicBranchSnapshot> branches(String processInstanceId);
 
-    AnalyticsSummaryDTO analyticsSummary(String processDefKey,
+    AnalyticsSummaryVO analyticsSummary(String processDefKey,
                                          LocalDateTime timeFrom, LocalDateTime timeTo);
 
     /** 实例办理时限原始行（超时可查）。 */
-    List<TaskDeadlineDTO> deadlines(String processInstanceId);
+    List<TaskDeadlineVO> deadlines(String processInstanceId);
 
     /** 分页监控行：实例 + 当前节点（id 与名称映射，名称缺省回退 id） + 挂起态。 */
     record InstanceMonitorView(BpmInstance instance, List<String> activeNodeIds,

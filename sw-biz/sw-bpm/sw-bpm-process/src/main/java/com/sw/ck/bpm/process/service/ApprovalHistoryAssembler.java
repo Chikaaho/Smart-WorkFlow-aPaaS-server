@@ -4,9 +4,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.process.controller.BpmMyInstanceController;
-import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
+import com.sw.ck.bpm.process.vo.ApprovalHistoryItemVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.entity.BpmInstance;
@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.common.value.DynamicData;
 /**
  * 实例流转记录装配（1.0.0 F2 服务端 PDF 与「我发起的」详情共用同一口径）。
  * <p>
@@ -51,13 +52,13 @@ public class ApprovalHistoryAssembler {
     private DeptQueryFacade deptQueryFacade;
 
     /** 与原控制器同一口径的流转记录装配。 */
-    public List<ApprovalHistoryItemDTO> build(BpmInstance instance) {
+    public List<ApprovalHistoryItemVO> build(BpmInstance instance) {
         // 流转记录：引擎历史 + 审批动作（意见/结果）合并。
         // A1/C1 修复：已办理节点必须回显真实动作/结果/意见（否则前端对 null 结果
         // 一律显示"进行中"，流程已结束的终审节点仍显示进行中）；无动作记录的
         // 节点（如取消成员）不伪造动作。
         // empty = 实例标识缺失：无历史（响应字段保持原列表形状，不漂移为 Optional）
-        List<BpmTaskDTO> historyTasks =
+        List<BpmTaskVO> historyTasks =
                 bpmTaskFacade.queryHistoryByProcessInstance(instance.getProcessInstanceId())
                         .orElse(List.of());
         Map<String, ApprovalActionRecord> actionByTask =
@@ -70,9 +71,9 @@ public class ApprovalHistoryAssembler {
                                         ApprovalActionRecord::getTaskId,
                                         record -> record,
                                         (first, second) -> first));
-        List<ApprovalHistoryItemDTO> history = new ArrayList<>();
-        for (BpmTaskDTO h : historyTasks) {
-            ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
+        List<ApprovalHistoryItemVO> history = new ArrayList<>();
+        for (BpmTaskVO h : historyTasks) {
+            ApprovalHistoryItemVO item = new ApprovalHistoryItemVO();
             item.setTaskId(h.getTaskId());
             item.setTaskName(h.getName());
             item.setNodeKey(h.getTaskDefinitionKey());
@@ -90,7 +91,7 @@ public class ApprovalHistoryAssembler {
                 item.setAction(action.getAction());
                 item.setActionRecordId(action.getId());
                 item.setApprovalResult(action.getSettlementStatus());
-                item.setOpinionData(parseOpinionData(action.getOpinionData()));
+                item.setOpinionData(DynamicData.of(parseOpinionData(action.getOpinionData())));
                 item.setOpinionFormId(action.getOpinionFormId());
                 item.setOpinionFormVersion(action.getOpinionFormVersion());
             }
@@ -105,7 +106,7 @@ public class ApprovalHistoryAssembler {
                     participantNameService.resolveNodeAssignees(instance.getProcessInstanceId());
             Map<String, Long> taskAssignees =
                     participantNameService.resolveTaskAssignees(instance.getProcessInstanceId());
-            for (ApprovalHistoryItemDTO item : history) {
+            for (ApprovalHistoryItemVO item : history) {
                 Long pid = item.getTaskId() != null ? taskAssignees.get(item.getTaskId()) : null;
                 if (pid == null && item.getNodeKey() != null) {
                     pid = nodeAssignees.get(item.getNodeKey());
@@ -118,22 +119,22 @@ public class ApprovalHistoryAssembler {
             Map<Long, String> names = participantNameService.resolveDisplayNames(
                     instance.getProcessInstanceId(),
                     history.stream()
-                            .map(ApprovalHistoryItemDTO::getAssignee)
+                            .map(ApprovalHistoryItemVO::getAssignee)
                             .filter(a -> a != null && a.matches("\\d+"))
                             .map(Long::valueOf)
                             .collect(Collectors.toSet()));
-            for (ApprovalHistoryItemDTO item : history) {
+            for (ApprovalHistoryItemVO item : history) {
                 if (item.getAssignee() != null && item.getAssignee().matches("\\d+")) {
                     item.setAssigneeName(names.get(Long.valueOf(item.getAssignee())));
                 }
             }
         } else if (taskActionService != null) {
             Map<Long, String> names = taskActionService.resolveUserNames(history.stream()
-                    .map(ApprovalHistoryItemDTO::getAssignee)
+                    .map(ApprovalHistoryItemVO::getAssignee)
                     .filter(a -> a != null && a.matches("\\d+"))
                     .map(Long::valueOf)
                     .collect(Collectors.toSet()));
-            for (ApprovalHistoryItemDTO item : history) {
+            for (ApprovalHistoryItemVO item : history) {
                 if (item.getAssignee() != null && item.getAssignee().matches("\\d+")) {
                     item.setAssigneeName(names.get(Long.valueOf(item.getAssignee())));
                 }

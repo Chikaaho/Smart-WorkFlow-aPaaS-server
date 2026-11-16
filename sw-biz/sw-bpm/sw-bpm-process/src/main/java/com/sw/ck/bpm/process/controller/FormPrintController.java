@@ -3,7 +3,7 @@ package com.sw.ck.bpm.process.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
+import com.sw.ck.bpm.process.vo.ApprovalHistoryItemVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.service.ApprovalHistoryAssembler;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
@@ -105,7 +105,7 @@ public class FormPrintController {
         }
 
         BpmInstance instance = null;
-        List<ApprovalHistoryItemDTO> history = null;
+        List<ApprovalHistoryItemVO> history = null;
         if (processInstanceId != null && !processInstanceId.isBlank()) {
             instance = bpmInstanceService.findByProcessInstanceId(processInstanceId).orElse(null);
             if (instance == null) {

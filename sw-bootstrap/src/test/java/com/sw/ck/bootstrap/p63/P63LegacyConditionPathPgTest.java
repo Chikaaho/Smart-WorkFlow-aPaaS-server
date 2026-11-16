@@ -5,7 +5,7 @@ import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.security.holder.LoginUser;
@@ -125,7 +125,7 @@ class P63LegacyConditionPathPgTest {
                 + "ON CONFLICT (id) DO NOTHING", TENANT, APPROVER_B);
 
         asUser(INITIATOR, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P63条件表单", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P63条件表单", null, null);
             formDefService.saveConfig(draft.getId(),
                     "{\"schemaVersion\":1,\"title\":\"P63条件表单\",\"fields\":["
                             + "{\"name\":\"topic\",\"type\":\"TEXT\",\"label\":\"主题\",\"required\":false},"

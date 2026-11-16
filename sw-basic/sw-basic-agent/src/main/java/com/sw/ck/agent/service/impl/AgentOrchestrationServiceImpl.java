@@ -3,7 +3,7 @@ package com.sw.ck.agent.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
-import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
+import com.sw.ck.agent.vo.AgentOrchestrationRunRespVO;
 import com.sw.ck.agent.entity.AgentMessage;
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentSession;
@@ -84,7 +84,7 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
     private static final String ROLE_ASSISTANT = "ASSISTANT";
 
     @Override
-    public AgentOrchestrationRunRespDTO run(AgentOrchestrationRunReqDTO req) {
+    public AgentOrchestrationRunRespVO run(AgentOrchestrationRunReqDTO req) {
         if (req == null || req.getAgentModelConfigId() == null) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "agentModelConfigId 不能为空");
         }
@@ -92,7 +92,7 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "input 不能为空");
         }
         long start = System.currentTimeMillis();
-        AgentOrchestrationRunRespDTO resp = new AgentOrchestrationRunRespDTO();
+        AgentOrchestrationRunRespVO resp = new AgentOrchestrationRunRespVO();
         // D022-05：候选切换重试循环（triedIds 去重保证终止）
         Set<Long> triedIds = new HashSet<>();
         Long currentModelId = req.getAgentModelConfigId();

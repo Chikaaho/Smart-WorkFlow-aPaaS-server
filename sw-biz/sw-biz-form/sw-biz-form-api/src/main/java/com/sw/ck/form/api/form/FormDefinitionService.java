@@ -1,6 +1,6 @@
 package com.sw.ck.form.api.form;
 
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 
 import java.util.Optional;
 
@@ -40,7 +40,7 @@ public interface FormDefinitionService {
      * @param formKey 表单业务标识
      * @return present = 表单定义 DTO；empty = 该 formKey 无表单定义
      */
-    Optional<FormDefDTO> getFormDef(String formKey);
+    Optional<FormDefVO> getFormDef(String formKey);
 
     /**
      * 指定已发布版本的表单定义快照（任务级绑定版本冻结读取用，P64 A01）。

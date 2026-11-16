@@ -40,8 +40,7 @@ class ProcessTriggerRecoveryJobAdmissionTest {
         trigger.setStatus("PENDING");
         trigger.setRetryCount(0);
         when(mapper.selectList(any())).thenReturn(List.of(trigger));
-        ProcessTriggerRecoveryJob job = new ProcessTriggerRecoveryJob(
-                mapper, publisher, transactions, (tenantId, claim) -> 0);
+        ProcessTriggerRecoveryJob job = new ProcessTriggerRecoveryJob();
 
         job.recoverDue();
 
@@ -69,8 +68,7 @@ class ProcessTriggerRecoveryJobAdmissionTest {
         trigger.setFormSnapshot("{\"flow\":\"35.0\"}");
         when(mapper.selectList(any())).thenReturn(List.of(trigger));
         when(mapper.update(any(), any())).thenReturn(1);
-        ProcessTriggerRecoveryJob job = new ProcessTriggerRecoveryJob(
-                mapper, publisher, transactions, (tenantId, claim) -> 1);
+        ProcessTriggerRecoveryJob job = new ProcessTriggerRecoveryJob();
 
         job.recoverDue();
 

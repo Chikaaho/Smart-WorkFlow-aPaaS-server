@@ -107,8 +107,7 @@ class SystemOrgScriptServiceTest {
         when(userPostMapper.selectList(any()))
                 .thenReturn(List.of(activePostRelation, disabledPostRelation));
 
-        SystemOrgScriptService service = new SystemOrgScriptService(userMapper, deptMapper,
-                roleMapper, postMapper, userRoleMapper, userPostMapper);
+        SystemOrgScriptService service = new SystemOrgScriptService();
 
         SystemOrgScriptService.OrgScriptContext context = service.load();
 
@@ -125,9 +124,7 @@ class SystemOrgScriptServiceTest {
     @Test
     @DisplayName("无登录租户上下文时拒绝")
     void rejectsMissingLoginContext() {
-        SystemOrgScriptService service = new SystemOrgScriptService(
-                mock(SysUserMapper.class), mock(SysDeptMapper.class), mock(SysRoleMapper.class),
-                mock(SysPostMapper.class), mock(SysUserRoleMapper.class), mock(SysUserPostMapper.class));
+        SystemOrgScriptService service = new SystemOrgScriptService();
 
         BaseException error = assertThrows(BaseException.class, service::load);
 

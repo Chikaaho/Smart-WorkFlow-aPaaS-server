@@ -6,8 +6,8 @@ import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.controller.BpmCommandController;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
-import com.sw.ck.bpm.process.dto.CommandStatusRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
+import com.sw.ck.bpm.process.vo.CommandStatusRespVO;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
@@ -15,7 +15,7 @@ import com.sw.ck.bpm.process.service.CommandAcceptService;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.response.R;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
@@ -213,7 +213,7 @@ class P63FunctionAuthorityWindowPgTest {
                 NO_MODEL_DEVICE_KEY, NO_MODEL_DEVICE_KEY, DRAFT_PRODUCT_ID);
 
         asUser(INITIATOR, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P63功能权威表单", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P63功能权威表单", null, null);
             formDefService.saveConfig(draft.getId(),
                     "{\"schemaVersion\":1,\"title\":\"P63功能权威表单\",\"fields\":["
                             + "{\"name\":\"topic\",\"type\":\"TEXT\",\"label\":\"主题\",\"required\":false},"
@@ -309,17 +309,17 @@ class P63FunctionAuthorityWindowPgTest {
         Long approveCommandId = lastApprovedCommandId;
         int before = jdbc.queryForObject("SELECT COUNT(*) FROM sw_bpm_command", Integer.class);
 
-        R<CommandStatusRespDTO> self = asUser(APPROVER,
+        R<CommandStatusRespVO> self = asUser(APPROVER,
                 () -> commandController.latestForTask(taskId));
         assertThat(self.getData()).as("本人查询命中本人命令").isNotNull();
         assertThat(self.getData().getCommandId()).isEqualTo(approveCommandId);
         assertThat(self.getData().getStatus()).isEqualTo("COMPLETED");
 
-        R<CommandStatusRespDTO> otherUser = asUser(OTHER_USER,
+        R<CommandStatusRespVO> otherUser = asUser(OTHER_USER,
                 () -> commandController.latestForTask(taskId));
         assertThat(otherUser.getData()).as("同租其他用户：不泄露他人命令").isNull();
 
-        R<CommandStatusRespDTO> otherTenant = asUserOfTenant(TENANT2_USER, TENANT2,
+        R<CommandStatusRespVO> otherTenant = asUserOfTenant(TENANT2_USER, TENANT2,
                 () -> commandController.latestForTask(taskId));
         assertThat(otherTenant.getData()).as("跨租户：不泄露命令").isNull();
 
@@ -515,7 +515,7 @@ class P63FunctionAuthorityWindowPgTest {
                 data("topic", topic, "plan_time", dueText), null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req("核准预约"), CommandChannelEnum.NORMAL));
         awaitCommandCompleted(accepted.getCommandId());
         this.currentPi = pi;
@@ -533,7 +533,7 @@ class P63FunctionAuthorityWindowPgTest {
                 data("topic", topic, "plan_time", clockDueText(Duration.ofMinutes(30))), null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req("核准预约"), CommandChannelEnum.NORMAL));
         awaitCommandTerminalFailed(accepted.getCommandId());
         return recordId;

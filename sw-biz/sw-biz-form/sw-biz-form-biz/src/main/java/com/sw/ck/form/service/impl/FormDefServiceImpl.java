@@ -12,9 +12,9 @@ import com.google.re2j.PatternSyntaxException;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotVO;
+import com.sw.ck.form.api.vo.FormSnapshotDetailVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.DynamicTableManager;
@@ -104,12 +104,12 @@ public class FormDefServiceImpl implements FormDefService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description) {
+    public FormDefVO createDraft(String formKey, String name, String logicalTableName, String description) {
         return createDraft(formKey, name, logicalTableName, description, null);
     }
 
     /** BF20261013-020：带表单类型的草稿创建（空白类型按业务表单）。 */
-    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+    public FormDefVO createDraft(String formKey, String name, String logicalTableName, String description,
             String formType) {
         return createDraft(formKey, name, logicalTableName, description, formType, null, null);
     }
@@ -117,7 +117,7 @@ public class FormDefServiceImpl implements FormDefService {
     /** 应用中心：带表单类型与归属的草稿创建（审批意见表单不参与应用归属）。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+    public FormDefVO createDraft(String formKey, String name, String logicalTableName, String description,
             String formType, String appId, String dirId) {
         // —— 校验唯一性（经租户拦截器按当前租户过滤；V83 后跨租户同名 formKey 合法） ——
         LambdaQueryWrapper<FormDefEntity> keyQuery = Wrappers.lambdaQuery(FormDefEntity.class)
@@ -176,7 +176,7 @@ public class FormDefServiceImpl implements FormDefService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormDefDTO updateDraft(String id, String name, String logicalTableName, String description) {
+    public FormDefVO updateDraft(String id, String name, String logicalTableName, String description) {
         FormDefEntity entity = formDefMapper.selectById(id);
         if (entity == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
@@ -519,13 +519,13 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
-    public FormDefDTO getFormDef(String id) {
+    public FormDefVO getFormDef(String id) {
         FormDefEntity entity = formDefMapper.selectById(id);
         return entity != null ? toDTO(entity) : null;
     }
 
     @Override
-    public FormDefDTO getFormDefByKey(String formKey) {
+    public FormDefVO getFormDefByKey(String formKey) {
         LambdaQueryWrapper<FormDefEntity> query = Wrappers.lambdaQuery(FormDefEntity.class)
                 .eq(FormDefEntity::getFormKey, formKey);
         FormDefEntity entity = formDefMapper.selectOne(query);
@@ -558,7 +558,7 @@ public class FormDefServiceImpl implements FormDefService {
 
     @Override
     public String getSnapshotDefinitionByKey(String formKey, Integer formVersion) {
-        FormDefDTO dto = getFormDefByKey(formKey);
+        FormDefVO dto = getFormDefByKey(formKey);
         if (dto == null) {
             return null;
         }
@@ -566,12 +566,12 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
-    public PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword) {
+    public PageResult<FormDefVO> pageFormDefs(PageParam pageParam, String keyword) {
         return pageFormDefs(pageParam, keyword, null);
     }
 
     /** BF20261013-020：按表单类型过滤的分页查询（formType 为空不过滤）。 */
-    public PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword, String formType) {
+    public PageResult<FormDefVO> pageFormDefs(PageParam pageParam, String keyword, String formType) {
         // 构造查询条件：按 update_time 倒序 + 可选 name 模糊搜索 + 可选类型精确过滤
         LambdaQueryWrapper<FormDefEntity> wrapper = Wrappers.lambdaQuery(FormDefEntity.class)
                 .orderByDesc(FormDefEntity::getUpdateTime);
@@ -584,11 +584,11 @@ public class FormDefServiceImpl implements FormDefService {
         // 走 MyBatis-Plus selectPage → @TableLogic / TenantLineHandler 自动生效
         PageResult<FormDefEntity> entityPage = formDefMapper.selectPage(pageParam, wrapper);
         // 转换 Entity → DTO
-        List<FormDefDTO> dtoList = entityPage.getRecords().stream()
+        List<FormDefVO> dtoList = entityPage.getRecords().stream()
                 .map(this::toDTO)
                 .toList();
         resolveCreatorNames(entityPage.getRecords(), dtoList);
-        PageResult<FormDefDTO> result = new PageResult<>();
+        PageResult<FormDefVO> result = new PageResult<>();
         result.setRecords(dtoList);
         result.setTotal(entityPage.getTotal());
         result.setPageNum(entityPage.getPageNum());
@@ -601,7 +601,7 @@ public class FormDefServiceImpl implements FormDefService {
      * {@link UserQueryFacade#getUserDisplayNames} 查询后逐行回填。
      * 查询上下文缺失、失败或无解析结果时降级为 null，不阻断列表查询。
      */
-    private void resolveCreatorNames(List<FormDefEntity> entities, List<FormDefDTO> dtoList) {
+    private void resolveCreatorNames(List<FormDefEntity> entities, List<FormDefVO> dtoList) {
         if (userQueryFacade == null) {
             return;
         }
@@ -630,7 +630,7 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
-    public List<FormSnapshotDTO> listSnapshots(String formId) {
+    public List<FormSnapshotVO> listSnapshots(String formId) {
         FormDefEntity entity = formDefMapper.selectById(formId);
         if (entity == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
@@ -639,7 +639,7 @@ public class FormDefServiceImpl implements FormDefService {
                 .eq(FormSnapshotEntity::getFormId, formId)
                 .orderByDesc(FormSnapshotEntity::getFormVersion);
         return formSnapshotMapper.selectList(query).stream()
-                .map(s -> FormSnapshotDTO.builder()
+                .map(s -> FormSnapshotVO.builder()
                         .formVersion(s.getFormVersion())
                         .createTime(s.getCreateTime())
                         .build())
@@ -647,7 +647,7 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
-    public FormSnapshotDetailDTO getSnapshot(String formId, Integer formVersion) {
+    public FormSnapshotDetailVO getSnapshot(String formId, Integer formVersion) {
         FormDefEntity entity = formDefMapper.selectById(formId);
         if (entity == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
@@ -660,7 +660,7 @@ public class FormDefServiceImpl implements FormDefService {
             throw new BaseException(FormErrorCode.SNAPSHOT_NOT_FOUND,
                     "表单版本快照不存在: version=" + formVersion);
         }
-        return FormSnapshotDetailDTO.builder()
+        return FormSnapshotDetailVO.builder()
                 .formVersion(snapshot.getFormVersion())
                 .createTime(snapshot.getCreateTime())
                 .definition(snapshot.getDefinition())
@@ -673,7 +673,7 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
-    public List<FormDefDTO> listPublishedForCurrentUser() {
+    public List<FormDefVO> listPublishedForCurrentUser() {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(1);
         pageParam.setPageSize(200);
@@ -1088,8 +1088,8 @@ public class FormDefServiceImpl implements FormDefService {
 
     // ==================== 内部方法 ====================
 
-    private FormDefDTO toDTO(FormDefEntity entity) {
-        return FormDefDTO.builder()
+    private FormDefVO toDTO(FormDefEntity entity) {
+        return FormDefVO.builder()
                 .id(entity.getId())
                 .formKey(entity.getFormKey())
                 .name(entity.getName())

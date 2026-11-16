@@ -1,7 +1,7 @@
 package com.sw.ck.agent.service;
 
-import com.sw.ck.agent.dto.AgentConversationDTO;
-import com.sw.ck.agent.dto.AgentConversationMessageDTO;
+import com.sw.ck.agent.vo.AgentConversationVO;
+import com.sw.ck.agent.vo.AgentConversationMessageVO;
 
 import java.util.List;
 
@@ -21,7 +21,7 @@ public interface AgentConversationService {
      * @param agentModelConfigId 可选过滤：仅返回该配置下的会话；null 返回全部
      * @return 会话列表（按 create_time DESC）
      */
-    List<AgentConversationDTO> listConversations(Long agentModelConfigId);
+    List<AgentConversationVO> listConversations(Long agentModelConfigId);
 
     /**
      * 会话内消息列表（按 msg_order 升序，不分页）。
@@ -29,5 +29,5 @@ public interface AgentConversationService {
      * @param sessionId 会话 id；不存在/跨租户 → 404 语义
      * @return 消息列表（msg_order ASC）
      */
-    List<AgentConversationMessageDTO> listMessages(Long sessionId);
+    List<AgentConversationMessageVO> listMessages(Long sessionId);
 }

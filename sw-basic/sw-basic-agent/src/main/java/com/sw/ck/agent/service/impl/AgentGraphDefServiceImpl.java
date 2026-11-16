@@ -5,8 +5,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.dto.AgentGraphDefDTO;
-import com.sw.ck.agent.dto.AgentGraphSnapshotDTO;
+import com.sw.ck.agent.vo.AgentGraphDefVO;
+import com.sw.ck.agent.vo.AgentGraphSnapshotVO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
@@ -256,7 +256,7 @@ public class AgentGraphDefServiceImpl
     }
 
     @Override
-    public PageResult<AgentGraphDefDTO> pageDefs(PageParam pageParam) {
+    public PageResult<AgentGraphDefVO> pageDefs(PageParam pageParam) {
         LambdaQueryWrapper<AgentGraphDef> wrapper = Wrappers.<AgentGraphDef>lambdaQuery()
                 .orderByDesc(AgentGraphDef::getUpdateTime, AgentGraphDef::getId);
         Page<AgentGraphDef> page = page(new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), wrapper);
@@ -277,7 +277,7 @@ public class AgentGraphDefServiceImpl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDefDTO publish(Long id) {
+    public AgentGraphDefVO publish(Long id) {
         AgentGraphDef entity = requireEntity(id);
 
         // —— ① 发布门：图可解析且 elements 非空（最小校验，完整拓扑校验留 Step8） ——
@@ -310,14 +310,14 @@ public class AgentGraphDefServiceImpl
     }
 
     @Override
-    public List<AgentGraphSnapshotDTO> listVersions(Long id) {
+    public List<AgentGraphSnapshotVO> listVersions(Long id) {
         requireEntity(id);
         return snapshotService.listVersions(id);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDefDTO updateSettings(Long id, Integer executionTimeoutSecs) {
+    public AgentGraphDefVO updateSettings(Long id, Integer executionTimeoutSecs) {
         if (executionTimeoutSecs == null
                 || executionTimeoutSecs < 1
                 || executionTimeoutSecs > MAX_EXECUTION_TIMEOUT_SECONDS) {
@@ -433,8 +433,8 @@ public class AgentGraphDefServiceImpl
         }
     }
 
-    private AgentGraphDefDTO toDTO(AgentGraphDef entity) {
-        AgentGraphDefDTO dto = new AgentGraphDefDTO();
+    private AgentGraphDefVO toDTO(AgentGraphDef entity) {
+        AgentGraphDefVO dto = new AgentGraphDefVO();
         dto.setId(entity.getId());
         dto.setGraphKey(entity.getGraphKey());
         dto.setName(entity.getName());

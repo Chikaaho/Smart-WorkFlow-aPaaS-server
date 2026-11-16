@@ -2,7 +2,7 @@ package com.sw.ck.bpm.engine.facade;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.result.MutationOutcome;
@@ -39,6 +39,7 @@ import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.variable.api.history.HistoricVariableInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import com.sw.ck.common.value.DynamicData;
 /**
  * BPM 任务门面实现 —— 封装 Flowable {@link TaskService} + {@link RuntimeService} + {@link RepositoryService} 查询。
  * <p>
@@ -66,7 +67,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     private static final ConcurrentHashMap<String, Object> ACTION_LOCKS = new ConcurrentHashMap<>();
 
     @Override
-    public Optional<List<BpmTaskDTO>> queryTodo(String tenantId, String assignee) {
+    public Optional<List<BpmTaskVO>> queryTodo(String tenantId, String assignee) {
         if (isBlank(tenantId) || isBlank(assignee)) {
             // 租户或处理人上下文缺失：无法确定查询范围
             return Optional.empty();
@@ -82,7 +83,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public Optional<List<BpmTaskDTO>> queryByProcessInstance(String processInstanceId) {
+    public Optional<List<BpmTaskVO>> queryByProcessInstance(String processInstanceId) {
         if (isBlank(processInstanceId)) {
             return Optional.empty();
         }
@@ -95,13 +96,13 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public Optional<BpmTaskDTO> getTask(String taskId) {
+    public Optional<BpmTaskVO> getTask(String taskId) {
         Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
         return Optional.ofNullable(task).map(this::toDto);
     }
 
     @Override
-    public Optional<BpmTaskDTO> getHistoricTask(String taskId) {
+    public Optional<BpmTaskVO> getHistoricTask(String taskId) {
         if (isBlank(taskId)) {
             // 任务标识缺失：无法确定查询目标
             return Optional.empty();
@@ -394,7 +395,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public Optional<List<BpmTaskDTO>> queryTodoPage(String tenantId, String assignee, int offset, int limit) {
+    public Optional<List<BpmTaskVO>> queryTodoPage(String tenantId, String assignee, int offset, int limit) {
         if (isBlank(tenantId) || isBlank(assignee)) {
             return Optional.empty();
         }
@@ -451,7 +452,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public Optional<List<BpmTaskDTO>> queryProcessedPage(String tenantId, String assignee, int offset, int limit) {
+    public Optional<List<BpmTaskVO>> queryProcessedPage(String tenantId, String assignee, int offset, int limit) {
         if (isBlank(tenantId) || isBlank(assignee)) {
             return Optional.empty();
         }
@@ -487,7 +488,7 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     @Override
-    public Optional<List<BpmTaskDTO>> queryHistoryByProcessInstance(String processInstanceId) {
+    public Optional<List<BpmTaskVO>> queryHistoryByProcessInstance(String processInstanceId) {
         if (isBlank(processInstanceId)) {
             return Optional.empty();
         }
@@ -612,15 +613,15 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
         }
     }
 
-    private BpmTaskDTO toDto(Task task) {
-        BpmTaskDTO dto = new BpmTaskDTO();
+    private BpmTaskVO toDto(Task task) {
+        BpmTaskVO dto = new BpmTaskVO();
         dto.setTaskId(task.getId());
         dto.setTenantId(task.getTenantId());
         dto.setName(task.getName());
         dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(getProcessDefinitionKey(task));
-        dto.setNodeConfig(getFrozenNodeConfig(task.getProcessDefinitionId(), task.getTaskDefinitionKey()));
+        dto.setNodeConfig(DynamicData.of(getFrozenNodeConfig(task.getProcessDefinitionId(), task.getTaskDefinitionKey())));
         dto.setAssignee(task.getAssignee());
         dto.setCandidateUserIds(candidateUserIdsOf(task.getId()));
         dto.setCreateTime(task.getCreateTime());
@@ -670,20 +671,20 @@ public class BpmTaskFacadeImpl implements BpmTaskFacade {
     }
 
     /**
-     * 将 Flowable HistoricTaskInstance 转为 BpmTaskDTO。
+     * 将 Flowable HistoricTaskInstance 转为 BpmTaskVO。
      * <p>
      * 与 {@link #toDto(Task)} 的区别：增加 endTime 字段。
      * </p>
      */
-    private BpmTaskDTO toDtoFromHistory(HistoricTaskInstance task) {
-        BpmTaskDTO dto = new BpmTaskDTO();
+    private BpmTaskVO toDtoFromHistory(HistoricTaskInstance task) {
+        BpmTaskVO dto = new BpmTaskVO();
         dto.setTaskId(task.getId());
         dto.setTenantId(task.getTenantId());
         dto.setName(task.getName());
         dto.setTaskDefinitionKey(task.getTaskDefinitionKey());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(getProcessDefinitionKeyFromId(task.getProcessDefinitionId()));
-        dto.setNodeConfig(getFrozenNodeConfig(task.getProcessDefinitionId(), task.getTaskDefinitionKey()));
+        dto.setNodeConfig(DynamicData.of(getFrozenNodeConfig(task.getProcessDefinitionId(), task.getTaskDefinitionKey())));
         dto.setAssignee(task.getAssignee());
         dto.setCreateTime(task.getCreateTime());
         dto.setEndTime(task.getEndTime());

@@ -46,7 +46,7 @@ class RuleEngineServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new RuleEngineService(ruleMapper, triggerMapper, propertyRecordMapper, eventPublisher);
+        service = new RuleEngineService();
         device = new IotDevice();
         device.setId(7L);
         device.setDeviceKey("dev-001");

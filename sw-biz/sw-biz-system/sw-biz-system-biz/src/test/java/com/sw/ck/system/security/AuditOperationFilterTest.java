@@ -48,7 +48,7 @@ class AuditOperationFilterTest {
     @BeforeEach
     void setUp() {
         when(provider.getObject()).thenReturn(auditLogService);
-        filter = new AuditOperationFilter(provider);
+        filter = new AuditOperationFilter();
         LoginUser user = new LoginUser();
         user.setUserId(1L);
         user.setTenantId(0L);

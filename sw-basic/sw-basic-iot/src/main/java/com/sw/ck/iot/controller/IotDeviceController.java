@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.vo.IotDeviceVO;
+import com.sw.ck.iot.vo.IotDeviceCommandVO;
 /**
  * IoT 设备控制控制器。
  * <p>
@@ -35,14 +37,14 @@ public class IotDeviceController {
      */
     @PostMapping
     @PreAuthorize("@ss.hasPermi('iot:device:manage')")
-    public R<IotDevice> register(@RequestBody RegisterDeviceRequest request) {
+    public R<IotDeviceVO> register(@RequestBody RegisterDeviceRequest request) {
         IotDevice device = new IotDevice();
         device.setProductId(request.getProductId());
         device.setDeviceName(request.getDeviceName());
         device.setDeviceKey(request.getDeviceKey());
         device.setName(request.getName());
         device.setDeviceType(request.getDeviceType());
-        return R.ok(iotDeviceService.register(device));
+        return R.ok(IotDeviceVO.from(iotDeviceService.register(device)));
     }
 
     /**
@@ -50,8 +52,8 @@ public class IotDeviceController {
      */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('iot:view')")
-    public R<List<IotDevice>> list() {
-        return R.ok(iotDeviceService.lambdaQuery().list());
+    public R<List<IotDeviceVO>> list() {
+        return R.ok(iotDeviceService.lambdaQuery().list() == null ? List.of() : iotDeviceService.lambdaQuery().list().stream().map(IotDeviceVO::from).toList());
     }
 
     /**
@@ -59,13 +61,13 @@ public class IotDeviceController {
      */
     @GetMapping("/{productId}/{deviceName}")
     @PreAuthorize("@ss.hasPermi('iot:view')")
-    public R<IotDevice> detail(@PathVariable String productId,
+    public R<IotDeviceVO> detail(@PathVariable String productId,
                                @PathVariable String deviceName) {
         IotDevice device = iotDeviceService.getByProductAndDeviceName(productId, deviceName);
         if (device == null) {
             return R.fail(404, "设备不存在: productId=" + productId + ", deviceName=" + deviceName);
         }
-        return R.ok(device);
+        return R.ok(IotDeviceVO.from(device));
     }
 
     /**
@@ -73,14 +75,14 @@ public class IotDeviceController {
      */
     @PostMapping("/{productId}/{deviceName}/commands")
     @PreAuthorize("@ss.hasPermi('iot:device:manage')")
-    public R<IotDeviceCommand> dispatch(@PathVariable String productId,
+    public R<IotDeviceCommandVO> dispatch(@PathVariable String productId,
                                         @PathVariable String deviceName,
                                         @RequestBody DispatchCommandRequest request) {
         log.info("下发设备命令: productId={}, deviceName={}, commandKey={}, commandType={}",
                 productId, deviceName, request.getCommandKey(), request.getCommandType());
-        return R.ok(iotDeviceService.dispatchCommand(
+        return R.ok(IotDeviceCommandVO.from(iotDeviceService.dispatchCommand(
                 productId, deviceName, request.getCommandKey(),
-                request.getCommandType(), request.getPayload(), request.getApprovalBizId()));
+                request.getCommandType(), request.getPayload(), request.getApprovalBizId())));
     }
 
     /**
@@ -88,9 +90,9 @@ public class IotDeviceController {
      */
     @GetMapping("/{productId}/{deviceName}/commands")
     @PreAuthorize("@ss.hasPermi('iot:view')")
-    public R<List<IotDeviceCommand>> commands(@PathVariable String productId,
+    public R<List<IotDeviceCommandVO>> commands(@PathVariable String productId,
                                               @PathVariable String deviceName) {
-        return R.ok(iotDeviceService.listCommands(productId, deviceName));
+        return R.ok(iotDeviceService.listCommands(productId, deviceName) == null ? List.of() : iotDeviceService.listCommands(productId, deviceName).stream().map(IotDeviceCommandVO::from).toList());
     }
 
     /**
@@ -98,9 +100,9 @@ public class IotDeviceController {
      */
     @PostMapping("/commands/{commandId}/result")
     @PreAuthorize("@ss.hasPermi('iot:device:manage')")
-    public R<IotDeviceCommand> reportResult(@PathVariable Long commandId,
+    public R<IotDeviceCommandVO> reportResult(@PathVariable Long commandId,
                                             @RequestBody CommandResultRequest request) {
-        return R.ok(iotDeviceService.reportResult(commandId, request.getStatus(), request.getResult()));
+        return R.ok(IotDeviceCommandVO.from(iotDeviceService.reportResult(commandId, request.getStatus(), request.getResult())));
     }
 
     @Data

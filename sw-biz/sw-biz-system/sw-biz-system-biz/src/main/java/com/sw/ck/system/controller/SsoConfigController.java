@@ -4,8 +4,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.trace.EventRef;
-import com.sw.ck.system.dto.SsoConfigCheckDTO;
-import com.sw.ck.system.dto.SsoConfigListDTO;
+import com.sw.ck.system.vo.SsoConfigCheckVO;
+import com.sw.ck.system.vo.SsoConfigListVO;
 import com.sw.ck.system.sso.SsoAuthService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,8 +36,8 @@ public class SsoConfigController {
     /** 租户配置列表（含未登记平台占位；secret 只回是否已配置）。 */
     @PreAuthorize("@ss.hasPermi('system:sso:config:list')")
     @GetMapping
-    public R<SsoConfigListDTO> list() {
-        SsoConfigListDTO result = new SsoConfigListDTO();
+    public R<SsoConfigListVO> list() {
+        SsoConfigListVO result = new SsoConfigListVO();
         result.setConfigs(ssoAuthService.listConfigs());
         return R.ok(result);
     }
@@ -93,7 +93,7 @@ public class SsoConfigController {
     /** 配置检查（只读；不修改配置/绑定，不宣称真实登录通过）。 */
     @PreAuthorize("@ss.hasPermi('system:sso:config:list')")
     @GetMapping("/{provider}/check")
-    public R<SsoConfigCheckDTO> check(@PathVariable("provider") String provider) {
+    public R<SsoConfigCheckVO> check(@PathVariable("provider") String provider) {
         try {
             return R.ok(ssoAuthService.checkConfig(provider));
         } catch (RuntimeException e) {

@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.notify.dto.NotifyTemplateDTO;
+import com.sw.ck.notify.vo.NotifyTemplateVO;
 import com.sw.ck.notify.dto.NotifyTemplateQuery;
 import com.sw.ck.notify.dto.TemplatePreviewRequest;
 import com.sw.ck.notify.dto.TemplatePreviewResult;
@@ -45,7 +45,7 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
     private NotifyTemplateVersionService versionService;
 
     @Override
-    public PageResult<NotifyTemplateDTO> pageTemplates(NotifyTemplateQuery query) {
+    public PageResult<NotifyTemplateVO> pageTemplates(NotifyTemplateQuery query) {
         LambdaQueryWrapper<NotifyTemplate> wrapper = Wrappers.lambdaQuery();
         if (query.getKeyword() != null && !query.getKeyword().isBlank()) {
             String kw = query.getKeyword();
@@ -62,12 +62,12 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
     }
 
     @Override
-    public NotifyTemplateDTO getTemplate(Long id) {
+    public NotifyTemplateVO getTemplate(Long id) {
         return toDTO(requireEntity(id));
     }
 
     @Override
-    public Long createTemplate(NotifyTemplateDTO dto) {
+    public Long createTemplate(NotifyTemplateVO dto) {
         validate(dto);
         requireCodeAvailable(dto.getTemplateCode());
         NotifyTemplate entity = toEntity(dto);
@@ -80,7 +80,7 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
     }
 
     @Override
-    public void updateTemplate(Long id, NotifyTemplateDTO dto) {
+    public void updateTemplate(Long id, NotifyTemplateVO dto) {
         NotifyTemplate existing = requireEntity(id);
         validate(dto);
         // 稳定标识不可变更（方向 §3.1）：请求中的 templateCode 必须与库中一致
@@ -193,7 +193,7 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         }
     }
 
-    private void validate(NotifyTemplateDTO dto) {
+    private void validate(NotifyTemplateVO dto) {
         if (dto.getTemplateCode() == null || dto.getTemplateCode().isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "模板代码不能为空");
         }
@@ -224,8 +224,8 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         }
     }
 
-    private NotifyTemplateDTO toDTO(NotifyTemplate t) {
-        NotifyTemplateDTO dto = new NotifyTemplateDTO();
+    private NotifyTemplateVO toDTO(NotifyTemplate t) {
+        NotifyTemplateVO dto = new NotifyTemplateVO();
         dto.setId(t.getId());
         dto.setTemplateCode(t.getTemplateCode());
         dto.setName(t.getName());
@@ -240,7 +240,7 @@ public class NotifyTemplateServiceImpl implements NotifyTemplateService {
         return dto;
     }
 
-    private NotifyTemplate toEntity(NotifyTemplateDTO dto) {
+    private NotifyTemplate toEntity(NotifyTemplateVO dto) {
         NotifyTemplate t = new NotifyTemplate();
         t.setTemplateCode(dto.getTemplateCode());
         t.setName(dto.getName());

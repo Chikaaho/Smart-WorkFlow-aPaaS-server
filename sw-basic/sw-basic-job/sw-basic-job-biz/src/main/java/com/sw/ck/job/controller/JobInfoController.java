@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.job.vo.JobInfoVO;
 /**
  * 定时任务定义控制器。
  * <p>
@@ -37,13 +38,13 @@ public class JobInfoController {
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('job:list')")
-    public R<PageResult<JobInfo>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<JobInfoVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                         @RequestParam(defaultValue = "10") long pageSize,
                                         @RequestBody(required = false) JobInfo query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(jobInfoService.page(pageParam, query));
+        return R.ok(PageResult.map(jobInfoService.page(pageParam, query), JobInfoVO::from));
     }
 
     /**
@@ -51,12 +52,12 @@ public class JobInfoController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('job:list')")
-    public R<JobInfo> getById(@PathVariable Long id) {
+    public R<JobInfoVO> getById(@PathVariable Long id) {
         JobInfo jobInfo = jobInfoService.getById(id);
         if (jobInfo == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
         }
-        return R.ok(jobInfo);
+        return R.ok(JobInfoVO.from(jobInfo));
     }
 
     /**

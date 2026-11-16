@@ -59,7 +59,7 @@ class MqttDownlinkPublisherTest {
         DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
         factory.registerSingleton("iotConnectionService", connectionService);
         ObjectProvider<IotConnectionService> provider = factory.getBeanProvider(IotConnectionService.class);
-        publisher = new MqttDownlinkPublisher(connectionMapper, topicMapper, mqttBrokerManager, provider);
+        publisher = new MqttDownlinkPublisher();
     }
 
     private IotDevice device() {

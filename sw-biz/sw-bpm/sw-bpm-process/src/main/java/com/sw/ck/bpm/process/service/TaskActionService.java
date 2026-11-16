@@ -2,7 +2,7 @@ package com.sw.ck.bpm.process.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
@@ -237,7 +237,7 @@ public class TaskActionService {
 
         // 1. 查询 task（经 Facade 包装，无 Flowable 泄漏）
         // empty = 该任务不存在（原 null 返回路径），继续走既有“已被处理/任务不存在”判定
-        Optional<BpmTaskDTO> foundTask = bpmTaskFacade.getTask(taskId);
+        Optional<BpmTaskVO> foundTask = bpmTaskFacade.getTask(taskId);
         if (foundTask.isEmpty()) {
             ApprovalActionRecord handled = approvalActionService == null
                     ? null : approvalActionService.findByTaskId(taskId);
@@ -276,7 +276,7 @@ public class TaskActionService {
             }
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在");
         }
-        BpmTaskDTO task = foundTask.get(); // 上方 empty 分支已证明存在
+        BpmTaskVO task = foundTask.get(); // 上方 empty 分支已证明存在
 
         // 2. 越权校验：审批人
         boolean assigned = String.valueOf(loginUser.getUserId()).equals(task.getAssignee());
@@ -562,9 +562,10 @@ public class TaskActionService {
         }
     }
 
-    public List<String> resolveAllowedActions(BpmTaskDTO task) {
+    public List<String> resolveAllowedActions(BpmTaskVO task) {
         try {
-            return NodeActionPolicy.resolve(task.getNodeConfig())
+            return NodeActionPolicy.resolve(task.getNodeConfig() == null
+                    ? null : task.getNodeConfig().asMap())
                     .orElseThrow(() -> new IllegalArgumentException("节点允许操作配置无效"));
         } catch (IllegalArgumentException e) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
@@ -572,7 +573,7 @@ public class TaskActionService {
         }
     }
 
-    public void assertNodeActionAllowed(BpmTaskDTO task, ApprovalAction action) {
+    public void assertNodeActionAllowed(BpmTaskVO task, ApprovalAction action) {
         if (action == null || !resolveAllowedActions(task).contains(action.name())) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
                     "当前节点不允许此操作");
@@ -623,9 +624,9 @@ public class TaskActionService {
         }
     }
 
-    public Map<String, Object> resolveOpinionForm(BpmTaskDTO task) {
+    public Map<String, Object> resolveOpinionForm(BpmTaskVO task) {
         if (task.getNodeConfig() != null) {
-            Object frozen = task.getNodeConfig().get("opinionForm");
+            Object frozen = task.getNodeConfig().asMap().get("opinionForm");
             if (frozen == null) return Map.of();
             if (!(frozen instanceof Map<?, ?>)) {
                 throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
@@ -656,7 +657,7 @@ public class TaskActionService {
         }
     }
 
-    public boolean isConsensusTask(BpmTaskDTO task) {
+    public boolean isConsensusTask(BpmTaskVO task) {
         if (task == null || bpmProcessDefService == null || objectMapper == null
                 || task.getProcessDefinitionKey() == null || task.getTaskDefinitionKey() == null) {
             return false;
@@ -676,7 +677,7 @@ public class TaskActionService {
         }
     }
 
-    private void recordAction(BpmTaskDTO task, LoginUser loginUser,
+    private void recordAction(BpmTaskVO task, LoginUser loginUser,
                               ApprovalActionRequest request, ApprovalAction action,
                               String settlementStatus, Map<String, Object> processVariables,
                               Long commandId, Integer roundNo) {
@@ -758,7 +759,7 @@ public class TaskActionService {
      * 引擎命令按 REQUIRED 加入本事务，complete 失败时写入随之回滚。变量写入失败视为办理失败
      * （不伪装成功），由调用方的异常路径统一结算。
      */
-    void writeOpinionVariables(BpmTaskDTO task, LoginUser loginUser,
+    void writeOpinionVariables(BpmTaskVO task, LoginUser loginUser,
                                ApprovalActionRequest request) {
         if (bpmTaskFacade == null
                 || request.getOpinionData() == null || request.getOpinionData().isEmpty()) {
@@ -814,7 +815,7 @@ public class TaskActionService {
 
     /** 会签意见聚合：同节点全部意见（含本次）按字段类型聚合为 opinionAgg_* 流程变量。 */
     @SuppressWarnings("unchecked")
-    private void aggregateConsensusOpinions(BpmTaskDTO task, Map<String, Object> currentData) {
+    private void aggregateConsensusOpinions(BpmTaskVO task, Map<String, Object> currentData) {
         Map<String, Object> frozen = resolveOpinionForm(task);
         Object rawFields = frozen.get("fields");
         if (!(rawFields instanceof Collection<?> fields) || approvalActionService == null) {
@@ -887,7 +888,7 @@ public class TaskActionService {
      * P64 节点业务表单合法最终提交（A01）：任务绑定节点表单且携带/存在数据时，
      * 与任务完成同事务落 SUBMITTED；校验失败抛业务异常使整个办理回滚（无半成功）。
      */
-    private void submitNodeFormData(BpmInstance instance, BpmTaskDTO task,
+    private void submitNodeFormData(BpmInstance instance, BpmTaskVO task,
                                     ApprovalActionRequest request, LoginUser loginUser) {
         NodeFormDataService nodeFormDataService = nodeFormDataService();
         if (nodeFormDataService == null || instance.getDefVersion() == null) {
@@ -905,7 +906,7 @@ public class TaskActionService {
     }
 
     /** 分支求值失败/并发冲突路径：清理本任务刚落的最终提交（同租户同任务精准删除）。 */
-    private void discardNodeFormData(BpmTaskDTO task, LoginUser loginUser) {
+    private void discardNodeFormData(BpmTaskVO task, LoginUser loginUser) {
         NodeFormDataService nodeFormDataService = nodeFormDataService();
         if (nodeFormDataService == null) {
             return;
@@ -917,7 +918,7 @@ public class TaskActionService {
     }
 
     /** I3 §4.9：结果处理白名单函数执行（输出不改变流程走向，仅审计摘要/白名单变量）。 */
-    private void runHandleResultFunction(BpmTaskDTO task, LoginUser loginUser,
+    private void runHandleResultFunction(BpmTaskVO task, LoginUser loginUser,
                                          Map<String, Object> processVariables,
                                          ApprovalAction action) {
         if (nodeFunctionService == null) {
@@ -1004,7 +1005,7 @@ public class TaskActionService {
     }
 
     /** 读取节点的不通过意见结算策略（disapprovePolicy；默认 TERMINATE）。 */
-    private String nodeDisapprovePolicy(BpmTaskDTO task) {
+    private String nodeDisapprovePolicy(BpmTaskVO task) {
         if (bpmProcessDefService == null || objectMapper == null
                 || task.getProcessDefinitionKey() == null || task.getTaskDefinitionKey() == null) {
             return null;
@@ -1072,9 +1073,9 @@ public class TaskActionService {
     private void publishReturnedRoundTodoCreated(String processInstanceId, LoginUser loginUser) {
         try {
             // empty = 实例标识缺失：与“无重建待办 task”同为非预期但不阻断退回，仅 warn
-            List<BpmTaskDTO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
+            List<BpmTaskVO> tasks = bpmTaskFacade.queryByProcessInstance(processInstanceId)
                     .orElse(List.of());
-            BpmTaskDTO matchedTask = tasks.stream().findFirst().orElse(null);
+            BpmTaskVO matchedTask = tasks.stream().findFirst().orElse(null);
             if (matchedTask == null) {
                 log.warn("流程 {} 退回后无重建待办 task，跳过新轮次 TODO_CREATED 通知", processInstanceId);
                 return;

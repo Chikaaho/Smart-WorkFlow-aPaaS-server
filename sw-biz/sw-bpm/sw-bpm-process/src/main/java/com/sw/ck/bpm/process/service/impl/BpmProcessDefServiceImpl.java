@@ -27,7 +27,7 @@ import com.sw.ck.bpm.process.validator.ProcessVariableValidator;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -332,7 +332,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         String formKey = graph.getFormKey();
         if (formKey != null && !formKey.isBlank()) {
             // empty = 该 formKey 无表单定义（原 null 返回路径）：按“绑定表单不存在”拒绝发布
-            Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+            Optional<FormDefVO> formDefLookup = formDefinitionService.getFormDef(formKey);
             if (formDefLookup.isEmpty()) {
                 throw new BaseException(BpmErrorCode.GRAPH_FORM_NOT_FOUND);
             }
@@ -459,7 +459,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         }
         try {
             // empty = 该 formKey 无表单定义（原 null 返回路径）：无版本可回填
-            Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+            Optional<FormDefVO> formDefLookup = formDefinitionService.getFormDef(formKey);
             if (formDefLookup.isEmpty()) {
                 return null;
             }
@@ -510,7 +510,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
                 if (formKeyObj == null || String.valueOf(formKeyObj).isBlank()) {
                     continue;
                 }
-                Optional<FormDefDTO> def =
+                Optional<FormDefVO> def =
                         formDefinitionService.getFormDef(String.valueOf(formKeyObj).trim());
                 if (def.isEmpty() || def.get().getFormVersion() == null) {
                     continue;

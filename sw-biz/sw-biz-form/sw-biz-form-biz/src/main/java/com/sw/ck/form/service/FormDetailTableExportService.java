@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
@@ -96,7 +96,7 @@ public class FormDetailTableExportService {
         if (loginUser == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
@@ -279,7 +279,7 @@ public class FormDetailTableExportService {
     }
 
     private String resolvePhysicalTable(String targetFormKey) {
-        FormDefDTO target = formDefService.getFormDefByKey(targetFormKey);
+        FormDefVO target = formDefService.getFormDefByKey(targetFormKey);
         if (target == null || target.getPhysicalTableName() == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST,
                     "引用表单 '" + targetFormKey + "' 不存在");
@@ -288,7 +288,7 @@ public class FormDetailTableExportService {
     }
 
     private String resolveDisplayColumn(String targetFormKey) {
-        FormDefDTO target = formDefService.getFormDefByKey(targetFormKey);
+        FormDefVO target = formDefService.getFormDefByKey(targetFormKey);
         if (target == null) {
             return null;
         }

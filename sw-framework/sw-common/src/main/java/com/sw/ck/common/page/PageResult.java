@@ -24,6 +24,17 @@ public class PageResult<T> implements Serializable {
         return result;
     }
 
+    /** 逐条转换记录类型，分页元信息原样保留。 */
+    public static <S, T> PageResult<T> map(PageResult<S> source, java.util.function.Function<S, T> mapper) {
+        PageResult<T> result = new PageResult<>();
+        result.setRecords(source.getRecords() == null ? Collections.emptyList()
+                : source.getRecords().stream().map(mapper).toList());
+        result.setTotal(source.getTotal());
+        result.setPageNum(source.getPageNum());
+        result.setPageSize(source.getPageSize());
+        return result;
+    }
+
     public static <T> PageResult<T> empty() {
         PageResult<T> result = new PageResult<>();
         result.setRecords(Collections.emptyList());

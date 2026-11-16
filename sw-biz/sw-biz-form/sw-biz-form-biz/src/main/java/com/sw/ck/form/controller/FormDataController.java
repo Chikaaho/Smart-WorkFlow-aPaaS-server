@@ -4,7 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
-import com.sw.ck.form.dto.FormDataRecordDTO;
+import com.sw.ck.form.vo.FormDataRecordVO;
 import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormDataUpdateService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -37,14 +37,14 @@ public class FormDataController {
      *
      * @param formKey  表单业务标识
      * @param recordId 主表记录 UUID
-     * @return {@code R<FormDataRecordDTO>} 主记录字段 + 各子表行列表（动态字段）
+     * @return {@code R<FormDataRecordVO>} 主记录字段 + 各子表行列表（动态字段）
      */
     @GetMapping("/{formKey}/{recordId}")
     @PreAuthorize("@ss.hasPermi('form:data:query')")
-    public R<FormDataRecordDTO> getDetail(@PathVariable("formKey") String formKey,
+    public R<FormDataRecordVO> getDetail(@PathVariable("formKey") String formKey,
                                           @PathVariable("recordId") String recordId) {
         log.info("Form data detail: formKey={}, recordId={}", formKey, recordId);
-        return R.ok(new FormDataRecordDTO(
+        return R.ok(new FormDataRecordVO(
                 formDataQueryService.getRecordDetail(formKey, recordId)));
     }
 

@@ -38,8 +38,7 @@ class IotDeviceReportResultSanitizeTest {
 
     @BeforeEach
     void setUp() {
-        service = new IotDeviceServiceImpl(commandMapper,
-                Mockito.mock(IotProductMapper.class), Mockito.mock(IotThingModelMapper.class));
+        service = new IotDeviceServiceImpl();
     }
 
     private IotDeviceCommand existing() {

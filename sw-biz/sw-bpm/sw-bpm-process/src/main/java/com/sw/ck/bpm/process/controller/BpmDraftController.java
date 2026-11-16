@@ -2,7 +2,7 @@ package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
@@ -15,7 +15,7 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
 
@@ -35,6 +35,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.sw.ck.bpm.process.vo.BpmDraftVO;
 /**
  * 我的草稿控制器（业务发起草稿，与表单设计/流程定义草稿无关）。
  * <p>
@@ -64,7 +65,7 @@ public class BpmDraftController {
 
     /** 我的草稿分页列表。 */
     @GetMapping
-    public R<PageResult<BpmDraft>> list(PageParam pageParam) {
+    public R<PageResult<BpmDraftVO>> list(PageParam pageParam) {
         var loginUser = LoginUserHolder.get();
         List<BpmDraft> readable = draftService.lambdaQuery()
                 .eq(BpmDraft::getCreateBy, loginUser.getUserId())
@@ -82,16 +83,16 @@ public class BpmDraftController {
         page.setTotal(total);
         page.setPageNum(pageParam.getPageNum());
         page.setPageSize(pageParam.getPageSize());
-        return R.ok(page);
+        return R.ok(PageResult.map(page, BpmDraftVO::from));
     }
 
     /** 新建草稿（formKey 必须为已发布表单；保存不触发流程）。 */
     @PostMapping
     @Transactional
-    public R<BpmDraft> create(@RequestBody Map<String, Object> body) {
+    public R<BpmDraftVO> create(@RequestBody Map<String, Object> body) {
         var loginUser = LoginUserHolder.get();
         String formKey = str(body.get("formKey"));
-        FormDefDTO formDef = draftSubmitService.requirePublishedForm(formKey);
+        FormDefVO formDef = draftSubmitService.requirePublishedForm(formKey);
 
         BpmDraft draft = new BpmDraft();
         draft.setTitle(str(body.get("title")));
@@ -105,19 +106,19 @@ public class BpmDraftController {
         draft.setSubmitSeq(0);
         draftService.save(draft);
         log.info("草稿已创建: id={}, formKey={}, owner={}", draft.getId(), formKey, loginUser.getUserId());
-        return R.ok(draft);
+        return R.ok(BpmDraftVO.from(draft));
     }
 
     /** 草稿详情（仅本人）。 */
     @GetMapping("/{id}")
-    public R<BpmDraft> get(@PathVariable Long id) {
-        return R.ok(draftSubmitService.loadOwned(id));
+    public R<BpmDraftVO> get(@PathVariable Long id) {
+        return R.ok(BpmDraftVO.from(draftSubmitService.loadOwned(id)));
     }
 
     /** 更新草稿（仅本人；SUBMITTING/SUBMITTED 冻结，FAILED 可修正）。 */
     @PutMapping("/{id}")
     @Transactional
-    public R<BpmDraft> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public R<BpmDraftVO> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         BpmDraft draft = draftSubmitService.loadOwned(id);
         requireEditable(draft);
         if (body.containsKey("title")) {
@@ -134,7 +135,7 @@ public class BpmDraftController {
         // D3：用户显式重绑表单版本（refreshFormVersion=true）时刷新快照版本与绑定；
         // 不随发布静默变化；无法保留的数据由前端在重绑时提示核对。
         if (Boolean.TRUE.equals(body.get("refreshFormVersion"))) {
-            FormDefDTO formDef = draftSubmitService.requirePublishedForm(draft.getFormKey());
+            FormDefVO formDef = draftSubmitService.requirePublishedForm(draft.getFormKey());
             draft.setFormVersion(formDef.getFormVersion() == null ? null
                     : Long.valueOf(formDef.getFormVersion()));
             draft.setProcessDefKey(draftSubmitService.resolveUniqueActiveProcessDefKey(draft.getFormKey()));
@@ -144,7 +145,7 @@ public class BpmDraftController {
             draft.setLastError(null);
         }
         draftService.updateById(draft);
-        return R.ok(draft);
+        return R.ok(BpmDraftVO.from(draft));
     }
 
     /** 删除草稿（仅本人；受理中不可删）。 */
@@ -162,7 +163,7 @@ public class BpmDraftController {
      * 正式提交草稿（统一命令边界，普通异步通道）。
      */
     @PostMapping("/{id}/submit")
-    public R<CommandAcceptRespDTO> submit(@PathVariable Long id) {
+    public R<CommandAcceptRespVO> submit(@PathVariable Long id) {
         return R.ok(draftSubmitService.submit(id, CommandChannelEnum.NORMAL));
     }
 
@@ -172,7 +173,7 @@ public class BpmDraftController {
      * 有界等待在事务外，超时返回受理标识（可回查），不重复提交。
      */
     @PostMapping(value = "/{id}/submit", params = {"channel"})
-    public R<CommandAcceptRespDTO> submit(@PathVariable Long id,
+    public R<CommandAcceptRespVO> submit(@PathVariable Long id,
                                           @RequestParam String channel) {
         boolean p0 = "P0".equalsIgnoreCase(channel);
         if (!p0 && !CommandChannelEnum.NORMAL.getCode().equalsIgnoreCase(channel)) {
@@ -182,7 +183,7 @@ public class BpmDraftController {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(),
                     "缺少 P0 调用专用权限: workflow:p0:dispatch");
         }
-        CommandAcceptRespDTO accepted = draftSubmitService.submit(id,
+        CommandAcceptRespVO accepted = draftSubmitService.submit(id,
                 p0 ? CommandChannelEnum.P0 : CommandChannelEnum.NORMAL);
         if (!p0) {
             return R.ok(accepted);
@@ -194,7 +195,7 @@ public class BpmDraftController {
         accepted.setStatus(switch (wait.outcome()) {
             case COMPLETED -> BatchStatusEnum.COMPLETED.getCode();
             case FAILED -> DraftStatusEnum.FAILED.getCode();
-            case TIMEOUT -> CommandAcceptRespDTO.STATUS_ACCEPTED;
+            case TIMEOUT -> CommandAcceptRespVO.STATUS_ACCEPTED;
         });
         return R.ok(accepted);
     }

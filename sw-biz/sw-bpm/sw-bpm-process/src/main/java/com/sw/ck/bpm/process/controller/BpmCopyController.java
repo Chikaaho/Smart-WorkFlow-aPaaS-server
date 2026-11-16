@@ -2,8 +2,8 @@ package com.sw.ck.bpm.process.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.bpm.process.dto.CopyItemDTO;
-import com.sw.ck.bpm.process.dto.MyCopyDetailDTO;
+import com.sw.ck.bpm.process.vo.CopyItemVO;
+import com.sw.ck.bpm.process.vo.MyCopyDetailVO;
 import com.sw.ck.bpm.process.service.BpmCopyQueryService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -26,7 +26,7 @@ public class BpmCopyController {
 
     /** 仅查询本人收到的抄送（关键字 + 时间窗过滤，稳定分页，同事件去重）。 */
     @GetMapping
-    public R<PageResult<CopyItemDTO>> myCopies(PageParam pageParam,
+    public R<PageResult<CopyItemVO>> myCopies(PageParam pageParam,
                                                @RequestParam(required = false) String processInstanceId,
                                                @RequestParam(required = false) String keyword,
                                                @RequestParam(required = false) LocalDateTime timeFrom,
@@ -36,7 +36,7 @@ public class BpmCopyController {
 
     /** 抄送详情（仅接收人本人；只读表单快照 + 审批进度/意见，无审批操作权）。 */
     @GetMapping("/{id}")
-    public R<MyCopyDetailDTO> detail(@PathVariable Long id) {
+    public R<MyCopyDetailVO> detail(@PathVariable Long id) {
         return R.ok(copyQueryService.myCopyDetail(id));
     }
 }

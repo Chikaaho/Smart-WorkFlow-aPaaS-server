@@ -42,7 +42,7 @@ class PositionDelegateServiceImplTest {
         postMapper = mock(SysPostMapper.class);
         deptMapper = mock(SysDeptMapper.class);
         // 匿名子类实例初始化器注入受保护 baseMapper（MyBatis-Plus 仓储基类口径）
-        service = new PositionDelegateServiceImpl(postMapper, deptMapper) {
+        service = new PositionDelegateServiceImpl() {
             {
                 this.baseMapper = delegateMapper;
             }

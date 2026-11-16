@@ -4,11 +4,11 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
-import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
+import com.sw.ck.agent.vo.AgentGraphExecuteRespVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionDetailVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionNodeVO;
+import com.sw.ck.agent.vo.AgentNodeRunRespVO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
@@ -151,7 +151,7 @@ public class AgentGraphExecutionServiceImpl
     private KnowledgeRetrievalService knowledgeRetrievalService;
 
     @Override
-    public AgentGraphExecuteRespDTO execute(Long graphDefId, String input) {
+    public AgentGraphExecuteRespVO execute(Long graphDefId, String input) {
         return execute(graphDefId, input, null);
     }
 
@@ -191,7 +191,7 @@ public class AgentGraphExecutionServiceImpl
     }
 
     @Override
-    public AgentNodeRunRespDTO runNode(Long graphDefId, String nodeId,
+    public AgentNodeRunRespVO runNode(Long graphDefId, String nodeId,
                                                            Map<String, String> inputs) {
         AgentGraphDef entity = requireEntity(graphDefId);
         if (!STATUS_PUBLISHED.equals(entity.getStatus())) {
@@ -240,7 +240,7 @@ public class AgentGraphExecutionServiceImpl
                 loginContextProvider.getTenantId(),
                 Math.max(8, graph.getElements().size() * 2));
         long start = System.currentTimeMillis();
-        AgentNodeRunRespDTO resp = new AgentNodeRunRespDTO();
+        AgentNodeRunRespVO resp = new AgentNodeRunRespVO();
         try {
             String output = interpreter.run(debugGraph,
                     inputs == null ? Map.of() : inputs);
@@ -266,7 +266,7 @@ public class AgentGraphExecutionServiceImpl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphExecuteRespDTO execute(Long graphDefId, String input,
+    public AgentGraphExecuteRespVO execute(Long graphDefId, String input,
                                             Map<String, String> inputs) {
         AgentGraphDef entity = requireEntity(graphDefId);
         ProcessGraph graph = requireExecutableGraph(entity);
@@ -277,7 +277,7 @@ public class AgentGraphExecutionServiceImpl
             // 同步接口不支持人工等待：把本次执行标为失败并给出明确原因
             markExecutionFailed(outcome.executionId, AgentGraphInterpreter.ERROR_CATEGORY_HUMAN_PAUSE,
                     "运行到人工节点，需通过异步执行与运行页处理");
-            AgentGraphExecuteRespDTO resp = outcome.response;
+            AgentGraphExecuteRespVO resp = outcome.response;
             resp.setSuccess(false);
             resp.setErrorMessage("运行到人工节点，需通过异步执行与运行页处理");
             return resp;
@@ -399,7 +399,7 @@ public class AgentGraphExecutionServiceImpl
         options.subgraphRunner = call -> runSubgraph(call, currentExec.getId(), depth, graphChain);
 
         long start = System.currentTimeMillis();
-        AgentGraphExecuteRespDTO resp = new AgentGraphExecuteRespDTO();
+        AgentGraphExecuteRespVO resp = new AgentGraphExecuteRespVO();
         List<AgentGraphInterpreter.NodeExecutionTrace> traces;
         Throwable failure = null;
         AgentGraphInterpreter.HumanPauseException pause = null;
@@ -579,7 +579,7 @@ public class AgentGraphExecutionServiceImpl
     // ==================== 执行历史查询（Step12，只读端点） ====================
 
     @Override
-    public PageResult<AgentGraphExecutionDTO> pageExecutions(PageParam pageParam, Long graphDefId) {
+    public PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId) {
         // 租户隔离经租户拦截器自动生效；数据范围：sw_agent_graph_execution 无 dept_id 列，
         // 等效条件在 selectExecutionPage 内实现（create_by VARCHAR 兼容比较）
         DataScopeFilter scope = DataScopeFilter.resolve(loginContextProvider, deptScopeProvider);
@@ -589,12 +589,12 @@ public class AgentGraphExecutionServiceImpl
     }
 
     @Override
-    public AgentGraphExecutionDetailDTO getExecution(Long executionId) {
+    public AgentGraphExecutionDetailVO getExecution(Long executionId) {
         return toDetailDTO(requireExecution(executionId));
     }
 
     @Override
-    public List<AgentGraphExecutionNodeDTO> listExecutionNodes(Long executionId) {
+    public List<AgentGraphExecutionNodeVO> listExecutionNodes(Long executionId) {
         // 执行记录存在性校验（selectById 经租户拦截器自动过滤：跨租户/不存在 → 404 语义）
         requireExecution(executionId);
         return executionNodeMapper.selectList(
@@ -753,8 +753,8 @@ public class AgentGraphExecutionServiceImpl
 
     // ==================== DTO 转换（Step12） ====================
 
-    private AgentGraphExecutionDTO toSummaryDTO(AgentGraphExecution exec) {
-        AgentGraphExecutionDTO dto = new AgentGraphExecutionDTO();
+    private AgentGraphExecutionVO toSummaryDTO(AgentGraphExecution exec) {
+        AgentGraphExecutionVO dto = new AgentGraphExecutionVO();
         dto.setId(exec.getId());
         dto.setGraphDefId(exec.getGraphDefId());
         dto.setGraphDefVersion(exec.getGraphDefVersion());
@@ -769,8 +769,8 @@ public class AgentGraphExecutionServiceImpl
         return dto;
     }
 
-    private AgentGraphExecutionDetailDTO toDetailDTO(AgentGraphExecution exec) {
-        AgentGraphExecutionDetailDTO dto = new AgentGraphExecutionDetailDTO();
+    private AgentGraphExecutionDetailVO toDetailDTO(AgentGraphExecution exec) {
+        AgentGraphExecutionDetailVO dto = new AgentGraphExecutionDetailVO();
         dto.setId(exec.getId());
         dto.setGraphDefId(exec.getGraphDefId());
         dto.setGraphDefVersion(exec.getGraphDefVersion());
@@ -788,8 +788,8 @@ public class AgentGraphExecutionServiceImpl
         return dto;
     }
 
-    private AgentGraphExecutionNodeDTO toNodeDTO(AgentGraphExecutionNode node) {
-        AgentGraphExecutionNodeDTO dto = new AgentGraphExecutionNodeDTO();
+    private AgentGraphExecutionNodeVO toNodeDTO(AgentGraphExecutionNode node) {
+        AgentGraphExecutionNodeVO dto = new AgentGraphExecutionNodeVO();
         dto.setNodeSeq(node.getNodeSeq());
         dto.setBranchId(node.getBranchId());
         dto.setNodeId(node.getNodeId());

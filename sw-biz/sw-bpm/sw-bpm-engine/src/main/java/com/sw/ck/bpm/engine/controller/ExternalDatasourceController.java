@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.engine.vo.ExternalDatasourceVO;
 /**
  * 外部数据源管理 + SQL 执行控制器。
  */
@@ -113,15 +114,15 @@ public class ExternalDatasourceController {
     /** 查询外部数据源详情（不返回密码） */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
-    public R<ExternalDatasource> getById(@PathVariable Long id) {
+    public R<ExternalDatasourceVO> getById(@PathVariable Long id) {
         ExternalDatasource entity = datasourceService.getById(id);
-        return R.ok(entity);
+        return R.ok(ExternalDatasourceVO.from(entity));
     }
 
     /** 当前租户的数据源清单，密码和密文不进入响应。 */
     @GetMapping("/page")
     @PreAuthorize("@ss.hasPermi('workflow:datasource:manage')")
-    public R<PageResult<ExternalDatasource>> page(
+    public R<PageResult<ExternalDatasourceVO>> page(
             @RequestParam(defaultValue = "1") long pageNum,
             @RequestParam(defaultValue = "20") long pageSize,
             @RequestParam(required = false) String name,
@@ -140,7 +141,7 @@ public class ExternalDatasourceController {
         result.setTotal(page.getTotal());
         result.setPageNum(page.getCurrent());
         result.setPageSize(page.getSize());
-        return R.ok(result);
+        return R.ok(PageResult.map(result, ExternalDatasourceVO::from));
     }
 
     /** 指定数据源的授权主体清单（F020：设计人员仅能引用已授权数据源）。 */

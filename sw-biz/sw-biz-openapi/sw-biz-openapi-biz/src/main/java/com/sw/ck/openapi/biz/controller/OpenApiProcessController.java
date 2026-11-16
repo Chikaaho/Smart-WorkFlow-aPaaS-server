@@ -6,11 +6,11 @@ import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
-import com.sw.ck.openapi.biz.dto.OpenApiCallbackRecordsDTO;
-import com.sw.ck.openapi.biz.dto.OpenApiCallbackResendDTO;
-import com.sw.ck.openapi.biz.dto.OpenApiCompleteTaskResultDTO;
-import com.sw.ck.openapi.biz.dto.OpenApiStartResultDTO;
-import com.sw.ck.openapi.biz.dto.OpenApiStatusDTO;
+import com.sw.ck.openapi.biz.vo.OpenApiCallbackRecordsVO;
+import com.sw.ck.openapi.biz.vo.OpenApiCallbackResendVO;
+import com.sw.ck.openapi.biz.vo.OpenApiCompleteTaskResultVO;
+import com.sw.ck.openapi.biz.vo.OpenApiStartResultVO;
+import com.sw.ck.openapi.biz.vo.OpenApiStatusVO;
 import com.sw.ck.openapi.biz.service.OpenApiAuthService;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
 import com.sw.ck.openapi.biz.service.OpenApiProcessService;
@@ -58,7 +58,7 @@ public class OpenApiProcessController {
 
     /** 外部发起：经正式表单提交链（校验/版本/幂等/事件），不直接调用底层启动能力。签名材料=原始请求体字节。 */
     @PostMapping("/processes")
-    public R<OpenApiStartResultDTO> start(
+    public R<OpenApiStartResultVO> start(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -85,7 +85,7 @@ public class OpenApiProcessController {
 
     /** 外部状态查询。 */
     @GetMapping("/processes/{processInstanceId}")
-    public R<OpenApiStatusDTO> status(
+    public R<OpenApiStatusVO> status(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -102,7 +102,7 @@ public class OpenApiProcessController {
 
     /** 嵌入式任务办理：服务端校验应用绑定用户的任务归属。签名材料=原始请求体字节。 */
     @PostMapping("/tasks/{taskId}/complete")
-    public R<OpenApiCompleteTaskResultDTO> completeTask(
+    public R<OpenApiCompleteTaskResultVO> completeTask(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -125,7 +125,7 @@ public class OpenApiProcessController {
 
     /** 出站回调投递记录查询（失败可查，I4 §3.4）：仅本应用自身记录，scope=PROCESS_QUERY。 */
     @GetMapping("/callbacks")
-    public R<OpenApiCallbackRecordsDTO> callbacks(
+    public R<OpenApiCallbackRecordsVO> callbacks(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -136,7 +136,7 @@ public class OpenApiProcessController {
         OpenApiAuthService.OpenApiAuthContext context = authService.authenticate(
                 appId, timestamp, nonce, signature, "", "PROCESS_QUERY");
         try {
-            OpenApiCallbackRecordsDTO result = new OpenApiCallbackRecordsDTO();
+            OpenApiCallbackRecordsVO result = new OpenApiCallbackRecordsVO();
             result.setRecords(deliveryService.records(context.appId(), bizRef, event, status));
             return R.ok(result);
         } finally {
@@ -149,7 +149,7 @@ public class OpenApiProcessController {
      * 已成功投递的事件按去重口径零新增返回。scope=PROCESS_QUERY（应用自助补投自身事件）。
      */
     @PostMapping("/callbacks/resend")
-    public R<OpenApiCallbackResendDTO> resend(
+    public R<OpenApiCallbackResendVO> resend(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,

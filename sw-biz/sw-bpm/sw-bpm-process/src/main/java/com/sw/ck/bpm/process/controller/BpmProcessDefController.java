@@ -45,6 +45,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.vo.BpmProcessDefVO;
+import com.sw.ck.bpm.process.vo.BpmProcessDefVersionVO;
 /**
  * 流程定义控制器 —— 图设计器后端。
  * <p>
@@ -236,7 +238,7 @@ public class BpmProcessDefController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping
-    public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
+    public R<PageResult<BpmProcessDefVO>> listDefs(PageParam pageParam,
                                                  @RequestParam(required = false) String formKey,
                                                  @RequestParam(required = false) Long tenantId) {
         LoginUser user = LoginUserHolder.get();
@@ -246,7 +248,7 @@ public class BpmProcessDefController {
         fillCreatorNames(result.getRecords());
         fillListDisplayFields(result.getRecords());
         fillTenantNames(result.getRecords());
-        return R.ok(result);
+        return R.ok(PageResult.map(result, BpmProcessDefVO::from));
     }
 
     /** 租户 id→名称映射（复用启用租户选项口径；jdbcTemplate 缺失或读失败为空映射，名称留空）。 */
@@ -422,10 +424,10 @@ public class BpmProcessDefController {
     @Transactional
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/publish")
-    public R<BpmProcessDef> publish(@PathVariable Long id) {
+    public R<BpmProcessDefVO> publish(@PathVariable Long id) {
         BpmProcessDef published = bpmProcessDefService.publish(id);
         log.info("流程定义已发布: id={}", id);
-        return R.ok(published);
+        return R.ok(BpmProcessDefVO.from(published));
     }
 
     // ==================== I3 发布版本冻结 ====================
@@ -444,11 +446,11 @@ public class BpmProcessDefController {
     /** 列出流程定义全部发布版本（不含 graph_json）。 */
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping("/{id}/versions")
-    public R<List<BpmProcessDefVersion>> listVersions(@PathVariable Long id) {
+    public R<List<BpmProcessDefVersionVO>> listVersions(@PathVariable Long id) {
         List<BpmProcessDefVersion> versions =
                 bpmProcessDefService.listVersions(id);
         fillPublisherNames(versions);
-        return R.ok(versions);
+        return R.ok(versions == null ? List.of() : versions.stream().map(BpmProcessDefVersionVO::from).toList());
     }
 
     /** 读取指定发布版本的冻结图。 */
@@ -487,7 +489,7 @@ public class BpmProcessDefController {
     @Transactional
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/iot-access/{flag}")
-    public R<BpmProcessDef> changeIotAccess(@PathVariable Long id, @PathVariable boolean flag) {
+    public R<BpmProcessDefVO> changeIotAccess(@PathVariable Long id, @PathVariable boolean flag) {
         BpmProcessDef def = bpmProcessDefService.findById(id);
         if (def == null) {
             return R.fail(404, "流程定义不存在: id=" + id);
@@ -495,7 +497,7 @@ public class BpmProcessDefController {
         if (flag && !"PUBLISHED".equals(def.getStatus())) {
             return R.fail(400, "仅已发布流程定义可开启 IoT 接入: " + def.getProcessKey());
         }
-        return R.ok(bpmProcessDefService.changeIotAccess(id, flag));
+        return R.ok(BpmProcessDefVO.from(bpmProcessDefService.changeIotAccess(id, flag)));
     }
 
     /**
@@ -504,11 +506,11 @@ public class BpmProcessDefController {
     @Transactional
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/iot-device-action")
-    public R<BpmProcessDef> setIotDeviceAction(@PathVariable Long id,
+    public R<BpmProcessDefVO> setIotDeviceAction(@PathVariable Long id,
                                                @RequestBody Map<String, Object> body) {
         String actionJson = body.get("action") == null ? null
                 : JSON.toJSONString(body.get("action"));
-        return R.ok(bpmProcessDefService.setIotDeviceAction(id, actionJson));
+        return R.ok(BpmProcessDefVO.from(bpmProcessDefService.setIotDeviceAction(id, actionJson)));
     }
 
     /**

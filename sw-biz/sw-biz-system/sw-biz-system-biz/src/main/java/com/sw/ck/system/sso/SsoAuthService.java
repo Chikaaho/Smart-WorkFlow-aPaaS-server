@@ -7,12 +7,12 @@ import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.system.dto.SsoAuditListDTO;
-import com.sw.ck.system.dto.SsoAuditRecordDTO;
-import com.sw.ck.system.dto.SsoBindingItemDTO;
-import com.sw.ck.system.dto.SsoBindingListDTO;
-import com.sw.ck.system.dto.SsoConfigCheckDTO;
-import com.sw.ck.system.dto.SsoConfigItemDTO;
+import com.sw.ck.system.vo.SsoAuditListVO;
+import com.sw.ck.system.vo.SsoAuditRecordVO;
+import com.sw.ck.system.vo.SsoBindingItemVO;
+import com.sw.ck.system.vo.SsoBindingListVO;
+import com.sw.ck.system.vo.SsoConfigCheckVO;
+import com.sw.ck.system.vo.SsoConfigItemVO;
 import com.sw.ck.system.entity.SsoAuditRecord;
 import com.sw.ck.system.entity.SsoAuthState;
 import com.sw.ck.system.entity.SsoProviderConfig;
@@ -267,13 +267,13 @@ public class SsoAuthService {
      * 租户级配置列表（管理端）：平台/启用/应用标识/身份模式/允许企业标识/凭据是否
      * 已配置/服务端推导只读回调地址/更新时间。secret 原文与密文不回传。
      */
-    public List<SsoConfigItemDTO> listConfigs() {
+    public List<SsoConfigItemVO> listConfigs() {
         Long tenantId = requireTenantContext();
-        List<SsoConfigItemDTO> rows = new ArrayList<>();
+        List<SsoConfigItemVO> rows = new ArrayList<>();
         for (String provider : PROVIDERS.stream().sorted().toList()) {
             SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
             String enterpriseId = config == null ? null : configuredEnterpriseId(config);
-            SsoConfigItemDTO row = new SsoConfigItemDTO();
+            SsoConfigItemVO row = new SsoConfigItemVO();
             row.setProvider(provider);
             row.setEnabled(config != null && config.getEnabled() == 1);
             row.setAppId(config == null ? "" : nullToEmpty(config.getAppId()));
@@ -386,12 +386,12 @@ public class SsoAuthService {
      * 启用状态；不发起用户授权、不修改配置或绑定、不宣称真实登录通过。
      * 检查失败项名称进审计与响应，secret 值不出现。
      */
-    public SsoConfigCheckDTO checkConfig(String provider) {
+    public SsoConfigCheckVO checkConfig(String provider) {
         requireProvider(provider);
         LoginUser current = requireLoginContext();
         Long tenantId = current.getTenantId();
         SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
-        SsoConfigCheckDTO checks = new SsoConfigCheckDTO();
+        SsoConfigCheckVO checks = new SsoConfigCheckVO();
         checks.setConfigExists(config != null);
         boolean appIdOk = config != null && config.getAppId() != null && !isPlaceholder(config.getAppId());
         checks.setAppIdValid(appIdOk);
@@ -506,7 +506,7 @@ public class SsoAuthService {
     /**
      * 查询本地账号的全部有效绑定（个人中心展示；不回传外部原文，只回 Provider 与摘要前 8 位）。
      */
-    public SsoBindingListDTO listBindings(Long userId) {
+    public SsoBindingListVO listBindings(Long userId) {
         LoginUser current = LoginUserHolder.get();
         if (current == null || current.getTenantId() == null) {
             throw new IllegalStateException("租户上下文缺失");
@@ -515,15 +515,15 @@ public class SsoAuthService {
                 Wrappers.<SsoUserBinding>lambdaQuery()
                         .eq(SsoUserBinding::getUserId, userId)
                         .eq(SsoUserBinding::getBindStatus, SsoBindStatusEnum.ACTIVE.getCode()));
-        List<SsoBindingItemDTO> view = bindings.stream()
+        List<SsoBindingItemVO> view = bindings.stream()
                 .map(b -> {
-                    SsoBindingItemDTO item = new SsoBindingItemDTO();
+                    SsoBindingItemVO item = new SsoBindingItemVO();
                     item.setProvider(b.getProvider());
                     item.setExternalDigestPrefix(b.getExternalDigest().substring(0, 8));
                     return item;
                 })
                 .toList();
-        SsoBindingListDTO result = new SsoBindingListDTO();
+        SsoBindingListVO result = new SsoBindingListVO();
         result.setBindings(view);
         return result;
     }
@@ -1313,7 +1313,7 @@ public class SsoAuthService {
      * 按租户隔离查询 SSO 审计（调用方须经 {@code system:sso:audit:query} 权限守卫；
      * 无权/跨租户查询被拒绝由权限链与本查询的显式租户条件共同保证）。
      */
-    public SsoAuditListDTO queryAudit(String provider, String eventType, String result,
+    public SsoAuditListVO queryAudit(String provider, String eventType, String result,
                                       Long localUserId, int page, int size) {
         LoginUser current = LoginUserHolder.get();
         if (current == null || current.getTenantId() == null) {
@@ -1329,8 +1329,8 @@ public class SsoAuthService {
                 .orderByDesc(SsoAuditRecord::getId)
                 .last("LIMIT " + safeSize + " OFFSET " + (long) Math.max(page, 0) * safeSize);
         List<SsoAuditRecord> records = auditMapper.selectList(wrapper);
-        List<SsoAuditRecordDTO> view = records.stream().map(r -> {
-            SsoAuditRecordDTO item = new SsoAuditRecordDTO();
+        List<SsoAuditRecordVO> view = records.stream().map(r -> {
+            SsoAuditRecordVO item = new SsoAuditRecordVO();
             item.setId(String.valueOf(r.getId()));
             item.setProvider(r.getProvider());
             item.setEventType(r.getEventType());
@@ -1343,7 +1343,7 @@ public class SsoAuthService {
             item.setCreateTime(String.valueOf(r.getCreateTime()));
             return item;
         }).toList();
-        SsoAuditListDTO response = new SsoAuditListDTO();
+        SsoAuditListVO response = new SsoAuditListVO();
         response.setRecords(view);
         response.setTenantId(String.valueOf(current.getTenantId()));
         return response;

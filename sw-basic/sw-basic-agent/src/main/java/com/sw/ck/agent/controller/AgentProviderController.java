@@ -2,7 +2,7 @@ package com.sw.ck.agent.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.agent.dto.AgentProviderDTO;
+import com.sw.ck.agent.vo.AgentProviderVO;
 import com.sw.ck.agent.dto.AgentProviderSaveReqDTO;
 import com.sw.ck.agent.service.AgentProviderService;
 import com.sw.ck.common.page.PageParam;
@@ -38,7 +38,7 @@ public class AgentProviderController {
     /** 分页查询（密钥脱敏） */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<PageResult<AgentProviderDTO>> page(PageParam pageParam,
+    public R<PageResult<AgentProviderVO>> page(PageParam pageParam,
                                                 @RequestParam(required = false) String nameKeyword) {
         return R.ok(agentProviderService.pageProviders(pageParam, nameKeyword));
     }
@@ -46,14 +46,14 @@ public class AgentProviderController {
     /** 启用中的供应商列表（模型编辑下拉用） */
     @GetMapping("/enabled")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<AgentProviderDTO>> listEnabled() {
+    public R<List<AgentProviderVO>> listEnabled() {
         return R.ok(agentProviderService.listEnabled());
     }
 
     /** 详情（密钥脱敏） */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<AgentProviderDTO> get(@PathVariable Long id) {
+    public R<AgentProviderVO> get(@PathVariable Long id) {
         return R.ok(agentProviderService.getById(id));
     }
 

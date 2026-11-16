@@ -3,7 +3,7 @@ package com.sw.ck.bootstrap.p62;
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.service.FormDataDeleteService;
 import com.sw.ck.form.service.FormDataUpdateService;
@@ -384,7 +384,7 @@ class P62TxnActionPgBehaviourTest {
     void c1ProtectsAllWritePaths() {
         String c1Key = "p62_stock_c1";
         String c1FormId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(c1Key, "P62库存表C1", null, null);
+            FormDefVO draft = formDefService.createDraft(c1Key, "P62库存表C1", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -475,7 +475,7 @@ class P62TxnActionPgBehaviourTest {
     void c1CoversImportEntry() throws Exception {
         String protectedKey = "p62_stock_c1imp";
         String formId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(protectedKey, "P62库存导入C1", null, null);
+            FormDefVO draft = formDefService.createDraft(protectedKey, "P62库存导入C1", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -599,7 +599,7 @@ class P62TxnActionPgBehaviourTest {
     void settlementUsesFrozenVersionAndSurvivesDisable() {
         String formKey = "p62_stock_multi";
         String formId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(formKey, "P62多字段库存", null, null);
+            FormDefVO draft = formDefService.createDraft(formKey, "P62多字段库存", null, null);
             formDefService.saveConfig(draft.getId(), multiFieldDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -725,7 +725,7 @@ class P62TxnActionPgBehaviourTest {
         // 单对象证据集：一个表单、一条记录、一笔预占，全程同一身份贯穿
         String formKey = "p62_stock_single";
         String formId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(formKey, "P62单对象库存", null, null);
+            FormDefVO draft = formDefService.createDraft(formKey, "P62单对象库存", null, null);
             formDefService.saveConfig(draft.getId(), multiFieldDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -958,12 +958,12 @@ class P62TxnActionPgBehaviourTest {
 
     private void seedStockForm() {
         asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P62库存表", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P62库存表", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return null;
         });
-        FormDefDTO def = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(FORM_KEY));
+        FormDefVO def = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(FORM_KEY));
         stockTable = def.getPhysicalTableName();
         assertThat(stockTable).isNotBlank();
     }

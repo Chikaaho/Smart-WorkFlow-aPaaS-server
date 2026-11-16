@@ -5,7 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.knowledge.dto.KnowledgeDocumentDTO;
+import com.sw.ck.knowledge.vo.KnowledgeDocumentVO;
 import com.sw.ck.knowledge.entity.KnowledgeBase;
 import com.sw.ck.knowledge.entity.KnowledgeChunk;
 import com.sw.ck.knowledge.entity.KnowledgeDocument;
@@ -53,7 +53,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     private KnowledgeVectorStore vectorStore;
 
     @Override
-    public List<KnowledgeDocumentDTO> list(Long kbId) {
+    public List<KnowledgeDocumentVO> list(Long kbId) {
         requireBase(kbId);
         return documentMapper.selectList(
                         Wrappers.<KnowledgeDocument>lambdaQuery()
@@ -63,7 +63,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     }
 
     @Override
-    public KnowledgeDocumentDTO upload(Long kbId, MultipartFile file) {
+    public KnowledgeDocumentVO upload(Long kbId, MultipartFile file) {
         KnowledgeBase base = requireBase(kbId);
         if (file == null || file.isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "上传文件不能为空");
@@ -185,8 +185,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         return value.length() <= max ? value : value.substring(0, max);
     }
 
-    private KnowledgeDocumentDTO toDTO(KnowledgeDocument entity) {
-        KnowledgeDocumentDTO dto = new KnowledgeDocumentDTO();
+    private KnowledgeDocumentVO toDTO(KnowledgeDocument entity) {
+        KnowledgeDocumentVO dto = new KnowledgeDocumentVO();
         dto.setId(entity.getId());
         dto.setKbId(entity.getKbId());
         dto.setName(entity.getName());

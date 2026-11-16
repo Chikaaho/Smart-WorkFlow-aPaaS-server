@@ -6,7 +6,7 @@ import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
-import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.vo.KnowledgeHitVO;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
 
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -224,7 +224,7 @@ class AgentGraphInterpreterTest {
     @DisplayName("F1S3-K01: KNOWLEDGE 节点检索命中 → 输出含文档名/相似度/正文，轨迹记录输入输出")
     void knowledgeNode_shouldRetrieveAndWriteContextToVariable() {
         KnowledgeRetrievalService retrieval = mock(KnowledgeRetrievalService.class);
-        KnowledgeHitDTO hit = new KnowledgeHitDTO();
+        KnowledgeHitVO hit = new KnowledgeHitVO();
         hit.setChunkId(11L);
         hit.setDocumentId(22L);
         hit.setDocumentName("项目说明.md");

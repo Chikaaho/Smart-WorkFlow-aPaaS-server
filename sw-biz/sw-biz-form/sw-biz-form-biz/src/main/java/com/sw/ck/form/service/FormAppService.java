@@ -1,8 +1,8 @@
 package com.sw.ck.form.service;
 
-import com.sw.ck.form.api.dto.FormAppContentDTO;
-import com.sw.ck.form.api.dto.FormAppDTO;
-import com.sw.ck.form.api.dto.FormAppDirDTO;
+import com.sw.ck.form.api.vo.FormAppContentVO;
+import com.sw.ck.form.api.vo.FormAppVO;
+import com.sw.ck.form.api.vo.FormAppDirVO;
 import com.sw.ck.form.api.dto.FormAppDirSaveReq;
 import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
@@ -25,16 +25,16 @@ public interface FormAppService {
      * <p>owner-20261030-u020-q40-list-contract：tenantIdFilter 仅在调用方确认为超管时非空，
      * 按归属租户过滤；普通调用方必须传 null，租户隔离仍由既有拦截器保证。</p>
      */
-    List<FormAppDTO> listApps(String keyword, Long tenantIdFilter);
+    List<FormAppVO> listApps(String keyword, Long tenantIdFilter);
 
     /** 应用详情（含计数与指定用户集合）。 */
-    FormAppDTO getApp(String id);
+    FormAppVO getApp(String id);
 
     /** 新建应用（重名校验；SPECIFIED 集合空=无人可见）。 */
-    FormAppDTO createApp(FormAppSaveReq req);
+    FormAppVO createApp(FormAppSaveReq req);
 
     /** 更新应用（名称/图标/颜色/排序/可见范围；可见范围集合整体重配）。 */
-    FormAppDTO updateApp(String id, FormAppSaveReq req);
+    FormAppVO updateApp(String id, FormAppSaveReq req);
 
     /** 停用应用（阻止新增入口，保留数据与历史；已有待办/记录经既有入口继续）。 */
     void disableApp(String id);
@@ -46,13 +46,13 @@ public interface FormAppService {
     void deleteApp(String id);
 
     /** 应用内容（管理视角：全部业务表单，目录+直接归属分组）。 */
-    FormAppContentDTO getAppContent(String appId);
+    FormAppContentVO getAppContent(String appId);
 
     /** 新建目录（应用内二级分类）。 */
-    FormAppDirDTO createDir(String appId, FormAppDirSaveReq req);
+    FormAppDirVO createDir(String appId, FormAppDirSaveReq req);
 
     /** 更新目录名称/排序。 */
-    FormAppDirDTO updateDir(String dirId, FormAppDirSaveReq req);
+    FormAppDirVO updateDir(String dirId, FormAppDirSaveReq req);
 
     /** 删除目录（目录下有表单时拒绝）。 */
     void deleteDir(String dirId);
@@ -63,8 +63,8 @@ public interface FormAppService {
     // ==================== 用户端（登录即可） ====================
 
     /** 当前用户可见的应用（启用 + 可见范围命中），计数只含当前用户可用表单。 */
-    List<FormAppDTO> listVisibleAppsForCurrentUser();
+    List<FormAppVO> listVisibleAppsForCurrentUser();
 
     /** 可见应用内容（未发布/停用/不可见表单不下发；应用不可见按不存在处理）。 */
-    FormAppContentDTO getVisibleAppContent(String appId);
+    FormAppContentVO getVisibleAppContent(String appId);
 }

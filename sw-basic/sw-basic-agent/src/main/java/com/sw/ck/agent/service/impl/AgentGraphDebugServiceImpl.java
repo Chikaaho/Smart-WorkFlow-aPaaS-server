@@ -7,8 +7,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.sw.ck.agent.dto.AgentGraphDebugNodeDTO;
-import com.sw.ck.agent.dto.AgentGraphDebugSessionDTO;
+import com.sw.ck.agent.vo.AgentGraphDebugNodeVO;
+import com.sw.ck.agent.vo.AgentGraphDebugSessionVO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDebugNode;
@@ -99,7 +99,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO createSession(Long graphDefId, String input) {
+    public AgentGraphDebugSessionVO createSession(Long graphDefId, String input) {
         if (input == null || input.isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "input 不能为空");
         }
@@ -142,7 +142,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     // ==================== 查询会话 ====================
 
     @Override
-    public AgentGraphDebugSessionDTO getSession(Long sessionId) {
+    public AgentGraphDebugSessionVO getSession(Long sessionId) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         // 重新加载以获取可能更新的过期状态
@@ -157,7 +157,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO step(Long sessionId, Long expectedVersion) {
+    public AgentGraphDebugSessionVO step(Long sessionId, Long expectedVersion) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (session.getStatus() != null && !STATUS_PAUSED.equals(session.getStatus())) {
@@ -265,7 +265,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO continueUntilBreakpoint(Long sessionId) {
+    public AgentGraphDebugSessionVO continueUntilBreakpoint(Long sessionId) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (!STATUS_PAUSED.equals(session.getStatus())) {
@@ -412,7 +412,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO updateBreakpoints(Long sessionId, Set<String> breakpoints) {
+    public AgentGraphDebugSessionVO updateBreakpoints(Long sessionId, Set<String> breakpoints) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (session.getStatus() != null && !STATUS_PAUSED.equals(session.getStatus())) {
@@ -446,7 +446,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO stop(Long sessionId) {
+    public AgentGraphDebugSessionVO stop(Long sessionId) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (!STATUS_PAUSED.equals(session.getStatus())) {
@@ -461,13 +461,13 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     // ==================== 明细 ====================
 
     @Override
-    public List<AgentGraphDebugNodeDTO> listNodes(Long sessionId) {
+    public List<AgentGraphDebugNodeVO> listNodes(Long sessionId) {
         requireSession(sessionId);
         List<AgentGraphDebugNode> nodes = debugNodeMapper.selectList(
                 Wrappers.<AgentGraphDebugNode>lambdaQuery()
                         .eq(AgentGraphDebugNode::getDebugSessionId, sessionId)
                         .orderByAsc(AgentGraphDebugNode::getNodeSeq));
-        List<AgentGraphDebugNodeDTO> result = new ArrayList<>(nodes.size());
+        List<AgentGraphDebugNodeVO> result = new ArrayList<>(nodes.size());
         for (AgentGraphDebugNode n : nodes) {
             result.add(toNodeDTO(n));
         }
@@ -477,7 +477,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     // ==================== 分页 ====================
 
     @Override
-    public PageResult<AgentGraphDebugSessionDTO> pageSessions(PageParam pageParam, Long graphDefId) {
+    public PageResult<AgentGraphDebugSessionVO> pageSessions(PageParam pageParam, Long graphDefId) {
         LambdaQueryWrapper<AgentGraphDebugSession> wrapper = Wrappers.<AgentGraphDebugSession>lambdaQuery()
                 .eq(graphDefId != null, AgentGraphDebugSession::getGraphDefId, graphDefId)
                 .orderByDesc(AgentGraphDebugSession::getCreateTime);
@@ -487,7 +487,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         for (AgentGraphDebugSession s : page.getRecords()) {
             expireIfNeeded(s);
         }
-        IPage<AgentGraphDebugSessionDTO> dtoPage = page.convert(this::toSummaryDTO);
+        IPage<AgentGraphDebugSessionVO> dtoPage = page.convert(this::toSummaryDTO);
         return PageResult.of(dtoPage);
     }
 
@@ -667,10 +667,10 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         return Duration.between(createTime, LocalDateTime.now()).toMillis();
     }
 
-    private AgentGraphDebugSessionDTO toDTO(AgentGraphDebugSession session,
+    private AgentGraphDebugSessionVO toDTO(AgentGraphDebugSession session,
                                             AgentGraphDebugEngine engine,
                                             int traceCount) {
-        AgentGraphDebugSessionDTO dto = new AgentGraphDebugSessionDTO();
+        AgentGraphDebugSessionVO dto = new AgentGraphDebugSessionVO();
         dto.setId(session.getId());
         dto.setGraphDefId(session.getGraphDefId());
         dto.setGraphDefVersion(session.getGraphDefVersion());
@@ -700,7 +700,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         return dto;
     }
 
-    private AgentGraphDebugSessionDTO toDTOWithState(AgentGraphDebugSession session) {
+    private AgentGraphDebugSessionVO toDTOWithState(AgentGraphDebugSession session) {
         // 尝试恢复 engine 以获取 nextNodeId/variables
         AgentGraphDebugEngine engine = null;
         int traceCount = countTraces(session.getId());
@@ -720,7 +720,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                 // 忽略，反序列化失败则不提供 nextNodeId
             }
         }
-        AgentGraphDebugSessionDTO dto = toDTO(session, engine, traceCount);
+        AgentGraphDebugSessionVO dto = toDTO(session, engine, traceCount);
         // 终态下 nextNodeId 保持 null
         if (engine == null) {
             // variables 已在 toDTO 中从 stateJson 解析
@@ -728,8 +728,8 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         return dto;
     }
 
-    private AgentGraphDebugSessionDTO toSummaryDTO(AgentGraphDebugSession session) {
-        AgentGraphDebugSessionDTO dto = new AgentGraphDebugSessionDTO();
+    private AgentGraphDebugSessionVO toSummaryDTO(AgentGraphDebugSession session) {
+        AgentGraphDebugSessionVO dto = new AgentGraphDebugSessionVO();
         dto.setId(session.getId());
         dto.setGraphDefId(session.getGraphDefId());
         dto.setGraphDefVersion(session.getGraphDefVersion());
@@ -751,8 +751,8 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         return dto;
     }
 
-    private AgentGraphDebugNodeDTO toNodeDTO(AgentGraphDebugNode node) {
-        AgentGraphDebugNodeDTO dto = new AgentGraphDebugNodeDTO();
+    private AgentGraphDebugNodeVO toNodeDTO(AgentGraphDebugNode node) {
+        AgentGraphDebugNodeVO dto = new AgentGraphDebugNodeVO();
         dto.setId(node.getId());
         dto.setDebugSessionId(node.getDebugSessionId());
         dto.setNodeSeq(node.getNodeSeq());

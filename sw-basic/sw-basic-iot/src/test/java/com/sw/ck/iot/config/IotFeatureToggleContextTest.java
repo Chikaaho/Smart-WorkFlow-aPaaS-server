@@ -153,12 +153,7 @@ class IotFeatureToggleContextTest {
          */
         @Bean
         MqttDownlinkPublisher mqttDownlinkPublisher() {
-            return new MqttDownlinkPublisher(
-                    mock(IotConnectionMapper.class),
-                    mock(IotTopicMapper.class),
-                    mock(MqttBrokerManager.class),
-                    new DefaultListableBeanFactory()
-                            .getBeanProvider(IotConnectionService.class));
+            return new MqttDownlinkPublisher();
         }
     }
 }

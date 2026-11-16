@@ -1,8 +1,8 @@
 package com.sw.ck.bpm.process.controller;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.process.dto.MyProcessedItemDTO;
+import com.sw.ck.bpm.process.vo.MyProcessedItemVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -56,18 +56,18 @@ public class BpmMyProcessedController {
     private UserQueryFacade userQueryFacade;
 
     @GetMapping
-    public R<PageResult<MyProcessedItemDTO>> myProcessed(PageParam pageParam,
+    public R<PageResult<MyProcessedItemVO>> myProcessed(PageParam pageParam,
                                                          @RequestParam(required = false) String source) {
         LoginUser loginUser = LoginUserHolder.get();
         long actorId = loginUser.getUserId();
 
-        List<MyProcessedItemDTO> items = new ArrayList<>();
+        List<MyProcessedItemVO> items = new ArrayList<>();
         Set<String> taskIdsFromActions = new HashSet<>();
 
         boolean includeAction = source == null || source.isBlank()
-                || MyProcessedItemDTO.SOURCE_ACTION.equals(source);
+                || MyProcessedItemVO.SOURCE_ACTION.equals(source);
         boolean includeCompat = source == null || source.isBlank()
-                || MyProcessedItemDTO.SOURCE_HISTORY_COMPAT.equals(source);
+                || MyProcessedItemVO.SOURCE_HISTORY_COMPAT.equals(source);
 
         if (includeAction && includeCompat) {
             // 默认（未指定来源）= 全局合并分页（审查04：跨页不漏不重、total 精确非上界）。
@@ -82,7 +82,7 @@ public class BpmMyProcessedController {
                 allActions.addAll(approvalActionService.pageByActor(actorId, off, pageSize));
             }
             Set<String> actionTaskIds = new HashSet<>();
-            List<MyProcessedItemDTO> merged = new ArrayList<>();
+            List<MyProcessedItemVO> merged = new ArrayList<>();
             for (ApprovalActionRecord record : allActions) {
                 actionTaskIds.add(record.getTaskId());
                 merged.add(toItem(record, null));
@@ -92,30 +92,30 @@ public class BpmMyProcessedController {
                     String.valueOf(loginUser.getTenantId()), String.valueOf(actorId))
                     .orElse(0L);
             for (int off = 0; off < compatTotal; off += pageSize) {
-                List<BpmTaskDTO> finished = bpmTaskFacade.queryProcessedPage(
+                List<BpmTaskVO> finished = bpmTaskFacade.queryProcessedPage(
                                 String.valueOf(loginUser.getTenantId()), String.valueOf(actorId), off, pageSize)
                         .orElse(List.of());
-                for (BpmTaskDTO task : finished) {
+                for (BpmTaskVO task : finished) {
                     if (actionTaskIds.contains(task.getTaskId())) {
                         continue;
                     }
-                    MyProcessedItemDTO item = new MyProcessedItemDTO();
-                    item.setSource(MyProcessedItemDTO.SOURCE_HISTORY_COMPAT);
+                    MyProcessedItemVO item = new MyProcessedItemVO();
+                    item.setSource(MyProcessedItemVO.SOURCE_HISTORY_COMPAT);
                     fillFromTask(item, task);
                     merged.add(item);
                 }
             }
             // 唯一次键：同办理时间记录按 taskId 全序，合并分页跨页确定性不漏不重（A5）
-            Comparator<MyProcessedItemDTO> mergedOrder = Comparator
-                    .comparing(MyProcessedItemDTO::getHandleTime,
+            Comparator<MyProcessedItemVO> mergedOrder = Comparator
+                    .comparing(MyProcessedItemVO::getHandleTime,
                             Comparator.nullsLast(Comparator.naturalOrder()))
-                    .thenComparing(MyProcessedItemDTO::getTaskId,
+                    .thenComparing(MyProcessedItemVO::getTaskId,
                             Comparator.nullsLast(Comparator.naturalOrder()));
             merged.sort(mergedOrder.reversed());
             long total = merged.size();
             int from = (int) Math.min((long) (pageParam.getPageNum() - 1) * pageParam.getPageSize(), total);
             int to = (int) Math.min(from + (long) pageParam.getPageSize(), total);
-            PageResult<MyProcessedItemDTO> page = new PageResult<>();
+            PageResult<MyProcessedItemVO> page = new PageResult<>();
             page.setRecords(new ArrayList<>(merged.subList(from, to)));
             page.setTotal(total);
             page.setPageNum(pageParam.getPageNum());
@@ -132,7 +132,7 @@ public class BpmMyProcessedController {
                 taskIdsFromActions.add(record.getTaskId());
                 items.add(toItem(record, null));
             }
-            PageResult<MyProcessedItemDTO> page = new PageResult<>();
+            PageResult<MyProcessedItemVO> page = new PageResult<>();
             page.setRecords(items);
             page.setTotal(total);
             page.setPageNum(pageParam.getPageNum());
@@ -145,23 +145,23 @@ public class BpmMyProcessedController {
             // 引擎查询口径：taskAssignee + finished；被取消/删除的任务不在 finished 历史。
             long offset = (long) (pageParam.getPageNum() - 1) * pageParam.getPageSize();
             // empty = 租户/处理人上下文缺失：兼容来源无数据（响应形状保持原样）
-            List<BpmTaskDTO> finished = bpmTaskFacade.queryProcessedPage(
+            List<BpmTaskVO> finished = bpmTaskFacade.queryProcessedPage(
                             String.valueOf(loginUser.getTenantId()), String.valueOf(actorId),
                             (int) offset, (int) pageParam.getPageSize())
                     .orElse(List.of());
             long total = bpmTaskFacade.countProcessed(
                     String.valueOf(loginUser.getTenantId()), String.valueOf(actorId))
                     .orElse(0L);
-            for (BpmTaskDTO task : finished) {
+            for (BpmTaskVO task : finished) {
                 if (taskIdsFromActions.contains(task.getTaskId())) {
                     continue;
                 }
-                MyProcessedItemDTO item = new MyProcessedItemDTO();
-                item.setSource(MyProcessedItemDTO.SOURCE_HISTORY_COMPAT);
+                MyProcessedItemVO item = new MyProcessedItemVO();
+                item.setSource(MyProcessedItemVO.SOURCE_HISTORY_COMPAT);
                 fillFromTask(item, task);
                 items.add(item);
             }
-            PageResult<MyProcessedItemDTO> page = new PageResult<>();
+            PageResult<MyProcessedItemVO> page = new PageResult<>();
             page.setRecords(items);
             page.setTotal(total);
             page.setPageNum(pageParam.getPageNum());
@@ -169,15 +169,15 @@ public class BpmMyProcessedController {
             return R.ok(page);
         }
 
-        PageResult<MyProcessedItemDTO> empty = new PageResult<>();
+        PageResult<MyProcessedItemVO> empty = new PageResult<>();
         empty.setRecords(items);
         empty.setTotal(0);
         return R.ok(empty);
     }
 
-    private MyProcessedItemDTO toItem(ApprovalActionRecord record, BpmTaskDTO ignored) {
-        MyProcessedItemDTO item = new MyProcessedItemDTO();
-        item.setSource(MyProcessedItemDTO.SOURCE_ACTION);
+    private MyProcessedItemVO toItem(ApprovalActionRecord record, BpmTaskVO ignored) {
+        MyProcessedItemVO item = new MyProcessedItemVO();
+        item.setSource(MyProcessedItemVO.SOURCE_ACTION);
         item.setTaskId(record.getTaskId());
         item.setAction(record.getAction());
         item.setHandleTime(record.getCreateTime());
@@ -189,7 +189,7 @@ public class BpmMyProcessedController {
     }
 
     /** 实例公共信息填充（V012-BUG-021）：状态/表单/流程名/主题/发起时间/发起人展示名。 */
-    private void fillInstanceInfo(MyProcessedItemDTO item, BpmInstance instance) {
+    private void fillInstanceInfo(MyProcessedItemVO item, BpmInstance instance) {
         if (instance == null) {
             return;
         }
@@ -210,7 +210,7 @@ public class BpmMyProcessedController {
         }
     }
 
-    private void fillFromTask(MyProcessedItemDTO item, BpmTaskDTO task) {
+    private void fillFromTask(MyProcessedItemVO item, BpmTaskVO task) {
         item.setTaskId(task.getTaskId());
         item.setTaskName(task.getName());
         item.setProcessInstanceId(task.getProcessInstanceId());

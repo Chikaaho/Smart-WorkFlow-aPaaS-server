@@ -5,8 +5,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
-import com.sw.ck.notify.dto.NotifyRecordDetailDTO;
-import com.sw.ck.notify.dto.NotifyRecordSummaryDTO;
+import com.sw.ck.notify.vo.NotifyRecordDetailVO;
+import com.sw.ck.notify.vo.NotifyRecordSummaryVO;
 import com.sw.ck.notify.service.NotifyRecordService;
 import com.sw.ck.security.holder.LoginUserHolder;
 
@@ -40,7 +40,7 @@ public class NotifyRecordController {
     /** 发送记录分页（状态/接收人/关键字/时间窗筛选）。 */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:record:view')")
-    public R<PageResult<NotifyRecordSummaryDTO>> records(PageParam pageParam,
+    public R<PageResult<NotifyRecordSummaryVO>> records(PageParam pageParam,
                                                 @RequestParam(required = false) String deliveryStatus,
                                                 @RequestParam(required = false) Long recipientId,
                                                 @RequestParam(required = false) String keyword,
@@ -52,14 +52,14 @@ public class NotifyRecordController {
     /** 单条记录详情（最小暴露：不含完整正文/联系方式/Provider 原始响应）。 */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:record:view')")
-    public R<NotifyRecordDetailDTO> detail(@PathVariable Long id) {
+    public R<NotifyRecordDetailVO> detail(@PathVariable Long id) {
         return R.ok(notifyRecordService.recordDetail(id));
     }
 
     /** 必要详情（含正文与尝试流水）：独立权限 + 审计；构造请求仍须授权。 */
     @GetMapping("/{id}/detail")
     @PreAuthorize("@ss.hasPermi('notify:record:detail')")
-    public R<NotifyRecordDetailDTO> fullDetail(@PathVariable Long id) {
+    public R<NotifyRecordDetailVO> fullDetail(@PathVariable Long id) {
         log.info("通知记录详情审计: recordId={}, operator={}", id,
                 LoginUserHolder.get() == null ? null
                         : LoginUserHolder.get().getUserId());

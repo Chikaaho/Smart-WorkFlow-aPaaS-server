@@ -5,11 +5,11 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
-import com.sw.ck.agent.dto.AgentHumanTaskDTO;
+import com.sw.ck.agent.vo.AgentGraphExecuteRespVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionEventVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionLifecycleVO;
+import com.sw.ck.agent.vo.AgentHumanTaskVO;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecution;
 import com.sw.ck.agent.entity.AgentGraphExecutionEvent;
@@ -152,7 +152,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     @Override
-    public AgentGraphExecutionAcceptedDTO submit(Long graphDefId, String input,
+    public AgentGraphExecutionAcceptedVO submit(Long graphDefId, String input,
                                                  Map<String, String> inputs, String idempotencyKey) {
         boolean hasStructuredInputs = inputs != null && !inputs.isEmpty();
         if (graphDefId == null || ((input == null || input.isBlank()) && !hasStructuredInputs)) {
@@ -203,16 +203,16 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         if (QUEUED.equals(accepted.getStatus())) {
             dispatch(accepted.getId(), loginUser);
         }
-        return new AgentGraphExecutionAcceptedDTO(accepted.getId(), accepted.getStatus());
+        return new AgentGraphExecutionAcceptedVO(accepted.getId(), accepted.getStatus());
     }
 
     @Override
-    public AgentGraphExecutionLifecycleDTO get(Long executionId) {
+    public AgentGraphExecutionLifecycleVO get(Long executionId) {
         return toDto(requireOwned(executionId));
     }
 
     @Override
-    public List<AgentGraphExecutionEventDTO> listEvents(Long executionId, long afterSequence) {
+    public List<AgentGraphExecutionEventVO> listEvents(Long executionId, long afterSequence) {
         // W5：事件按受理行 id 落库；入参可为执行编号（结果行）
         Long requestId = requireOwned(executionId).getId();
         return eventMapper.selectList(Wrappers.<AgentGraphExecutionEvent>lambdaQuery()
@@ -224,7 +224,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     @Override
-    public AgentGraphExecutionLifecycleDTO cancel(Long executionId) {
+    public AgentGraphExecutionLifecycleVO cancel(Long executionId) {
         AgentGraphExecutionRequest current = requireOwned(executionId);
         // W5/P71：入参可为执行编号（结果行）——取消变更一律落在受理行 id 上，
         // 否则按执行编号取消时 UPDATE 命中 0 行，接口 200 却静默无效
@@ -303,7 +303,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 enterWaitingHuman(executionId, request, outcome);
                 return;
             }
-            AgentGraphExecuteRespDTO result = outcome.response;
+            AgentGraphExecuteRespVO result = outcome.response;
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
             String outputsJson = result.isSuccess() ? toJson(result.getOutputs()) : null;
             if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
@@ -409,7 +409,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
      * 提交人工任务（G3-2）：校验处理人身份、单次提交（PENDING→SUBMITTED 认领）、
      * 同等待其余待处理行一并关闭，然后重新派发执行。
      */
-    public AgentGraphExecutionLifecycleDTO submitHumanTask(Long executionId, Long taskId,
+    public AgentGraphExecutionLifecycleVO submitHumanTask(Long executionId, Long taskId,
                                                            Map<String, String> values,
                                                            String decision) {
         AgentGraphExecutionRequest request = requireOwned(executionId);
@@ -469,7 +469,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     /** 待我处理列表：直接指派给我的 + 指派给我角色的 PENDING 任务。 */
-    public List<AgentHumanTaskDTO> listMyHumanTasks() {
+    public List<AgentHumanTaskVO> listMyHumanTasks() {
         LoginUser loginUser = LoginUserHolder.get();
         Long userId = requireUserId();
         List<AgentGraphHumanTask> tasks = humanTaskMapper.selectList(
@@ -489,7 +489,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     /** 指定执行的人工任务列表（执行详情页展示等待/已处理）。 */
-    public List<AgentHumanTaskDTO> listExecutionHumanTasks(Long executionId) {
+    public List<AgentHumanTaskVO> listExecutionHumanTasks(Long executionId) {
         // W5：入参可为受理编号或执行编号，任务行始终按受理编号查询
         Long requestId = requireOwned(executionId).getId();
         return humanTaskMapper.selectList(Wrappers.<AgentGraphHumanTask>lambdaQuery()
@@ -568,8 +568,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         }
     }
 
-    private AgentHumanTaskDTO toHumanTaskDto(AgentGraphHumanTask task) {
-        AgentHumanTaskDTO dto = new AgentHumanTaskDTO();
+    private AgentHumanTaskVO toHumanTaskDto(AgentGraphHumanTask task) {
+        AgentHumanTaskVO dto = new AgentHumanTaskVO();
         dto.setId(task.getId());
         dto.setExecutionId(task.getExecutionId());
         // W5：任务行 executionId 是受理编号，回链受理行取结果执行 id，前端统一展示执行编号
@@ -717,8 +717,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 String.valueOf(request.getCreateBy()), request.getId(), type, nodeId, payload);
     }
 
-    private AgentGraphExecutionEventDTO toEventDto(AgentGraphExecutionEvent event) {
-        AgentGraphExecutionEventDTO dto = new AgentGraphExecutionEventDTO();
+    private AgentGraphExecutionEventVO toEventDto(AgentGraphExecutionEvent event) {
+        AgentGraphExecutionEventVO dto = new AgentGraphExecutionEventVO();
         dto.setSequence(event.getSequenceNo());
         dto.setType(event.getEventType());
         dto.setNodeId(event.getNodeId());
@@ -751,8 +751,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         return id;
     }
 
-    private AgentGraphExecutionLifecycleDTO toDto(AgentGraphExecutionRequest request) {
-        AgentGraphExecutionLifecycleDTO dto = new AgentGraphExecutionLifecycleDTO();
+    private AgentGraphExecutionLifecycleVO toDto(AgentGraphExecutionRequest request) {
+        AgentGraphExecutionLifecycleVO dto = new AgentGraphExecutionLifecycleVO();
         dto.setExecutionId(request.getId());
         dto.setGraphDefId(request.getGraphDefId());
         dto.setGraphDefVersion(request.getGraphDefVersion());

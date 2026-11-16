@@ -3,7 +3,7 @@ package com.sw.ck.bpm.process.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.bpm.process.dto.UrgeReqDTO;
-import com.sw.ck.bpm.process.dto.UrgeRespDTO;
+import com.sw.ck.bpm.process.vo.UrgeRespVO;
 import com.sw.ck.bpm.process.service.BpmUrgeService;
 import com.sw.ck.common.response.R;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,7 +25,7 @@ public class BpmUrgeController {
      * <p>body 可空：携带可选催办留言（最长 200 字），旧无 body 调用保持原语义。</p>
      */
     @PostMapping("/{id}/urge")
-    public R<UrgeRespDTO> urge(@PathVariable Long id, @RequestBody(required = false) UrgeReqDTO req) {
+    public R<UrgeRespVO> urge(@PathVariable Long id, @RequestBody(required = false) UrgeReqDTO req) {
         return R.ok(urgeService.urge(id,
                 req == null ? null : req.getMessage(),
                 req == null ? null : req.getRecipientIds()));

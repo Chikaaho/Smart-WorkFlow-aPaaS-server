@@ -6,8 +6,8 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.ExtQueryResult;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dto.ExtQueryContractDTO;
-import com.sw.ck.form.dto.ExtQueryContractStatusDTO;
+import com.sw.ck.form.vo.ExtQueryContractVO;
+import com.sw.ck.form.vo.ExtQueryContractStatusVO;
 import com.sw.ck.form.dto.ExtQueryContractView;
 import com.sw.ck.form.entity.FormExtQueryEntity;
 import com.sw.ck.form.service.FormExtDataService;
@@ -40,10 +40,10 @@ public class FormExtDataController {
 
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PostMapping("/query-contract")
-    public R<ExtQueryContractDTO> registerQuery(@RequestBody RegisterReq req) {
+    public R<ExtQueryContractVO> registerQuery(@RequestBody RegisterReq req) {
         FormExtQueryEntity entity = extDataService.registerQuery(req.datasourceId(), req.queryKey(),
                 req.sql(), req.outputFields());
-        ExtQueryContractDTO result = new ExtQueryContractDTO();
+        ExtQueryContractVO result = new ExtQueryContractVO();
         result.setQueryKey(entity.getQueryKey());
         result.setVersion(entity.getQueryVersion());
         return R.ok(result);
@@ -97,13 +97,13 @@ public class FormExtDataController {
 
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PutMapping("/query-contract/{queryKey}/status")
-    public R<ExtQueryContractStatusDTO> setContractStatus(@PathVariable("queryKey") String queryKey,
+    public R<ExtQueryContractStatusVO> setContractStatus(@PathVariable("queryKey") String queryKey,
                                                           @RequestBody ContractStatusReq req) {
         if (req == null || req.enabled() == null) {
             throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID.getCode(), "enabled 不能为空");
         }
         FormExtQueryEntity entity = extDataService.setContractEnabled(queryKey, req.enabled());
-        ExtQueryContractStatusDTO result = new ExtQueryContractStatusDTO();
+        ExtQueryContractStatusVO result = new ExtQueryContractStatusVO();
         result.setQueryKey(entity.getQueryKey());
         result.setVersion(entity.getQueryVersion());
         result.setEnabled(entity.getEnabled());

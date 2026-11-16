@@ -186,19 +186,19 @@ class PostGovernanceIntegrationTest {
 
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean
         public SysPostService sysPostService(SysUserPostMapper userPostMapper) {
-            return new SysPostServiceImpl(userPostMapper);
+            return new SysPostServiceImpl();
         }
 
         @Bean
         public SysUserService sysUserService(PasswordEncoder passwordEncoder, SysUserRoleMapper userRoleMapper,
                                              SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
                                              SysPostMapper postMapper, SysDeptMapper deptMapper) {
-            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper, deptMapper, null);
+            return new SysUserServiceImpl();
         }
 
         @Bean

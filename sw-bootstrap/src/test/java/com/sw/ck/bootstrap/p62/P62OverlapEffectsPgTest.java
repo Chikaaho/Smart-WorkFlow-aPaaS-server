@@ -12,7 +12,7 @@ import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
@@ -432,7 +432,7 @@ class P62OverlapEffectsPgTest {
         if (formDefService.getFormDefByKey(formKey) != null) {
             return;
         }
-        FormDefDTO draft = formDefService.createDraft(formKey, "重叠演练表单", null, null);
+        FormDefVO draft = formDefService.createDraft(formKey, "重叠演练表单", null, null);
         formDefService.saveConfig(draft.getId(), stockDefinition());
         formDefService.publish(draft.getId());
     }

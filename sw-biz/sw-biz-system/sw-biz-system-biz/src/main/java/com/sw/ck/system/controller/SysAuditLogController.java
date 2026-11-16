@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.sw.ck.system.vo.SysAuditLogVO;
 
 /**
  * 日志查询（1.0.0 F3-4）：登录、操作、异常三类审计的分页查询。
@@ -36,7 +37,7 @@ public class SysAuditLogController {
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:log:list')")
-    public R<PageResult<SysAuditLog>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysAuditLogVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                            @RequestParam(defaultValue = "10") long pageSize,
                                            @RequestBody(required = false)
                                            AuditLogService.AuditLogPageQuery query) {
@@ -48,6 +49,7 @@ public class SysAuditLogController {
         Long tenantId = tenantContext.readTarget(filter.getTenantId());
         boolean suspendTenant = tenantId != null;
         filter.setTenantId(tenantId);
-        return R.ok(auditLogService.page(pageParam, filter, suspendTenant));
+        return R.ok(PageResult.map(auditLogService.page(pageParam, filter, suspendTenant),
+                SysAuditLogVO::from));
     }
 }

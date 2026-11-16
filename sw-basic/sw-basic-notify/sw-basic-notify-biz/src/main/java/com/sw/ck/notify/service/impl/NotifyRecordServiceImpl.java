@@ -20,8 +20,8 @@ import com.sw.ck.notify.mapper.NotifyMessageMapper;
 import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
 import com.sw.ck.notify.service.NotifyRecordService;
 import com.sw.ck.common.trace.DiagnosticText;
-import com.sw.ck.notify.dto.NotifyRecordDetailDTO;
-import com.sw.ck.notify.dto.NotifyRecordSummaryDTO;
+import com.sw.ck.notify.vo.NotifyRecordDetailVO;
+import com.sw.ck.notify.vo.NotifyRecordSummaryVO;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -73,7 +73,7 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
 
     /** 必要详情（含完整正文/尝试流水）：仅限独立详情权限调用并记审计。 */
     @Override
-    public NotifyRecordDetailDTO recordFullDetail(Long id) {
+    public NotifyRecordDetailVO recordFullDetail(Long id) {
         NotifyMessage message = messageMapper.selectById(id);
         if (message == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "发送记录不存在");
@@ -82,13 +82,13 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
                 Wrappers.lambdaQuery(NotifySendAttempt.class)
                         .eq(NotifySendAttempt::getMessageId, id)
                         .orderByAsc(NotifySendAttempt::getAttemptNo));
-        NotifyRecordDetailDTO detail = new NotifyRecordDetailDTO();
+        NotifyRecordDetailVO detail = new NotifyRecordDetailVO();
         detail.setMessage(message);
         detail.setAttempts(attempts);
         return detail;
     }
 
-    public NotifyRecordDetailDTO recordDetail(Long id) {
+    public NotifyRecordDetailVO recordDetail(Long id) {
         NotifyMessage message = messageMapper.selectById(id);
         if (message == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "发送记录不存在");
@@ -107,7 +107,7 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
         masked.setChannel(message.getChannel());
         masked.setDeliveryStatus(message.getDeliveryStatus());
         masked.setCreateTime(message.getCreateTime());
-        NotifyRecordDetailDTO detail = new NotifyRecordDetailDTO();
+        NotifyRecordDetailVO detail = new NotifyRecordDetailVO();
         detail.setMessage(masked);
         detail.setAttempts(attempts);
         return detail;
@@ -258,14 +258,14 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
         }
     }
     @Override
-    public PageResult<NotifyRecordSummaryDTO> pageRecords(
+    public PageResult<NotifyRecordSummaryVO> pageRecords(
             PageParam pageParam, String deliveryStatus, Long recipientId, String keyword,
             LocalDateTime timeFrom, LocalDateTime timeTo) {
         PageResult<NotifyMessage> raw = pageEntities(pageParam, deliveryStatus, recipientId, keyword,
                 timeFrom, timeTo);
-        NotifyRecordSummaryDTO[] mapped = raw.getRecords().stream()
-                .map(this::toSummary).toArray(NotifyRecordSummaryDTO[]::new);
-        return new PageResult<NotifyRecordSummaryDTO>() {{
+        NotifyRecordSummaryVO[] mapped = raw.getRecords().stream()
+                .map(this::toSummary).toArray(NotifyRecordSummaryVO[]::new);
+        return new PageResult<NotifyRecordSummaryVO>() {{
             setRecords(Arrays.asList(mapped));
             setTotal(raw.getTotal());
             setPageNum(raw.getPageNum());
@@ -273,8 +273,8 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
         }};
     }
 
-    private NotifyRecordSummaryDTO toSummary(NotifyMessage m) {
-        NotifyRecordSummaryDTO dto = new NotifyRecordSummaryDTO();
+    private NotifyRecordSummaryVO toSummary(NotifyMessage m) {
+        NotifyRecordSummaryVO dto = new NotifyRecordSummaryVO();
         dto.setId(m.getId());
         dto.setTitle(m.getTitle());
         dto.setBizType(m.getBizType());

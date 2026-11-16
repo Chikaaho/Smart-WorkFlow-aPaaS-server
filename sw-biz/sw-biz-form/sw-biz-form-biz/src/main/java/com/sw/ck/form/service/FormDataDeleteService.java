@@ -10,7 +10,7 @@ import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
@@ -97,8 +97,8 @@ public class FormDataDeleteService {
         }
         Long tenantId = loginUser.getTenantId();
 
-        // —— Step 2: 解析 formKey → FormDefDTO ——
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        // —— Step 2: 解析 formKey → FormDefVO ——
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }

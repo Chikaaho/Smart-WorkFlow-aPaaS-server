@@ -10,7 +10,7 @@ import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.TxnActionConfig;
@@ -140,7 +140,7 @@ class P62FrozenSemanticsPgTest {
         jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) VALUES (92501, ?, ?, 2) "
                 + "ON CONFLICT (id) DO NOTHING", TENANT, USER);
         asOperator(() -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "冻结演练库存", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "冻结演练库存", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return null;

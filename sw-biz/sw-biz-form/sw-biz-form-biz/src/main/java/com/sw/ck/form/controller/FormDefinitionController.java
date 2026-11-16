@@ -9,15 +9,15 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormConfigSaveReq;
 import com.sw.ck.form.api.dto.FormRenameReq;
 import com.sw.ck.form.api.dto.FormCreateReq;
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotVO;
+import com.sw.ck.form.api.vo.FormSnapshotDetailVO;
 import com.sw.ck.form.api.dto.FormUpdateReq;
 import com.sw.ck.form.api.dto.FormVisibilityUpdateReq;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.FieldType;
-import com.sw.ck.form.dto.FieldTypeOptionDTO;
-import com.sw.ck.form.dto.PublishedFormOptionDTO;
+import com.sw.ck.form.vo.FieldTypeOptionVO;
+import com.sw.ck.form.vo.PublishedFormOptionVO;
 import com.sw.ck.form.service.FormDefService;
 
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -50,10 +50,10 @@ public class FormDefinitionController {
      * 不接受源码枚举或前端常量替代。
      */
     @GetMapping("/field-types")
-    public R<List<FieldTypeOptionDTO>> fieldTypes() {
-        List<FieldTypeOptionDTO> list = new ArrayList<>();
+    public R<List<FieldTypeOptionVO>> fieldTypes() {
+        List<FieldTypeOptionVO> list = new ArrayList<>();
         for (FieldType ft : FieldType.values()) {
-            FieldTypeOptionDTO row = new FieldTypeOptionDTO();
+            FieldTypeOptionVO row = new FieldTypeOptionVO();
             row.setType(ft.name());
             row.setEnabled(ft.isEnabled());
             list.add(row);
@@ -68,9 +68,9 @@ public class FormDefinitionController {
      */
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PostMapping
-    public R<FormDefDTO> createDraft(@RequestBody FormCreateReq req) {
+    public R<FormDefVO> createDraft(@RequestBody FormCreateReq req) {
         log.info("Creating form draft: formKey={}, name={}, appId={}", req.getFormKey(), req.getName(), req.getAppId());
-        FormDefDTO result = formDefService.createDraft(
+        FormDefVO result = formDefService.createDraft(
                 req.getFormKey(), req.getName(),
                 req.getLogicalTableName(), req.getDescription(), req.getFormType(),
                 req.getAppId(), req.getDirId());
@@ -82,9 +82,9 @@ public class FormDefinitionController {
      */
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PutMapping("/{id}")
-    public R<FormDefDTO> updateDraft(@PathVariable("id") String id, @RequestBody FormUpdateReq req) {
+    public R<FormDefVO> updateDraft(@PathVariable("id") String id, @RequestBody FormUpdateReq req) {
         log.info("Updating form draft: id={}", id);
-        FormDefDTO result = formDefService.updateDraft(
+        FormDefVO result = formDefService.updateDraft(
                 id, req.getName(), req.getLogicalTableName(), req.getDescription());
         return R.ok(result);
     }
@@ -134,14 +134,14 @@ public class FormDefinitionController {
      *
      * @param pageParam 分页参数（pageNum/pageSize）
      * @param keyword   可选，对 name 模糊搜索（LIKE），为空不加该条件
-     * @return 分页结果，每行为 FormDefDTO
+     * @return 分页结果，每行为 FormDefVO
      */
     @PreAuthorize("@ss.hasPermi('form:design')")
     @GetMapping("/page")
-    public R<PageResult<FormDefDTO>> pageFormDefs(PageParam pageParam,
+    public R<PageResult<FormDefVO>> pageFormDefs(PageParam pageParam,
                                                   @RequestParam(required = false) String keyword,
                                                   @RequestParam(required = false) String formType) {
-        PageResult<FormDefDTO> result = formDefService.pageFormDefs(pageParam, keyword, formType);
+        PageResult<FormDefVO> result = formDefService.pageFormDefs(pageParam, keyword, formType);
         return R.ok(result);
     }
 
@@ -151,10 +151,10 @@ public class FormDefinitionController {
      * formKey/name/formVersion 最小集，且仅 PUBLISHED。
      */
     @GetMapping("/published")
-    public R<List<PublishedFormOptionDTO>> listPublishedForDraft() {
-        List<PublishedFormOptionDTO> candidates = formDefService.listPublishedForCurrentUser().stream()
+    public R<List<PublishedFormOptionVO>> listPublishedForDraft() {
+        List<PublishedFormOptionVO> candidates = formDefService.listPublishedForCurrentUser().stream()
                 .map(d -> {
-                    PublishedFormOptionDTO m = new PublishedFormOptionDTO();
+                    PublishedFormOptionVO m = new PublishedFormOptionVO();
                     m.setFormKey(d.getFormKey());
                     m.setName(d.getName());
                     m.setFormVersion(d.getFormVersion());
@@ -244,8 +244,8 @@ public class FormDefinitionController {
      */
     @PreAuthorize("@ss.hasPermi('form:design')")
     @GetMapping("/{id}")
-    public R<FormDefDTO> getFormDef(@PathVariable("id") String id) {
-        FormDefDTO dto = formDefService.getFormDef(id);
+    public R<FormDefVO> getFormDef(@PathVariable("id") String id) {
+        FormDefVO dto = formDefService.getFormDef(id);
         if (dto == null) {
             return R.fail(FormErrorCode.FORM_NOT_FOUND.getCode(), FormErrorCode.FORM_NOT_FOUND.getMessage());
         }
@@ -256,8 +256,8 @@ public class FormDefinitionController {
      * 根据 formKey 获取表单定义 DTO。
      */
     @GetMapping("/by-key/{formKey}")
-    public R<FormDefDTO> getFormDefByKey(@PathVariable("formKey") String formKey) {
-        FormDefDTO dto = formDefService.getFormDefByKey(formKey);
+    public R<FormDefVO> getFormDefByKey(@PathVariable("formKey") String formKey) {
+        FormDefVO dto = formDefService.getFormDefByKey(formKey);
         if (dto == null || !formDefService.isCurrentUserVisible(formKey)) {
             return R.fail(FormErrorCode.FORM_NOT_FOUND.getCode(), FormErrorCode.FORM_NOT_FOUND.getMessage());
         }
@@ -324,7 +324,7 @@ public class FormDefinitionController {
      */
     @PreAuthorize("@ss.hasPermi('form:design')")
     @GetMapping("/{id}/snapshots")
-    public R<List<FormSnapshotDTO>> listSnapshots(@PathVariable("id") String id) {
+    public R<List<FormSnapshotVO>> listSnapshots(@PathVariable("id") String id) {
         return R.ok(formDefService.listSnapshots(id));
     }
 
@@ -339,7 +339,7 @@ public class FormDefinitionController {
      */
     @PreAuthorize("@ss.hasPermi('form:design')")
     @GetMapping("/{id}/snapshots/{formVersion}")
-    public R<FormSnapshotDetailDTO> getSnapshot(@PathVariable("id") String id,
+    public R<FormSnapshotDetailVO> getSnapshot(@PathVariable("id") String id,
                                                 @PathVariable("formVersion") Integer formVersion) {
         return R.ok(formDefService.getSnapshot(id, formVersion));
     }

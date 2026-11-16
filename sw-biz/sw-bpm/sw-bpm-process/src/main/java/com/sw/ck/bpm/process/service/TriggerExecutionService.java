@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.ActionConfig;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
@@ -13,7 +13,7 @@ import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
-import com.sw.ck.bpm.process.dto.InstanceRelationDTO;
+import com.sw.ck.bpm.process.vo.InstanceRelationVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
@@ -235,7 +235,7 @@ public class TriggerExecutionService {
      * 任务合法完成（APPROVE/DISAPPROVE）后触发：TASK_SUBMITTED + NODE_ROUND_COMPLETED 判定。
      */
     @Transactional(propagation = Propagation.REQUIRED)
-    public void onTaskActionCompleted(BpmInstance instance, BpmTaskDTO task, ApprovalAction action) {
+    public void onTaskActionCompleted(BpmInstance instance, BpmTaskVO task, ApprovalAction action) {
         if (action != ApprovalAction.APPROVE && action != ApprovalAction.DISAPPROVE) {
             // 退回/驳回等生命周期动作各自处置，不冒充合法完成（方向 §3.2）
             return;
@@ -581,7 +581,7 @@ public class TriggerExecutionService {
                             instance.getFormKey(), instance.getTenantId());
                     frozen = new ChildOrchestrationService.FrozenBatch(batch.getId(), batch.getBatchKey(),
                             batch.getWaitPolicy());
-                    if (InstanceRelationDTO.RELATION_NONE.equals(frozen.waitPolicy())) {
+                    if (InstanceRelationVO.RELATION_NONE.equals(frozen.waitPolicy())) {
                         dispatchNotes.add("动作 " + action.getActionId() + ": NONE 策略批次 "
                                 + batch.getBatchKey() + " 派发意图提交后即结算，父流程不等待");
                     }
@@ -591,7 +591,7 @@ public class TriggerExecutionService {
                     dispatchItem(instance, trigger, action, exec, item, snapshot, dispatchNotes,
                             frozen, mappingScriptValues);
                 }
-                if (orchestration != null && frozen != null && InstanceRelationDTO.RELATION_NONE.equals(frozen.waitPolicy())) {
+                if (orchestration != null && frozen != null && InstanceRelationVO.RELATION_NONE.equals(frozen.waitPolicy())) {
                     // NONE：全部项登记完成后立即结算（单次推进由结算通道幂等保证）
                     orchestration.settleIfNone(
                             orchestration.loadBatch(instance.getTenantId(), frozen.batchId()));

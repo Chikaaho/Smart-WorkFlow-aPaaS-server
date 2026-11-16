@@ -2,9 +2,9 @@ package com.sw.ck.bpm.process.service.impl;
 
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifySendRequest;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.process.dto.UrgeRespDTO;
+import com.sw.ck.bpm.process.vo.UrgeRespVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.UrgeRecord;
 import com.sw.ck.bpm.process.mapper.UrgeRecordMapper;
@@ -68,19 +68,19 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
 
     @Override
     @Transactional
-    public UrgeRespDTO urge(Long instanceRecordId) {
+    public UrgeRespVO urge(Long instanceRecordId) {
         return urge(instanceRecordId, null, null);
     }
 
     @Override
     @Transactional
-    public UrgeRespDTO urge(Long instanceRecordId, String message) {
+    public UrgeRespVO urge(Long instanceRecordId, String message) {
         return urge(instanceRecordId, message, null);
     }
 
     @Override
     @Transactional
-    public UrgeRespDTO urge(Long instanceRecordId, String message, List<Long> recipientIds) {
+    public UrgeRespVO urge(Long instanceRecordId, String message, List<Long> recipientIds) {
         String normalizedMessage = normalizeMessage(message);
         LoginUser loginUser = LoginUserHolder.get();
         BpmInstance instance = bpmInstanceService.getById(instanceRecordId);
@@ -88,7 +88,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在");
         }
         // empty = 实例标识缺失：与“无活动审批任务”同判拒绝（后续拒绝文案按活动任务空处理）
-        List<BpmTaskDTO> activeTasks = bpmTaskFacade
+        List<BpmTaskVO> activeTasks = bpmTaskFacade
                 .queryByProcessInstance(instance.getProcessInstanceId())
                 .orElse(List.of());
         if (!isLegalUrgeOperator(instance, loginUser, activeTasks)) {
@@ -119,11 +119,11 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
 
     /** 合法催办操作者：实例发起人，或当前活动任务的办理人/候选办理人（服务端以引擎状态为准）。 */
     private boolean isLegalUrgeOperator(BpmInstance instance, LoginUser loginUser,
-                                        List<BpmTaskDTO> activeTasks) {
+                                        List<BpmTaskVO> activeTasks) {
         if (loginUser == null || loginUser.getUserId() == null) return false;
         if (loginUser.getUserId().equals(instance.getInitiatorId())) return true;
         String uid = String.valueOf(loginUser.getUserId());
-        for (BpmTaskDTO task : activeTasks) {
+        for (BpmTaskVO task : activeTasks) {
             if (uid.equals(task.getAssignee())) return true;
             if (task.getCandidateUserIds() != null && task.getCandidateUserIds().contains(uid)) {
                 return true;
@@ -132,9 +132,9 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         return false;
     }
 
-    private UrgeRespDTO doUrge(BpmInstance instance, LoginUser loginUser, Long instanceRecordId,
+    private UrgeRespVO doUrge(BpmInstance instance, LoginUser loginUser, Long instanceRecordId,
                                String normalizedMessage, List<Long> recipientIds,
-                               List<BpmTaskDTO> activeTasks) {
+                               List<BpmTaskVO> activeTasks) {
 
         // 实例行加锁串行化同实例并发催办（H2/PG 语义一致），核对在锁内完成。
         // 并发失败方等待锁期间可能触发 H2 锁等待超时（PG 侧为 lock_timeout/锁冲突异常），
@@ -159,7 +159,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                 long remainSeconds = Math.max(1, COOLDOWN.minus(since).toSeconds());
                 UrgeRecord record = record(instance, loginUser.getUserId(), null, RESULT_COOLDOWN,
                         "冷却中，约 " + remainSeconds + " 秒后可再次催办");
-                return UrgeRespDTO.builder().result(RESULT_COOLDOWN)
+                return UrgeRespVO.builder().result(RESULT_COOLDOWN)
                         .detail("冷却中，约 " + remainSeconds + " 秒后可再次催办")
                         .recordId(record.getId()).build();
             }
@@ -170,7 +170,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
             return reject(instance, loginUser.getUserId(), "当前无活动审批任务，不能催办");
         }
         Set<Long> targets = new LinkedHashSet<>();
-        for (BpmTaskDTO task : activeTasks) {
+        for (BpmTaskVO task : activeTasks) {
             if (task.getAssignee() != null && !task.getAssignee().isBlank()) {
                 try {
                     targets.add(Long.valueOf(task.getAssignee()));
@@ -246,7 +246,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         urgeRecordMapper.insert(record);
         log.info("催办已受理: instance={}, operator={}, targets={}",
                 instance.getProcessInstanceId(), loginUser.getUserId(), targets);
-        return UrgeRespDTO.builder().result(RESULT_ACCEPTED)
+        return UrgeRespVO.builder().result(RESULT_ACCEPTED)
                 .detail(urgeDetail(targets, normalizedMessage)).recordId(record.getId()).build();
     }
 
@@ -280,9 +280,9 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         return System.currentTimeMillis() / 600000L;
     }
 
-    private UrgeRespDTO reject(BpmInstance instance, Long operator, String reason) {
+    private UrgeRespVO reject(BpmInstance instance, Long operator, String reason) {
         UrgeRecord record = record(instance, operator, null, RESULT_REJECTED, reason);
-        return UrgeRespDTO.builder().result(RESULT_REJECTED).detail(reason).recordId(record.getId()).build();
+        return UrgeRespVO.builder().result(RESULT_REJECTED).detail(reason).recordId(record.getId()).build();
     }
 
     /** 有界重试获取实例行锁：每次失败短暂退避后重试，耗尽后按数据库异常向上抛（真实失败）。 */

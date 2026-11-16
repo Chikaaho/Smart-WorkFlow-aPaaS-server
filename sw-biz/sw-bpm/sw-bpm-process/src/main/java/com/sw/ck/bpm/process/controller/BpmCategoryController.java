@@ -2,7 +2,7 @@ package com.sw.ck.bpm.process.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.bpm.process.dto.CategoryDTO;
+import com.sw.ck.bpm.process.vo.CategoryVO;
 import com.sw.ck.bpm.process.dto.CategorySaveReq;
 import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.service.BpmCategoryService;
@@ -36,15 +36,15 @@ public class BpmCategoryController {
     /** 分类列表（管理视角，附事项归属计数）。 */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('workflow:catalog:manage')")
-    public R<List<CategoryDTO>> list() {
+    public R<List<CategoryVO>> list() {
         return R.ok(categoryService.listCategories());
     }
 
     @PostMapping
     @PreAuthorize("@ss.hasPermi('workflow:catalog:manage')")
-    public R<CategoryDTO> create(@RequestBody CategorySaveReq req) {
+    public R<CategoryVO> create(@RequestBody CategorySaveReq req) {
         BpmCategory category = categoryService.createCategory(req);
-        return R.ok(CategoryDTO.builder()
+        return R.ok(CategoryVO.builder()
                 .id(category.getId())
                 .name(category.getName())
                 .sortNo(category.getSortNo())
@@ -54,9 +54,9 @@ public class BpmCategoryController {
 
     @PutMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('workflow:catalog:manage')")
-    public R<CategoryDTO> update(@PathVariable Long id, @RequestBody CategorySaveReq req) {
+    public R<CategoryVO> update(@PathVariable Long id, @RequestBody CategorySaveReq req) {
         BpmCategory category = categoryService.updateCategory(id, req);
-        return R.ok(CategoryDTO.builder()
+        return R.ok(CategoryVO.builder()
                 .id(category.getId())
                 .name(category.getName())
                 .sortNo(category.getSortNo())

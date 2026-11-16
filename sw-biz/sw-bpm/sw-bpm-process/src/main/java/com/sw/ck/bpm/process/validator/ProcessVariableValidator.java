@@ -12,11 +12,11 @@ import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.common.SubjectTypeEnum;
-import com.sw.ck.bpm.process.dto.InstanceRelationDTO;
+import com.sw.ck.bpm.process.vo.InstanceRelationVO;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.bpm.process.service.TriggerExecutionService;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.system.api.user.UserQueryFacade;
 
@@ -51,7 +51,7 @@ public class ProcessVariableValidator {
     private static final Set<String> VARIABLE_TYPES = Set.of(
             "NUMBER", "STRING", "BOOLEAN", SubjectTypeEnum.USER.getCode(), "DEPT", "USER_SET", "DEPT_SET", "ROWS");
     private static final Set<String> VARIABLE_SOURCES = Set.of("MAIN_FORM", "NODE_FORM", "SYSTEM");
-    private static final Set<String> AGGREGATIONS = Set.of(InstanceRelationDTO.RELATION_NONE, "UNION", "CONCAT");
+    private static final Set<String> AGGREGATIONS = Set.of(InstanceRelationVO.RELATION_NONE, "UNION", "CONCAT");
     private static final Set<String> TRIGGER_EVENTS = Set.of(
             TriggerExecutionService.EVENT_TASK_SUBMITTED, TriggerExecutionService.EVENT_NODE_ROUND_COMPLETED, TriggerExecutionService.EVENT_PROCESS_COMPLETED,
             TriggerExecutionService.EVENT_NODE_ENTERING, TriggerExecutionService.EVENT_PROCESS_START);
@@ -113,7 +113,7 @@ public class ProcessVariableValidator {
                     }
                     for (ActionConfig action : branch.getActions()) {
                         if (action.isChild()
-                                && !InstanceRelationDTO.RELATION_NONE.equalsIgnoreCase(action.getWaitPolicy())) {
+                                && !InstanceRelationVO.RELATION_NONE.equalsIgnoreCase(action.getWaitPolicy())) {
                             waitableActionIds.add(action.getActionId());
                         }
                     }
@@ -176,7 +176,7 @@ public class ProcessVariableValidator {
                 continue;
             }
             String formKey = String.valueOf(formKeyObj).trim();
-            Optional<FormDefDTO> def = formDefinitionService.getFormDef(formKey);
+            Optional<FormDefVO> def = formDefinitionService.getFormDef(formKey);
             if (def.isEmpty() || !"PUBLISHED".equals(def.get().getStatus())) {
                 errors.add(error(element.getId(), BpmErrorCode.NODE_FORM_NOT_BOUND,
                         "节点业务表单不存在或未发布: " + formKey));
@@ -265,7 +265,7 @@ public class ProcessVariableValidator {
                     // 已在上/source 无效分支处理
                 }
             }
-            String aggregation = def.getAggregation() == null ? InstanceRelationDTO.RELATION_NONE : def.getAggregation().toUpperCase();
+            String aggregation = def.getAggregation() == null ? InstanceRelationVO.RELATION_NONE : def.getAggregation().toUpperCase();
             if (!AGGREGATIONS.contains(aggregation)) {
                 errors.add(error(locator, BpmErrorCode.VARIABLE_INVALID,
                         "变量 " + def.getVarId() + " 聚合规则无效: " + def.getAggregation()));
@@ -520,7 +520,7 @@ public class ProcessVariableValidator {
 
     // ==================== CHILD 子流程动作（P64 阶段Ⅱ A05/A06） ====================
 
-    private static final Set<String> WAIT_POLICIES = Set.of("ALL", "ANY", "COUNT", InstanceRelationDTO.RELATION_NONE);
+    private static final Set<String> WAIT_POLICIES = Set.of("ALL", "ANY", "COUNT", InstanceRelationVO.RELATION_NONE);
 
     /** CHILD 配置校验：等待策略/K 值/输出回写结构与父表单目标字段存在性。 */
     private void validateChildAction(ProcessGraph graph, ActionConfig action, String locator,
@@ -637,7 +637,7 @@ public class ProcessVariableValidator {
                     "动作 " + action.getActionId() + ": 缺少目标表单 targetFormKey"));
             return;
         }
-        Optional<FormDefDTO> targetForm = formDefinitionService.getFormDef(action.getTargetFormKey());
+        Optional<FormDefVO> targetForm = formDefinitionService.getFormDef(action.getTargetFormKey());
         if (targetForm.isEmpty() || !"PUBLISHED".equals(targetForm.get().getStatus())) {
             errors.add(error(locator, BpmErrorCode.ACTION_TARGET_INVALID,
                     "动作 " + action.getActionId() + ": 目标表单不存在或未发布 " + action.getTargetFormKey()));

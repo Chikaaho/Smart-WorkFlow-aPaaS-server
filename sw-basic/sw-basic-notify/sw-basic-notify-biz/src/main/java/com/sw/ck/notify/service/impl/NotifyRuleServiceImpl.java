@@ -10,7 +10,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.notify.api.NotifyChannel;
-import com.sw.ck.notify.dto.NotifyRuleDTO;
+import com.sw.ck.notify.vo.NotifyRuleVO;
 import com.sw.ck.notify.dto.NotifyRuleQuery;
 import com.sw.ck.notify.entity.NotifyRule;
 import com.sw.ck.notify.mapper.NotifyRuleMapper;
@@ -36,7 +36,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     private NotifyRuleMapper ruleMapper;
 
     @Override
-    public PageResult<NotifyRuleDTO> pageRules(NotifyRuleQuery query) {
+    public PageResult<NotifyRuleVO> pageRules(NotifyRuleQuery query) {
         LambdaQueryWrapper<NotifyRule> w = Wrappers.lambdaQuery(NotifyRule.class);
         if (StringUtils.hasText(query.getEventType())) {
             w.eq(NotifyRule::getEventType, query.getEventType());
@@ -52,14 +52,14 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         Page<NotifyRule> resultPage = ruleMapper.selectPage(Page.of(
                 query.getPageNum() == null ? 1 : Math.max(1, query.getPageNum()),
                 Math.min(Math.max(1, query.getPageSize() == null ? 20 : query.getPageSize()), 200)), w);
-        Page<NotifyRuleDTO> converted = Page.of(resultPage.getCurrent(), resultPage.getSize(),
+        Page<NotifyRuleVO> converted = Page.of(resultPage.getCurrent(), resultPage.getSize(),
                 resultPage.getTotal());
         converted.setRecords(resultPage.getRecords().stream().map(this::toDTO).toList());
         return PageResult.of(converted);
     }
 
-    private NotifyRuleDTO toDTO(NotifyRule r) {
-        NotifyRuleDTO dto = new NotifyRuleDTO();
+    private NotifyRuleVO toDTO(NotifyRule r) {
+        NotifyRuleVO dto = new NotifyRuleVO();
         dto.setId(r.getId());
         dto.setRuleCode(r.getRuleCode());
         dto.setName(r.getName());
@@ -74,12 +74,12 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     }
 
     @Override
-    public NotifyRuleDTO getRule(Long id) {
+    public NotifyRuleVO getRule(Long id) {
         return toDTO(requireEntity(id));
     }
 
     @Override
-    public Long createRule(NotifyRuleDTO dto) {
+    public Long createRule(NotifyRuleVO dto) {
         validate(dto);
         requireCodeAvailable(dto.getRuleCode());
         NotifyRule entity = toEntity(dto);
@@ -88,7 +88,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     }
 
     @Override
-    public void updateRule(Long id, NotifyRuleDTO dto) {
+    public void updateRule(Long id, NotifyRuleVO dto) {
         NotifyRule existing = requireEntity(id);
         validate(dto);
         if (!existing.getRuleCode().equals(dto.getRuleCode())) {
@@ -125,7 +125,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
 
     // ==================== 内部 ====================
 
-    void validate(NotifyRuleDTO dto) {
+    void validate(NotifyRuleVO dto) {
         if (dto.getRuleCode() == null || !dto.getRuleCode().matches("[A-Za-z][A-Za-z0-9_]{1,98}")) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "规则编码非法");
         }
@@ -159,7 +159,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         }
     }
 
-    private NotifyRule toEntity(NotifyRuleDTO dto) {
+    private NotifyRule toEntity(NotifyRuleVO dto) {
         NotifyRule r = new NotifyRule();
         r.setRuleCode(dto.getRuleCode());
         r.setName(dto.getName());

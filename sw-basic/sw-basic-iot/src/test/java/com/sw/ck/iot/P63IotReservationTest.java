@@ -65,7 +65,7 @@ class P63IotReservationTest {
     @BeforeEach
     void setUp() {
         reservationMapper = mock(IotCommandReservationMapper.class);
-        facade = new IotCommandReservationFacadeImpl(reservationMapper, mock(IotDeviceService.class), Clock.systemUTC());
+        facade = new IotCommandReservationFacadeImpl();
         // mock insert 回填生成主键（真实链路由数据库/ID 生成器填充）
         when(reservationMapper.insert(any(IotCommandReservation.class))).thenAnswer(inv -> {
             inv.getArgument(0, IotCommandReservation.class).setId(99L);
@@ -153,8 +153,7 @@ class P63IotReservationTest {
         IotCommandReservation due = duePendingRow();
         when(mapper.selectExpiredPending(any())).thenReturn(List.of());
         when(mapper.selectDuePending(any(), any())).thenReturn(List.of(due));
-        var job = new IotReservationDispatchJob(mapper, commands, devices, provider(sender), queue,
-                Clock.systemUTC(), (tenantId, claim) -> 0);
+        var job = new IotReservationDispatchJob();
         job.dispatchDueReservations();
         verify(mapper, never()).update(isNull(), any());
         verifyNoInteractions(commands, devices, sender, queue);
@@ -184,8 +183,7 @@ class P63IotReservationTest {
         when(commandMapper.selectById(555L)).thenReturn(command);
         when(commandMapper.update(isNull(), any())).thenReturn(1);
 
-        IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(sender), queueService, Clock.systemUTC(), (tenantId, claim) -> claim.getAsInt());
+        IotReservationDispatchJob job = new IotReservationDispatchJob();
         job.dispatchDueReservations();
 
         // P63 修复后契约：job 不再预占 SENDING（预占会让共享发送路径 markSending 撞状态判死），
@@ -211,8 +209,7 @@ class P63IotReservationTest {
         when(mapper.selectDuePending(any(), any())).thenReturn(List.of(due));
         when(mapper.update(isNull(), any())).thenReturn(1);
 
-        IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(null), queueService, Clock.systemUTC(), (tenantId, claim) -> claim.getAsInt());
+        IotReservationDispatchJob job = new IotReservationDispatchJob();
         job.dispatchDueReservations();
 
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(
@@ -233,8 +230,7 @@ class P63IotReservationTest {
         when(mapper.selectDuePending(any(), any())).thenReturn(List.of());
         when(mapper.update(isNull(), any())).thenReturn(1);
 
-        IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(null), queueService, Clock.systemUTC(), (tenantId, claim) -> claim.getAsInt());
+        IotReservationDispatchJob job = new IotReservationDispatchJob();
         job.dispatchDueReservations();
 
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(

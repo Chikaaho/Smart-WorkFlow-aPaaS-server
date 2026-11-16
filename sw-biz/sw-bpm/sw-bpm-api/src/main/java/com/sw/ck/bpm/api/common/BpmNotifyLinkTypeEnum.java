@@ -3,7 +3,7 @@ package com.sw.ck.bpm.api.common;
 import lombok.Getter;
 
 /**
- * BPM 通知链接类型（NotifyLinkDTO.linkType 契约）。
+ * BPM 通知链接类型（NotifyLinkVO.linkType 契约）。
  */
 @Getter
 public enum BpmNotifyLinkTypeEnum {

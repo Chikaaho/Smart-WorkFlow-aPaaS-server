@@ -46,7 +46,7 @@ class SsoTicketExchangeConfigChangeTest {
     void setUp() {
         ticketStore = new SsoTicketStore();
         ssoAuthService = Mockito.mock(SsoAuthService.class);
-        var callbackPolicy = new SsoCallbackPolicy("", List.of(), "");
+        var callbackPolicy = new SsoCallbackPolicy();
         var sysUserService = Mockito.mock(SysUserService.class);
         jwtTokenProvider = Mockito.mock(JwtTokenProvider.class);
         var jwtProperties = Mockito.mock(JwtProperties.class);
@@ -59,8 +59,7 @@ class SsoTicketExchangeConfigChangeTest {
         Mockito.when(jwtTokenProvider.generateToken(Mockito.any())).thenReturn("access-token-stub");
         Mockito.when(refreshTokenService.createRefreshToken(Mockito.any(), Mockito.any(), Mockito.anyLong()))
                 .thenReturn("refresh-token-stub");
-        controller = new SsoAuthController(ssoAuthService, ticketStore, callbackPolicy, sysUserService,
-                jwtTokenProvider, jwtProperties, refreshTokenService, tenantValidityService);
+        controller = new SsoAuthController();
         ReflectionTestUtils.setField(controller, "cookieSecure", false);
         ReflectionTestUtils.setField(controller, "cookiePath", "/api/auth/");
     }

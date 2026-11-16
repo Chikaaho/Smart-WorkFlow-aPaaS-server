@@ -1,7 +1,7 @@
 package com.sw.ck.bootstrap.phase5;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -303,7 +303,7 @@ abstract class Phase5PgSupport {
      * 因此"审批状态推进"与"持久意图"是否同提交/同回滚可直接由引擎状态与命令行共同观测。
      */
     protected void publishForm(String formKey) {
-        FormDefDTO draft =
+        FormDefVO draft =
                 app.getBean(FormDefService.class)
                         .createDraft(formKey, "P5-" + formKey, null, null);
         FormDefService service = app.getBean(FormDefService.class);

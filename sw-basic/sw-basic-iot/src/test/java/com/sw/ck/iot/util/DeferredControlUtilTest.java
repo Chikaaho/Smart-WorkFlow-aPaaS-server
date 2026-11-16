@@ -47,10 +47,8 @@ class DeferredControlUtilTest {
     @BeforeEach
     void setUp() {
         // provider 可缺省：装配存在与否决定控制通道是否可用
-        deferredControlUtil = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(deviceControlProvider), mqttDownlinkPublisher, Clock.systemUTC());
-        deferredControlUtilWithoutProvider = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(null), mqttDownlinkPublisher, Clock.systemUTC());
+        deferredControlUtil = new DeferredControlUtil();
+        deferredControlUtilWithoutProvider = new DeferredControlUtil();
 
         testDevice = new IotDevice();
         testDevice.setId(1L);

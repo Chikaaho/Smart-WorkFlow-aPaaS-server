@@ -7,7 +7,7 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.notify.api.NotifyBizType;
-import com.sw.ck.notify.dto.NotifyTemplateDTO;
+import com.sw.ck.notify.vo.NotifyTemplateVO;
 import com.sw.ck.notify.dto.NotifyTemplateQuery;
 import com.sw.ck.notify.dto.TemplatePreviewRequest;
 import com.sw.ck.notify.dto.TemplatePreviewResult;
@@ -61,28 +61,28 @@ public class NotifyTemplateController {
     /** 分页列表 */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:template:view')")
-    public R<PageResult<NotifyTemplateDTO>> page(NotifyTemplateQuery query) {
+    public R<PageResult<NotifyTemplateVO>> page(NotifyTemplateQuery query) {
         return R.ok(templateService.pageTemplates(query));
     }
 
     /** 详情 */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:template:view')")
-    public R<NotifyTemplateDTO> get(@PathVariable Long id) {
+    public R<NotifyTemplateVO> get(@PathVariable Long id) {
         return R.ok(templateService.getTemplate(id));
     }
 
     /** 新建 */
     @PostMapping
     @PreAuthorize("@ss.hasPermi('notify:template:manage')")
-    public R<Long> create(@RequestBody NotifyTemplateDTO dto) {
+    public R<Long> create(@RequestBody NotifyTemplateVO dto) {
         return R.ok(templateService.createTemplate(dto));
     }
 
     /** 编辑（模板代码不可变更） */
     @PutMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:template:manage')")
-    public R<Void> update(@PathVariable Long id, @RequestBody NotifyTemplateDTO dto) {
+    public R<Void> update(@PathVariable Long id, @RequestBody NotifyTemplateVO dto) {
         templateService.updateTemplate(id, dto);
         return R.ok();
     }

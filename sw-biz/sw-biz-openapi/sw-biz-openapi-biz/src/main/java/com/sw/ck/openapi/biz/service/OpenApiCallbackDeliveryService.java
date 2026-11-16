@@ -9,7 +9,7 @@ import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.FailureCategory;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
-import com.sw.ck.openapi.biz.dto.OpenApiCallbackResendDTO;
+import com.sw.ck.openapi.biz.vo.OpenApiCallbackResendVO;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.entity.OpenApiCallbackLog;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
@@ -74,7 +74,7 @@ public class OpenApiCallbackDeliveryService {
      * 否则以与事件监听完全相同的签名/重试/落账路径补发一次。
      * 仅接受实例终态事件；流程动作不被重发改写（投递只读实例终态）。
      */
-    public OpenApiCallbackResendDTO resend(String appId, BpmNotifyTrigger trigger, String bizRef) {
+    public OpenApiCallbackResendVO resend(String appId, BpmNotifyTrigger trigger, String bizRef) {
         OpenApiApp app = appMapper.selectOne(new LambdaQueryWrapper<OpenApiApp>()
                 .eq(OpenApiApp::getAppId, appId)
                 .eq(OpenApiApp::getStatus, OpenApiAppStatusEnum.ENABLED.getCode())
@@ -83,7 +83,7 @@ public class OpenApiCallbackDeliveryService {
             throw new BaseException(OpenApiErrorCode.APP_NOT_FOUND);
         }
         long deliveredBefore = countSuccess(appId, trigger, bizRef);
-        OpenApiCallbackResendDTO result = new OpenApiCallbackResendDTO();
+        OpenApiCallbackResendVO result = new OpenApiCallbackResendVO();
         result.setEvent(trigger.name());
         result.setProcessInstanceId(bizRef);
         if (deliveredBefore > 0) {

@@ -1,8 +1,8 @@
 package com.sw.ck.agent.service;
 
 import com.sw.ck.agent.dto.AgentGraphBreakpointsReq;
-import com.sw.ck.agent.dto.AgentGraphDebugNodeDTO;
-import com.sw.ck.agent.dto.AgentGraphDebugSessionDTO;
+import com.sw.ck.agent.vo.AgentGraphDebugNodeVO;
+import com.sw.ck.agent.vo.AgentGraphDebugSessionVO;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 
@@ -14,23 +14,23 @@ import java.util.Set;
  */
 public interface AgentGraphDebugService {
 
-    AgentGraphDebugSessionDTO createSession(Long graphDefId, String input);
+    AgentGraphDebugSessionVO createSession(Long graphDefId, String input);
 
-    AgentGraphDebugSessionDTO getSession(Long sessionId);
+    AgentGraphDebugSessionVO getSession(Long sessionId);
 
-    AgentGraphDebugSessionDTO step(Long sessionId, Long expectedVersion);
+    AgentGraphDebugSessionVO step(Long sessionId, Long expectedVersion);
 
-    default AgentGraphDebugSessionDTO step(Long sessionId) {
+    default AgentGraphDebugSessionVO step(Long sessionId) {
         return step(sessionId, null);
     }
 
-    AgentGraphDebugSessionDTO continueUntilBreakpoint(Long sessionId);
+    AgentGraphDebugSessionVO continueUntilBreakpoint(Long sessionId);
 
-    AgentGraphDebugSessionDTO updateBreakpoints(Long sessionId, Set<String> breakpoints);
+    AgentGraphDebugSessionVO updateBreakpoints(Long sessionId, Set<String> breakpoints);
 
-    AgentGraphDebugSessionDTO stop(Long sessionId);
+    AgentGraphDebugSessionVO stop(Long sessionId);
 
-    List<AgentGraphDebugNodeDTO> listNodes(Long sessionId);
+    List<AgentGraphDebugNodeVO> listNodes(Long sessionId);
 
-    PageResult<AgentGraphDebugSessionDTO> pageSessions(PageParam pageParam, Long graphDefId);
+    PageResult<AgentGraphDebugSessionVO> pageSessions(PageParam pageParam, Long graphDefId);
 }

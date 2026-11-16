@@ -1,7 +1,7 @@
 package com.sw.ck.form.service.impl;
 
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotDetailVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.service.FormDataQueryService;
@@ -45,7 +45,7 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
     }
 
     @Override
-    public Optional<FormDefDTO> getFormDef(String formKey) {
+    public Optional<FormDefVO> getFormDef(String formKey) {
         return Optional.ofNullable(formDefService.getFormDefByKey(formKey));
     }
 
@@ -54,13 +54,13 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
         if (formKey == null || formKey.isBlank() || formVersion == null) {
             return Optional.empty();
         }
-        FormDefDTO def = formDefService.getFormDefByKey(formKey);
+        FormDefVO def = formDefService.getFormDefByKey(formKey);
         if (def == null || def.getId() == null) {
             return Optional.empty();
         }
         try {
             return Optional.ofNullable(formDefService.getSnapshot(def.getId(), formVersion))
-                    .map(FormSnapshotDetailDTO::getDefinition);
+                    .map(FormSnapshotDetailVO::getDefinition);
         } catch (RuntimeException e) {
             // 该版本无快照（历史数据）按目标缺失处理，由调用方回退当前定义
             return Optional.empty();
@@ -80,7 +80,7 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
         if (formKey == null || formKey.isBlank()) {
             return Optional.empty();
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null || !formDefService.isCurrentUserVisible(formKey)) {
             return Optional.of(false);
         }

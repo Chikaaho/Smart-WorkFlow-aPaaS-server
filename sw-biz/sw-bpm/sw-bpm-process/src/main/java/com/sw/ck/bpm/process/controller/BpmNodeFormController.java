@@ -2,11 +2,11 @@ package com.sw.ck.bpm.process.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.process.dto.InstanceNodeFormDataDTO;
-import com.sw.ck.bpm.process.dto.TaskNodeFormDTO;
+import com.sw.ck.bpm.process.vo.InstanceNodeFormDataVO;
+import com.sw.ck.bpm.process.vo.TaskNodeFormVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.sw.ck.common.value.DynamicData;
 
 /**
  * P64 节点业务表单控制器（A01）。
@@ -59,13 +60,13 @@ public class BpmNodeFormController {
      * </p>
      */
     @GetMapping("/tasks/{taskId}/node-form")
-    public R<TaskNodeFormDTO> getTaskNodeForm(@PathVariable String taskId) {
-        BpmTaskDTO task = bpmTaskFacade.getTask(taskId)
+    public R<TaskNodeFormVO> getTaskNodeForm(@PathVariable String taskId) {
+        BpmTaskVO task = bpmTaskFacade.getTask(taskId)
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
         BpmInstance instance = bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在"));
         assertNodeFormReadable(task, instance);
-        TaskNodeFormDTO result = new TaskNodeFormDTO();
+        TaskNodeFormVO result = new TaskNodeFormVO();
         Optional<NodeFormDataService.NodeFormBinding> binding = nodeFormDataService.resolveBinding(
                 task.getProcessDefinitionKey(), instance.getDefVersion(), task.getTaskDefinitionKey());
         if (binding.isEmpty()) {
@@ -97,8 +98,8 @@ public class BpmNodeFormController {
         }
         // 契约形状：definition 为结构化对象（fields 供办理页渲染），不是 JSON 字符串
         try {
-            result.setDefinition(objectMapper.readValue(definition.get(),
-                    new TypeReference<Map<String, Object>>() { }));
+            result.setDefinition(DynamicData.of(objectMapper.readValue(definition.get(),
+                    new TypeReference<Map<String, Object>>() { })));
         } catch (Exception e) {
             throw new BaseException(BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),
                     "节点表单定义解析失败: " + binding.get().formKey() + "@v" + boundVersion
@@ -106,11 +107,11 @@ public class BpmNodeFormController {
         }
         if (data != null) {
             result.setStatus(data.getStatus());
-            result.setData(nodeFormDataService.parseData(data.getDataText()));
+            result.setData(DynamicData.of(nodeFormDataService.parseData(data.getDataText())));
             result.setRoundNo(data.getRoundNo());
         } else {
             result.setStatus("EMPTY");
-            result.setData(Map.of());
+            result.setData(DynamicData.empty());
         }
         return R.ok(result);
     }
@@ -121,7 +122,7 @@ public class BpmNodeFormController {
     @PostMapping("/tasks/{taskId}/node-form/draft")
     public R<Long> saveDraft(@PathVariable String taskId,
                              @RequestBody Map<String, Object> body) {
-        BpmTaskDTO task = bpmTaskFacade.getTask(taskId)
+        BpmTaskVO task = bpmTaskFacade.getTask(taskId)
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
         BpmInstance instance = bpmInstanceService.findByProcessInstanceId(task.getProcessInstanceId())
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "流程实例不存在"));
@@ -145,14 +146,14 @@ public class BpmNodeFormController {
      * 实例维度节点表单数据历史回看（含各任务/轮次数据、状态与提交人）。
      */
     @GetMapping("/instances/{instanceId}/node-form-data")
-    public R<List<InstanceNodeFormDataDTO>> listInstanceNodeFormData(@PathVariable String instanceId) {
+    public R<List<InstanceNodeFormDataVO>> listInstanceNodeFormData(@PathVariable String instanceId) {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         if (tenantId == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED);
         }
         List<BpmTaskFormData> rows = nodeFormDataService.listByInstance(tenantId, instanceId);
         return R.ok(rows.stream().map(row -> {
-            InstanceNodeFormDataDTO item = new InstanceNodeFormDataDTO();
+            InstanceNodeFormDataVO item = new InstanceNodeFormDataVO();
             item.setId(row.getId());
             item.setProcessInstanceId(row.getProcessInstanceId());
             item.setNodeKey(row.getNodeKey());
@@ -161,7 +162,7 @@ public class BpmNodeFormController {
             item.setFormKey(row.getFormKey());
             item.setFormVersion(row.getFormVersion());
             item.setStatus(row.getStatus());
-            item.setData(nodeFormDataService.parseData(row.getDataText()));
+            item.setData(DynamicData.of(nodeFormDataService.parseData(row.getDataText())));
             item.setSubmittedBy(row.getSubmittedBy());
             item.setSubmitTime(row.getSubmitTime());
             return item;
@@ -178,7 +179,7 @@ public class BpmNodeFormController {
     /**
      * 读取边界：任务办理人（assignee/candidate）或实例发起人；无法判定时 fail closed。
      */
-    private void assertNodeFormReadable(BpmTaskDTO task, BpmInstance instance) {
+    private void assertNodeFormReadable(BpmTaskVO task, BpmInstance instance) {
         Long userId = currentUserId();
         if (userId == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED);
@@ -197,7 +198,7 @@ public class BpmNodeFormController {
     /**
      * 写入边界（草稿/最终提交）：仅任务办理人；无法判定时 fail closed（与办理校验同语义）。
      */
-    private void assertNodeFormWritable(BpmTaskDTO task) {
+    private void assertNodeFormWritable(BpmTaskVO task) {
         Long userId = currentUserId();
         if (userId == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED);

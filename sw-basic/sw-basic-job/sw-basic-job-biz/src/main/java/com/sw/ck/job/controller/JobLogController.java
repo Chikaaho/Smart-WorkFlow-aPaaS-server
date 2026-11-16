@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.job.vo.JobLogVO;
 /**
  * 定时任务执行日志控制器。
  * <p>
@@ -37,7 +38,7 @@ public class JobLogController {
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('job:log')")
-    public R<PageResult<JobLog>> page(@RequestParam Long jobId,
+    public R<PageResult<JobLogVO>> page(@RequestParam Long jobId,
                                        @RequestParam(defaultValue = "1") long pageNum,
                                        @RequestParam(defaultValue = "10") long pageSize) {
         if (jobId == null) {
@@ -47,7 +48,7 @@ public class JobLogController {
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
         // 按 jobId 查询，按创建时间倒序
-        return R.ok(jobLogService.page(pageParam, jobId));
+        return R.ok(PageResult.map(jobLogService.page(pageParam, jobId), JobLogVO::from));
     }
 
     /**
@@ -55,11 +56,11 @@ public class JobLogController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('job:log')")
-    public R<JobLog> getById(@PathVariable Long id) {
+    public R<JobLogVO> getById(@PathVariable Long id) {
         JobLog jobLog = jobLogService.getById(id);
         if (jobLog == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "日志不存在");
         }
-        return R.ok(jobLog);
+        return R.ok(JobLogVO.from(jobLog));
     }
 }

@@ -3,7 +3,7 @@ package com.sw.ck.agent.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
-import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
+import com.sw.ck.agent.vo.AgentOrchestrationRunRespVO;
 import com.sw.ck.agent.service.AgentOrchestrationService;
 import com.sw.ck.common.response.R;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -31,7 +31,7 @@ public class AgentOrchestrationController {
     /** 触发一次编排执行（单轮同步调用，模型服务不可达返回 success=false 而非 500） */
     @PostMapping("/run")
     @PreAuthorize("@ss.hasPermi('agent:orchestration:run')")
-    public R<AgentOrchestrationRunRespDTO> run(@RequestBody @Validated AgentOrchestrationRunReqDTO req) {
+    public R<AgentOrchestrationRunRespVO> run(@RequestBody @Validated AgentOrchestrationRunReqDTO req) {
         return R.ok(agentOrchestrationService.run(req));
     }
 }

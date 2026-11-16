@@ -5,7 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
-import com.sw.ck.form.dto.FormDataRecordDTO;
+import com.sw.ck.form.vo.FormDataRecordVO;
 import com.sw.ck.form.service.FormDataQueryService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -32,19 +32,19 @@ public class FormDataQueryController {
      *
      * @param formKey 表单业务标识
      * @param request 查询请求（分页参数 + 过滤条件）
-     * @return {@code R<PageResult<FormDataRecordDTO>>} 分页结果（动态字段）
+     * @return {@code R<PageResult<FormDataRecordVO>>} 分页结果（动态字段）
      */
     @PostMapping("/{formKey}/query")
     @PreAuthorize("@ss.hasPermi('form:data:query')")
-    public R<PageResult<FormDataRecordDTO>> queryData(@PathVariable("formKey") String formKey,
+    public R<PageResult<FormDataRecordVO>> queryData(@PathVariable("formKey") String formKey,
                                                        @RequestBody FormDataQueryRequest request) {
         log.info("Form data query: formKey={}, page={}, size={}, filters={}",
                 formKey, request.getPageNum(), request.getPageSize(),
                 request.getFilters() != null ? request.getFilters().size() : 0);
 
         PageResult<Map<String, Object>> source = formDataQueryService.queryFormData(formKey, request);
-        PageResult<FormDataRecordDTO> result = new PageResult<>();
-        result.setRecords(source.getRecords().stream().map(FormDataRecordDTO::new).toList());
+        PageResult<FormDataRecordVO> result = new PageResult<>();
+        result.setRecords(source.getRecords().stream().map(FormDataRecordVO::new).toList());
         result.setTotal(source.getTotal());
         result.setPageNum(source.getPageNum());
         result.setPageSize(source.getPageSize());

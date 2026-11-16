@@ -180,13 +180,13 @@ class OrgAuthorityFacadeIntegrationTest {
 
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean
         public UserQueryFacade userQueryFacade(SysUserMapper sysUserMapper,
                                                SysDeptMapper sysDeptMapper) {
-            return new UserFacadeImpl(sysUserMapper, sysDeptMapper);
+            return new UserFacadeImpl();
         }
 
         @Bean

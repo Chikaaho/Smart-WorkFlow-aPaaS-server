@@ -4,7 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.vo.KnowledgeHitVO;
 import com.sw.ck.knowledge.entity.KnowledgeBase;
 import com.sw.ck.knowledge.mapper.KnowledgeBaseMapper;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
@@ -33,7 +33,7 @@ public class KnowledgeRetrievalServiceImpl implements KnowledgeRetrievalService 
     private KnowledgeVectorStore vectorStore;
 
     @Override
-    public List<KnowledgeHitDTO> retrieve(Long kbId, String query, Integer topK,
+    public List<KnowledgeHitVO> retrieve(Long kbId, String query, Integer topK,
                                           Double similarityThreshold) {
         if (kbId == null) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "知识库 id 不能为空");
@@ -58,8 +58,8 @@ public class KnowledgeRetrievalServiceImpl implements KnowledgeRetrievalService 
                 .toList();
     }
 
-    private KnowledgeHitDTO toDTO(KnowledgeVectorHit hit) {
-        KnowledgeHitDTO dto = new KnowledgeHitDTO();
+    private KnowledgeHitVO toDTO(KnowledgeVectorHit hit) {
+        KnowledgeHitVO dto = new KnowledgeHitVO();
         dto.setChunkId(hit.chunkId());
         dto.setDocumentId(hit.documentId());
         dto.setDocumentName(hit.documentName());

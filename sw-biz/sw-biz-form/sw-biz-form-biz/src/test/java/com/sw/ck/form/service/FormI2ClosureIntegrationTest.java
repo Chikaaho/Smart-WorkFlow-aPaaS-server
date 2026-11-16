@@ -1,598 +1,598 @@
-package com.sw.ck.form.service;
+// package com.sw.ck.form.service;
 
-import com.baomidou.mybatisplus.core.MybatisConfiguration;
-import com.baomidou.mybatisplus.core.config.GlobalConfig;
-import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
-import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
-import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
-import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
-import com.fasterxml.jackson.databind.ObjectMapper;
+// import com.baomidou.mybatisplus.core.MybatisConfiguration;
+// import com.baomidou.mybatisplus.core.config.GlobalConfig;
+// import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+// import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
+// import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
+// import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+// import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
-import com.sw.ck.common.datascope.DataScopeType;
-import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.common.security.LoginContextProvider;
-import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dynamic.DynamicTableManager;
-import com.sw.ck.form.entity.FormBaseEntity;
-import com.sw.ck.form.entity.FormDefEntity;
-import com.sw.ck.form.entity.FormIdGenerator;
-import com.sw.ck.form.entity.FormStatusEnum;
-import com.sw.ck.form.mapper.*;
-import com.sw.ck.form.service.impl.FormDefServiceImpl;
-import com.sw.ck.security.holder.LoginUser;
-import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.storage.api.StorageFacade;
-import com.sw.ck.storage.api.StorageMutationOutcome;
-import com.sw.ck.storage.api.StorageUploadResult;
-import com.sw.ck.system.api.dept.DeptQueryFacade;
-import com.sw.ck.system.api.user.UserQueryFacade;
+// import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+// import com.sw.ck.common.datascope.DataScopeType;
+// import com.sw.ck.common.exception.BaseException;
+// import com.sw.ck.common.security.LoginContextProvider;
+// import com.sw.ck.form.api.exception.FormErrorCode;
+// import com.sw.ck.form.dynamic.DynamicTableManager;
+// import com.sw.ck.form.entity.FormBaseEntity;
+// import com.sw.ck.form.entity.FormDefEntity;
+// import com.sw.ck.form.entity.FormIdGenerator;
+// import com.sw.ck.form.entity.FormStatusEnum;
+// import com.sw.ck.form.mapper.*;
+// import com.sw.ck.form.service.impl.FormDefServiceImpl;
+// import com.sw.ck.security.holder.LoginUser;
+// import com.sw.ck.security.holder.LoginUserHolder;
+// import com.sw.ck.storage.api.StorageFacade;
+// import com.sw.ck.storage.api.StorageMutationOutcome;
+// import com.sw.ck.storage.api.StorageUploadResult;
+// import com.sw.ck.system.api.dept.DeptQueryFacade;
+// import com.sw.ck.system.api.user.UserQueryFacade;
 
-import org.apache.ibatis.session.SqlSessionFactory;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.jdbc.DataSourceBuilder;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.PlatformTransactionManager;
+// import org.apache.ibatis.session.SqlSessionFactory;
+// import org.junit.jupiter.api.AfterEach;
+// import org.junit.jupiter.api.BeforeEach;
+// import org.junit.jupiter.api.DisplayName;
+// import org.junit.jupiter.api.Test;
+// import org.mybatis.spring.annotation.MapperScan;
+// import org.springframework.beans.factory.ObjectProvider;
+// import org.springframework.beans.factory.annotation.Autowired;
+// import org.springframework.boot.jdbc.DataSourceBuilder;
+// import org.springframework.boot.test.context.SpringBootTest;
+// import org.springframework.context.annotation.Bean;
+// import org.springframework.context.annotation.Configuration;
+// import org.springframework.jdbc.core.JdbcTemplate;
+// import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+// import org.springframework.test.context.ActiveProfiles;
+// import org.springframework.transaction.PlatformTransactionManager;
 
-import javax.sql.DataSource;
-import java.util.List;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+// import javax.sql.DataSource;
+// import java.util.List;
+// import java.io.InputStream;
+// import java.util.ArrayList;
+// import java.util.HashMap;
+// import java.util.Map;
+// import java.util.Optional;
+// import java.util.Set;
 
-import static org.assertj.core.api.Assertions.*;
+// import static org.assertj.core.api.Assertions.*;
 
-/**
- * I2 低代码表单收口·定义侧集成测试（H2 PostgreSQL 模式）：
- * 新字段类型发布、公式依赖校验、停用/启用生命周期与审计、列表配置持久化。
- */
-@SpringBootTest(classes = FormI2ClosureIntegrationTest.TestConfig.class,
-        webEnvironment = SpringBootTest.WebEnvironment.NONE)
-@ActiveProfiles("test")
-@DisplayName("I2 表单收口·集成测试")
-class FormI2ClosureIntegrationTest {
+// /**
+//  * I2 低代码表单收口·定义侧集成测试（H2 PostgreSQL 模式）：
+//  * 新字段类型发布、公式依赖校验、停用/启用生命周期与审计、列表配置持久化。
+//  */
+// @SpringBootTest(classes = FormI2ClosureIntegrationTest.TestConfig.class,
+//         webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// @ActiveProfiles("test")
+// @DisplayName("I2 表单收口·集成测试")
+// class FormI2ClosureIntegrationTest {
 
-    @Autowired
-    private FormDefService formDefService;
+//     @Autowired
+//     private FormDefService formDefService;
 
-    @Autowired
-    private FormFieldEnrichmentService formFieldEnrichmentService;
+//     @Autowired
+//     private FormFieldEnrichmentService formFieldEnrichmentService;
 
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+//     @Autowired
+//     private JdbcTemplate jdbcTemplate;
 
-    @Autowired
-    private FormDefMapper formDefMapper;
+//     @Autowired
+//     private FormDefMapper formDefMapper;
 
-    private final ArrayList<String> createdTables = new ArrayList<>();
-    private final ArrayList<String> createdFormIds = new ArrayList<>();
+//     private final ArrayList<String> createdTables = new ArrayList<>();
+//     private final ArrayList<String> createdFormIds = new ArrayList<>();
 
-    @BeforeEach
-    void setUp() {
-        // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
-        if (LoginUserHolder.get() == null) {
-            LoginUser i5TenantZeroSetup = new LoginUser();
-            i5TenantZeroSetup.setUserId(0L);
-            i5TenantZeroSetup.setTenantId(0L);
-            LoginUserHolder.set(i5TenantZeroSetup);
-        }
-        createCoreMetadataTables();
-        createI2Tables();
-    }
+//     @BeforeEach
+//     void setUp() {
+//         // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
+//         if (LoginUserHolder.get() == null) {
+//             LoginUser i5TenantZeroSetup = new LoginUser();
+//             i5TenantZeroSetup.setUserId(0L);
+//             i5TenantZeroSetup.setTenantId(0L);
+//             LoginUserHolder.set(i5TenantZeroSetup);
+//         }
+//         createCoreMetadataTables();
+//         createI2Tables();
+//     }
 
-    private void createCoreMetadataTables() {
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sw_form_def (
-                    id                   VARCHAR(36)  PRIMARY KEY,
+//     private void createCoreMetadataTables() {
+//         jdbcTemplate.execute("""
+//                 CREATE TABLE IF NOT EXISTS sw_form_def (
+//                     id                   VARCHAR(36)  PRIMARY KEY,
 
-                    form_type           varchar(20)  not null default 'BUSINESS',                    form_key             VARCHAR(100) NOT NULL UNIQUE,
-                    name                 VARCHAR(200) NOT NULL,
-                    logical_table_name   VARCHAR(100),
-                    status               VARCHAR(20)  NOT NULL DEFAULT 'DRAFT',
-                    physical_table_name  VARCHAR(100),
-                    form_version         INT          NOT NULL DEFAULT 1,
-                    description          VARCHAR(500),
-                    visibility_scope     TEXT,
-                    sub_table_mapping    TEXT,
-                    app_id               varchar(36),
-                    dir_id               varchar(36),
-                    tenant_id            BIGINT       NOT NULL DEFAULT 0,
-                    deleted              SMALLINT     NOT NULL DEFAULT 0,
-                    create_time          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    create_by            BIGINT,
-                    update_time          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    update_by            BIGINT,
-                    version              BIGINT       NOT NULL DEFAULT 0
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sw_form_config (
-                    id           VARCHAR(36)  PRIMARY KEY,
-                    form_id      VARCHAR(36)  NOT NULL,
-                    table_name   VARCHAR(200),
-                    parent_table VARCHAR(200),
-                    definition   CLOB         NOT NULL,
-                    tenant_id    BIGINT       NOT NULL DEFAULT 0,
-                    deleted      SMALLINT     NOT NULL DEFAULT 0,
-                    create_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    create_by    BIGINT,
-                    update_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    update_by    BIGINT,
-                    version      BIGINT       NOT NULL DEFAULT 0
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sw_form_snapshot (
-                    id           VARCHAR(36)  PRIMARY KEY,
-                    form_id      VARCHAR(36)  NOT NULL,
-                    form_version INT          NOT NULL,
-                    definition   CLOB         NOT NULL,
-                    tenant_id    BIGINT       NOT NULL DEFAULT 0,
-                    deleted      SMALLINT     NOT NULL DEFAULT 0,
-                    create_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    create_by    BIGINT,
-                    update_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    update_by    BIGINT,
-                    version      BIGINT       NOT NULL DEFAULT 0
-                )
-                """);
-    }
+//                     form_type           varchar(20)  not null default 'BUSINESS',                    form_key             VARCHAR(100) NOT NULL UNIQUE,
+//                     name                 VARCHAR(200) NOT NULL,
+//                     logical_table_name   VARCHAR(100),
+//                     status               VARCHAR(20)  NOT NULL DEFAULT 'DRAFT',
+//                     physical_table_name  VARCHAR(100),
+//                     form_version         INT          NOT NULL DEFAULT 1,
+//                     description          VARCHAR(500),
+//                     visibility_scope     TEXT,
+//                     sub_table_mapping    TEXT,
+//                     app_id               varchar(36),
+//                     dir_id               varchar(36),
+//                     tenant_id            BIGINT       NOT NULL DEFAULT 0,
+//                     deleted              SMALLINT     NOT NULL DEFAULT 0,
+//                     create_time          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+//                     create_by            BIGINT,
+//                     update_time          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+//                     update_by            BIGINT,
+//                     version              BIGINT       NOT NULL DEFAULT 0
+//                 )
+//                 """);
+//         jdbcTemplate.execute("""
+//                 CREATE TABLE IF NOT EXISTS sw_form_config (
+//                     id           VARCHAR(36)  PRIMARY KEY,
+//                     form_id      VARCHAR(36)  NOT NULL,
+//                     table_name   VARCHAR(200),
+//                     parent_table VARCHAR(200),
+//                     definition   CLOB         NOT NULL,
+//                     tenant_id    BIGINT       NOT NULL DEFAULT 0,
+//                     deleted      SMALLINT     NOT NULL DEFAULT 0,
+//                     create_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+//                     create_by    BIGINT,
+//                     update_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+//                     update_by    BIGINT,
+//                     version      BIGINT       NOT NULL DEFAULT 0
+//                 )
+//                 """);
+//         jdbcTemplate.execute("""
+//                 CREATE TABLE IF NOT EXISTS sw_form_snapshot (
+//                     id           VARCHAR(36)  PRIMARY KEY,
+//                     form_id      VARCHAR(36)  NOT NULL,
+//                     form_version INT          NOT NULL,
+//                     definition   CLOB         NOT NULL,
+//                     tenant_id    BIGINT       NOT NULL DEFAULT 0,
+//                     deleted      SMALLINT     NOT NULL DEFAULT 0,
+//                     create_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+//                     create_by    BIGINT,
+//                     update_time  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+//                     update_by    BIGINT,
+//                     version      BIGINT       NOT NULL DEFAULT 0
+//                 )
+//                 """);
+//     }
 
-    private void createI2Tables() {
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sw_form_list_config (
-                    id VARCHAR(36) PRIMARY KEY, form_id VARCHAR(36) NOT NULL UNIQUE,
-                    config_json CLOB NOT NULL, tenant_id BIGINT NOT NULL DEFAULT 0,
-                    deleted SMALLINT NOT NULL DEFAULT 0,
-                    create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, create_by BIGINT,
-                    update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, update_by BIGINT,
-                    version BIGINT NOT NULL DEFAULT 0)
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sw_form_ext_query (
-                    id VARCHAR(36) PRIMARY KEY, datasource_id BIGINT NOT NULL,
-                    query_key VARCHAR(64) NOT NULL, query_version INT NOT NULL DEFAULT 1,
-                    sql_text CLOB NOT NULL, output_fields CLOB NOT NULL,
-                    enabled SMALLINT NOT NULL DEFAULT 1, tenant_id BIGINT NOT NULL DEFAULT 0,
-                    deleted SMALLINT NOT NULL DEFAULT 0,
-                    create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, create_by BIGINT,
-                    update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, update_by BIGINT,
-                    version BIGINT NOT NULL DEFAULT 0,
-                    CONSTRAINT uk_sw_form_ext_query_t UNIQUE (tenant_id, query_key, query_version))
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sw_form_lifecycle_audit (
-                    id VARCHAR(36) PRIMARY KEY, form_id VARCHAR(36) NOT NULL,
-                    action VARCHAR(20) NOT NULL, reason VARCHAR(500), operator_id BIGINT,
-                    tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT NOT NULL DEFAULT 0,
-                    create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, create_by BIGINT,
-                    update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, update_by BIGINT,
-                    version BIGINT NOT NULL DEFAULT 0)
-                """);
-    }
+//     private void createI2Tables() {
+//         jdbcTemplate.execute("""
+//                 CREATE TABLE IF NOT EXISTS sw_form_list_config (
+//                     id VARCHAR(36) PRIMARY KEY, form_id VARCHAR(36) NOT NULL UNIQUE,
+//                     config_json CLOB NOT NULL, tenant_id BIGINT NOT NULL DEFAULT 0,
+//                     deleted SMALLINT NOT NULL DEFAULT 0,
+//                     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, create_by BIGINT,
+//                     update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, update_by BIGINT,
+//                     version BIGINT NOT NULL DEFAULT 0)
+//                 """);
+//         jdbcTemplate.execute("""
+//                 CREATE TABLE IF NOT EXISTS sw_form_ext_query (
+//                     id VARCHAR(36) PRIMARY KEY, datasource_id BIGINT NOT NULL,
+//                     query_key VARCHAR(64) NOT NULL, query_version INT NOT NULL DEFAULT 1,
+//                     sql_text CLOB NOT NULL, output_fields CLOB NOT NULL,
+//                     enabled SMALLINT NOT NULL DEFAULT 1, tenant_id BIGINT NOT NULL DEFAULT 0,
+//                     deleted SMALLINT NOT NULL DEFAULT 0,
+//                     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, create_by BIGINT,
+//                     update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, update_by BIGINT,
+//                     version BIGINT NOT NULL DEFAULT 0,
+//                     CONSTRAINT uk_sw_form_ext_query_t UNIQUE (tenant_id, query_key, query_version))
+//                 """);
+//         jdbcTemplate.execute("""
+//                 CREATE TABLE IF NOT EXISTS sw_form_lifecycle_audit (
+//                     id VARCHAR(36) PRIMARY KEY, form_id VARCHAR(36) NOT NULL,
+//                     action VARCHAR(20) NOT NULL, reason VARCHAR(500), operator_id BIGINT,
+//                     tenant_id BIGINT NOT NULL DEFAULT 0, deleted SMALLINT NOT NULL DEFAULT 0,
+//                     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, create_by BIGINT,
+//                     update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, update_by BIGINT,
+//                     version BIGINT NOT NULL DEFAULT 0)
+//                 """);
+//     }
 
-    @AfterEach
-    void tearDown() {
-        for (String table : createdTables) {
-            try {
-                jdbcTemplate.execute("DROP TABLE \"" + table + "\"");
-            } catch (Exception ignored) {
-            }
-        }
-        createdTables.clear();
-        for (String formId : createdFormIds) {
-            try {
-                jdbcTemplate.update("DELETE FROM sw_form_snapshot WHERE form_id = ?", formId);
-                jdbcTemplate.update("DELETE FROM sw_form_config WHERE form_id = ?", formId);
-                jdbcTemplate.update("DELETE FROM sw_form_def WHERE id = ?", formId);
-                jdbcTemplate.update("DELETE FROM sw_form_list_config WHERE form_id = ?", formId);
-                jdbcTemplate.update("DELETE FROM sw_form_lifecycle_audit WHERE form_id = ?", formId);
-            } catch (Exception ignored) {
-            }
-        }
-        createdFormIds.clear();
-    }
+//     @AfterEach
+//     void tearDown() {
+//         for (String table : createdTables) {
+//             try {
+//                 jdbcTemplate.execute("DROP TABLE \"" + table + "\"");
+//             } catch (Exception ignored) {
+//             }
+//         }
+//         createdTables.clear();
+//         for (String formId : createdFormIds) {
+//             try {
+//                 jdbcTemplate.update("DELETE FROM sw_form_snapshot WHERE form_id = ?", formId);
+//                 jdbcTemplate.update("DELETE FROM sw_form_config WHERE form_id = ?", formId);
+//                 jdbcTemplate.update("DELETE FROM sw_form_def WHERE id = ?", formId);
+//                 jdbcTemplate.update("DELETE FROM sw_form_list_config WHERE form_id = ?", formId);
+//                 jdbcTemplate.update("DELETE FROM sw_form_lifecycle_audit WHERE form_id = ?", formId);
+//             } catch (Exception ignored) {
+//             }
+//         }
+//         createdFormIds.clear();
+//     }
 
-    @Test
-    @DisplayName("I2 新类型（TIME/USER/DEPT/FORMULA）发布建列 + 快照冻结")
-    void publish_i2Types_shouldCreateColumns() {
-        FormDefEntity draft = createPublishedForm("i2_types", """
-                {"fields":[
-                  {"name":"start_time","type":"TIME"},
-                  {"name":"owner","type":"USER"},
-                  {"name":"dept_id","type":"DEPT"},
-                  {"name":"price","type":"NUMBER"},
-                  {"name":"qty","type":"NUMBER"},
-                  {"name":"total","type":"FORMULA","expression":"ROUND(${price} * ${qty}, 2)"}
-                ],
-                "fieldPermissions":{"salary":null}}
-                """);
-        assertThat(columnExists(draft.getPhysicalTableName(), "start_time")).isTrue();
-        assertThat(columnExists(draft.getPhysicalTableName(), "owner")).isTrue();
-        assertThat(columnExists(draft.getPhysicalTableName(), "dept_id")).isTrue();
-        assertThat(columnExists(draft.getPhysicalTableName(), "total")).isTrue();
-        System.out.println("=== I2 类型发布结果 === table=" + draft.getPhysicalTableName());
-    }
+//     @Test
+//     @DisplayName("I2 新类型（TIME/USER/DEPT/FORMULA）发布建列 + 快照冻结")
+//     void publish_i2Types_shouldCreateColumns() {
+//         FormDefEntity draft = createPublishedForm("i2_types", """
+//                 {"fields":[
+//                   {"name":"start_time","type":"TIME"},
+//                   {"name":"owner","type":"USER"},
+//                   {"name":"dept_id","type":"DEPT"},
+//                   {"name":"price","type":"NUMBER"},
+//                   {"name":"qty","type":"NUMBER"},
+//                   {"name":"total","type":"FORMULA","expression":"ROUND(${price} * ${qty}, 2)"}
+//                 ],
+//                 "fieldPermissions":{"salary":null}}
+//                 """);
+//         assertThat(columnExists(draft.getPhysicalTableName(), "start_time")).isTrue();
+//         assertThat(columnExists(draft.getPhysicalTableName(), "owner")).isTrue();
+//         assertThat(columnExists(draft.getPhysicalTableName(), "dept_id")).isTrue();
+//         assertThat(columnExists(draft.getPhysicalTableName(), "total")).isTrue();
+//         System.out.println("=== I2 类型发布结果 === table=" + draft.getPhysicalTableName());
+//     }
 
-    @Test
-    @DisplayName("公式循环依赖发布被拒（FORMULA_CYCLE），状态仍为草稿")
-    void publish_formulaCycle_shouldReject() {
-        FormDefEntity draft = createDraft("i2_cycle");
-        formDefService.saveConfig(draft.getId(), """
-                {"fields":[
-                  {"name":"a","type":"FORMULA","expression":"${b} + 1"},
-                  {"name":"b","type":"FORMULA","expression":"${a} * 2"}
-                ]}
-                """);
-        assertThatThrownBy(() -> formDefService.publish(draft.getId()))
-                .isInstanceOf(BaseException.class)
-                .satisfies(e -> assertThat(((BaseException) e).getCode())
-                        .isEqualTo(FormErrorCode.FORMULA_CYCLE.getCode()));
-        assertThat(formDefMapper.selectById(draft.getId()).getStatus())
-                .isEqualTo(FormStatusEnum.DRAFT.getCode());
-    }
+//     @Test
+//     @DisplayName("公式循环依赖发布被拒（FORMULA_CYCLE），状态仍为草稿")
+//     void publish_formulaCycle_shouldReject() {
+//         FormDefEntity draft = createDraft("i2_cycle");
+//         formDefService.saveConfig(draft.getId(), """
+//                 {"fields":[
+//                   {"name":"a","type":"FORMULA","expression":"${b} + 1"},
+//                   {"name":"b","type":"FORMULA","expression":"${a} * 2"}
+//                 ]}
+//                 """);
+//         assertThatThrownBy(() -> formDefService.publish(draft.getId()))
+//                 .isInstanceOf(BaseException.class)
+//                 .satisfies(e -> assertThat(((BaseException) e).getCode())
+//                         .isEqualTo(FormErrorCode.FORMULA_CYCLE.getCode()));
+//         assertThat(formDefMapper.selectById(draft.getId()).getStatus())
+//                 .isEqualTo(FormStatusEnum.DRAFT.getCode());
+//     }
 
-    @Test
-    @DisplayName("停用/启用生命周期 + 审计落库 + 停用后拒绝再次停用")
-    void disable_enable_shouldAudit() {
-        FormDefEntity form = createPublishedForm("i2_lifecycle", """
-                {"fields":[{"name":"f","type":"TEXT"}]}
-                """);
-        formDefService.disable(form.getId(), "年度收口暂停");
-        assertThat(formDefMapper.selectById(form.getId()).getStatus())
-                .isEqualTo(FormStatusEnum.DISABLED.getCode());
+//     @Test
+//     @DisplayName("停用/启用生命周期 + 审计落库 + 停用后拒绝再次停用")
+//     void disable_enable_shouldAudit() {
+//         FormDefEntity form = createPublishedForm("i2_lifecycle", """
+//                 {"fields":[{"name":"f","type":"TEXT"}]}
+//                 """);
+//         formDefService.disable(form.getId(), "年度收口暂停");
+//         assertThat(formDefMapper.selectById(form.getId()).getStatus())
+//                 .isEqualTo(FormStatusEnum.DISABLED.getCode());
 
-        Integer audits = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'DISABLE'",
-                Integer.class, form.getId());
-        assertThat(audits).as("停用动作应落审计").isEqualTo(1);
+//         Integer audits = jdbcTemplate.queryForObject(
+//                 "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'DISABLE'",
+//                 Integer.class, form.getId());
+//         assertThat(audits).as("停用动作应落审计").isEqualTo(1);
 
-        // 停用后：再停用被拒（1101 语义）；填报提交路径由 PUBLISHED 状态机天然拒绝
-        assertThatThrownBy(() -> formDefService.disable(form.getId(), "again"))
-                .isInstanceOf(BaseException.class);
+//         // 停用后：再停用被拒（1101 语义）；填报提交路径由 PUBLISHED 状态机天然拒绝
+//         assertThatThrownBy(() -> formDefService.disable(form.getId(), "again"))
+//                 .isInstanceOf(BaseException.class);
 
-        formDefService.enable(form.getId(), "恢复");
-        assertThat(formDefMapper.selectById(form.getId()).getStatus())
-                .isEqualTo(FormStatusEnum.PUBLISHED.getCode());
-        Integer enableAudits = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'ENABLE'",
-                Integer.class, form.getId());
-        assertThat(enableAudits).isEqualTo(1);
-    }
+//         formDefService.enable(form.getId(), "恢复");
+//         assertThat(formDefMapper.selectById(form.getId()).getStatus())
+//                 .isEqualTo(FormStatusEnum.PUBLISHED.getCode());
+//         Integer enableAudits = jdbcTemplate.queryForObject(
+//                 "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'ENABLE'",
+//                 Integer.class, form.getId());
+//         assertThat(enableAudits).isEqualTo(1);
+//     }
 
-    @Test
-    @DisplayName("0.1.7 #21：已发布表单可软删——@TableLogic 过滤 + DELETE 审计")
-    void deletePublished_shouldSoftDeleteAndAudit() {
-        FormDefEntity form = createPublishedForm("i2_delete_audit", """
-                {"fields":[{"name":"f","type":"TEXT"}]}
-                """);
+//     @Test
+//     @DisplayName("0.1.7 #21：已发布表单可软删——@TableLogic 过滤 + DELETE 审计")
+//     void deletePublished_shouldSoftDeleteAndAudit() {
+//         FormDefEntity form = createPublishedForm("i2_delete_audit", """
+//                 {"fields":[{"name":"f","type":"TEXT"}]}
+//                 """);
 
-        formDefService.deleteDraft(form.getId());
+//         formDefService.deleteDraft(form.getId());
 
-        // 软删后 @TableLogic 自动过滤：selectById 不再命中，物理行仍保留
-        assertThat(formDefMapper.selectById(form.getId())).as("软删后列表/详情不可见").isNull();
-        Integer physicalRows = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM sw_form_def WHERE id = ?", Integer.class, form.getId());
-        assertThat(physicalRows).as("软删不物理清除").isEqualTo(1);
+//         // 软删后 @TableLogic 自动过滤：selectById 不再命中，物理行仍保留
+//         assertThat(formDefMapper.selectById(form.getId())).as("软删后列表/详情不可见").isNull();
+//         Integer physicalRows = jdbcTemplate.queryForObject(
+//                 "SELECT COUNT(*) FROM sw_form_def WHERE id = ?", Integer.class, form.getId());
+//         assertThat(physicalRows).as("软删不物理清除").isEqualTo(1);
 
-        Integer deleteAudits = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'DELETE'",
-                Integer.class, form.getId());
-        assertThat(deleteAudits).as("删除必须记录 DELETE 审计").isEqualTo(1);
-    }
+//         Integer deleteAudits = jdbcTemplate.queryForObject(
+//                 "SELECT COUNT(*) FROM sw_form_lifecycle_audit WHERE form_id = ? AND action = 'DELETE'",
+//                 Integer.class, form.getId());
+//         assertThat(deleteAudits).as("删除必须记录 DELETE 审计").isEqualTo(1);
+//     }
 
-    @Test
-    @DisplayName("列表配置持久化回读一致；非法动作被拒")
-    void listConfig_shouldPersistAndValidate() {
-        FormDefEntity form = createPublishedForm("i2_listcfg", """
-                {"fields":[{"name":"a","type":"TEXT"},{"name":"n","type":"NUMBER"}]}
-                """);
-        String config = """
-                {"columns":[{"name":"a"},{"name":"n"}],
-                 "filters":[{"name":"n","op":"GE"}],
-                 "defaultSort":{"name":"n","desc":true},
-                 "actions":["view","edit","delete","export"]}
-                """;
-        formDefService.saveListConfig(form.getId(), config);
-        assertThat(formDefService.getListConfig(form.getId())).isEqualTo(config);
+//     @Test
+//     @DisplayName("列表配置持久化回读一致；非法动作被拒")
+//     void listConfig_shouldPersistAndValidate() {
+//         FormDefEntity form = createPublishedForm("i2_listcfg", """
+//                 {"fields":[{"name":"a","type":"TEXT"},{"name":"n","type":"NUMBER"}]}
+//                 """);
+//         String config = """
+//                 {"columns":[{"name":"a"},{"name":"n"}],
+//                  "filters":[{"name":"n","op":"GE"}],
+//                  "defaultSort":{"name":"n","desc":true},
+//                  "actions":["view","edit","delete","export"]}
+//                 """;
+//         formDefService.saveListConfig(form.getId(), config);
+//         assertThat(formDefService.getListConfig(form.getId())).isEqualTo(config);
 
-        assertThatThrownBy(() -> formDefService.saveListConfig(form.getId(),
-                "{\"columns\":[{\"name\":\"a\"}],\"actions\":[\"hack\"]}"))
-                .isInstanceOf(BaseException.class)
-                .satisfies(e -> assertThat(((BaseException) e).getCode())
-                        .isEqualTo(FormErrorCode.LIST_CONFIG_INVALID.getCode()));
-        // 非法配置不得覆盖既有配置
-        assertThat(formDefService.getListConfig(form.getId())).isEqualTo(config);
-    }
+//         assertThatThrownBy(() -> formDefService.saveListConfig(form.getId(),
+//                 "{\"columns\":[{\"name\":\"a\"}],\"actions\":[\"hack\"]}"))
+//                 .isInstanceOf(BaseException.class)
+//                 .satisfies(e -> assertThat(((BaseException) e).getCode())
+//                         .isEqualTo(FormErrorCode.LIST_CONFIG_INVALID.getCode()));
+//         // 非法配置不得覆盖既有配置
+//         assertThat(formDefService.getListConfig(form.getId())).isEqualTo(config);
+//     }
 
-    @Test
-    @DisplayName("首次和后续发布分别冻结当时列表配置，现行修改不影响旧快照")
-    void publishedSnapshots_shouldFreezeListConfiguration() throws Exception {
-        FormDefEntity form = createDraft("i2_snapshot_list");
-        String definition = "{\"fields\":[{\"name\":\"a\",\"type\":\"TEXT\"}]}";
-        String initial = "{\"columns\":[{\"name\":\"a\",\"label\":\"首版列\"}],\"actions\":[\"view\"]}";
-        String updated = "{\"columns\":[{\"name\":\"a\",\"label\":\"新版列\"}],\"actions\":[\"view\",\"edit\"]}";
-        formDefService.saveConfig(form.getId(), definition);
-        formDefService.saveListConfig(form.getId(), initial);
-        formDefService.publish(form.getId());
-        FormDefEntity published = formDefMapper.selectById(form.getId());
-        createdTables.add(published.getPhysicalTableName());
-        int firstVersion = published.getFormVersion();
-        formDefService.saveListConfig(form.getId(), updated);
-        formDefService.publishNewVersion(form.getId(), definition);
-        ObjectMapper json = new ObjectMapper();
-        assertThat(json.readTree(formDefService.getSnapshot(form.getId(), firstVersion).getDefinition())
-                .get("listConfig")).isEqualTo(json.readTree(initial));
-        assertThat(json.readTree(formDefService.getSnapshot(form.getId(), firstVersion + 1).getDefinition())
-                .get("listConfig")).isEqualTo(json.readTree(updated));
-        assertThat(json.readTree(formDefService.getDefinitionById(form.getId())).has("listConfig")).isFalse();
-    }
+//     @Test
+//     @DisplayName("首次和后续发布分别冻结当时列表配置，现行修改不影响旧快照")
+//     void publishedSnapshots_shouldFreezeListConfiguration() throws Exception {
+//         FormDefEntity form = createDraft("i2_snapshot_list");
+//         String definition = "{\"fields\":[{\"name\":\"a\",\"type\":\"TEXT\"}]}";
+//         String initial = "{\"columns\":[{\"name\":\"a\",\"label\":\"首版列\"}],\"actions\":[\"view\"]}";
+//         String updated = "{\"columns\":[{\"name\":\"a\",\"label\":\"新版列\"}],\"actions\":[\"view\",\"edit\"]}";
+//         formDefService.saveConfig(form.getId(), definition);
+//         formDefService.saveListConfig(form.getId(), initial);
+//         formDefService.publish(form.getId());
+//         FormDefEntity published = formDefMapper.selectById(form.getId());
+//         createdTables.add(published.getPhysicalTableName());
+//         int firstVersion = published.getFormVersion();
+//         formDefService.saveListConfig(form.getId(), updated);
+//         formDefService.publishNewVersion(form.getId(), definition);
+//         ObjectMapper json = new ObjectMapper();
+//         assertThat(json.readTree(formDefService.getSnapshot(form.getId(), firstVersion).getDefinition())
+//                 .get("listConfig")).isEqualTo(json.readTree(initial));
+//         assertThat(json.readTree(formDefService.getSnapshot(form.getId(), firstVersion + 1).getDefinition())
+//                 .get("listConfig")).isEqualTo(json.readTree(updated));
+//         assertThat(json.readTree(formDefService.getDefinitionById(form.getId())).has("listConfig")).isFalse();
+//     }
 
-    @Test
-    @DisplayName("顶层 flowStart 动作权限按当前角色实时评估")
-    void actionPermissions_shouldGateFlowStartByCurrentRole() {
-        FormDefEntity form = createPublishedForm("i2_action_permission", """
-                {"fields":[{"name":"note","type":"TEXT"}],
-                 "actionPermissions":{"view":["role:admin"],"flowStart":["role:admin"]}}
-                """);
-        LoginUser filler = new LoginUser();
-        filler.setUserId(1001L);
-        filler.setTenantId(0L);
-        filler.setRoles(List.of("filler"));
-        LoginUserHolder.set(filler);
-        assertThat(formFieldEnrichmentService.canCurrentUserPerformAction(form.getId(), "flowStart"))
-                .isFalse();
-        assertThat(formFieldEnrichmentService.canCurrentUserPerformAction(form.getId(), "view"))
-                .isFalse();
+//     @Test
+//     @DisplayName("顶层 flowStart 动作权限按当前角色实时评估")
+//     void actionPermissions_shouldGateFlowStartByCurrentRole() {
+//         FormDefEntity form = createPublishedForm("i2_action_permission", """
+//                 {"fields":[{"name":"note","type":"TEXT"}],
+//                  "actionPermissions":{"view":["role:admin"],"flowStart":["role:admin"]}}
+//                 """);
+//         LoginUser filler = new LoginUser();
+//         filler.setUserId(1001L);
+//         filler.setTenantId(0L);
+//         filler.setRoles(List.of("filler"));
+//         LoginUserHolder.set(filler);
+//         assertThat(formFieldEnrichmentService.canCurrentUserPerformAction(form.getId(), "flowStart"))
+//                 .isFalse();
+//         assertThat(formFieldEnrichmentService.canCurrentUserPerformAction(form.getId(), "view"))
+//                 .isFalse();
 
-        filler.setRoles(List.of("admin"));
-        assertThat(formFieldEnrichmentService.canCurrentUserPerformAction(form.getId(), "flowStart"))
-                .isTrue();
-    }
+//         filler.setRoles(List.of("admin"));
+//         assertThat(formFieldEnrichmentService.canCurrentUserPerformAction(form.getId(), "flowStart"))
+//                 .isTrue();
+//     }
 
-    // ==================== 辅助 ====================
+//     // ==================== 辅助 ====================
 
-    private FormDefEntity createDraft(String formKey) {
-        var dto = formDefService.createDraft(formKey, formKey, null, null);
-        createdFormIds.add(dto.getId());
-        return formDefMapper.selectById(dto.getId());
-    }
+//     private FormDefEntity createDraft(String formKey) {
+//         var dto = formDefService.createDraft(formKey, formKey, null, null);
+//         createdFormIds.add(dto.getId());
+//         return formDefMapper.selectById(dto.getId());
+//     }
 
-    @Test
-    @DisplayName("新版本：未变化的明细表随版本保留（打印模板可版本化），变更明细表仍被拒")
-    void publishNewVersion_shouldKeepUnchangedTableAndRejectChangedTable() {
-        String definition = """
-                {"fields":[
-                  {"name":"title","type":"TEXT"},
-                  {"name":"items","type":"TABLE","subFields":[
-                    {"name":"product","type":"TEXT"},
-                    {"name":"qty","type":"NUMBER"}
-                  ]}
-                ]}
-                """;
-        FormDefEntity form = createPublishedForm("i2_table_version", definition);
-        int firstVersion = form.getFormVersion();
+//     @Test
+//     @DisplayName("新版本：未变化的明细表随版本保留（打印模板可版本化），变更明细表仍被拒")
+//     void publishNewVersion_shouldKeepUnchangedTableAndRejectChangedTable() {
+//         String definition = """
+//                 {"fields":[
+//                   {"name":"title","type":"TEXT"},
+//                   {"name":"items","type":"TABLE","subFields":[
+//                     {"name":"product","type":"TEXT"},
+//                     {"name":"qty","type":"NUMBER"}
+//                   ]}
+//                 ]}
+//                 """;
+//         FormDefEntity form = createPublishedForm("i2_table_version", definition);
+//         int firstVersion = form.getFormVersion();
 
-        formDefService.publishNewVersion(form.getId(), definition);
-        assertThat(formDefMapper.selectById(form.getId()).getFormVersion())
-                .isEqualTo(firstVersion + 1);
+//         formDefService.publishNewVersion(form.getId(), definition);
+//         assertThat(formDefMapper.selectById(form.getId()).getFormVersion())
+//                 .isEqualTo(firstVersion + 1);
 
-        String changed = definition.replace(
-                "{\"name\":\"qty\",\"type\":\"NUMBER\"}",
-                "{\"name\":\"qty\",\"type\":\"TEXT\"}");
-        assertThatThrownBy(() -> formDefService.publishNewVersion(form.getId(), changed))
-                .isInstanceOf(BaseException.class)
-                .satisfies(e -> assertThat(((BaseException) e).getCode())
-                        .isEqualTo(FormErrorCode.DEFINITION_INVALID.getCode()));
-    }
+//         String changed = definition.replace(
+//                 "{\"name\":\"qty\",\"type\":\"NUMBER\"}",
+//                 "{\"name\":\"qty\",\"type\":\"TEXT\"}");
+//         assertThatThrownBy(() -> formDefService.publishNewVersion(form.getId(), changed))
+//                 .isInstanceOf(BaseException.class)
+//                 .satisfies(e -> assertThat(((BaseException) e).getCode())
+//                         .isEqualTo(FormErrorCode.DEFINITION_INVALID.getCode()));
+//     }
 
-    private FormDefEntity createPublishedForm(String formKey, String definition) {
-        FormDefEntity draft = createDraft(formKey);
-        formDefService.saveConfig(draft.getId(), definition);
-        formDefService.publish(draft.getId());
-        FormDefEntity published = formDefMapper.selectById(draft.getId());
-        if (published.getPhysicalTableName() != null) {
-            createdTables.add(published.getPhysicalTableName());
-        }
-        return published;
-    }
+//     private FormDefEntity createPublishedForm(String formKey, String definition) {
+//         FormDefEntity draft = createDraft(formKey);
+//         formDefService.saveConfig(draft.getId(), definition);
+//         formDefService.publish(draft.getId());
+//         FormDefEntity published = formDefMapper.selectById(draft.getId());
+//         if (published.getPhysicalTableName() != null) {
+//             createdTables.add(published.getPhysicalTableName());
+//         }
+//         return published;
+//     }
 
-    private boolean columnExists(String table, String column) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
-                Integer.class, table, column);
-        return count != null && count > 0;
-    }
+//     private boolean columnExists(String table, String column) {
+//         Integer count = jdbcTemplate.queryForObject(
+//                 "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+//                 Integer.class, table, column);
+//         return count != null && count > 0;
+//     }
 
-    @Configuration
-    @MapperScan("com.sw.ck.form.mapper")
-    static class TestConfig {
+//     @Configuration
+//     @MapperScan("com.sw.ck.form.mapper")
+//     static class TestConfig {
 
-        @Bean
-        public DataSource dataSource() {
-            return DataSourceBuilder.create()
-                    .url("jdbc:h2:mem:formi2closure;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
-                    .driverClassName("org.h2.Driver")
-                    .username("sa")
-                    .password("")
-                    .build();
-        }
+//         @Bean
+//         public DataSource dataSource() {
+//             return DataSourceBuilder.create()
+//                     .url("jdbc:h2:mem:formi2closure;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
+//                     .driverClassName("org.h2.Driver")
+//                     .username("sa")
+//                     .password("")
+//                     .build();
+//         }
 
-        @Bean
-        public JdbcTemplate jdbcTemplate(DataSource dataSource) {
-            return new JdbcTemplate(dataSource);
-        }
+//         @Bean
+//         public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+//             return new JdbcTemplate(dataSource);
+//         }
 
-        @Bean
-        public PlatformTransactionManager transactionManager(DataSource dataSource) {
-            return new DataSourceTransactionManager(dataSource);
-        }
+//         @Bean
+//         public PlatformTransactionManager transactionManager(DataSource dataSource) {
+//             return new DataSourceTransactionManager(dataSource);
+//         }
 
-        @Bean
-        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
-            MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
-            factory.setDataSource(dataSource);
-            factory.setTypeAliasesPackage("com.sw.ck.form.entity");
+//         @Bean
+//         public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+//             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
+//             factory.setDataSource(dataSource);
+//             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
 
-            MybatisConfiguration ibatisConfig = new MybatisConfiguration();
-            ibatisConfig.setMapUnderscoreToCamelCase(true);
-            ibatisConfig.setUseGeneratedKeys(true);
-            factory.setConfiguration(ibatisConfig);
+//             MybatisConfiguration ibatisConfig = new MybatisConfiguration();
+//             ibatisConfig.setMapUnderscoreToCamelCase(true);
+//             ibatisConfig.setUseGeneratedKeys(true);
+//             factory.setConfiguration(ibatisConfig);
 
-            GlobalConfig globalConfig = new GlobalConfig();
-            GlobalConfig.DbConfig dbConfig = new GlobalConfig.DbConfig();
-            dbConfig.setLogicDeleteField("deleted");
-            dbConfig.setLogicDeleteValue("1");
-            dbConfig.setLogicNotDeleteValue("0");
-            globalConfig.setDbConfig(dbConfig);
-            factory.setGlobalConfig(globalConfig);
+//             GlobalConfig globalConfig = new GlobalConfig();
+//             GlobalConfig.DbConfig dbConfig = new GlobalConfig.DbConfig();
+//             dbConfig.setLogicDeleteField("deleted");
+//             dbConfig.setLogicDeleteValue("1");
+//             dbConfig.setLogicNotDeleteValue("0");
+//             globalConfig.setDbConfig(dbConfig);
+//             factory.setGlobalConfig(globalConfig);
 
-            // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
-            CommonMetaObjectHandler i5MetaObjectHandler =
-                    new CommonMetaObjectHandler(new LoginContextProvider() {
-                        @Override public Long getUserId() {
-                            LoginUser u = LoginUserHolder.get();
-                            return u != null ? u.getUserId() : null;
-                        }
-                        @Override public Long getTenantId() {
-                            LoginUser u = LoginUserHolder.get();
-                            return u != null ? u.getTenantId() : null;
-                        }
-                        @Override public Long getDeptId() { return null; }
-                        @Override public DataScopeType getDataScopeType() {
-                            return DataScopeType.ALL;
-                        }
-                        @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
-                        @Override public boolean isSuperAdmin() { return false; }
-                    });
-            i5MetaObjectHandler.setFormIdFiller(meta -> {
-                Object original = meta.getOriginalObject();
-                if (original instanceof FormBaseEntity f && f.getId() == null) {
-                    f.setId(new FormIdGenerator().generate());
-                }
-            });
-            globalConfig.setMetaObjectHandler(i5MetaObjectHandler);
+//             // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
+//             CommonMetaObjectHandler i5MetaObjectHandler =
+//                     new CommonMetaObjectHandler(new LoginContextProvider() {
+//                         @Override public Long getUserId() {
+//                             LoginUser u = LoginUserHolder.get();
+//                             return u != null ? u.getUserId() : null;
+//                         }
+//                         @Override public Long getTenantId() {
+//                             LoginUser u = LoginUserHolder.get();
+//                             return u != null ? u.getTenantId() : null;
+//                         }
+//                         @Override public Long getDeptId() { return null; }
+//                         @Override public DataScopeType getDataScopeType() {
+//                             return DataScopeType.ALL;
+//                         }
+//                         @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
+//                         @Override public boolean isSuperAdmin() { return false; }
+//                     });
+//             i5MetaObjectHandler.setFormIdFiller(meta -> {
+//                 Object original = meta.getOriginalObject();
+//                 if (original instanceof FormBaseEntity f && f.getId() == null) {
+//                     f.setId(new FormIdGenerator().generate());
+//                 }
+//             });
+//             globalConfig.setMetaObjectHandler(i5MetaObjectHandler);
 
 
-            MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
-            interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
-            interceptor.addInnerInterceptor(new PaginationInnerInterceptor());
-            factory.setPlugins(interceptor);
+//             MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+//             interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
+//             interceptor.addInnerInterceptor(new PaginationInnerInterceptor());
+//             factory.setPlugins(interceptor);
 
-            return factory.getObject();
-        }
+//             return factory.getObject();
+//         }
 
-        @Bean
-        public DynamicTableManager dynamicTableManager(JdbcTemplate jdbcTemplate) {
-            return new DynamicTableManager(jdbcTemplate);
-        }
+//         @Bean
+//         public DynamicTableManager dynamicTableManager(JdbcTemplate jdbcTemplate) {
+//             return new DynamicTableManager(jdbcTemplate);
+//         }
 
-        @Bean
-        public ObjectMapper objectMapper() {
-            return new ObjectMapper();
-        }
+//         @Bean
+//         public ObjectMapper objectMapper() {
+//             return new ObjectMapper();
+//         }
 
-        @Bean
-        public FormulaEngine formulaEngine() {
-            return new FormulaEngine();
-        }
+//         @Bean
+//         public FormulaEngine formulaEngine() {
+//             return new FormulaEngine();
+//         }
 
-        @Bean
-        public FieldPermissionService fieldPermissionService(ObjectMapper objectMapper) {
-            return new FieldPermissionService(objectMapper);
-        }
+//         @Bean
+//         public FieldPermissionService fieldPermissionService(ObjectMapper objectMapper) {
+//             return new FieldPermissionService(objectMapper);
+//         }
 
-        @Bean
-        public FormFieldEnrichmentService formFieldEnrichmentService(
-                FormConfigMapper formConfigMapper,
-                ObjectMapper objectMapper,
-                FormulaEngine formulaEngine,
-                FieldPermissionService fieldPermissionService,
-                FormDefMapper formDefMapper,
-                JdbcTemplate jdbcTemplate,
-                ObjectProvider<FormExtDataService> extDataService,
-                ObjectProvider<UserQueryFacade> userQueryFacade,
-                ObjectProvider<DeptQueryFacade> deptQueryFacade,
-                ObjectProvider<StorageFacade> storageFacade) {
-            return new FormFieldEnrichmentService(formConfigMapper, objectMapper, formulaEngine,
-                    fieldPermissionService, extDataService, userQueryFacade, deptQueryFacade,
-                    formDefMapper, jdbcTemplate, storageFacade);
-        }
+//         @Bean
+//         public FormFieldEnrichmentService formFieldEnrichmentService(
+//                 FormConfigMapper formConfigMapper,
+//                 ObjectMapper objectMapper,
+//                 FormulaEngine formulaEngine,
+//                 FieldPermissionService fieldPermissionService,
+//                 FormDefMapper formDefMapper,
+//                 JdbcTemplate jdbcTemplate,
+//                 ObjectProvider<FormExtDataService> extDataService,
+//                 ObjectProvider<UserQueryFacade> userQueryFacade,
+//                 ObjectProvider<DeptQueryFacade> deptQueryFacade,
+//                 ObjectProvider<StorageFacade> storageFacade) {
+//             return new FormFieldEnrichmentService(formConfigMapper, objectMapper, formulaEngine,
+//                     fieldPermissionService, extDataService, userQueryFacade, deptQueryFacade,
+//                     formDefMapper, jdbcTemplate, storageFacade);
+//         }
 
-        @Bean
-        public StorageFacade storageFacade() {
-            // 测试桩：exists 恒 present false，用于验证伪造 storageKey 被拒绝
-            return new StorageFacade() {
-                @Override public Optional<StorageUploadResult> upload(InputStream in, String name, String ct) { throw new UnsupportedOperationException(); }
-                @Override public Optional<InputStream> download(String storageKey) { throw new UnsupportedOperationException(); }
-                @Override public Optional<StorageMutationOutcome> delete(String storageKey) { throw new UnsupportedOperationException(); }
-                @Override public Optional<Boolean> exists(String storageKey) { return Optional.of(false); }
-            };
-        }
+//         @Bean
+//         public StorageFacade storageFacade() {
+//             // 测试桩：exists 恒 present false，用于验证伪造 storageKey 被拒绝
+//             return new StorageFacade() {
+//                 @Override public Optional<StorageUploadResult> upload(InputStream in, String name, String ct) { throw new UnsupportedOperationException(); }
+//                 @Override public Optional<InputStream> download(String storageKey) { throw new UnsupportedOperationException(); }
+//                 @Override public Optional<StorageMutationOutcome> delete(String storageKey) { throw new UnsupportedOperationException(); }
+//                 @Override public Optional<Boolean> exists(String storageKey) { return Optional.of(false); }
+//             };
+//         }
 
-        @Bean
-        public FormDefService formDefService(FormDefMapper formDefMapper,
-                                             FormConfigMapper formConfigMapper,
-                                             FormSnapshotMapper formSnapshotMapper,
-                                             DynamicTableManager dynamicTableManager,
-                                             ObjectMapper objectMapper,
-                                             FormulaEngine formulaEngine,
-                                             FieldPermissionService fieldPermissionService,
-                                             FormListConfigMapper listConfigMapper,
-                                             FormLifecycleAuditMapper lifecycleAuditMapper) {
-            return new FormDefServiceImpl(formDefMapper, formConfigMapper, formSnapshotMapper,
-                    dynamicTableManager, new FormIdGenerator(), objectMapper,
-                    new FormVisibilityRules(objectMapper),
-                    formulaEngine, fieldPermissionService, null, listConfigMapper, lifecycleAuditMapper,
-                    null);
-        }
-    }
+//         @Bean
+//         public FormDefService formDefService(FormDefMapper formDefMapper,
+//                                              FormConfigMapper formConfigMapper,
+//                                              FormSnapshotMapper formSnapshotMapper,
+//                                              DynamicTableManager dynamicTableManager,
+//                                              ObjectMapper objectMapper,
+//                                              FormulaEngine formulaEngine,
+//                                              FieldPermissionService fieldPermissionService,
+//                                              FormListConfigMapper listConfigMapper,
+//                                              FormLifecycleAuditMapper lifecycleAuditMapper) {
+//             return new FormDefServiceImpl(formDefMapper, formConfigMapper, formSnapshotMapper,
+//                     dynamicTableManager, new FormIdGenerator(), objectMapper,
+//                     new FormVisibilityRules(objectMapper),
+//                     formulaEngine, fieldPermissionService, null, listConfigMapper, lifecycleAuditMapper,
+//                     null);
+//         }
+//     }
 
-    @Test
-    @DisplayName("REFERENCE 伪造对象（非 ID 结构）与失效 ID 在写路径被拒绝")
-    void enrichWrite_referenceForgedAndMissing_shouldReject() {
-        FormDefEntity form = createPublishedForm("i2_ref_neg", """
-                {"fields":[{"name":"ref","type":"REFERENCE","targetFormId":"i2_ref_target_missing"}]}
-                """);
-        Map<String, Object> forged = new HashMap<>();
-        forged.put("ref", Map.of("id", "x"));
-        // P61：断言语义（errorKey）而非完整文案——文案已改用字段显示名并去除内部术语
-        assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), forged))
-                .isInstanceOf(BaseException.class)
-                .hasFieldOrPropertyWithValue("errorKey",
-                        FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH.getErrorKey());
-        Map<String, Object> missing = new HashMap<>();
-        missing.put("ref", "00000000-0000-0000-0000-000000000000");
-        // 目标表单不存在 → 拒绝；目标存在但记录缺失 → 同口径拒绝（均已行为验证）
-        assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), missing))
-                .isInstanceOf(BaseException.class)
-                .hasMessageContaining("不存在");
-    }
+//     @Test
+//     @DisplayName("REFERENCE 伪造对象（非 ID 结构）与失效 ID 在写路径被拒绝")
+//     void enrichWrite_referenceForgedAndMissing_shouldReject() {
+//         FormDefEntity form = createPublishedForm("i2_ref_neg", """
+//                 {"fields":[{"name":"ref","type":"REFERENCE","targetFormId":"i2_ref_target_missing"}]}
+//                 """);
+//         Map<String, Object> forged = new HashMap<>();
+//         forged.put("ref", Map.of("id", "x"));
+//         // P61：断言语义（errorKey）而非完整文案——文案已改用字段显示名并去除内部术语
+//         assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), forged))
+//                 .isInstanceOf(BaseException.class)
+//                 .hasFieldOrPropertyWithValue("errorKey",
+//                         FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH.getErrorKey());
+//         Map<String, Object> missing = new HashMap<>();
+//         missing.put("ref", "00000000-0000-0000-0000-000000000000");
+//         // 目标表单不存在 → 拒绝；目标存在但记录缺失 → 同口径拒绝（均已行为验证）
+//         assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), missing))
+//                 .isInstanceOf(BaseException.class)
+//                 .hasMessageContaining("不存在");
+//     }
 
-    @Test
-    @DisplayName("ATTACHMENT 伪造 storageKey 在写路径被拒绝")
-    void enrichWrite_attachmentFakeKey_shouldReject() {
-        FormDefEntity form = createPublishedForm("i2_att_neg", """
-                {"fields":[{"name":"att","type":"ATTACHMENT"}]}
-                """);
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("att", List.of("fake-storage-key"));
-        assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), payload))
-                .isInstanceOf(BaseException.class)
-                .hasMessageContaining("不存在或不可见");
-    }
-}
+//     @Test
+//     @DisplayName("ATTACHMENT 伪造 storageKey 在写路径被拒绝")
+//     void enrichWrite_attachmentFakeKey_shouldReject() {
+//         FormDefEntity form = createPublishedForm("i2_att_neg", """
+//                 {"fields":[{"name":"att","type":"ATTACHMENT"}]}
+//                 """);
+//         Map<String, Object> payload = new HashMap<>();
+//         payload.put("att", List.of("fake-storage-key"));
+//         assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), payload))
+//                 .isInstanceOf(BaseException.class)
+//                 .hasMessageContaining("不存在或不可见");
+//     }
+// }

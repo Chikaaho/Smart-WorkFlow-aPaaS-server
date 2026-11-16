@@ -1,6 +1,6 @@
 package com.sw.ck.job.impl;
 
-import com.sw.ck.job.dto.JobInfoDTO;
+import com.sw.ck.job.vo.JobInfoVO;
 import com.sw.ck.job.entity.JobInfo;
 import com.sw.ck.job.facade.JobFacade;
 import com.sw.ck.job.service.JobInfoService;
@@ -22,12 +22,12 @@ public class JobFacadeImpl implements JobFacade {
     private final JobInfoService jobInfoService;
 
     @Override
-    public Optional<JobInfoDTO> getById(Long jobId) {
+    public Optional<JobInfoVO> getById(Long jobId) {
         return toDTO(jobInfoService.getById(jobId));
     }
 
     @Override
-    public Optional<JobInfoDTO> getByJobName(String jobName) {
+    public Optional<JobInfoVO> getByJobName(String jobName) {
         return toDTO(jobInfoService.getByJobName(jobName));
     }
 
@@ -38,11 +38,11 @@ public class JobFacadeImpl implements JobFacade {
      * 契约语义：Entity 缺失（null，即查询目标不存在）→ empty。
      * </p>
      */
-    private Optional<JobInfoDTO> toDTO(JobInfo entity) {
+    private Optional<JobInfoVO> toDTO(JobInfo entity) {
         if (entity == null) {
             return Optional.empty();
         }
-        JobInfoDTO dto = new JobInfoDTO();
+        JobInfoVO dto = new JobInfoVO();
         dto.setId(entity.getId());
         dto.setJobName(entity.getJobName());
         dto.setJobGroup(entity.getJobGroup());

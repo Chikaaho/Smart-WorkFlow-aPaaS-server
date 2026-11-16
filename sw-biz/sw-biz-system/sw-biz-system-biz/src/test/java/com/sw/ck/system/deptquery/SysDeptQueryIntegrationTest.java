@@ -376,19 +376,19 @@ class SysDeptQueryIntegrationTest {
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
             // @Lazy 对齐生产装配：DeptScopeProviderImpl 处于拦截器链依赖图中
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean
         public SysDeptService sysDeptService(SysUserService sysUserService) {
-            return new SysDeptServiceImpl(sysUserService);
+            return new SysDeptServiceImpl();
         }
 
         @Bean
         public SysUserService sysUserService(PasswordEncoder passwordEncoder, SysUserRoleMapper userRoleMapper,
                                              SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
                                              SysPostMapper postMapper) {
-            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper);
+            return new SysUserServiceImpl();
         }
 
         @Bean

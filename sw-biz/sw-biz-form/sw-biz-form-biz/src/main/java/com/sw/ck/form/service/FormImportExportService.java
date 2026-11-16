@@ -12,7 +12,7 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
@@ -225,7 +225,7 @@ public class FormImportExportService {
      * 计算模板签名：formKey + formVersion + 主字段映射 + 子表字段映射指纹。
      * 表单结构（字段增删改/类型变更）或重新发布（formVersion 递增）都会使签名变化。
      */
-    private String buildTemplateSignature(FormDefDTO formDef,
+    private String buildTemplateSignature(FormDefVO formDef,
                                           List<FieldMeta> mainFields,
                                           Map<String, List<FieldMeta>> tableFields) {
         StringBuilder sb = new StringBuilder();
@@ -419,7 +419,7 @@ public class FormImportExportService {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,
                     "关联字段 '" + field.name() + "' 未配置目标表单，无法导入");
         }
-        FormDefDTO targetDef = formDefService.getFormDefByKey(field.targetFormId());
+        FormDefVO targetDef = formDefService.getFormDefByKey(field.targetFormId());
         if (targetDef == null || targetDef.getPhysicalTableName() == null
                 || targetDef.getPhysicalTableName().isBlank()) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,
@@ -793,7 +793,7 @@ public class FormImportExportService {
             }
             if (ids.isEmpty()) continue;
 
-            FormDefDTO targetDef;
+            FormDefVO targetDef;
             try {
                 targetDef = formDefService.getFormDefByKey(field.targetFormId());
             } catch (Exception e) {
@@ -999,7 +999,7 @@ public class FormImportExportService {
 
     // ==================== 上下文加载 ====================
 
-    private record FormContext(FormDefDTO formDef,
+    private record FormContext(FormDefVO formDef,
                                FormDefEntity formDefEntity,
                                List<FieldMeta> mainFields,
                                Map<String, List<FieldMeta>> tableFields) {}
@@ -1013,7 +1013,7 @@ public class FormImportExportService {
     }
 
     private FormContext loadFormContext(String formKey, String action) {
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }

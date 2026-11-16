@@ -10,9 +10,9 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
-import com.sw.ck.openapi.biz.dto.OpenApiCompleteTaskResultDTO;
-import com.sw.ck.openapi.biz.dto.OpenApiStartResultDTO;
-import com.sw.ck.openapi.biz.dto.OpenApiStatusDTO;
+import com.sw.ck.openapi.biz.vo.OpenApiCompleteTaskResultVO;
+import com.sw.ck.openapi.biz.vo.OpenApiStartResultVO;
+import com.sw.ck.openapi.biz.vo.OpenApiStatusVO;
 import com.sw.ck.openapi.biz.entity.OpenApiIdempotency;
 import com.sw.ck.openapi.biz.mapper.OpenApiIdempotencyMapper;
 import lombok.extern.log4j.Log4j2;
@@ -45,7 +45,7 @@ public class OpenApiProcessService {
     private OpenApiIdempotencyMapper idempotencyMapper;
 
     /** 外部发起：返回 recordId（业务键），状态经查询端点获取。 */
-    public OpenApiStartResultDTO start(OpenApiAuthService.OpenApiAuthContext context,
+    public OpenApiStartResultVO start(OpenApiAuthService.OpenApiAuthContext context,
                                        String formKey, Map<String, Object> formData,
                                        String businessKey, String idempotencyKey) {
         String idemRef = idempotencyLookup(context.appId(), idempotencyKey, businessKey);
@@ -58,7 +58,7 @@ public class OpenApiProcessService {
             String recordId = submitFacade.submit(formKey, formData, idemKey(context, idempotencyKey, businessKey))
                     .orElseThrow(() -> new IllegalStateException("表单提交未返回记录标识"));
             idempotencyRegister(context.appId(), idemKey(context, idempotencyKey, businessKey), recordId);
-            OpenApiStartResultDTO result = new OpenApiStartResultDTO();
+            OpenApiStartResultVO result = new OpenApiStartResultVO();
             result.setRecordId(recordId);
             result.setIdempotentReplay(false);
             return result;
@@ -75,7 +75,7 @@ public class OpenApiProcessService {
     }
 
     /** 状态查询：仅返回应用发起（businessKey=recordId）且同租户的实例状态。 */
-    public OpenApiStatusDTO status(OpenApiAuthService.OpenApiAuthContext context,
+    public OpenApiStatusVO status(OpenApiAuthService.OpenApiAuthContext context,
                                    String processInstanceId) {
         // 业务键缺失或空白 = 该实例对应用不可见（保持原判定与错误码）
         String businessKey = bpmTaskFacade.getBusinessKey(processInstanceId)
@@ -92,7 +92,7 @@ public class OpenApiProcessService {
         String status = bpmRuntimeFacade.getProcessInstanceStatus(processInstanceId)
                 .map(BpmProcessStatus::name)
                 .orElse("NOT_FOUND");
-        OpenApiStatusDTO result = new OpenApiStatusDTO();
+        OpenApiStatusVO result = new OpenApiStatusVO();
         result.setProcessInstanceId(processInstanceId);
         result.setBusinessKey(businessKey);
         result.setStatus(status);
@@ -100,7 +100,7 @@ public class OpenApiProcessService {
     }
 
     /** 嵌入式任务办理：completeAsUser 服务端校验任务归属（assignee/candidate）。 */
-    public OpenApiCompleteTaskResultDTO completeTask(OpenApiAuthService.OpenApiAuthContext context,
+    public OpenApiCompleteTaskResultVO completeTask(OpenApiAuthService.OpenApiAuthContext context,
                                                      String taskId, Map<String, Object> variables) {
         var task = bpmTaskFacade.getTask(taskId)
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
@@ -115,7 +115,7 @@ public class OpenApiProcessService {
         }
         bpmTaskFacade.completeAsUser(taskId, String.valueOf(context.actAsUserId()),
                 variables == null ? Map.of() : variables);
-        OpenApiCompleteTaskResultDTO result = new OpenApiCompleteTaskResultDTO();
+        OpenApiCompleteTaskResultVO result = new OpenApiCompleteTaskResultVO();
         result.setTaskId(taskId);
         result.setCompleted(true);
         return result;
@@ -155,8 +155,8 @@ public class OpenApiProcessService {
         }
     }
 
-    private static OpenApiStartResultDTO statusPayload(String recordId, boolean replay) {
-        OpenApiStartResultDTO result = new OpenApiStartResultDTO();
+    private static OpenApiStartResultVO statusPayload(String recordId, boolean replay) {
+        OpenApiStartResultVO result = new OpenApiStartResultVO();
         result.setRecordId(recordId);
         result.setIdempotentReplay(replay);
         return result;

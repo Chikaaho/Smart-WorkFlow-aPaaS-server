@@ -7,11 +7,11 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.form.api.dto.FormAppContentDTO;
-import com.sw.ck.form.api.dto.FormAppDTO;
-import com.sw.ck.form.api.dto.FormAppDirDTO;
+import com.sw.ck.form.api.vo.FormAppContentVO;
+import com.sw.ck.form.api.vo.FormAppVO;
+import com.sw.ck.form.api.vo.FormAppDirVO;
 import com.sw.ck.form.api.dto.FormAppDirSaveReq;
-import com.sw.ck.form.api.dto.FormAppFormItemDTO;
+import com.sw.ck.form.api.vo.FormAppFormItemVO;
 import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
 import com.sw.ck.form.api.exception.FormErrorCode;
@@ -79,7 +79,7 @@ public class FormAppServiceImpl implements FormAppService {
     // ==================== 管理端 ====================
 
     @Override
-    public List<FormAppDTO> listApps(String keyword, Long tenantIdFilter) {
+    public List<FormAppVO> listApps(String keyword, Long tenantIdFilter) {
         LambdaQueryWrapper<FormAppEntity> query = Wrappers.<FormAppEntity>lambdaQuery()
                 .orderByAsc(FormAppEntity::getSortNo)
                 .orderByAsc(FormAppEntity::getCreateTime);
@@ -104,7 +104,7 @@ public class FormAppServiceImpl implements FormAppService {
     }
 
     @Override
-    public FormAppDTO getApp(String id) {
+    public FormAppVO getApp(String id) {
         FormAppEntity app = requireApp(id);
         Long dirCount = dirMapper.selectCount(Wrappers.<FormAppDirEntity>lambdaQuery()
                 .eq(FormAppDirEntity::getAppId, id));
@@ -118,7 +118,7 @@ public class FormAppServiceImpl implements FormAppService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormAppDTO createApp(FormAppSaveReq req) {
+    public FormAppVO createApp(FormAppSaveReq req) {
         String name = requireName(req == null ? null : req.getName(), "应用名称");
         String scope = normalizeScope(req == null ? null : req.getVisibleScopeType());
         AppScopeSets scopeSets = readScopeSets(req);
@@ -144,7 +144,7 @@ public class FormAppServiceImpl implements FormAppService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormAppDTO updateApp(String id, FormAppSaveReq req) {
+    public FormAppVO updateApp(String id, FormAppSaveReq req) {
         FormAppEntity app = requireApp(id);
         String name = requireName(req == null ? null : req.getName(), "应用名称");
         requireNameAvailable(name, id);
@@ -221,7 +221,7 @@ public class FormAppServiceImpl implements FormAppService {
     }
 
     @Override
-    public FormAppContentDTO getAppContent(String appId) {
+    public FormAppContentVO getAppContent(String appId) {
         FormAppEntity app = requireApp(appId);
         List<FormAppDirEntity> dirs = listDirs(appId);
         List<FormDefEntity> forms = listBusinessForms(appId);
@@ -230,7 +230,7 @@ public class FormAppServiceImpl implements FormAppService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormAppDirDTO createDir(String appId, FormAppDirSaveReq req) {
+    public FormAppDirVO createDir(String appId, FormAppDirSaveReq req) {
         FormAppEntity app = requireApp(appId);
         if (!STATUS_ENABLED.equals(app.getStatus())) {
             throw new BaseException(FormErrorCode.APP_DISABLED, "应用已停用，不能新建目录");
@@ -249,7 +249,7 @@ public class FormAppServiceImpl implements FormAppService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormAppDirDTO updateDir(String dirId, FormAppDirSaveReq req) {
+    public FormAppDirVO updateDir(String dirId, FormAppDirSaveReq req) {
         FormAppDirEntity dir = requireDir(dirId);
         String name = requireName(req == null ? null : req.getName(), "目录名称");
         requireDirNameAvailable(dir.getAppId(), name, dirId);
@@ -304,7 +304,7 @@ public class FormAppServiceImpl implements FormAppService {
     // ==================== 用户端 ====================
 
     @Override
-    public List<FormAppDTO> listVisibleAppsForCurrentUser() {
+    public List<FormAppVO> listVisibleAppsForCurrentUser() {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null || loginUser.getUserId() == null) {
             return List.of();
@@ -342,7 +342,7 @@ public class FormAppServiceImpl implements FormAppService {
     }
 
     @Override
-    public FormAppContentDTO getVisibleAppContent(String appId) {
+    public FormAppContentVO getVisibleAppContent(String appId) {
         FormAppEntity app = appMapper.selectById(appId);
         if (app == null || !STATUS_ENABLED.equals(app.getStatus())) {
             throw new BaseException(FormErrorCode.APP_NOT_FOUND);
@@ -538,30 +538,30 @@ public class FormAppServiceImpl implements FormAppService {
                 .eq(FormAppScopeEntity::getAppId, appId));
     }
 
-    private FormAppContentDTO buildContent(FormAppEntity app, List<FormAppDirEntity> dirs,
+    private FormAppContentVO buildContent(FormAppEntity app, List<FormAppDirEntity> dirs,
                                            List<FormDefEntity> forms, long formCount) {
         Map<String, List<FormDefEntity>> byDir = forms.stream()
                 .filter(form -> form.getDirId() != null)
                 .collect(Collectors.groupingBy(FormDefEntity::getDirId));
-        List<FormAppDirDTO> dirDtos = dirs.stream()
+        List<FormAppDirVO> dirDtos = dirs.stream()
                 .map(dir -> {
                     List<FormDefEntity> dirForms = byDir.getOrDefault(dir.getId(), List.of());
                     return toDirDTO(dir, (long) dirForms.size(), toFormItems(dirForms));
                 })
                 .toList();
-        List<FormAppFormItemDTO> directForms = toFormItems(forms.stream()
+        List<FormAppFormItemVO> directForms = toFormItems(forms.stream()
                 .filter(form -> form.getDirId() == null)
                 .toList());
-        return FormAppContentDTO.builder()
+        return FormAppContentVO.builder()
                 .app(toDTO(app, formCount, (long) dirs.size(), null))
                 .dirs(dirDtos)
                 .directForms(directForms)
                 .build();
     }
 
-    private List<FormAppFormItemDTO> toFormItems(List<FormDefEntity> forms) {
+    private List<FormAppFormItemVO> toFormItems(List<FormDefEntity> forms) {
         return forms.stream()
-                .map(form -> FormAppFormItemDTO.builder()
+                .map(form -> FormAppFormItemVO.builder()
                         .formId(form.getId())
                         .formKey(form.getFormKey())
                         .name(form.getName())
@@ -572,8 +572,8 @@ public class FormAppServiceImpl implements FormAppService {
                 .toList();
     }
 
-    private FormAppDirDTO toDirDTO(FormAppDirEntity dir, Long formCount, List<FormAppFormItemDTO> forms) {
-        return FormAppDirDTO.builder()
+    private FormAppDirVO toDirDTO(FormAppDirEntity dir, Long formCount, List<FormAppFormItemVO> forms) {
+        return FormAppDirVO.builder()
                 .id(dir.getId())
                 .appId(dir.getAppId())
                 .name(dir.getName())
@@ -583,7 +583,7 @@ public class FormAppServiceImpl implements FormAppService {
                 .build();
     }
 
-    private FormAppDTO toDTO(FormAppEntity app, Long formCount, Long dirCount,
+    private FormAppVO toDTO(FormAppEntity app, Long formCount, Long dirCount,
                              List<FormAppScopeEntity> scopeRows) {
         List<Long> visibleUserIds = null;
         List<Long> visibleDeptIds = null;
@@ -601,7 +601,7 @@ public class FormAppServiceImpl implements FormAppService {
             visibleTenantIds = scopeRowsOf(scopeRows, FormAppScopeTypes.TENANT)
                     .map(Long::valueOf).sorted().toList();
         }
-        return FormAppDTO.builder()
+        return FormAppVO.builder()
                 .id(app.getId())
                 .name(app.getName())
                 .icon(app.getIcon())

@@ -5,7 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.api.IotCommandReservationFacade.IotReservationView;
-import com.sw.ck.iot.dto.IotReservationCancelDTO;
+import com.sw.ck.iot.vo.IotReservationCancelVO;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -55,7 +55,7 @@ public class IotReservationController {
     /** 取消待触发预约（独立最小权限；竞争结果确定并留审计）。 */
     @PostMapping("/{id}/cancel")
     @PreAuthorize("@ss.hasPermi('iot:reservation:cancel')")
-    public R<IotReservationCancelDTO> cancel(@PathVariable Long id,
+    public R<IotReservationCancelVO> cancel(@PathVariable Long id,
                                              @RequestBody CancelRequest request) {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         Long actorId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
@@ -63,8 +63,8 @@ public class IotReservationController {
                 .cancel(tenantId, id, actorId, request == null ? null : request.reason());
         // empty = 租户内无此预约（含他租户主键探测）：明确 404，不进系统错误，不写任何数据
         return outcome
-                .<R<IotReservationCancelDTO>>map(value -> {
-                    IotReservationCancelDTO result = new IotReservationCancelDTO();
+                .<R<IotReservationCancelVO>>map(value -> {
+                    IotReservationCancelVO result = new IotReservationCancelVO();
                     result.setOutcome(value);
                     return R.ok(result);
                 })

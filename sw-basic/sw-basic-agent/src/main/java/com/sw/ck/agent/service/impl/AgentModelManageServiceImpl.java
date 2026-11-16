@@ -6,9 +6,9 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
-import com.sw.ck.agent.dto.AgentModelDTO;
+import com.sw.ck.agent.vo.AgentModelVO;
 import com.sw.ck.agent.dto.AgentModelSaveReqDTO;
-import com.sw.ck.agent.dto.AgentModelTestConnectionRespDTO;
+import com.sw.ck.agent.vo.AgentModelTestConnectionRespVO;
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
 import com.sw.ck.agent.mapper.AgentModelMapper;
@@ -53,7 +53,7 @@ public class AgentModelManageServiceImpl
     private AgentModelRuntimeService modelRuntimeService;
 
     @Override
-    public PageResult<AgentModelDTO> pageModels(PageParam pageParam, Long providerId, String nameKeyword) {
+    public PageResult<AgentModelVO> pageModels(PageParam pageParam, Long providerId, String nameKeyword) {
         String keyword = nameKeyword != null && !nameKeyword.isBlank() ? nameKeyword : null;
         IPage<AgentModel> page = baseMapper.selectPage(
                 new Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
@@ -65,7 +65,7 @@ public class AgentModelManageServiceImpl
     }
 
     @Override
-    public List<AgentModelDTO> listEnabled(String capability) {
+    public List<AgentModelVO> listEnabled(String capability) {
         List<AgentModel> models = baseMapper.selectList(
                 Wrappers.<AgentModel>lambdaQuery()
                         .eq(AgentModel::getEnabled, true)
@@ -81,7 +81,7 @@ public class AgentModelManageServiceImpl
     }
 
     @Override
-    public AgentModelDTO getById(Long id) {
+    public AgentModelVO getById(Long id) {
         return toDTO(requireEntity(id));
     }
 
@@ -128,11 +128,11 @@ public class AgentModelManageServiceImpl
     }
 
     @Override
-    public AgentModelTestConnectionRespDTO testConnection(Long id) {
+    public AgentModelTestConnectionRespVO testConnection(Long id) {
         // acquire 会做存在性 + 模型/供应商启停校验，并按修订号复用单例（真实装配）
         AgentModelRuntimeService.ModelInstance instance = modelRuntimeService.acquire(id);
         long start = System.currentTimeMillis();
-        AgentModelTestConnectionRespDTO resp = new AgentModelTestConnectionRespDTO();
+        AgentModelTestConnectionRespVO resp = new AgentModelTestConnectionRespVO();
         try {
             ChatResponse response = instance.chatModel().chat(ChatRequest.builder()
                     .messages(UserMessage.from("ping"))
@@ -231,8 +231,8 @@ public class AgentModelManageServiceImpl
         return entity;
     }
 
-    private AgentModelDTO toDTO(AgentModel entity) {
-        AgentModelDTO dto = new AgentModelDTO();
+    private AgentModelVO toDTO(AgentModel entity) {
+        AgentModelVO dto = new AgentModelVO();
         dto.setId(entity.getId());
         dto.setProviderId(entity.getProviderId());
         dto.setName(entity.getName());

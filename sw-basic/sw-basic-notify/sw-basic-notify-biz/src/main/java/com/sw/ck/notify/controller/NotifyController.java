@@ -28,6 +28,7 @@ import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
 import com.sw.ck.notify.api.NotifySendStatusEnum;
+import com.sw.ck.notify.vo.NotifyMessageVO;
 /**
  * 通知消息接收侧控制器（M05 Step 3 — 第四环闭合）。
  * <p>
@@ -69,7 +70,7 @@ public class NotifyController {
      * @return 通知列表（可能为空）
      */
     @GetMapping
-    public R<List<NotifyMessage>> messages(
+    public R<List<NotifyMessageVO>> messages(
             @RequestParam(required = false) Boolean read,
             @RequestParam(required = false) String keyword) {
         LoginUser loginUser = LoginUserHolder.get();
@@ -81,7 +82,7 @@ public class NotifyController {
 
         log.debug("通知列表查询: userId={}, read={}, keyword={}, count={}",
                 currentUserId, read, keyword, list.size());
-        return R.ok(list);
+        return R.ok(list == null ? List.of() : list.stream().map(NotifyMessageVO::from).toList());
     }
 
     /**

@@ -7,7 +7,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.iot.api.IotFormContractChecker;
 
@@ -56,7 +56,7 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
             throw new IllegalStateException("表单服务未装配，无法执行表单契约校验: " + processTemplateKey);
         }
         // empty = 该 formKey 无表单定义（原 null 返回路径）：与未发布同判
-        Optional<FormDefDTO> formLookup = formService.getFormDef(def.getFormKey());
+        Optional<FormDefVO> formLookup = formService.getFormDef(def.getFormKey());
         if (formLookup.isEmpty()
                 || !"PUBLISHED".equals(String.valueOf(formLookup.orElseThrow().getStatus()))) {
             errors.add("绑定表单未发布: " + def.getFormKey());

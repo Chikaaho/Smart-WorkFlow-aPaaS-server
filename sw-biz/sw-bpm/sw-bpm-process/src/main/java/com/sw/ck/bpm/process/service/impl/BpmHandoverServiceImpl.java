@@ -1,7 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
@@ -93,7 +93,7 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
 
         // 1) 未完成可办理任务迁移（稳定任务标识 + 前后责任人 + 结果/原因逐项落库）
         // empty = 租户/处理人上下文缺失：无待迁移任务（原空列表口径）
-        for (BpmTaskDTO task : bpmTaskFacade.queryTodo(tenant, String.valueOf(fromUserId))
+        for (BpmTaskVO task : bpmTaskFacade.queryTodo(tenant, String.valueOf(fromUserId))
                 .orElse(List.of())) {
             if (!scope.isEmpty() && !scope.contains(task.getProcessDefinitionKey())) {
                 continue;

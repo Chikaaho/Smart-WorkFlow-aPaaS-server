@@ -6,7 +6,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.sw.ck.bpm.process.dto.AttachmentUploadResultDTO;
+import com.sw.ck.bpm.process.vo.AttachmentUploadResultVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.CopyRecord;
@@ -77,7 +77,7 @@ public class WorkflowAttachmentController {
 
     /** 上传附件/图片（登录用户），返回 storageKey 供表单字段关联。 */
     @PostMapping("/upload")
-    public R<AttachmentUploadResultDTO> upload(@RequestParam("file") MultipartFile file) throws IOException {
+    public R<AttachmentUploadResultVO> upload(@RequestParam("file") MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "上传文件不能为空");
         }
@@ -85,7 +85,7 @@ public class WorkflowAttachmentController {
         StorageUploadResult uploadResult = storageFacade.upload(file.getInputStream(),
                         file.getOriginalFilename(), file.getContentType())
                 .orElseThrow(() -> new IllegalStateException("文件上传未返回结果"));
-        AttachmentUploadResultDTO result = new AttachmentUploadResultDTO();
+        AttachmentUploadResultVO result = new AttachmentUploadResultVO();
         result.setStorageKey(uploadResult.getStorageKey());
         result.setStorageName(uploadResult.getStorageName() == null ? "" : uploadResult.getStorageName());
         result.setFileSize(uploadResult.getFileSize() == null ? 0L : uploadResult.getFileSize());

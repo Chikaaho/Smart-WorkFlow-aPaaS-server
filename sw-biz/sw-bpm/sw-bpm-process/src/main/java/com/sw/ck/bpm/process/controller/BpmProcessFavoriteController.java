@@ -2,7 +2,7 @@ package com.sw.ck.bpm.process.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.bpm.process.dto.FavoriteItemDTO;
+import com.sw.ck.bpm.process.vo.FavoriteItemVO;
 import com.sw.ck.bpm.process.service.BpmProcessFavoriteService;
 import com.sw.ck.common.response.R;
 import org.springframework.web.bind.annotation.*;
@@ -21,7 +21,7 @@ public class BpmProcessFavoriteController {
 
     /** 当前用户收藏列表（最近收藏在前）。 */
     @GetMapping
-    public R<List<FavoriteItemDTO>> myFavorites() {
+    public R<List<FavoriteItemVO>> myFavorites() {
         return R.ok(favoriteService.listMyFavorites());
     }
 
@@ -42,13 +42,13 @@ public class BpmProcessFavoriteController {
 
     /** 常用流程：租户内发起次数总量 TopN（默认 5）。 */
     @GetMapping("/frequently-started")
-    public R<List<FavoriteItemDTO>> frequentlyStarted(@RequestParam(defaultValue = "5") int limit) {
+    public R<List<FavoriteItemVO>> frequentlyStarted(@RequestParam(defaultValue = "5") int limit) {
         return R.ok(favoriteService.frequentlyStarted(limit));
     }
 
     /** 最近使用：本人最近发起去重 TopN（默认 5）。 */
     @GetMapping("/recently-used")
-    public R<List<FavoriteItemDTO>> recentlyUsed(@RequestParam(defaultValue = "5") int limit) {
+    public R<List<FavoriteItemVO>> recentlyUsed(@RequestParam(defaultValue = "5") int limit) {
         return R.ok(favoriteService.recentlyUsed(limit));
     }
 

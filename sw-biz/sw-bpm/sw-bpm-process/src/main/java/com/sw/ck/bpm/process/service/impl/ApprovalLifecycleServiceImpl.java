@@ -3,7 +3,7 @@ package com.sw.ck.bpm.process.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -142,7 +142,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         if (actor == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED);
         }
-        BpmTaskDTO task = requireTask(taskId);
+        BpmTaskVO task = requireTask(taskId);
         boolean assigned = String.valueOf(actor.getUserId()).equals(task.getAssignee());
         // empty = 无法判定（任务/用户标识缺失；此处任务已存在且登录用户非空）：
         // fail closed，按不可处理拒绝
@@ -166,7 +166,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         return R.ok();
     }
 
-    private void doTransfer(BpmTaskDTO task, LoginUser actor, ApprovalActionRequest request) {
+    private void doTransfer(BpmTaskVO task, LoginUser actor, ApprovalActionRequest request) {
         Long target = request.getTargetUserId();
         if (target == null) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(), "转办目标不能为空");
@@ -187,7 +187,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         log.info("任务已转办: taskId={}, from={} to={}", task.getTaskId(), actor.getUserId(), target);
     }
 
-    private void doDelegate(BpmTaskDTO task, LoginUser actor, ApprovalActionRequest request) {
+    private void doDelegate(BpmTaskVO task, LoginUser actor, ApprovalActionRequest request) {
         Long target = request.getTargetUserId();
         if (target == null) {
             throw new BaseException(BpmErrorCode.DELEGATE_RELATION_INVALID);
@@ -207,7 +207,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 task.getTaskId(), actor.getUserId(), target);
     }
 
-    private void doCommunicate(BpmTaskDTO task, LoginUser actor, ApprovalActionRequest request) {
+    private void doCommunicate(BpmTaskVO task, LoginUser actor, ApprovalActionRequest request) {
         List<Long> receivers = request.getReceivers();
         if (receivers == null || receivers.isEmpty()) {
             throw new BaseException(BpmErrorCode.COMMUNICATION_INVALID);
@@ -242,7 +242,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         log.info("沟通征询已发起: taskId={}, receivers={}", task.getTaskId(), receivers);
     }
 
-    private void doAddSign(BpmTaskDTO task, LoginUser actor, ApprovalActionRequest request) {
+    private void doAddSign(BpmTaskVO task, LoginUser actor, ApprovalActionRequest request) {
         List<Long> participants = request.getParticipants();
         if (participants == null || participants.isEmpty()) {
             throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID);
@@ -425,8 +425,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         // 实例/节点/记录 ID 构造生命周期任务信息，保证补签表态同样落 ApprovalActionRecord
         // 与意见表单快照（Z5/Z8：SUPPLEMENT_SIGN 行不得缺快照）。
         // empty = 该任务不存在（原 null 返回路径）：补签任务非 Flowable 任务，回落自造生命周期任务信息
-        BpmTaskDTO lifecycleTask = bpmTaskFacade.getTask(record.getTaskId()).orElseGet(() -> {
-            BpmTaskDTO fallback = new BpmTaskDTO();
+        BpmTaskVO lifecycleTask = bpmTaskFacade.getTask(record.getTaskId()).orElseGet(() -> {
+            BpmTaskVO fallback = new BpmTaskVO();
             fallback.setTaskId(record.getTaskId());
             fallback.setProcessInstanceId(record.getProcessInstanceId());
             fallback.setTaskDefinitionKey(nullSafe(record.getNodeKey(), "SUPPLEMENT"));
@@ -499,12 +499,12 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             negative = all.stream().noneMatch(item -> "APPROVE".equals(item.getResultStatus()));
         }
         // empty = 该任务不存在（原 null 返回路径）：原任务已消失，跳过结算
-        Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(settled.getTaskId());
+        Optional<BpmTaskVO> taskLookup = bpmTaskFacade.getTask(settled.getTaskId());
         if (taskLookup.isEmpty()) {
             log.warn("原任务已消失，跳过加签结算: taskId={}", settled.getTaskId());
             return;
         }
-        BpmTaskDTO task = taskLookup.get();
+        BpmTaskVO task = taskLookup.get();
         String signPosition = extractDetailField(all.get(0).getDetail(), "signPosition");
         boolean autoFinish = "AUTO_FINISH".equals(policy) || BpmSignPositionEnum.AFTER.getCode().equalsIgnoreCase(signPosition);
         if (!autoFinish) {
@@ -1021,7 +1021,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
 
     // ==================== 内部工具 ====================
 
-    private BpmTaskDTO requireTask(String taskId) {
+    private BpmTaskVO requireTask(String taskId) {
         // empty = 该任务不存在（原 null 返回路径）
         return bpmTaskFacade.getTask(taskId)
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
@@ -1047,7 +1047,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
     }
 
-    private void recordLifecycle(BpmTaskDTO task, LoginUser actor, ApprovalAction action,
+    private void recordLifecycle(BpmTaskVO task, LoginUser actor, ApprovalAction action,
                                  String settlement, ApprovalActionRequest request,
                                  Map<String, Object> detail) {
         if (task == null) {

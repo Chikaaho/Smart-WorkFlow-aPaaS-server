@@ -3,12 +3,12 @@ package com.sw.ck.bpm.process.controller;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.PendingSignDTO;
+import com.sw.ck.bpm.process.vo.PendingSignVO;
 import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
 import com.sw.ck.bpm.process.entity.BpmInstance;
@@ -36,6 +36,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import com.sw.ck.bpm.process.entity.BpmSignPositionEnum;
+import com.sw.ck.bpm.process.vo.BpmAuthorizeRuleVO;
 /**
  * I3 人工审批生命周期端点：转办/委托/代理/撤回/沟通/废弃/加签/补签。
  * <p>
@@ -185,7 +186,7 @@ public class BpmLifecycleController {
     @Transactional
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/sign/pending")
-    public R<List<PendingSignDTO>> pendingSigns() {
+    public R<List<PendingSignVO>> pendingSigns() {
         LoginUser actor = requireAuthenticatedActor();
         List<BpmSignRecord> records = signRecordMapper.selectList(
                 Wrappers.<BpmSignRecord>lambdaQuery()
@@ -200,13 +201,13 @@ public class BpmLifecycleController {
                         .in(BpmSignRecord::getTaskId, taskIds)
                         .eq(BpmSignRecord::getTenantId, actor.getTenantId())
                         .eq(BpmSignRecord::getSignStatus, BatchItemStatusEnum.PENDING.getCode()));
-        List<PendingSignDTO> out = new ArrayList<>();
+        List<PendingSignVO> out = new ArrayList<>();
         for (BpmSignRecord record : records) {
             boolean serialBlocked = "SERIAL".equalsIgnoreCase(record.getModeType())
                     && allPendingForTasks.stream().anyMatch(other -> Objects.equals(record.getTaskId(), other.getTaskId())
                     && other.getSeqNo() != null && record.getSeqNo() != null
                     && other.getSeqNo() < record.getSeqNo());
-            PendingSignDTO item = new PendingSignDTO();
+            PendingSignVO item = new PendingSignVO();
             item.setRecordId(record.getId());
             item.setTaskId(record.getTaskId());
             item.setProcessInstanceId(record.getProcessInstanceId());
@@ -292,8 +293,8 @@ public class BpmLifecycleController {
 
     @PreAuthorize("@ss.hasPermi('workflow:task:authorize')")
     @GetMapping("/authorize-rules")
-    public R<List<BpmAuthorizeRule>> listAuthorizeRules() {
-        return R.ok(lifecycleService.listAuthorizeRules());
+    public R<List<BpmAuthorizeRuleVO>> listAuthorizeRules() {
+        return R.ok(lifecycleService.listAuthorizeRules() == null ? List.of() : lifecycleService.listAuthorizeRules().stream().map(BpmAuthorizeRuleVO::from).toList());
     }
 
     private LoginUser requireAuthenticatedActor() {

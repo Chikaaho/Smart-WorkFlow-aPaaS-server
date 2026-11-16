@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.common.SubjectTypeEnum;
-import com.sw.ck.bpm.process.dto.InstanceRelationDTO;
+import com.sw.ck.bpm.process.vo.InstanceRelationVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
@@ -234,7 +234,7 @@ public class BpmVariableSnapshotService {
                                        List<Map<String, Object>> submittedRows,
                                        List<String> missing, List<String> errors) {
         String field = def.getSourceFormField();
-        String aggregation = def.getAggregation() == null ? InstanceRelationDTO.RELATION_NONE : def.getAggregation().toUpperCase();
+        String aggregation = def.getAggregation() == null ? InstanceRelationVO.RELATION_NONE : def.getAggregation().toUpperCase();
         if (submittedRows.isEmpty()) {
             return null;
         }

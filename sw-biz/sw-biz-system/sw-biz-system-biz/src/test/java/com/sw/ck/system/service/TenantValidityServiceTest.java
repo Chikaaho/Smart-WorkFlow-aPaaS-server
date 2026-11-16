@@ -19,7 +19,7 @@ import static org.mockito.Mockito.when;
 class TenantValidityServiceTest {
 
     private final SysTenantMapper tenantMapper = mock(SysTenantMapper.class);
-    private final TenantValidityService service = new TenantValidityService(tenantMapper);
+    private final TenantValidityService service = new TenantValidityService();
 
     private SysTenant tenant(Long id, Integer status, LocalDateTime expireAt) {
         SysTenant t = new SysTenant();

@@ -27,7 +27,7 @@ class WorkspaceCardTypeServiceImplTest {
     @BeforeEach
     void setUp() {
         mapper = mock(SysWorkspaceCardTypeMapper.class);
-        service = new WorkspaceCardTypeServiceImpl(new ObjectMapper());
+        service = new WorkspaceCardTypeServiceImpl();
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
         when(mapper.selectCount(any())).thenReturn(0L);
     }

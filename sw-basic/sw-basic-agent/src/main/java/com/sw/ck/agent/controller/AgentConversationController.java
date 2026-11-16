@@ -2,8 +2,8 @@ package com.sw.ck.agent.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.agent.dto.AgentConversationDTO;
-import com.sw.ck.agent.dto.AgentConversationMessageDTO;
+import com.sw.ck.agent.vo.AgentConversationVO;
+import com.sw.ck.agent.vo.AgentConversationMessageVO;
 import com.sw.ck.agent.service.AgentConversationService;
 import com.sw.ck.common.response.R;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,7 +32,7 @@ public class AgentConversationController {
     /** 会话列表（当前租户 + 当前用户，按 create_time 倒序；可按配置 id 过滤） */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<AgentConversationDTO>> list(
+    public R<List<AgentConversationVO>> list(
             @RequestParam(required = false) Long agentModelConfigId) {
         return R.ok(agentConversationService.listConversations(agentModelConfigId));
     }
@@ -40,7 +40,7 @@ public class AgentConversationController {
     /** 会话内消息列表（按 msg_order 升序，不分页；会话不存在/跨租户 → 404 语义） */
     @GetMapping("/{sessionId}/messages")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<AgentConversationMessageDTO>> messages(@PathVariable Long sessionId) {
+    public R<List<AgentConversationMessageVO>> messages(@PathVariable Long sessionId) {
         return R.ok(agentConversationService.listMessages(sessionId));
     }
 }

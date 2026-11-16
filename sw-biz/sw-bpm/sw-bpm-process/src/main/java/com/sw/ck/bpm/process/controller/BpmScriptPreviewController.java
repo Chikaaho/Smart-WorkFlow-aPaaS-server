@@ -3,7 +3,7 @@ package com.sw.ck.bpm.process.controller;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import com.sw.ck.bpm.api.common.SubjectTypeEnum;
-import com.sw.ck.bpm.process.dto.ScriptPreviewDTO;
+import com.sw.ck.bpm.process.vo.ScriptPreviewVO;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.sw.ck.common.value.DynamicData;
 
 /**
  * 流程脚本模拟运行（只读，无副作用）。
@@ -56,7 +57,7 @@ public class BpmScriptPreviewController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:def:design')")
     @PostMapping("/preview")
-    public R<ScriptPreviewDTO> preview(@RequestBody(required = false) Map<String, Object> request) {
+    public R<ScriptPreviewVO> preview(@RequestBody(required = false) Map<String, Object> request) {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         if (tenantId == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED);
@@ -72,13 +73,13 @@ public class BpmScriptPreviewController {
         BpmScriptEvaluatePort.ScriptOutcome outcome = scriptEvaluatePort
                 .run(script, samples, timeoutMs, functionContext)
                 .orElseThrow(() -> new BaseException(CommonErrorCode.SYSTEM_ERROR));
-        ScriptPreviewDTO result = new ScriptPreviewDTO();
+        ScriptPreviewVO result = new ScriptPreviewVO();
         result.setKind(outcome.kind());
-        result.setValue(outcome.value());
+        result.setValue(DynamicData.of(outcome.value()));
         result.setTypeName(outcome.typeName());
         result.setErrorMessage(outcome.errorMessage());
         result.setDurationMs(outcome.durationMs());
-        result.setSamples(samples);
+        result.setSamples(DynamicData.of(samples));
         return R.ok(result);
     }
 

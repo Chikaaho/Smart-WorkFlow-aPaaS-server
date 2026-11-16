@@ -19,6 +19,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 
 import jakarta.validation.constraints.NotBlank;
 import java.util.List;
+import com.sw.ck.system.vo.SysUserVO;
+import com.sw.ck.system.vo.SysUserGroupVO;
 
 /**
  * 用户组管理控制器（D112：P28/I36）。
@@ -52,20 +54,20 @@ public class UserGroupController {
     /** 分页查询用户组（数据范围纳管）。 */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:userGroup:list')")
-    public R<PageResult<SysUserGroup>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysUserGroupVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                             @RequestParam(defaultValue = "10") long pageSize,
                                             @RequestBody(required = false) SysUserGroup query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysUserGroupService.page(pageParam, query));
+        return R.ok(PageResult.map(sysUserGroupService.page(pageParam, query), SysUserGroupVO::from));
     }
 
     /** 用户组详情（含成员回填）。id 限数字，避免吞掉 /candidates 等非数字路径。 */
     @GetMapping("/{id:\\d+}")
     @PreAuthorize("@ss.hasPermi('system:userGroup:list')")
-    public R<SysUserGroup> get(@PathVariable Long id) {
-        return R.ok(sysUserGroupService.getDetail(id));
+    public R<SysUserGroupVO> get(@PathVariable Long id) {
+        return R.ok(SysUserGroupVO.from(sysUserGroupService.getDetail(id)));
     }
 
     /** 创建用户组（含成员，事务一致）。 */
@@ -147,13 +149,14 @@ public class UserGroupController {
     /** 成员候选用户分页（仅启用用户 + 数据范围）。 */
     @GetMapping("/candidates")
     @PreAuthorize("@ss.hasPermi('system:userGroup:list')")
-    public R<PageResult<SysUser>> candidates(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysUserVO>> candidates(@RequestParam(defaultValue = "1") long pageNum,
                                              @RequestParam(defaultValue = "20") long pageSize,
                                              @RequestParam(required = false) String keyword) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysUserGroupService.memberCandidates(pageParam, keyword));
+        return R.ok(PageResult.map(sysUserGroupService.memberCandidates(pageParam, keyword),
+                SysUserVO::from));
     }
 
     /** UserGroupFormRequest → SysUserGroup 转换。 */

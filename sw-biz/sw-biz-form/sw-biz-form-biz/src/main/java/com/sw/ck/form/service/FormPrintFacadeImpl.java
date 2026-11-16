@@ -2,8 +2,8 @@ package com.sw.ck.form.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotVO;
 import com.sw.ck.form.api.print.FormPrintFacade;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
@@ -35,7 +35,7 @@ public class FormPrintFacadeImpl implements FormPrintFacade {
     public Optional<FormPrintData> recordDetail(String formKey, String recordId,
                                                 LocalDateTime submittedAt) {
         try {
-            FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+            FormDefVO formDef = formDefService.getFormDefByKey(formKey);
             if (formDef == null) {
                 return Optional.empty();
             }
@@ -49,7 +49,7 @@ public class FormPrintFacadeImpl implements FormPrintFacade {
             boolean versionPinned = false;
             if (submittedAt != null && formDef.getId() != null) {
                 // 快照列表按版本倒序；取 create_time ≤ 提交时间的最新一版（提交时可见的定义）
-                Optional<FormSnapshotDTO> pinned = formDefService.listSnapshots(formDef.getId())
+                Optional<FormSnapshotVO> pinned = formDefService.listSnapshots(formDef.getId())
                         .stream()
                         .filter(snapshot -> snapshot.getCreateTime() != null
                                 && !snapshot.getCreateTime().isAfter(submittedAt))

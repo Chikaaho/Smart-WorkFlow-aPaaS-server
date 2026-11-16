@@ -76,9 +76,7 @@ class MessageIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MessageIngestService(topicMapper, deviceMapper, messageLogMapper,
-                propertyRecordMapper, eventRecordMapper, commandMapper, productMapper,
-                thingModelMapper, ruleEngineService, scriptService);
+        service = new MessageIngestService();
 
         topicCfg = new IotTopic();
         topicCfg.setId(10L);

@@ -5,7 +5,7 @@ import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.listener.BpmIotReservationIntentRecorder;
@@ -235,7 +235,7 @@ class P63ReservationUnknownPgTest {
                 null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req("核准预约（将SENT无回执）"), CommandChannelEnum.NORMAL));
         awaitCommandCompleted(accepted.getCommandId());
         Long reservationId = awaitIntentRow(pi);

@@ -2,9 +2,9 @@ package com.sw.ck.agent.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolExternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
-import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolInternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
 import com.sw.ck.agent.service.AgentToolConfigService;
 import com.sw.ck.common.page.PageResult;
@@ -41,28 +41,28 @@ public class AgentToolConfigController {
     /** 分页列表 */
     @GetMapping("/internal")
     @PreAuthorize("@ss.hasPermi('agent:tool:view')")
-    public R<PageResult<AgentToolInternalConfigDTO>> pageInternal(AgentToolInternalConfigQuery query) {
+    public R<PageResult<AgentToolInternalConfigVO>> pageInternal(AgentToolInternalConfigQuery query) {
         return R.ok(agentToolConfigService.pageInternalTools(query));
     }
 
     /** 详情 */
     @GetMapping("/internal/{id}")
     @PreAuthorize("@ss.hasPermi('agent:tool:view')")
-    public R<AgentToolInternalConfigDTO> getInternal(@PathVariable Long id) {
+    public R<AgentToolInternalConfigVO> getInternal(@PathVariable Long id) {
         return R.ok(agentToolConfigService.getInternalTool(id));
     }
 
     /** 新建 */
     @PostMapping("/internal")
     @PreAuthorize("@ss.hasPermi('agent:tool:manage')")
-    public R<Long> createInternal(@RequestBody AgentToolInternalConfigDTO req) {
+    public R<Long> createInternal(@RequestBody AgentToolInternalConfigVO req) {
         return R.ok(agentToolConfigService.createInternalTool(req));
     }
 
     /** 修改 */
     @PutMapping("/internal/{id}")
     @PreAuthorize("@ss.hasPermi('agent:tool:manage')")
-    public R<Void> updateInternal(@PathVariable Long id, @RequestBody AgentToolInternalConfigDTO req) {
+    public R<Void> updateInternal(@PathVariable Long id, @RequestBody AgentToolInternalConfigVO req) {
         agentToolConfigService.updateInternalTool(id, req);
         return R.ok();
     }
@@ -88,28 +88,28 @@ public class AgentToolConfigController {
     /** 分页列表 */
     @GetMapping("/external")
     @PreAuthorize("@ss.hasPermi('agent:tool:view')")
-    public R<PageResult<AgentToolExternalConfigDTO>> pageExternal(AgentToolExternalConfigQuery query) {
+    public R<PageResult<AgentToolExternalConfigVO>> pageExternal(AgentToolExternalConfigQuery query) {
         return R.ok(agentToolConfigService.pageExternalTools(query));
     }
 
     /** 详情 */
     @GetMapping("/external/{id}")
     @PreAuthorize("@ss.hasPermi('agent:tool:view')")
-    public R<AgentToolExternalConfigDTO> getExternal(@PathVariable Long id) {
+    public R<AgentToolExternalConfigVO> getExternal(@PathVariable Long id) {
         return R.ok(agentToolConfigService.getExternalTool(id));
     }
 
     /** 新建 */
     @PostMapping("/external")
     @PreAuthorize("@ss.hasPermi('agent:tool:manage')")
-    public R<Long> createExternal(@RequestBody AgentToolExternalConfigDTO req) {
+    public R<Long> createExternal(@RequestBody AgentToolExternalConfigVO req) {
         return R.ok(agentToolConfigService.createExternalTool(req));
     }
 
     /** 修改 */
     @PutMapping("/external/{id}")
     @PreAuthorize("@ss.hasPermi('agent:tool:manage')")
-    public R<Void> updateExternal(@PathVariable Long id, @RequestBody AgentToolExternalConfigDTO req) {
+    public R<Void> updateExternal(@PathVariable Long id, @RequestBody AgentToolExternalConfigVO req) {
         agentToolConfigService.updateExternalTool(id, req);
         return R.ok();
     }

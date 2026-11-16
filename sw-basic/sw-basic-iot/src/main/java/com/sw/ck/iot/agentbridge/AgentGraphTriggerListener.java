@@ -4,7 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.alibaba.fastjson2.JSON;
 
-import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
+import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
@@ -97,7 +97,7 @@ public class AgentGraphTriggerListener {
         // 幂等键（生命周期上限 100 字符）：以触发记录 id 派生紧凑稳定键——同一触发
         // （含恢复调度重投）提交同一执行；触发记录自身的长幂等键仍由 IoT 侧唯一约束保证
         String submitKey = "iotag-" + event.getTriggerId();
-        AgentGraphExecutionAcceptedDTO accepted =
+        AgentGraphExecutionAcceptedVO accepted =
                 lifecycleService.submit(graphDefId, input, submitKey);
         IotProcessTrigger patch = new IotProcessTrigger();
         patch.setId(event.getTriggerId());

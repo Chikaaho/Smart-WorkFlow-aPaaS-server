@@ -4,7 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
@@ -80,9 +80,9 @@ public class FormRecordAccessPortImpl implements FormRecordAccessPort {
         return Optional.of(false);
     }
 
-    private boolean holdsTask(List<BpmTaskDTO> tasks, Long userId) {
+    private boolean holdsTask(List<BpmTaskVO> tasks, Long userId) {
         String uid = String.valueOf(userId);
-        for (BpmTaskDTO task : tasks) {
+        for (BpmTaskVO task : tasks) {
             if (uid.equals(task.getAssignee())) {
                 return true;
             }

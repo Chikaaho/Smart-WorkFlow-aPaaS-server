@@ -3,7 +3,7 @@ package com.sw.ck.system.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.common.response.R;
-import com.sw.ck.system.dto.NotifySubjectBindingDTO;
+import com.sw.ck.system.vo.NotifySubjectBindingVO;
 import com.sw.ck.system.entity.NotifySubjectBinding;
 import com.sw.ck.system.service.NotifySubjectBindingService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -42,19 +42,19 @@ public class NotifySubjectBindingController {
 
     @PostMapping
     @PreAuthorize("@ss.hasPermi('notify:channel:manage')")
-    public R<NotifySubjectBindingDTO> bind(@RequestBody BindRequest request) {
+    public R<NotifySubjectBindingVO> bind(@RequestBody BindRequest request) {
         NotifySubjectBinding binding = service.bind(request.getUserId(), request.getProvider(), request.getSubject());
         return R.ok(toDTO(binding));
     }
 
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:channel:manage')")
-    public R<List<NotifySubjectBindingDTO>> list(@RequestParam(required = false) String provider) {
+    public R<List<NotifySubjectBindingVO>> list(@RequestParam(required = false) String provider) {
         return R.ok(service.list(provider).stream().map(this::toDTO).toList());
     }
 
-    private NotifySubjectBindingDTO toDTO(NotifySubjectBinding binding) {
-        NotifySubjectBindingDTO dto = new NotifySubjectBindingDTO();
+    private NotifySubjectBindingVO toDTO(NotifySubjectBinding binding) {
+        NotifySubjectBindingVO dto = new NotifySubjectBindingVO();
         dto.setId(binding.getId());
         dto.setUserId(binding.getUserId());
         dto.setProvider(binding.getProvider());

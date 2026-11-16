@@ -3,7 +3,7 @@ package com.sw.ck.agent.orchestration;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.vo.KnowledgeHitVO;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -1075,7 +1075,7 @@ public class AgentGraphInterpreter {
         }
         int topK = configInt(node, CONFIG_KEY_TOP_K, DEFAULT_KNOWLEDGE_TOP_K);
         double threshold = configDouble(node, CONFIG_KEY_SIMILARITY_THRESHOLD, 0.0);
-        List<KnowledgeHitDTO> hits;
+        List<KnowledgeHitVO> hits;
         try {
             hits = service.retrieve(kbId, query, topK, threshold);
         } catch (GraphExecutionException e) {
@@ -1092,13 +1092,13 @@ public class AgentGraphInterpreter {
         return output;
     }
 
-    private static String formatKnowledgeHits(List<KnowledgeHitDTO> hits) {
+    private static String formatKnowledgeHits(List<KnowledgeHitVO> hits) {
         if (hits == null || hits.isEmpty()) {
             return "未检索到相关内容。";
         }
         StringBuilder sb = new StringBuilder();
         int index = 1;
-        for (KnowledgeHitDTO hit : hits) {
+        for (KnowledgeHitVO hit : hits) {
             if (sb.length() > 0) {
                 sb.append("\n\n---\n\n");
             }

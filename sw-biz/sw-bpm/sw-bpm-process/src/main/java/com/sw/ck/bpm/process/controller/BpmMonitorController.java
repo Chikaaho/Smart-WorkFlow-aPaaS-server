@@ -2,8 +2,8 @@ package com.sw.ck.bpm.process.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.sw.ck.bpm.process.dto.AnalyticsSummaryDTO;
-import com.sw.ck.bpm.process.dto.TaskDeadlineDTO;
+import com.sw.ck.bpm.process.vo.AnalyticsSummaryVO;
+import com.sw.ck.bpm.process.vo.TaskDeadlineVO;
 import com.sw.ck.bpm.process.entity.BpmInstanceIntervention;
 import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.service.BpmMonitorService;
@@ -25,6 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import com.sw.ck.bpm.process.vo.BpmInstanceInterventionVO;
+import com.sw.ck.bpm.process.vo.DynamicBranchSnapshotVO;
 
 /**
  * 流程运营监控/干预/基础分析（I4 §3.3）。管理端专用权限；数据范围同时约束汇总与明细。
@@ -66,37 +68,37 @@ public class BpmMonitorController {
 
     @PreAuthorize("@ss.hasPermi('workflow:monitor:manage')")
     @PostMapping("/instances/{processInstanceId}/intervene")
-    public R<BpmInstanceIntervention> intervene(@PathVariable String processInstanceId,
+    public R<BpmInstanceInterventionVO> intervene(@PathVariable String processInstanceId,
                                                 @RequestBody InterveneRequest request) {
         BpmInstanceIntervention record = monitorService.intervene(processInstanceId,
                 request.getAction(), request.getReason(), request.getToAssignee(), request.getTaskIds());
         log.info("实例干预接口已执行: instance={}, action={}", processInstanceId, request.getAction());
-        return R.ok(record);
+        return R.ok(BpmInstanceInterventionVO.from(record));
     }
 
     @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     @GetMapping("/instances/{processInstanceId}/interventions")
-    public R<List<BpmInstanceIntervention>> interventions(@PathVariable String processInstanceId) {
-        return R.ok(monitorService.interventions(processInstanceId));
+    public R<List<BpmInstanceInterventionVO>> interventions(@PathVariable String processInstanceId) {
+        return R.ok(monitorService.interventions(processInstanceId) == null ? List.of() : monitorService.interventions(processInstanceId).stream().map(BpmInstanceInterventionVO::from).toList());
     }
 
     /** 动态并行分支冻结快照勾稽（I4 §3.1 运营回读）：逐条展示冻结来源部门/负责人/状态/取消原因。 */
     @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     @GetMapping("/instances/{processInstanceId}/deadlines")
-    public R<List<TaskDeadlineDTO>> deadlines(@PathVariable String processInstanceId) {
+    public R<List<TaskDeadlineVO>> deadlines(@PathVariable String processInstanceId) {
         return R.ok(monitorService.deadlines(processInstanceId));
     }
 
     @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     @GetMapping("/instances/{processInstanceId}/branches")
-    public R<List<DynamicBranchSnapshot>> branches(
+    public R<List<DynamicBranchSnapshotVO>> branches(
             @PathVariable String processInstanceId) {
-        return R.ok(monitorService.branches(processInstanceId));
+        return R.ok(monitorService.branches(processInstanceId) == null ? List.of() : monitorService.branches(processInstanceId).stream().map(DynamicBranchSnapshotVO::from).toList());
     }
 
     @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     @GetMapping("/analytics/summary")
-    public R<AnalyticsSummaryDTO> analyticsSummary(
+    public R<AnalyticsSummaryVO> analyticsSummary(
             @RequestParam(required = false) String processDefKey,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime timeFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime timeTo) {

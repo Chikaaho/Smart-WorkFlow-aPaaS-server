@@ -7,7 +7,7 @@ import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
@@ -15,7 +15,7 @@ import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.CommandAcceptService;
 import com.sw.ck.common.response.R;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.iot.job.IotReservationDispatchJob;
@@ -201,7 +201,7 @@ class P63ReservationIntentTxPgTest {
         String processInstanceId = awaitInstanceStarted(recordId);
         publishApprovalProcessWithTz("Asia/Shanghai");
         String taskId = awaitTask(processInstanceId);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> {
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> {
             ApprovalActionRequest req = new ApprovalActionRequest();
             req.setComment("核准预约");
             return acceptService.acceptTaskAction(taskId,
@@ -252,7 +252,7 @@ class P63ReservationIntentTxPgTest {
                 null, null, null));
         String processInstanceId = awaitInstanceStarted(recordId);
         String taskId = awaitTask(processInstanceId);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> {
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> {
             ApprovalActionRequest req = new ApprovalActionRequest();
             req.setComment("尝试通过");
             return acceptService.acceptTaskAction(taskId,
@@ -284,7 +284,7 @@ class P63ReservationIntentTxPgTest {
                 null, null, null));
         String processInstanceId = awaitInstanceStarted(recordId);
         String taskId = awaitTask(processInstanceId);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> {
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> {
             ApprovalActionRequest req = new ApprovalActionRequest();
             req.setComment("驳回申请");
             return acceptService.acceptTaskAction(taskId,
@@ -313,7 +313,7 @@ class P63ReservationIntentTxPgTest {
                 null, null, null));
         String processInstanceId = awaitInstanceStarted(recordId);
         String taskId = awaitTask(processInstanceId);
-        CommandAcceptRespDTO accepted = asUser(APPROVER, () -> {
+        CommandAcceptRespVO accepted = asUser(APPROVER, () -> {
             ApprovalActionRequest req = new ApprovalActionRequest();
             req.setComment("核准后设备下线");
             return acceptService.acceptTaskAction(taskId,
@@ -357,7 +357,7 @@ class P63ReservationIntentTxPgTest {
 
     private void seedForm() {
         asUser(INITIATOR, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P63意图链", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P63意图链", null, null);
             formDefService.saveConfig(draft.getId(), intentDefinition());
             formDefService.publish(draft.getId());
             return null;

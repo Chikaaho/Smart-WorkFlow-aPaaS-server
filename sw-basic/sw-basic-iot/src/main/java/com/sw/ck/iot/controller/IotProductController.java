@@ -14,6 +14,9 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import com.sw.ck.iot.vo.IotDeviceVO;
+import com.sw.ck.iot.vo.IotThingModelVO;
+import com.sw.ck.iot.vo.IotProductVO;
 
 /**
  * 产品、物模型与设备管理控制器（P21 平台化）。
@@ -31,48 +34,48 @@ public class IotProductController {
     // ---------------- 产品 ----------------
 
     @GetMapping
-    public R<List<IotProduct>> list() {
-        return R.ok(productService.list());
+    public R<List<IotProductVO>> list() {
+        return R.ok(productService.list() == null ? List.of() : productService.list().stream().map(IotProductVO::from).toList());
     }
 
     @GetMapping("/{id}")
-    public R<IotProduct> detail(@PathVariable Long id) {
-        return R.ok(productService.getById(id));
+    public R<IotProductVO> detail(@PathVariable Long id) {
+        return R.ok(IotProductVO.from(productService.getById(id)));
     }
 
     @PostMapping
-    public R<IotProduct> create(@RequestBody ProductRequest request) {
-        return R.ok(productService.create(request.toProduct(), request.getModel()));
+    public R<IotProductVO> create(@RequestBody ProductRequest request) {
+        return R.ok(IotProductVO.from(productService.create(request.toProduct(), request.getModel())));
     }
 
     @PutMapping("/{id}")
-    public R<IotProduct> update(@PathVariable Long id, @RequestBody ProductRequest request) {
-        return R.ok(productService.update(id, request.toProduct()));
+    public R<IotProductVO> update(@PathVariable Long id, @RequestBody ProductRequest request) {
+        return R.ok(IotProductVO.from(productService.update(id, request.toProduct())));
     }
 
     // ---------------- 物模型 ----------------
 
     @GetMapping("/{id}/models")
-    public R<List<IotThingModel>> modelVersions(@PathVariable Long id) {
-        return R.ok(productService.modelVersions(id));
+    public R<List<IotThingModelVO>> modelVersions(@PathVariable Long id) {
+        return R.ok(productService.modelVersions(id) == null ? List.of() : productService.modelVersions(id).stream().map(IotThingModelVO::from).toList());
     }
 
     @PostMapping("/{id}/models")
-    public R<IotThingModel> saveModelDraft(@PathVariable Long id,
+    public R<IotThingModelVO> saveModelDraft(@PathVariable Long id,
                                            @RequestBody ProductRequest request) {
-        return R.ok(productService.saveModelDraft(id, request.getModel()));
+        return R.ok(IotThingModelVO.from(productService.saveModelDraft(id, request.getModel())));
     }
 
     @PostMapping("/{id}/models/publish")
-    public R<IotThingModel> publishModel(@PathVariable Long id) {
-        return R.ok(productService.publishModel(id));
+    public R<IotThingModelVO> publishModel(@PathVariable Long id) {
+        return R.ok(IotThingModelVO.from(productService.publishModel(id)));
     }
 
     // ---------------- 设备 ----------------
 
     @GetMapping("/devices/eligible")
-    public R<List<IotDevice>> processEligibleDevices() {
-        return R.ok(deviceManageService.listProcessEligible());
+    public R<List<IotDeviceVO>> processEligibleDevices() {
+        return R.ok(deviceManageService.listProcessEligible() == null ? List.of() : deviceManageService.listProcessEligible().stream().map(IotDeviceVO::from).toList());
     }
 
     // ---------------- 请求体 ----------------

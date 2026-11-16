@@ -3,7 +3,7 @@ package com.sw.ck.bpm.process.service.impl;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.bpm.process.dto.CategoryDTO;
+import com.sw.ck.bpm.process.vo.CategoryVO;
 import com.sw.ck.bpm.process.dto.CategorySaveReq;
 import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -32,7 +32,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
     private BpmProcessDefMapper processDefMapper;
 
     @Override
-    public List<CategoryDTO> listCategories() {
+    public List<CategoryVO> listCategories() {
         List<BpmCategory> categories = categoryMapper.selectList(
                 Wrappers.<BpmCategory>lambdaQuery()
                         .orderByAsc(BpmCategory::getSortNo)
@@ -43,7 +43,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
                 .filter(def -> def.getCategoryId() != null)
                 .collect(Collectors.groupingBy(BpmProcessDef::getCategoryId, Collectors.counting()));
         return categories.stream()
-                .map(c -> CategoryDTO.builder()
+                .map(c -> CategoryVO.builder()
                         .id(c.getId())
                         .name(c.getName())
                         .sortNo(c.getSortNo())

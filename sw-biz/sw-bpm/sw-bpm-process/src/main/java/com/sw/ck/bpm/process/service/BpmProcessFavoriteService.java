@@ -3,7 +3,7 @@ package com.sw.ck.bpm.process.service;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.bpm.process.dto.FavoriteItemDTO;
+import com.sw.ck.bpm.process.vo.FavoriteItemVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.BpmProcessFavorite;
@@ -46,12 +46,12 @@ public class BpmProcessFavoriteService {
     private BpmProcessDefMapper processDefMapper;
 
     /** 当前用户收藏列表（最近收藏在前 → 列表置顶语义）。 */
-    public List<FavoriteItemDTO> listMyFavorites() {
+    public List<FavoriteItemVO> listMyFavorites() {
         return favoriteMapper.selectList(Wrappers.lambdaQuery(BpmProcessFavorite.class)
                         .eq(BpmProcessFavorite::getUserId, currentUserId())
                         .orderByDesc(BpmProcessFavorite::getUpdateTime))
                 .stream()
-                .map(f -> FavoriteItemDTO.builder()
+                .map(f -> FavoriteItemVO.builder()
                         .processKey(f.getProcessKey())
                         .name(f.getProcessName())
                         .build())
@@ -89,7 +89,7 @@ public class BpmProcessFavoriteService {
     }
 
     /** 常用流程：租户内发起次数总量 TopN。 */
-    public List<FavoriteItemDTO> frequentlyStarted(int limit) {
+    public List<FavoriteItemVO> frequentlyStarted(int limit) {
         List<Map<String, Object>> rows = instanceMapper.selectMaps(
                 Wrappers.query(BpmInstance.class)
                         .select("process_def_key as \"processKey\"", "count(*) as cnt")
@@ -105,7 +105,7 @@ public class BpmProcessFavoriteService {
     }
 
     /** 最近使用：本人最近发起时间倒序 TopN。 */
-    public List<FavoriteItemDTO> recentlyUsed(int limit) {
+    public List<FavoriteItemVO> recentlyUsed(int limit) {
         List<Map<String, Object>> rows = instanceMapper.selectMaps(
                 Wrappers.query(BpmInstance.class)
                         .select("process_def_key as \"processKey\"", "max(create_time) as lastTime")
@@ -125,7 +125,7 @@ public class BpmProcessFavoriteService {
     }
 
     /** 名称解析：优先流程定义名；定义已删除时回退收藏快照名/键名。 */
-    private List<FavoriteItemDTO> toItems(List<String> keys) {
+    private List<FavoriteItemVO> toItems(List<String> keys) {
         if (keys.isEmpty()) {
             return List.of();
         }
@@ -135,7 +135,7 @@ public class BpmProcessFavoriteService {
             names.put(def.getProcessKey(), def.getName());
         }
         return keys.stream()
-                .map(key -> FavoriteItemDTO.builder()
+                .map(key -> FavoriteItemVO.builder()
                         .processKey(key)
                         .name(names.getOrDefault(key, key))
                         .build())

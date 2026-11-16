@@ -15,15 +15,15 @@ import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FilterOp;
 import com.sw.ck.form.api.dto.FormDataFilter;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FormRecordAccessPort;
-import com.sw.ck.form.dto.FormDataRecordDTO;
-import com.sw.ck.form.dto.WorkspaceAggregateDTO;
-import com.sw.ck.form.dto.WorkspaceFieldDTO;
-import com.sw.ck.form.dto.WorkspaceFieldsDTO;
-import com.sw.ck.form.dto.WorkspaceGroupDTO;
-import com.sw.ck.form.dto.WorkspaceOptionDTO;
+import com.sw.ck.form.vo.FormDataRecordVO;
+import com.sw.ck.form.vo.WorkspaceAggregateVO;
+import com.sw.ck.form.vo.WorkspaceFieldVO;
+import com.sw.ck.form.vo.WorkspaceFieldsVO;
+import com.sw.ck.form.vo.WorkspaceGroupVO;
+import com.sw.ck.form.vo.WorkspaceOptionVO;
 import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
 import com.sw.ck.form.dto.workspace.WorkspaceMetric;
 import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
@@ -53,6 +53,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import com.sw.ck.form.dynamic.FormWorkspaceAggEnum;
+import com.sw.ck.common.value.DynamicData;
 /**
  * 表单数据查询服务。
  *
@@ -175,8 +176,8 @@ public class FormDataQueryService {
         }
         Long tenantId = loginUser.getTenantId();
 
-        // —— Step 2: 解析 formKey → FormDefDTO（含 status + physicalTableName） ——
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        // —— Step 2: 解析 formKey → FormDefVO（含 status + physicalTableName） ——
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
@@ -299,12 +300,12 @@ public class FormDataQueryService {
      * 工作台字段目录：仅返回当前账号可见、可用于标量展示/聚合的字段。
      * 不返回子表、富文本、附件等字段，避免配置界面扩大读取范围。
      */
-    public WorkspaceFieldsDTO workspaceFields(String formKey) {
+    public WorkspaceFieldsVO workspaceFields(String formKey) {
         WorkspaceFormContext ctx = prepareWorkspaceForm(formKey);
-        WorkspaceFieldsDTO result = new WorkspaceFieldsDTO();
+        WorkspaceFieldsVO result = new WorkspaceFieldsVO();
         result.setFormKey(ctx.formDef().getFormKey());
         result.setFormVersion(ctx.formDef().getFormVersion());
-        List<WorkspaceFieldDTO> fields = new ArrayList<>();
+        List<WorkspaceFieldVO> fields = new ArrayList<>();
         try {
             String definitionJson = loadDefinitionJsonForPermissions(ctx.formDef().getId());
             if (definitionJson != null && !definitionJson.isBlank()) {
@@ -319,12 +320,12 @@ public class FormDataQueryService {
                             continue;
                         }
                         if (ctx.viewDenied().contains(name)) continue;
-                        WorkspaceFieldDTO item = new WorkspaceFieldDTO();
+                        WorkspaceFieldVO item = new WorkspaceFieldVO();
                         item.setName(name);
                         item.setLabel(field.path("label").asText(
                                 ctx.fieldLabels().getOrDefault(name, name)));
                         item.setType(type.name());
-                        List<WorkspaceOptionDTO> options = parseWorkspaceOptions(field, type);
+                        List<WorkspaceOptionVO> options = parseWorkspaceOptions(field, type);
                         if (!options.isEmpty()) item.setOptions(options);
                         fields.add(item);
                     }
@@ -343,7 +344,7 @@ public class FormDataQueryService {
      * <p>沿用列表查询的可见性、租户、记录数据范围和字段查看权限；越权字段整请求拒绝，
      * 不静默剔除。所有列名经 {@link DynamicTableSql#requireColumn}，值全部参数绑定。</p>
      */
-    public WorkspaceAggregateDTO aggregateWorkspaceData(String formKey, WorkspaceAggregateReq req) {
+    public WorkspaceAggregateVO aggregateWorkspaceData(String formKey, WorkspaceAggregateReq req) {
         if (req == null) {
             throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN, "聚合查询缺少请求体");
         }
@@ -450,15 +451,15 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "统计查询未能完成，请稍后重试");
         }
 
-        List<WorkspaceGroupDTO> groups = new ArrayList<>();
+        List<WorkspaceGroupVO> groups = new ArrayList<>();
         if (rows != null) {
             for (Map<String, Object> row : rows) {
-                WorkspaceGroupDTO item = new WorkspaceGroupDTO();
-                if (groupBy != null) item.setKey(normalizeWorkspaceValue(row.get("g0")));
-                if (groupBy2 != null) item.setKey2(normalizeWorkspaceValue(row.get("g1")));
-                List<Object> values = new ArrayList<>();
+                WorkspaceGroupVO item = new WorkspaceGroupVO();
+                if (groupBy != null) item.setKey(DynamicData.of(normalizeWorkspaceValue(row.get("g0"))));
+                if (groupBy2 != null) item.setKey2(DynamicData.of(normalizeWorkspaceValue(row.get("g1"))));
+                List<DynamicData> values = new ArrayList<>();
                 for (int i = 0; i < metrics.size(); i++) {
-                    values.add(normalizeWorkspaceValue(row.get("m" + i)));
+                    values.add(DynamicData.of(normalizeWorkspaceValue(row.get("m" + i))));
                 }
                 item.setValues(values);
                 groups.add(item);
@@ -476,7 +477,7 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "统计查询未能完成，请稍后重试");
         }
 
-        WorkspaceAggregateDTO result = new WorkspaceAggregateDTO();
+        WorkspaceAggregateVO result = new WorkspaceAggregateVO();
         result.setFormKey(ctx.formDef().getFormKey());
         result.setFormVersion(ctx.formDef().getFormVersion());
         result.setGroups(groups);
@@ -488,7 +489,7 @@ public class FormDataQueryService {
      * 工作台数据列表查询：显式列 + 过滤 + 排序 + 有界分页。
      * <p>列、过滤、排序字段均须当前账号可见；记录范围与普通表单列表同口径强制。</p>
      */
-    public PageResult<FormDataRecordDTO> queryWorkspaceRows(String formKey, WorkspaceRowsReq req) {
+    public PageResult<FormDataRecordVO> queryWorkspaceRows(String formKey, WorkspaceRowsReq req) {
         if (req == null) {
             throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN, "列表查询缺少请求体");
         }
@@ -573,9 +574,9 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "列表查询未能完成，请稍后重试");
         }
 
-        PageResult<FormDataRecordDTO> result = new PageResult<>();
+        PageResult<FormDataRecordVO> result = new PageResult<>();
         result.setRecords(records == null ? List.of()
-                : records.stream().map(FormDataRecordDTO::new).toList());
+                : records.stream().map(FormDataRecordVO::new).toList());
         result.setTotal(total == null ? 0L : total);
         result.setPageNum(page);
         result.setPageSize(size);
@@ -611,7 +612,7 @@ public class FormDataQueryService {
         if (loginUser == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null || !formDefService.isCurrentUserVisible(formKey)) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
@@ -676,8 +677,8 @@ public class FormDataQueryService {
     }
 
     /** 选项解析：兼容字符串与 {label,value}/{text,key} 两种定义形状。 */
-    private List<WorkspaceOptionDTO> parseWorkspaceOptions(JsonNode field, FieldType type) {
-        List<WorkspaceOptionDTO> options = new ArrayList<>();
+    private List<WorkspaceOptionVO> parseWorkspaceOptions(JsonNode field, FieldType type) {
+        List<WorkspaceOptionVO> options = new ArrayList<>();
         if (type == FieldType.BOOL) {
             options.add(option("是", "1"));
             options.add(option("否", "0"));
@@ -699,8 +700,8 @@ public class FormDataQueryService {
         return options;
     }
 
-    private WorkspaceOptionDTO option(String label, String value) {
-        WorkspaceOptionDTO option = new WorkspaceOptionDTO();
+    private WorkspaceOptionVO option(String label, String value) {
+        WorkspaceOptionVO option = new WorkspaceOptionVO();
         option.setLabel(label);
         option.setValue(value);
         return option;
@@ -722,7 +723,7 @@ public class FormDataQueryService {
         }
     }
 
-    private record WorkspaceFormContext(LoginUser loginUser, FormDefDTO formDef, String tableName,
+    private record WorkspaceFormContext(LoginUser loginUser, FormDefVO formDef, String tableName,
                                         Map<String, FieldType> fieldTypes, Set<String> viewDenied,
                                         Map<String, String> fieldLabels) {
     }
@@ -748,8 +749,8 @@ public class FormDataQueryService {
         }
         Long tenantId = loginUser.getTenantId();
 
-        // —— Step 2: 解析 formKey → FormDefDTO ——
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        // —— Step 2: 解析 formKey → FormDefVO ——
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
@@ -884,7 +885,7 @@ public class FormDataQueryService {
             return false;
         }
         Map<String, Object> record = getRecordDetail(formKey, recordId);
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             return false;
         }
@@ -958,7 +959,7 @@ public class FormDataQueryService {
         if (tenantId == null || recordId == null || recordId.isBlank()) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "读取表单记录缺少租户或记录标识");
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null || !FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus()) && !FormStatusEnum.DISABLED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在或未发布");
         }
@@ -1055,7 +1056,7 @@ public class FormDataQueryService {
                 || recordId == null || recordId.isBlank()) {
             return false;
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null || !FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())
                 || !formDefService.isCurrentUserVisible(formKey)) {
             return false;

@@ -158,7 +158,7 @@ class UserGroupAuthorizationTest {
             Mockito.when(service.page(ArgumentMatchers.any(PageParam.class),
                             ArgumentMatchers.<SysUserGroup>any()))
                     .thenReturn(empty);
-            return new UserGroupController(service);
+            return new UserGroupController();
         }
 
         @Bean("ss")

@@ -8,7 +8,7 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.notify.api.NotifyLinkAuthorizer;
-import com.sw.ck.notify.dto.NotifyLinkDTO;
+import com.sw.ck.notify.vo.NotifyLinkVO;
 import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.service.NotifyMessageService;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.vo.NotifyMessageVO;
 /**
  * 站内信收件箱控制器（I6）：服务端真分页、未读数、全部已读与受保护深链。
  * <p>收件箱读取同一 {@code sw_notify_message} 的 IN_APP 行；越权由
@@ -40,12 +41,13 @@ public class NotifyInboxController {
 
     /** 收件箱分页（read/eventType/keyword 过滤；稳定排序 create_time desc, id desc）。 */
     @GetMapping
-    public R<PageResult<NotifyMessage>> inbox(PageParam pageParam,
+    public R<PageResult<NotifyMessageVO>> inbox(PageParam pageParam,
                                               @RequestParam(required = false) Boolean read,
                                               @RequestParam(required = false) String eventType,
                                               @RequestParam(required = false) String keyword) {
-        return R.ok(notifyMessageService.pageInbox(pageParam, LoginUserHolder.get().getUserId(),
-                read, eventType, keyword));
+        return R.ok(PageResult.map(notifyMessageService.pageInbox(pageParam,
+                LoginUserHolder.get().getUserId(), read, eventType, keyword),
+                NotifyMessageVO::from));
     }
 
     /** 当前未读数。 */
@@ -62,7 +64,7 @@ public class NotifyInboxController {
 
     /** 受保护深链：返回当前用户对该消息深链的鉴权结果与受控目标标识。 */
     @PostMapping("/{id}/link")
-    public R<NotifyLinkDTO> openLink(@PathVariable Long id) {
+    public R<NotifyLinkVO> openLink(@PathVariable Long id) {
         NotifyMessage msg = requireOwn(id);
         if (msg.getLinkType() == null || msg.getLinkId() == null) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "该消息没有可跳转对象");
@@ -77,7 +79,7 @@ public class NotifyInboxController {
         }
         log.info("深链打开: msgId={}, linkType={}, userId={}", id, msg.getLinkType(),
                 LoginUserHolder.get().getUserId());
-        NotifyLinkDTO result = new NotifyLinkDTO();
+        NotifyLinkVO result = new NotifyLinkVO();
         result.setLinkType(msg.getLinkType());
         result.setLinkId(msg.getLinkId());
         return R.ok(result);

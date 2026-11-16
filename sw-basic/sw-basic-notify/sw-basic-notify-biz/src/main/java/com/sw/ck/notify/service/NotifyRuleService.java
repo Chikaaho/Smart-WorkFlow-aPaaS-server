@@ -1,7 +1,7 @@
 package com.sw.ck.notify.service;
 
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.notify.dto.NotifyRuleDTO;
+import com.sw.ck.notify.vo.NotifyRuleVO;
 import com.sw.ck.notify.dto.NotifyRuleQuery;
 import com.sw.ck.notify.entity.NotifyRule;
 
@@ -10,13 +10,13 @@ import java.util.List;
 /** 通知规则服务（I6）。 */
 public interface NotifyRuleService {
 
-    PageResult<NotifyRuleDTO> pageRules(NotifyRuleQuery query);
+    PageResult<NotifyRuleVO> pageRules(NotifyRuleQuery query);
 
-    NotifyRuleDTO getRule(Long id);
+    NotifyRuleVO getRule(Long id);
 
-    Long createRule(NotifyRuleDTO dto);
+    Long createRule(NotifyRuleVO dto);
 
-    void updateRule(Long id, NotifyRuleDTO dto);
+    void updateRule(Long id, NotifyRuleVO dto);
 
     void deleteRule(Long id);
 

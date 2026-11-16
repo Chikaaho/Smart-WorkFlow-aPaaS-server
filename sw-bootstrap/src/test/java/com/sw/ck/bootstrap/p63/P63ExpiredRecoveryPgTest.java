@@ -4,7 +4,7 @@ import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
 import com.sw.ck.bpm.process.queue.TieredCommandReconcileJob;
@@ -184,7 +184,7 @@ class P63ExpiredRecoveryPgTest {
         String taskId = awaitTask(processInstanceId);
 
         String comment = "原用户首次提交（错过准入截止）";
-        CommandAcceptRespDTO first = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO first = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req(comment),
                 CommandChannelEnum.NORMAL));
         Long originId = first.getCommandId();
@@ -214,7 +214,7 @@ class P63ExpiredRecoveryPgTest {
         assertThat(originReason).contains("准入截止到期");
 
         // 原用户同键同载荷重提交 → 生成恢复命令新行 :R1（原行不改写）
-        CommandAcceptRespDTO recovery = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO recovery = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req(comment),
                 CommandChannelEnum.NORMAL));
         Long recoveryId = recovery.getCommandId();
@@ -251,7 +251,7 @@ class P63ExpiredRecoveryPgTest {
         assertThat(String.valueOf(originFinal.get("failure_reason"))).isEqualTo(originReason);
 
         // 已生效后同载荷重放 → 幂等命中恢复行（取原结果，不自动重发）
-        CommandAcceptRespDTO replay = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO replay = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req(comment),
                 CommandChannelEnum.NORMAL));
         assertThat(replay.getCommandId()).as("已生效重放返回恢复命令原结果").isEqualTo(recoveryId);
@@ -284,7 +284,7 @@ class P63ExpiredRecoveryPgTest {
         String taskId = awaitTask(processInstanceId);
 
         String comment = "恢复链验收";
-        CommandAcceptRespDTO first = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO first = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req(comment),
                 CommandChannelEnum.NORMAL));
         Long originId = first.getCommandId();
@@ -293,7 +293,7 @@ class P63ExpiredRecoveryPgTest {
         assertThat(jdbc.queryForObject("SELECT status FROM sw_bpm_command WHERE id = ?",
                 String.class, originId)).isEqualTo("EXPIRED");
 
-        CommandAcceptRespDTO recovery = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO recovery = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req(comment),
                 CommandChannelEnum.NORMAL));
         Long recoveryId = recovery.getCommandId();
@@ -309,7 +309,7 @@ class P63ExpiredRecoveryPgTest {
                 String.class, recoveryId)).as("恢复行过期同样收敛 EXPIRED").isEqualTo("EXPIRED");
 
         // 第三次重提交 → 下一代 :R2；前两行 EXPIRED 记录独立保留
-        CommandAcceptRespDTO next = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
+        CommandAcceptRespVO next = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req(comment),
                 CommandChannelEnum.NORMAL));
         assertThat(next.getCommandKey()).as("恢复链推进到 :R2").endsWith(":R2");

@@ -33,7 +33,7 @@ class AuthMeControllerTest {
 
     private final SysUserService sysUserService = mock(SysUserService.class);
     private final SysMenuService sysMenuService = mock(SysMenuService.class);
-    private final AuthMeController controller = new AuthMeController(sysUserService, sysMenuService);
+    private final AuthMeController controller = new AuthMeController();
 
     @AfterEach
     void tearDown() {

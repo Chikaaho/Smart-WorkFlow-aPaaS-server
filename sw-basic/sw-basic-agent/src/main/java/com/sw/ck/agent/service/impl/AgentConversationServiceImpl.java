@@ -4,8 +4,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.agent.dto.AgentConversationDTO;
-import com.sw.ck.agent.dto.AgentConversationMessageDTO;
+import com.sw.ck.agent.vo.AgentConversationVO;
+import com.sw.ck.agent.vo.AgentConversationMessageVO;
 import com.sw.ck.agent.entity.AgentMessage;
 import com.sw.ck.agent.entity.AgentSession;
 import com.sw.ck.agent.mapper.AgentMessageMapper;
@@ -36,7 +36,7 @@ public class AgentConversationServiceImpl implements AgentConversationService {
     private AgentMessageMapper messageMapper;
 
     @Override
-    public List<AgentConversationDTO> listConversations(Long agentModelConfigId) {
+    public List<AgentConversationVO> listConversations(Long agentModelConfigId) {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null || loginUser.getUserId() == null) {
             // 无登录态（系统初始化等场景）：不泄漏任何会话
@@ -51,7 +51,7 @@ public class AgentConversationServiceImpl implements AgentConversationService {
     }
 
     @Override
-    public List<AgentConversationMessageDTO> listMessages(Long sessionId) {
+    public List<AgentConversationMessageVO> listMessages(Long sessionId) {
         // selectById 经租户拦截器自动过滤 tenant_id：跨租户/已删除/不存在 → null → 404 语义
         AgentSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
@@ -64,8 +64,8 @@ public class AgentConversationServiceImpl implements AgentConversationService {
                 .stream().map(this::toMessageDTO).toList();
     }
 
-    private AgentConversationDTO toDTO(AgentSession session) {
-        AgentConversationDTO dto = new AgentConversationDTO();
+    private AgentConversationVO toDTO(AgentSession session) {
+        AgentConversationVO dto = new AgentConversationVO();
         dto.setId(session.getId());
         dto.setAgentModelConfigId(session.getAgentModelConfigId());
         dto.setTitle(session.getTitle());
@@ -74,8 +74,8 @@ public class AgentConversationServiceImpl implements AgentConversationService {
         return dto;
     }
 
-    private AgentConversationMessageDTO toMessageDTO(AgentMessage message) {
-        AgentConversationMessageDTO dto = new AgentConversationMessageDTO();
+    private AgentConversationMessageVO toMessageDTO(AgentMessage message) {
+        AgentConversationMessageVO dto = new AgentConversationMessageVO();
         dto.setId(message.getId());
         dto.setRole(message.getRole());
         dto.setContent(message.getContent());
