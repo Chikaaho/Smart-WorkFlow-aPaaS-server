@@ -5,11 +5,13 @@ import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.queue.support.BatchH2TestConfig;
+import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,7 +57,7 @@ class TxnBatchCommandH2Test {
     private static final String ACTION_ID = "act-batch-1";
 
     @Autowired
-    private com.sw.ck.bpm.process.service.TxnBatchService batchService;
+    private TxnBatchService batchService;
 
     @Autowired
     private BatchInvokeCommandHandler handler;
@@ -221,8 +224,8 @@ class TxnBatchCommandH2Test {
         // 修复后重试：只处理 item-2
         when(txnActionPort.invoke(ArgumentMatchers.argThat(cmd ->
                         cmd != null && cmd.invocationKey().endsWith(":item-2"))))
-                .thenReturn(java.util.Optional.of(succeeded()),
-                        java.util.Optional.of(succeeded()));
+                .thenReturn(Optional.of(succeeded()),
+                        Optional.of(succeeded()));
         handler.handle(claimed);
 
         TxnBatchView recovered = batchService.get("b-resume");
@@ -289,16 +292,16 @@ class TxnBatchCommandH2Test {
     private void stubInvoke(String itemKey, FormTxnActionPort.TxnActionResult result) {
         when(txnActionPort.invoke(ArgumentMatchers.argThat(cmd ->
                         cmd != null && cmd.invocationKey().endsWith(":" + itemKey))))
-                .thenReturn(java.util.Optional.of(result));
+                .thenReturn(Optional.of(result));
     }
 
     private FormTxnActionPort.TxnActionResult succeeded() {
-        return new FormTxnActionPort.TxnActionResult("inv-" + java.util.UUID.randomUUID(), "SUCCEEDED",
+        return new FormTxnActionPort.TxnActionResult("inv-" + UUID.randomUUID(), "SUCCEEDED",
                 3, "res-1", null, null, null, null, null, 5L, false);
     }
 
     private FormTxnActionPort.TxnActionResult rejected(int errorCode, String message) {
-        return new FormTxnActionPort.TxnActionResult("inv-" + java.util.UUID.randomUUID(), "REJECTED",
+        return new FormTxnActionPort.TxnActionResult("inv-" + UUID.randomUUID(), "REJECTED",
                 3, null, null, null, null, errorCode, message, 3L, false);
     }
 

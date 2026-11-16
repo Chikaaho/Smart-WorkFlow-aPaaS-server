@@ -1,6 +1,7 @@
 package com.sw.ck.notify.service;
 
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.entity.NotifyMessage;
@@ -8,6 +9,11 @@ import com.sw.ck.notify.entity.NotifySendAttempt;
 import com.sw.ck.notify.mapper.NotifyMessageMapper;
 import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
 import com.sw.ck.notify.service.impl.NotifyRecordServiceImpl;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,12 +42,12 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class NotifyRecordServiceTest {
 
-    @org.junit.jupiter.api.BeforeAll
+    @BeforeAll
     static void initializeMapperMetadata() {
-        var config = new com.baomidou.mybatisplus.core.MybatisConfiguration();
-        var assistant = new org.apache.ibatis.builder.MapperBuilderAssistant(config, "");
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, NotifyMessage.class);
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, NotifySendAttempt.class);
+        var config = new MybatisConfiguration();
+        var assistant = new MapperBuilderAssistant(config, "");
+        TableInfoHelper.initTableInfo(assistant, NotifyMessage.class);
+        TableInfoHelper.initTableInfo(assistant, NotifySendAttempt.class);
     }
 
     @Mock
@@ -104,7 +111,7 @@ class NotifyRecordServiceTest {
         when(messageMapper.update(isNull(), any())).thenReturn(1);
         when(attemptMapper.selectList(any())).thenReturn(List.of());
         when(notifyFacade.attemptDelivery(any())).thenReturn(
-                Optional.of(NotifySendResult.builder().channel(com.sw.ck.notify.api.NotifyChannel.SMS)
+                Optional.of(NotifySendResult.builder().channel(NotifyChannel.SMS)
                         .status("SUCCESS").externalMessageId("ext-1").build()));
 
         String latest = recordService.resend(2L);
@@ -152,7 +159,7 @@ class NotifyRecordServiceTest {
         original.setMessageId(2L);
         original.setAttemptNo(1);
         original.setStatus("FAILED");
-        original.setCreateTime(java.time.LocalDateTime.now());
+        original.setCreateTime(LocalDateTime.now());
         when(attemptMapper.selectList(any())).thenReturn(List.of(original));
         when(messageMapper.update(isNull(), any())).thenReturn(1);
         when(notifyFacade.attemptDelivery(any())).thenReturn(
@@ -170,7 +177,7 @@ class NotifyRecordServiceTest {
         recent.setMessageId(2L);
         recent.setAttemptNo(2);
         recent.setStatus("FAILED");
-        recent.setCreateTime(java.time.LocalDateTime.now());
+        recent.setCreateTime(LocalDateTime.now());
         when(attemptMapper.selectList(any())).thenReturn(List.of(recent));
 
         assertThatThrownBy(() -> recordService.resend(2L))

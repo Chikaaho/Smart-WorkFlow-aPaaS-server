@@ -16,11 +16,11 @@ import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.common.exception.BaseException;
-import org.springframework.beans.factory.ObjectProvider;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.bpm.api.participant.NodeTriggerEventPort;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程发起唯一入口。
  * <p>
@@ -58,59 +59,37 @@ import java.util.Set;
  * </p>
  */
 @Service
+@Log4j2
 public class ProcessStartService {
-
-    private static final Logger log = LoggerFactory.getLogger(ProcessStartService.class);
 
     /** BF20261013-022⑧：自动发起（子流程等系统动作）的操作人=系统管理员（种子账号 userId=1）。 */
     public static final long AUTO_START_OPERATOR_USER_ID = 1L;
 
-    private final BpmFormBindingService bindingService;
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.sw.ck.bpm.process.service.BpmProcessDefService bpmProcessDefService;
-    private final ApproverResolver approverResolver;
-    private final BpmRuntimeFacade bpmRuntimeFacade;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final BpmInstanceService bpmInstanceService;
-    private final DomainEventPublisher domainEventPublisher;
+    @Autowired
+    private BpmFormBindingService bindingService;
+    @Autowired(required = false)
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private ApproverResolver approverResolver;
+    @Autowired
+    private BpmRuntimeFacade bpmRuntimeFacade;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private DomainEventPublisher domainEventPublisher;
     /** 可选：发起前置校验发起人在本租户有效且启用（I1）。 */
-    private final UserQueryFacade userQueryFacade;
+    @Autowired(required = false)
+    private UserQueryFacade userQueryFacade;
 
     /** 可选：主题生成规则服务（V012-BUG-010；缺省时不生成主题）。 */
-    private final ProcessThemeService processThemeService;
+    @Autowired(required = false)
+    private ProcessThemeService processThemeService;
 
     /** BF20261013-022⑥：流程发起触发器端口（可选注入；单测旧装配保持可用）。 */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.sw.ck.bpm.api.participant.NodeTriggerEventPort nodeTriggerEventPort;
-
-    public ProcessStartService(BpmFormBindingService bindingService,
-                                ApproverResolver approverResolver,
-                                BpmRuntimeFacade bpmRuntimeFacade,
-                                BpmTaskFacade bpmTaskFacade,
-                                BpmInstanceService bpmInstanceService,
-                                DomainEventPublisher domainEventPublisher) {
-        this(bindingService, approverResolver, bpmRuntimeFacade, bpmTaskFacade,
-                bpmInstanceService, domainEventPublisher, null, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public ProcessStartService(BpmFormBindingService bindingService,
-                                ApproverResolver approverResolver,
-                                BpmRuntimeFacade bpmRuntimeFacade,
-                                BpmTaskFacade bpmTaskFacade,
-                                BpmInstanceService bpmInstanceService,
-                                DomainEventPublisher domainEventPublisher,
-                                ObjectProvider<UserQueryFacade> userQueryFacade,
-                                ProcessThemeService processThemeService) {
-        this.bindingService = bindingService;
-        this.approverResolver = approverResolver;
-        this.bpmRuntimeFacade = bpmRuntimeFacade;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.bpmInstanceService = bpmInstanceService;
-        this.domainEventPublisher = domainEventPublisher;
-        this.userQueryFacade = userQueryFacade == null ? null : userQueryFacade.getIfAvailable();
-        this.processThemeService = processThemeService;
-    }
+    @Autowired(required = false)
+    private NodeTriggerEventPort nodeTriggerEventPort;
 
     /**
      * 发起流程实例。
@@ -392,7 +371,7 @@ public class ProcessStartService {
             return;
         }
 
-        java.util.LinkedHashSet<String> recipientIds = new java.util.LinkedHashSet<>();
+        LinkedHashSet<String> recipientIds = new LinkedHashSet<>();
         if (matchedTask.getAssignee() != null) recipientIds.add(matchedTask.getAssignee());
         if (matchedTask.getCandidateUserIds() != null) recipientIds.addAll(matchedTask.getCandidateUserIds());
         for (String recipient : recipientIds) {

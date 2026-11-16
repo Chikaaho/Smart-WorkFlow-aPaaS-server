@@ -1,9 +1,12 @@
 package com.sw.ck.bpm.engine.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
+import com.sw.ck.bpm.api.result.MutationOutcome;
+import com.sw.ck.bpm.api.variable.BpmVariableReadPort;
 import com.sw.ck.bpm.engine.delegate.DynamicBranchCollectionResolver;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 import com.sw.ck.bpm.engine.translator.DynamicParallelNodeTranslator;
@@ -11,15 +14,20 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.ExtensionAttribute;
+import org.flowable.bpmn.model.Process;
 import org.flowable.bpmn.model.UserTask;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,10 +65,10 @@ class P63DynamicParallelV2Test {
     private DynamicBranchCollectionResolver resolver(FormRecordReadFacade formFacade,
                                                      DynamicBranchPort port,
                                                      Map<String, Object> nodeConfig,
-                                                     com.sw.ck.bpm.api.variable.BpmVariableReadPort readPort) {
+                                                     BpmVariableReadPort readPort) {
         RepositoryService repositoryService = mock(RepositoryService.class);
         BpmnModel model = new BpmnModel();
-        org.flowable.bpmn.model.Process process = new org.flowable.bpmn.model.Process();
+        Process process = new Process();
         UserTask task = new UserTask();
         task.setId("dyn");
         ExtensionAttribute attr = new ExtensionAttribute("nodeConfig");
@@ -150,7 +158,7 @@ class P63DynamicParallelV2Test {
                                                               String st, String sd, String m, String ot,
                                                               List<BranchCandidateV2> candidates) {
                 frozenRefs.put("executionId", List.of(execId));
-                List<FrozenBranchV2> result = new java.util.ArrayList<>();
+                List<FrozenBranchV2> result = new ArrayList<>();
                 int i = 0;
                 for (BranchCandidateV2 c : candidates) {
                     if (c.assigneeId() != null) {
@@ -160,8 +168,8 @@ class P63DynamicParallelV2Test {
                 return Optional.of(result);
             }
 
-            @Override public Optional<com.sw.ck.bpm.api.result.MutationOutcome> recordAction(String t, String pi, String n, String l, String task, String a, String r) { return Optional.empty(); }
-            @Override public Optional<com.sw.ck.bpm.api.result.MutationOutcome> closeRemaining(String t, String pi, String n, String r) { return Optional.empty(); }
+            @Override public Optional<MutationOutcome> recordAction(String t, String pi, String n, String l, String task, String a, String r) { return Optional.empty(); }
+            @Override public Optional<MutationOutcome> closeRemaining(String t, String pi, String n, String r) { return Optional.empty(); }
         };
 
         // 缺负责人（部门 9）默认 BLOCK
@@ -189,8 +197,8 @@ class P63DynamicParallelV2Test {
         System.out.println("[P63-EV] g04b.exception scenario=dept-leader-missing-explicit-SKIP"
                 + " invalidStrategy=SKIP branches=[30,30] dept9=CANCELED result=old-explicit-SKIP-kept");
         assertThat(frozenRefs.get("executionId")).containsExactly("exec-2");
-        org.mockito.Mockito.verify(execSkip, org.mockito.Mockito.atLeastOnce())
-                .setVariable(org.mockito.ArgumentMatchers.eq("consensusApprovedCount"), org.mockito.ArgumentMatchers.eq(0));
+        Mockito.verify(execSkip, Mockito.atLeastOnce())
+                .setVariable(ArgumentMatchers.eq("consensusApprovedCount"), ArgumentMatchers.eq(0));
     }
 
     @Test
@@ -212,7 +220,7 @@ class P63DynamicParallelV2Test {
             public Optional<List<FrozenBranchV2>> freezeRound(String t, String pi, String n, String execId,
                                                               String st, String sd, String m, String ot,
                                                               List<BranchCandidateV2> candidates) {
-                List<FrozenBranchV2> result = new java.util.ArrayList<>();
+                List<FrozenBranchV2> result = new ArrayList<>();
                 int i = 0;
                 for (BranchCandidateV2 c : candidates) {
                     if (c.assigneeId() != null) {
@@ -222,8 +230,8 @@ class P63DynamicParallelV2Test {
                 return Optional.of(result);
             }
 
-            @Override public Optional<com.sw.ck.bpm.api.result.MutationOutcome> recordAction(String t, String pi, String n, String l, String task, String a, String r) { return Optional.empty(); }
-            @Override public Optional<com.sw.ck.bpm.api.result.MutationOutcome> closeRemaining(String t, String pi, String n, String r) { return Optional.empty(); }
+            @Override public Optional<MutationOutcome> recordAction(String t, String pi, String n, String l, String task, String a, String r) { return Optional.empty(); }
+            @Override public Optional<MutationOutcome> closeRemaining(String t, String pi, String n, String r) { return Optional.empty(); }
         };
 
         DynamicBranchCollectionResolver resolver = resolver(formFacade(Map.of(), tables), port,
@@ -258,8 +266,8 @@ class P63DynamicParallelV2Test {
             @Override public Optional<List<FrozenBranchV2>> freezeRound(String t, String pi, String n, String e, String st, String sd, String m, String ot, List<BranchCandidateV2> c) {
                 return Optional.of(List.of());
             }
-            @Override public Optional<com.sw.ck.bpm.api.result.MutationOutcome> recordAction(String t, String pi, String n, String l, String task, String a, String r) { return Optional.empty(); }
-            @Override public Optional<com.sw.ck.bpm.api.result.MutationOutcome> closeRemaining(String t, String pi, String n, String r) { return Optional.empty(); }
+            @Override public Optional<MutationOutcome> recordAction(String t, String pi, String n, String l, String task, String a, String r) { return Optional.empty(); }
+            @Override public Optional<MutationOutcome> closeRemaining(String t, String pi, String n, String r) { return Optional.empty(); }
         };
         DynamicBranchCollectionResolver blocking = resolver(formFacade(Map.of(), Map.of()), port,
                 v2Config(Map.of(), Map.of()));
@@ -321,7 +329,7 @@ class P63DynamicParallelV2Test {
     @Test
     @DisplayName("P64：VARIABLE 来源流程变量缺省时回退 BPM 变量快照端口（USER_SET → 逐对象分支）")
     void variableSourceFallsBackToBpmVariablePort() {
-        java.util.Map<String, List<String>> frozenRefs = new java.util.LinkedHashMap<>();
+        Map<String, List<String>> frozenRefs = new LinkedHashMap<>();
         DynamicBranchPort port = new DynamicBranchPort() {
             @Override
             public Optional<List<FrozenBranch>> freeze(String t, String pi, String n, String st,
@@ -335,7 +343,7 @@ class P63DynamicParallelV2Test {
                                                               String st, String sd, String m, String ot,
                                                               List<BranchCandidateV2> candidates) {
                 frozenRefs.put("executionId", List.of(execId));
-                List<FrozenBranchV2> result = new java.util.ArrayList<>();
+                List<FrozenBranchV2> result = new ArrayList<>();
                 int i = 0;
                 for (BranchCandidateV2 c : candidates) {
                     if (c.assigneeId() != null) {
@@ -346,21 +354,21 @@ class P63DynamicParallelV2Test {
             }
 
             @Override
-            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> recordAction(String t, String pi,
+            public Optional<MutationOutcome> recordAction(String t, String pi,
                                                                                    String n, String l,
                                                                                    String task, String a,
                                                                                    String r) {
-                return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED);
+                return Optional.of(MutationOutcome.APPLIED);
             }
 
             @Override
-            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> closeRemaining(String t, String pi,
+            public Optional<MutationOutcome> closeRemaining(String t, String pi,
                                                                                      String n, String r) {
                 return Optional.empty();
             }
         };
         // 流程变量缺省：仅端口提供 var_handlers（USER_SET 快照形态 = ID 列表）
-        com.sw.ck.bpm.api.variable.BpmVariableReadPort readPort = (pi, varId) ->
+        BpmVariableReadPort readPort = (pi, varId) ->
                 "var_handlers".equals(varId) ? Optional.of(List.of("5", "6")) : Optional.empty();
         Map<String, Object> config = v2Config(
                 Map.of("type", "VARIABLE", "value", "var_handlers", "objectType", "USER"), Map.of());
@@ -390,15 +398,15 @@ class P63DynamicParallelV2Test {
             }
 
             @Override
-            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> recordAction(String t, String pi,
+            public Optional<MutationOutcome> recordAction(String t, String pi,
                                                                                    String n, String l,
                                                                                    String task, String a,
                                                                                    String r) {
-                return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED);
+                return Optional.of(MutationOutcome.APPLIED);
             }
 
             @Override
-            public Optional<com.sw.ck.bpm.api.result.MutationOutcome> closeRemaining(String t, String pi,
+            public Optional<MutationOutcome> closeRemaining(String t, String pi,
                                                                                      String n, String r) {
                 return Optional.empty();
             }

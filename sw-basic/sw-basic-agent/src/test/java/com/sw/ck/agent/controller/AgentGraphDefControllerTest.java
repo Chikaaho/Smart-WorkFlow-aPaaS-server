@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
@@ -38,7 +39,17 @@ import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.jwt.JwtTokenProviderImpl;
 import com.sw.ck.security.spi.UserDetailsProvider;
 import com.sw.ck.security.support.PermissionService;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
+import com.sw.ck.agent.mapper.AgentGraphSnapshotMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
+import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DeptScopeProvider;
+
 import jakarta.servlet.Filter;
+
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.junit.jupiter.api.AfterEach;
@@ -74,6 +85,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.context.WebApplicationContext;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
 
 import javax.sql.DataSource;
 import java.util.HashMap;
@@ -729,8 +743,8 @@ class AgentGraphDefControllerTest {
         @Bean
         public TenantLineInnerInterceptor tenantLineInnerInterceptor(
                 LoginContextProvider loginContextProvider) {
-            return new TenantLineInnerInterceptor(new com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler(
-                    new com.sw.ck.common.config.mybatis.tenant.TenantProperties(), loginContextProvider));
+            return new TenantLineInnerInterceptor(new CommonTenantLineHandler(
+                    new TenantProperties(), loginContextProvider));
         }
 
         @Bean
@@ -743,7 +757,7 @@ class AgentGraphDefControllerTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -770,7 +784,7 @@ class AgentGraphDefControllerTest {
 
         @Bean
         public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
-                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
             return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
@@ -807,14 +821,14 @@ class AgentGraphDefControllerTest {
         @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
+                AgentToolInternalConfigMapper internalToolMapper,
+                AgentToolExternalConfigMapper externalToolMapper,
+                AgentGraphExecutionMapper executionMapper,
+                AgentGraphExecutionNodeMapper executionNodeMapper,
                 AgentModelRuntimeService modelRuntimeService,
                 AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+                DeptScopeProvider deptScopeProvider) {
             return new AgentGraphExecutionServiceImpl(objectMapper,
                     modelRuntimeService, snapshotService,
                     internalToolMapper, externalToolMapper, executionMapper,
@@ -823,9 +837,9 @@ class AgentGraphDefControllerTest {
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() {
+        public DeptScopeProvider testDeptScopeProvider() {
             // 测试用映射实现：无子部门（本测试不覆盖 DEPT_AND_CHILD 展开）
-            return deptId -> java.util.List.of();
+            return deptId -> List.of();
         }
 
         @Bean
@@ -896,8 +910,8 @@ class AgentGraphDefControllerTest {
         public LoginUserLoader loginUserLoader(
                 UserDetailsProvider userDetailsProvider,
                 LoginUserCacheService loginUserCacheService) {
-            org.springframework.beans.factory.ObjectProvider<UserDetailsProvider> provider =
-                    mock(org.springframework.beans.factory.ObjectProvider.class);
+            ObjectProvider<UserDetailsProvider> provider =
+                    mock(ObjectProvider.class);
             when(provider.getIfAvailable()).thenReturn(userDetailsProvider);
             return new LoginUserLoader(provider, loginUserCacheService);
         }
@@ -957,7 +971,7 @@ class AgentGraphDefControllerTest {
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties) {
             return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
-            org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
+            Mockito.mock(LoginUserCacheService.class));
         }
 
         @Bean

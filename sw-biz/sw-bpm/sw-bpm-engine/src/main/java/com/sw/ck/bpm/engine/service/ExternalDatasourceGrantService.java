@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.entity.ExternalDatasourceGrant;
@@ -46,17 +48,12 @@ public class ExternalDatasourceGrantService {
     private static final Set<String> SUBJECT_TYPES = Set.of(
             ExternalDatasourceGrant.SUBJECT_ROLE, ExternalDatasourceGrant.SUBJECT_USER);
 
-    private final ExternalDatasourceGrantMapper grantMapper;
-    private final ExternalDatasourceMapper datasourceMapper;
-    private final PermissionService permissionService;
-
-    public ExternalDatasourceGrantService(ExternalDatasourceGrantMapper grantMapper,
-                                          ExternalDatasourceMapper datasourceMapper,
-                                          PermissionService permissionService) {
-        this.grantMapper = grantMapper;
-        this.datasourceMapper = datasourceMapper;
-        this.permissionService = permissionService;
-    }
+    @Autowired
+    private ExternalDatasourceGrantMapper grantMapper;
+    @Autowired
+    private ExternalDatasourceMapper datasourceMapper;
+    @Autowired
+    private PermissionService permissionService;
 
     /** 当前登录主体是否为数据源管理员（管理员旁路授权匹配）。 */
     public boolean isDatasourceManager() {

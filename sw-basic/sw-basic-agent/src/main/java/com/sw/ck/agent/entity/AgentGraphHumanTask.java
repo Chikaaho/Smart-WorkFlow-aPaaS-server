@@ -1,9 +1,13 @@
 package com.sw.ck.agent.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * 人工节点任务（G3）：一次人工等待一行或多行（按处理人用户/角色拆分）。
@@ -35,7 +39,7 @@ public class AgentGraphHumanTask extends BaseEntity {
 
     private Long submittedBy;
 
-    private java.time.LocalDateTime submittedAt;
+    private LocalDateTime submittedAt;
 
-    private java.time.LocalDateTime finishedAt;
+    private LocalDateTime finishedAt;
 }

@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.queue;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmCommandEffect;
 import com.sw.ck.bpm.process.entity.CommandStatusEnum;
@@ -7,8 +9,6 @@ import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 命令效果权威记录器（P62 分级执行与统一命令）。
  * <p>
@@ -34,17 +35,13 @@ import java.util.Objects;
  * </p>
  */
 @Component
+@Log4j2
 public class CommandEffectRecorder {
 
-    private static final Logger log = LoggerFactory.getLogger(CommandEffectRecorder.class);
-
-    private final BpmCommandMapper commandMapper;
-    private final BpmCommandEffectMapper effectMapper;
-
-    public CommandEffectRecorder(BpmCommandMapper commandMapper, BpmCommandEffectMapper effectMapper) {
-        this.commandMapper = commandMapper;
-        this.effectMapper = effectMapper;
-    }
+    @Autowired
+    private BpmCommandMapper commandMapper;
+    @Autowired
+    private BpmCommandEffectMapper effectMapper;
 
     /**
      * 当前事务内校验命令执行权（持锁 + 状态 PROCESSING + 令牌一致）。

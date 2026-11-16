@@ -2,11 +2,16 @@ package com.sw.ck.system.service;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
+import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.mapper.SysRefreshTokenMapper;
 import com.sw.ck.system.security.SystemErrorKeys;
+
+import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import org.apache.ibatis.reflection.MetaObject;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.*;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -253,11 +258,11 @@ class RefreshTokenServiceTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 MybatisPlusInterceptor interceptor) throws Exception {
-            com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean factory =
-                    new com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean();
+            MybatisSqlSessionFactoryBean factory =
+                    new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             MybatisConfiguration ibatisConfig = new MybatisConfiguration();
             ibatisConfig.setMapUnderscoreToCamelCase(true);
@@ -269,7 +274,7 @@ class RefreshTokenServiceTest {
             dbConfig.setLogicDeleteValue("1");
             dbConfig.setLogicNotDeleteValue("0");
             globalConfig.setDbConfig(dbConfig);
-            globalConfig.setMetaObjectHandler(new com.baomidou.mybatisplus.core.handlers.MetaObjectHandler() {
+            globalConfig.setMetaObjectHandler(new MetaObjectHandler() {
                 @Override
                 public void insertFill(MetaObject metaObject) {
                     this.strictInsertFill(metaObject, "deleted", Integer.class, 0);

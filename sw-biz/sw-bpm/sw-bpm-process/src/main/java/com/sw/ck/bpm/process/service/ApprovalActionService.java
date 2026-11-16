@@ -11,7 +11,7 @@ public interface ApprovalActionService extends BaseService<ApprovalActionRecord>
     ApprovalActionRecord findByTaskId(String taskId);
     boolean existsForTask(String taskId);
     /** 按办理人分页查询本人动作记录（创建时间倒序），用于"我的已办"权威锚点。 */
-    java.util.List<ApprovalActionRecord> pageByActor(long actorId, int offset, int limit);
+    List<ApprovalActionRecord> pageByActor(long actorId, int offset, int limit);
     long countByActor(long actorId);
 
     /**

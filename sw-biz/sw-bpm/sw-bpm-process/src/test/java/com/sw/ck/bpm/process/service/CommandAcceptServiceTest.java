@@ -1,6 +1,8 @@
 package com.sw.ck.bpm.process.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
@@ -11,13 +13,19 @@ import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,8 +48,8 @@ class CommandAcceptServiceTest {
     private final BpmCommandQueue commandQueue = mock(BpmCommandQueue.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService =
-            mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+    private final ResourceAdmissionService admissionService =
+            mock(ResourceAdmissionService.class);
 
     private final CommandAcceptService service =
             new CommandAcceptService(commandQueue, objectMapper, admissionService);
@@ -65,9 +73,9 @@ class CommandAcceptServiceTest {
             ApprovalActionRequest effective = new ApprovalActionRequest();
             effective.setTaskId("task-9");
             effective.setAction(ApprovalAction.APPROVE);
-            java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>(
+            Map<String, Object> payload = new LinkedHashMap<>(
                     objectMapper.convertValue(effective,
-                            new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() { }));
+                            new TypeReference<Map<String, Object>>() { }));
             payload.entrySet().removeIf(entry -> entry.getValue() == null);
             return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
@@ -153,7 +161,7 @@ class CommandAcceptServiceTest {
 
         assertThat(resp.getCommandId()).isEqualTo(66L);
         assertThat(resp.isDuplicated()).isFalse();
-        verify(commandQueue, org.mockito.Mockito.times(1)).enqueue(any());
+        verify(commandQueue, Mockito.times(1)).enqueue(any());
     }
 
     @Test
@@ -176,7 +184,7 @@ class CommandAcceptServiceTest {
         // 同键、comment 不同的重放：必须拒绝（COMMAND_PAYLOAD_MISMATCH），不得返回原命令
         ApprovalActionRequest different = new ApprovalActionRequest();
         different.setComment("第二载荷");
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                         service.acceptTaskAction("task-9", ApprovalAction.APPROVE,
                                 different, CommandChannelEnum.NORMAL))
                 .isInstanceOf(BaseException.class)
@@ -305,16 +313,16 @@ class CommandAcceptServiceTest {
     @Test
     @DisplayName("动作映射：REJECT/RETURN → 对应命令类型")
     void acceptTaskAction_shouldMapActionTypes() {
-        when(commandQueue.findByKey(eq(0L), org.mockito.ArgumentMatchers.anyString())).thenReturn(Optional.empty());
+        when(commandQueue.findByKey(eq(0L), ArgumentMatchers.anyString())).thenReturn(Optional.empty());
         when(commandQueue.enqueue(any(CommandEnvelope.class))).thenReturn(1L);
 
         service.acceptTaskAction("task-9", ApprovalAction.REJECT, null, CommandChannelEnum.NORMAL);
         ArgumentCaptor<CommandEnvelope> captor = ArgumentCaptor.forClass(CommandEnvelope.class);
-        verify(commandQueue, org.mockito.Mockito.times(1)).enqueue(captor.capture());
+        verify(commandQueue, Mockito.times(1)).enqueue(captor.capture());
         assertThat(captor.getValue().getCommandType()).isEqualTo(CommandTypeEnum.TASK_REJECT);
 
         service.acceptTaskAction("task-9", ApprovalAction.RETURN, null, CommandChannelEnum.NORMAL);
-        verify(commandQueue, org.mockito.Mockito.times(2)).enqueue(captor.capture());
+        verify(commandQueue, Mockito.times(2)).enqueue(captor.capture());
         assertThat(captor.getValue().getCommandType()).isEqualTo(CommandTypeEnum.TASK_RETURN);
     }
 }

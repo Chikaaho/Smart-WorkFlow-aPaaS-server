@@ -1,22 +1,43 @@
 package com.sw.ck.bpm.process.service;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
+import com.sw.ck.bpm.api.dto.GraphElement;
+import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmChildItem;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
+import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildBatchMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildItemMapper;
+import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormDataWritebackFacade;
+
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,20 +67,20 @@ import static org.mockito.Mockito.when;
 @DisplayName("P64 阶段Ⅱ主子流程编排测试")
 class ChildOrchestrationServiceTest {
 
-    @org.junit.jupiter.api.BeforeAll
+    @BeforeAll
     static void initTableInfo() {
         // LambdaWrapper 解析 SFunction 需要实体 lambda 缓存；纯单测无 MyBatis 上下文，手动初始化
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 BpmChildBatch.class);
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 BpmChildItem.class);
     }
 
-    private com.sw.ck.bpm.process.mapper.BpmActionRefMapper actionRefMapper;
+    private BpmActionRefMapper actionRefMapper;
     private BpmChildBatchMapper batchMapper;
     private BpmChildItemMapper itemMapper;
     private NodeFormDataService nodeFormDataService;
@@ -70,7 +91,7 @@ class ChildOrchestrationServiceTest {
 
     @BeforeEach
     void setUp() {
-        actionRefMapper = mock(com.sw.ck.bpm.process.mapper.BpmActionRefMapper.class);
+        actionRefMapper = mock(BpmActionRefMapper.class);
         batchMapper = mock(BpmChildBatchMapper.class);
         itemMapper = mock(BpmChildItemMapper.class);
         nodeFormDataService = mock(NodeFormDataService.class);
@@ -79,19 +100,19 @@ class ChildOrchestrationServiceTest {
         writebackFacade = mock(FormDataWritebackFacade.class);
         service = new ChildOrchestrationService(actionRefMapper, batchMapper, itemMapper, nodeFormDataService,
                 bpmInstanceService, bpmRuntimeFacade, writebackFacade,
-                mock(com.sw.ck.bpm.process.mapper.BpmInstanceMapper.class), new ObjectMapper());
+                mock(BpmInstanceMapper.class), new ObjectMapper());
         // parseData 为实例方法：以真实 Jackson 语义应答（与实现口径一致）
-        com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        ObjectMapper realMapper = new ObjectMapper();
         when(nodeFormDataService.parseData(anyString())).thenAnswer(invocation -> {
             String json = invocation.getArgument(0);
             if (json == null || json.isBlank()) {
-                return new java.util.LinkedHashMap<String, Object>();
+                return new LinkedHashMap<String, Object>();
             }
-            return realMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() { });
+            return realMapper.readValue(json, new TypeReference<Map<String, Object>>() { });
         });
         // 唤醒门面契约恒 present
         when(bpmRuntimeFacade.signalWaitNode(anyString(), anyString()))
-                .thenReturn(Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED));
+                .thenReturn(Optional.of(MutationOutcome.APPLIED));
     }
 
     // ==================== 派发冻结 ====================
@@ -211,7 +232,7 @@ class ChildOrchestrationServiceTest {
         // 行级 + 主记录两段回写 × 两个批次项：稳定行身份 + 派发冻结版本 + 允许字段（extra 不回写）
         ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
                 ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
-        verify(writebackFacade, org.mockito.Mockito.times(4)).applyWriteback(captor.capture());
+        verify(writebackFacade, Mockito.times(4)).applyWriteback(captor.capture());
         List<FormDataWritebackFacade.WritebackRequest> requests = captor.getAllValues();
         FormDataWritebackFacade.WritebackRequest rowRequest = requests.get(0);
         assertThat(rowRequest.tenantId()).isEqualTo(9L);
@@ -229,13 +250,13 @@ class ChildOrchestrationServiceTest {
         verify(batchMapper).update(any(), any());
         verify(bpmRuntimeFacade).signalWaitNode(eq("p1"), eq("wait_1"));
         // 复审05 P2-02b-V-C：结算即清空阻断期诊断——SETTLED 批次不残留挂起文案
-        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildBatch>>
-                settleCaptor = org.mockito.ArgumentCaptor.forClass(
-                com.baomidou.mybatisplus.core.conditions.Wrapper.class);
-        verify(batchMapper).update(org.mockito.ArgumentMatchers.isNull(), settleCaptor.capture());
-        String settleSqlSet = ((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+        ArgumentCaptor<Wrapper<BpmChildBatch>>
+                settleCaptor = ArgumentCaptor.forClass(
+                Wrapper.class);
+        verify(batchMapper).update(ArgumentMatchers.isNull(), settleCaptor.capture());
+        String settleSqlSet = ((AbstractWrapper<?, ?, ?>)
                 settleCaptor.getValue()).getSqlSet();
-        org.junit.jupiter.api.Assertions.assertTrue(
+        Assertions.assertTrue(
                 settleSqlSet != null && settleSqlSet.contains("block_reason"),
                 "结算 UPDATE 应显式清空 block_reason: " + settleSqlSet);
     }
@@ -269,7 +290,7 @@ class ChildOrchestrationServiceTest {
         // 两行各一次行级回写 + 一次主记录回写；集合外 row-other 不产生回写
         ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
                 ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
-        verify(writebackFacade, org.mockito.Mockito.times(3)).applyWriteback(captor.capture());
+        verify(writebackFacade, Mockito.times(3)).applyWriteback(captor.capture());
         List<FormDataWritebackFacade.WritebackRequest> rowRequests = captor.getAllValues().stream()
                 .filter(request -> request.tableField() != null).toList();
         assertThat(rowRequests).hasSize(2);
@@ -308,7 +329,7 @@ class ChildOrchestrationServiceTest {
 
         service.onChildProcessTerminal(child, "APPROVED");
         // 行级 + 主记录两段回写
-        verify(writebackFacade, org.mockito.Mockito.times(2)).applyWriteback(any());
+        verify(writebackFacade, Mockito.times(2)).applyWriteback(any());
         verify(batchMapper).update(any(), any());
         verify(bpmRuntimeFacade).signalWaitNode(eq("p1"), eq("wait_1"));
 
@@ -318,7 +339,7 @@ class ChildOrchestrationServiceTest {
         BpmChildItem late = dispatchedItem(settled.getId(), "row-b", "row-b", 1L);
         when(itemMapper.selectList(any())).thenReturn(List.of(late));
         BpmInstance lateChild = child("rec-b");
-        org.mockito.Mockito.clearInvocations(writebackFacade, bpmRuntimeFacade);
+        Mockito.clearInvocations(writebackFacade, bpmRuntimeFacade);
 
         service.onChildProcessTerminal(lateChild, "APPROVED");
 
@@ -342,8 +363,8 @@ class ChildOrchestrationServiceTest {
         // 第二项也已终态（FAILED）：open=0、含失败 → BLOCKED
         service.settleForTest(batch.getId());
 
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildBatch>> captor =
-                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        ArgumentCaptor<Wrapper<BpmChildBatch>> captor =
+                ArgumentCaptor.forClass(Wrapper.class);
         verify(batchMapper).update(any(), captor.capture());
         verify(bpmRuntimeFacade, never()).signalWaitNode(anyString(), anyString());
     }
@@ -417,7 +438,7 @@ class ChildOrchestrationServiceTest {
         assertThat(outcome.status()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
         ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
                 ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
-        verify(writebackFacade, org.mockito.Mockito.times(2)).applyWriteback(captor.capture());
+        verify(writebackFacade, Mockito.times(2)).applyWriteback(captor.capture());
         assertThat(captor.getAllValues().get(0).rowId()).isEqualTo("row-b");
         assertThat(captor.getAllValues().get(0).expectedRowVersion()).isNull();
         // 主记录写回同样按当前权威版本应用（恢复重放不设冻结守卫）
@@ -429,13 +450,13 @@ class ChildOrchestrationServiceTest {
         assertThat(conflict.getStatus()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
         assertThat(conflict.getErrorText()).isNull();
         // MP updateById 忽略 null 字段：恢复成功后必须存在显式 error_text=NULL 的 wrapper 清除
-        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildItem>>
-                clearCaptor = org.mockito.ArgumentCaptor.forClass(
-                com.baomidou.mybatisplus.core.conditions.Wrapper.class);
-        verify(itemMapper).update(org.mockito.ArgumentMatchers.isNull(), clearCaptor.capture());
-        String clearSqlSet = ((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+        ArgumentCaptor<Wrapper<BpmChildItem>>
+                clearCaptor = ArgumentCaptor.forClass(
+                Wrapper.class);
+        verify(itemMapper).update(ArgumentMatchers.isNull(), clearCaptor.capture());
+        String clearSqlSet = ((AbstractWrapper<?, ?, ?>)
                 clearCaptor.getValue()).getSqlSet();
-        org.junit.jupiter.api.Assertions.assertTrue(
+        Assertions.assertTrue(
                 clearSqlSet != null && clearSqlSet.contains("error_text"),
                 "恢复成功后应显式清除 error_text: " + clearSqlSet);
         // 恢复成功后重新结算（BLOCKED 批次在全项成功后可结算）
@@ -466,7 +487,7 @@ class ChildOrchestrationServiceTest {
         assertThat(outcome.status()).isEqualTo(BpmChildItem.STATUS_WRITTEN);
         ArgumentCaptor<FormDataWritebackFacade.WritebackRequest> captor =
                 ArgumentCaptor.forClass(FormDataWritebackFacade.WritebackRequest.class);
-        verify(writebackFacade, org.mockito.Mockito.times(2)).applyWriteback(captor.capture());
+        verify(writebackFacade, Mockito.times(2)).applyWriteback(captor.capture());
         // 恢复重放：清空冻结版本守卫（按当前权威版本应用）；行级请求先于主记录请求
         assertThat(captor.getAllValues().get(0).expectedRowVersion()).isNull();
         assertThat(captor.getAllValues().get(0).rowId()).isEqualTo("row-b");
@@ -562,7 +583,7 @@ class ChildOrchestrationServiceTest {
         when(batchMapper.selectOne(any())).thenReturn(null);
         when(writebackFacade.readVersion(eq(9L), eq("parent_form"), eq("rec-1"), isNull(), isNull()))
                 .thenReturn(Optional.of(7L));
-        org.mockito.Mockito.doAnswer(invocation -> {
+        Mockito.doAnswer(invocation -> {
             invocation.getArgument(0, BpmChildBatch.class).setId(300L);
             return 1;
         }).when(batchMapper).insert(any(BpmChildBatch.class));
@@ -623,19 +644,19 @@ class ChildOrchestrationServiceTest {
         service.cancelBatchesForParent(parent(), "RETURNED");
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildBatch>> batchCaptor =
-                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        ArgumentCaptor<Wrapper<BpmChildBatch>> batchCaptor =
+                ArgumentCaptor.forClass(Wrapper.class);
         verify(batchMapper).update(isNull(), batchCaptor.capture());
-        assertThat(((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+        assertThat(((AbstractWrapper<?, ?, ?>)
                 batchCaptor.getValue()).getParamNameValuePairs().values())
                 .contains(BpmChildBatch.STATUS_CANCELLED)
                 .anySatisfy(value -> String.valueOf(value).contains("失去写回推进权"));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmChildItem>> itemCaptor =
-                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        ArgumentCaptor<Wrapper<BpmChildItem>> itemCaptor =
+                ArgumentCaptor.forClass(Wrapper.class);
         verify(itemMapper).update(isNull(), itemCaptor.capture());
-        assertThat(((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>)
+        assertThat(((AbstractWrapper<?, ?, ?>)
                 itemCaptor.getValue()).getParamNameValuePairs().values())
                 .contains(BpmChildItem.STATUS_REFUSED)
                 .anySatisfy(value -> String.valueOf(value).contains("失去向当前轮次写回/推进的资格"));
@@ -888,7 +909,7 @@ class ChildOrchestrationServiceTest {
     @Test
     @DisplayName("嵌套硬上限8：配置抬高到10仍按硬钳8拒绝（父批次深度7→本次深度8），不新增批次/项")
     void hardNestingCapEightBlocksEvenWithRaisedConfig() {
-        org.springframework.test.util.ReflectionTestUtils.setField(service, "configuredMaxNesting", 10);
+        ReflectionTestUtils.setField(service, "configuredMaxNesting", 10);
         BpmChildItem parentItem = itemWithBatch(7);
         when(itemMapper.selectList(any())).thenReturn(List.of(parentItem));
         when(batchMapper.selectList(any())).thenReturn(List.of());
@@ -904,13 +925,13 @@ class ChildOrchestrationServiceTest {
 
     // ==================== 工具 ====================
 
-    private com.sw.ck.bpm.api.dto.ProcessGraph graphWithWaitNode() {
-        com.sw.ck.bpm.api.dto.GraphElement waitNode = com.sw.ck.bpm.api.dto.GraphElement.builder()
+    private ProcessGraph graphWithWaitNode() {
+        GraphElement waitNode = GraphElement.builder()
                 .id("wait_1").kind("node").type("SUBFLOW_WAIT")
-                .config(java.util.Map.of("waitActionIds", java.util.List.of("act")))
+                .config(Map.of("waitActionIds", List.of("act")))
                 .build();
-        com.sw.ck.bpm.api.dto.ProcessGraph graph = new com.sw.ck.bpm.api.dto.ProcessGraph();
-        graph.setElements(new java.util.ArrayList<>(java.util.List.of(waitNode)));
+        ProcessGraph graph = new ProcessGraph();
+        graph.setElements(new ArrayList<>(List.of(waitNode)));
         return graph;
     }
 
@@ -992,8 +1013,8 @@ class ChildOrchestrationServiceTest {
         try {
             ActionConfig config = childAction("act_prior", "ALL", null);
             config.setTargetProcessDefKey(targetDefKey);
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(config);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return new ObjectMapper().writeValueAsString(config);
+        } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
     }
@@ -1062,7 +1083,7 @@ class ChildOrchestrationServiceTest {
         BpmChildBatch batch = new BpmChildBatch();
         batch.setId(55L);
         batch.setParentDepth(parentDepth);
-        org.mockito.Mockito.doReturn(batch).when(batchMapper).selectById(55L);
+        Mockito.doReturn(batch).when(batchMapper).selectById(55L);
         return item;
     }
 

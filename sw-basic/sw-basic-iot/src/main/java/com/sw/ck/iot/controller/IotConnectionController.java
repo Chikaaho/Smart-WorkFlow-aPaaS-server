@@ -1,6 +1,11 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
+import com.sw.ck.iot.dto.IotConnectResultDTO;
+import com.sw.ck.iot.dto.IotConnectionDTO;
+import com.sw.ck.iot.dto.IotConnectionTestResultDTO;
 import com.sw.ck.iot.entity.IotConnection;
 import com.sw.ck.iot.service.IotConnectionService;
 import org.springframework.web.bind.annotation.*;
@@ -20,19 +25,16 @@ import java.util.Map;
 @RequestMapping("/iot/connections")
 public class IotConnectionController {
 
-    private final IotConnectionService connectionService;
-
-    public IotConnectionController(IotConnectionService connectionService) {
-        this.connectionService = connectionService;
-    }
+    @Autowired
+    private IotConnectionService connectionService;
 
     @GetMapping
-    public R<List<Map<String, Object>>> list() {
+    public R<List<IotConnectionDTO>> list() {
         return R.ok(connectionService.list().stream().map(connectionService::toVO).toList());
     }
 
     @GetMapping("/{id}")
-    public R<Map<String, Object>> detail(@PathVariable Long id) {
+    public R<IotConnectionDTO> detail(@PathVariable Long id) {
         IotConnection conn = connectionService.getById(id);
         if (conn == null) {
             return R.fail(404, "连接配置不存在: id=" + id);
@@ -41,7 +43,7 @@ public class IotConnectionController {
     }
 
     @PostMapping
-    public R<Map<String, Object>> create(@RequestBody Map<String, Object> body) {
+    public R<IotConnectionDTO> create(@RequestBody Map<String, Object> body) {
         IotConnection conn = new IotConnection();
         conn.setCode((String) body.get("code"));
         conn.setName((String) body.get("name"));
@@ -65,7 +67,7 @@ public class IotConnectionController {
     }
 
     @PutMapping("/{id}")
-    public R<Map<String, Object>> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public R<IotConnectionDTO> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         IotConnection patch = new IotConnection();
         patch.setName((String) body.get("name"));
         patch.setConnType((String) body.get("connType"));
@@ -90,7 +92,7 @@ public class IotConnectionController {
      * 连接测试（区分 DNS/网络不可达、认证失败、TLS 失败、协议失败与成功）。
      */
     @PostMapping("/{id}/test")
-    public R<Map<String, Object>> test(@PathVariable Long id) {
+    public R<IotConnectionTestResultDTO> test(@PathVariable Long id) {
         return R.ok(connectionService.testConnection(id));
     }
 
@@ -98,7 +100,7 @@ public class IotConnectionController {
      * 建立常驻连接并恢复订阅。
      */
     @PostMapping("/{id}/connect")
-    public R<Map<String, Object>> connect(@PathVariable Long id) {
+    public R<IotConnectResultDTO> connect(@PathVariable Long id) {
         return R.ok(connectionService.connect(id));
     }
 

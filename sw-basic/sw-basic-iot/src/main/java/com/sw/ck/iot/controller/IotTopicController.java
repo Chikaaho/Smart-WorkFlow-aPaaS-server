@@ -1,5 +1,7 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotTopic;
 import com.sw.ck.iot.service.IotTopicService;
@@ -16,11 +18,8 @@ import java.util.List;
 @RequestMapping("/iot/topics")
 public class IotTopicController {
 
-    private final IotTopicService topicService;
-
-    public IotTopicController(IotTopicService topicService) {
-        this.topicService = topicService;
-    }
+    @Autowired
+    private IotTopicService topicService;
 
     @GetMapping
     public R<List<IotTopic>> list() {

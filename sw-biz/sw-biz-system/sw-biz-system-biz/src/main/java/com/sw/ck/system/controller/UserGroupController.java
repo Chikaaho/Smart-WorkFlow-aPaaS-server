@@ -1,16 +1,23 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.entity.SysUserGroup;
 import com.sw.ck.system.service.SysUserGroupService;
+
 import jakarta.validation.Valid;
+
 import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 
 /**
@@ -26,19 +33,16 @@ import java.util.List;
 @RequestMapping("/system/user-group")
 public class UserGroupController {
 
-    private final SysUserGroupService sysUserGroupService;
-
-    public UserGroupController(SysUserGroupService sysUserGroupService) {
-        this.sysUserGroupService = sysUserGroupService;
-    }
+    @Autowired
+    private SysUserGroupService sysUserGroupService;
 
     /** 内嵌 DTO：用户组表单（memberIds 用于创建/更新时随主记录事务写入） */
     @Data
     public static class UserGroupFormRequest {
         private Long id;
-        @jakarta.validation.constraints.NotBlank(message = "业务标识不能为空")
+        @NotBlank(message = "业务标识不能为空")
         private String groupCode;
-        @jakarta.validation.constraints.NotBlank(message = "组名称不能为空")
+        @NotBlank(message = "组名称不能为空")
         private String groupName;
         private Integer status;
         private String remark;
@@ -78,8 +82,8 @@ public class UserGroupController {
     @PreAuthorize("@ss.hasPermi('system:userGroup:manage')")
     public R<Void> update(@Valid @RequestBody UserGroupFormRequest req) {
         if (req.getId() == null) {
-            throw new com.sw.ck.common.exception.BaseException(
-                    com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "用户组 ID 不能为空");
+            throw new BaseException(
+                    CommonErrorCode.PARAM_ERROR, "用户组 ID 不能为空");
         }
         sysUserGroupService.update(toEntity(req));
         return R.ok();

@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -17,12 +18,17 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.mapper.NotifyMessageMapper;
+import com.sw.ck.notify.render.TemplateRenderService;
 import com.sw.ck.notify.service.NotifyMessageService;
+import com.sw.ck.notify.service.NotifyTemplateService;
 import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -35,6 +41,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.Set;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -299,7 +306,7 @@ class NotifyFacadeIdempotencyIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -323,27 +330,27 @@ class NotifyFacadeIdempotencyIntegrationTest {
         }
 
         @Bean
-        public com.sw.ck.notify.render.TemplateRenderService templateRenderService() {
-            return new com.sw.ck.notify.render.TemplateRenderService();
+        public TemplateRenderService templateRenderService() {
+            return new TemplateRenderService();
         }
 
         /** 模板服务仅作依赖占位：本测试走直连内容模式，不经模板渲染路径。 */
         @Bean
-        public com.sw.ck.notify.service.NotifyTemplateService notifyTemplateService() {
-            return org.mockito.Mockito.mock(com.sw.ck.notify.service.NotifyTemplateService.class);
+        public NotifyTemplateService notifyTemplateService() {
+            return Mockito.mock(NotifyTemplateService.class);
         }
 
         @Bean
         public NotifyMessageService notifyMessageService(
-                com.sw.ck.notify.service.NotifyTemplateService notifyTemplateService,
-                com.sw.ck.notify.render.TemplateRenderService templateRenderService,
+                NotifyTemplateService notifyTemplateService,
+                TemplateRenderService templateRenderService,
                 LoginContextProvider loginContextProvider) {
             return new NotifyMessageServiceImpl(notifyTemplateService, templateRenderService, loginContextProvider);
         }
 
         @Bean
         public NotifyFacade notifyFacade(NotifyMessageService notifyMessageService) {
-            return new NotifyFacadeImpl(notifyMessageService, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
+            return new NotifyFacadeImpl(notifyMessageService, List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
     }
 }

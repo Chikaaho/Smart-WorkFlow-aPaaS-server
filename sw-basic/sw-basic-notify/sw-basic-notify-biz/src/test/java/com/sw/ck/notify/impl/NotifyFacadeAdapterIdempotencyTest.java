@@ -6,9 +6,16 @@ import com.sw.ck.notify.api.NotifyChannelAdapter;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.entity.NotifyMessage;
+import com.sw.ck.notify.mapper.NotifyMessageMapper;
 import com.sw.ck.notify.service.NotifyMessageService;
-import org.junit.jupiter.api.Test;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,17 +42,17 @@ class NotifyFacadeAdapterIdempotencyTest {
                 .thenReturn(null)
                 .thenReturn(existing);
 
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""),
                 NotifyMessage.class);
-        var mapper = mock(com.sw.ck.notify.mapper.NotifyMessageMapper.class);
+        var mapper = mock(NotifyMessageMapper.class);
         when(messageService.getBaseMapper()).thenReturn(mapper);
-        when(mapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        when(mapper.update(ArgumentMatchers.isNull(), any())).thenReturn(1);
         when(messageService.save(any(NotifyMessage.class))).thenAnswer(call -> {
             call.getArgument(0, NotifyMessage.class).setId(901L);
             return true;
         });
-        NotifyFacadeImpl facade = new NotifyFacadeImpl(messageService, java.util.List.of(adapter), null,
+        NotifyFacadeImpl facade = new NotifyFacadeImpl(messageService, List.of(adapter), null,
                 (tenantId, claim) -> claim.getAsInt());
         NotifySendRequest request = NotifySendRequest.builder()
                 .recipientId(2095490569284018177L)

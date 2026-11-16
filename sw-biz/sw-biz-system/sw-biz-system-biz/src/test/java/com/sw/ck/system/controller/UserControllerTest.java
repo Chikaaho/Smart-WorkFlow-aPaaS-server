@@ -4,14 +4,21 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.api.user.UserOptionDTO;
+import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.system.entity.SysUser;
+import com.sw.ck.system.service.ManagementTenantContext;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.UserImportExportService;
 import com.sw.ck.system.service.impl.UserFacadeImpl;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -28,17 +35,17 @@ import static org.mockito.Mockito.*;
 class UserControllerTest {
 
     private final SysUserService sysUserService = mock(SysUserService.class);
-    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
-            mock(com.sw.ck.system.api.user.UserQueryFacade.class);
-    private final com.sw.ck.system.service.ManagementTenantContext tenantContext =
-            mock(com.sw.ck.system.service.ManagementTenantContext.class);
+    private final UserQueryFacade userQueryFacade =
+            mock(UserQueryFacade.class);
+    private final ManagementTenantContext tenantContext =
+            mock(ManagementTenantContext.class);
     private final UserController controller = new UserController(sysUserService, userQueryFacade, tenantContext,
-            mock(com.sw.ck.system.service.UserImportExportService.class));
+            mock(UserImportExportService.class));
 
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void defaultOwnedObject() {
         when(tenantContext.readTarget(nullable(Long.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        com.sw.ck.system.entity.SysUser owner = new com.sw.ck.system.entity.SysUser();
+        SysUser owner = new SysUser();
         owner.setId(1L);
         owner.setTenantId(1L);
         when(sysUserService.getById(1L)).thenReturn(owner);
@@ -51,7 +58,7 @@ class UserControllerTest {
     void options_shouldReturnMinimalOptions() {
         UserOptionDTO opt = new UserOptionDTO(1L, "admin", "系统管理员");
         when(userQueryFacade.searchActiveUsers(eq("系统"), eq(200), eq(false)))
-                .thenReturn(java.util.Optional.of(List.of(opt)));
+                .thenReturn(Optional.of(List.of(opt)));
 
         var resp = controller.options("系统", 500, false);
 
@@ -64,8 +71,8 @@ class UserControllerTest {
     @DisplayName("options includeDept → 透传部门查询（表单脚本组织成员）并返回 deptId")
     void options_includeDept_shouldPassThrough() {
         UserOptionDTO opt = new UserOptionDTO(2L, "zhangsan", "张三", 10L);
-        when(userQueryFacade.searchActiveUsers(org.mockito.ArgumentMatchers.isNull(), eq(200), eq(true)))
-                .thenReturn(java.util.Optional.of(List.of(opt)));
+        when(userQueryFacade.searchActiveUsers(ArgumentMatchers.isNull(), eq(200), eq(true)))
+                .thenReturn(Optional.of(List.of(opt)));
 
         var resp = controller.options(null, 200, true);
 
@@ -77,7 +84,7 @@ class UserControllerTest {
     @DisplayName("options → 门面返回 empty（无租户上下文）时回退空列表而非失败")
     void options_shouldFallBackToEmptyOnEmptyFacade() {
         when(userQueryFacade.searchActiveUsers(any(), anyInt(), eq(false)))
-                .thenReturn(java.util.Optional.empty());
+                .thenReturn(Optional.empty());
 
         var resp = controller.options(null, 50, false);
 

@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
 import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
 import com.sw.ck.agent.entity.AgentMessage;
@@ -32,6 +33,7 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.bsc.langgraph4j.CompiledGraph;
@@ -43,9 +45,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
+
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.exception.HttpException;
 import dev.langchain4j.model.chat.ChatModel;
@@ -62,6 +68,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.annotation.Transactional;
+import org.apache.ibatis.session.SqlSessionFactory;
 
 import javax.sql.DataSource;
 import java.io.IOException;
@@ -117,10 +124,10 @@ class AgentOrchestrationServiceImplTest {
     private AgentOrchestrationService service;
 
     @Autowired
-    private com.sw.ck.agent.mapper.AgentProviderMapper providerMapper;
+    private AgentProviderMapper providerMapper;
 
     @Autowired
-    private com.sw.ck.agent.mapper.AgentModelMapper modelMapper;
+    private AgentModelMapper modelMapper;
 
     @Autowired
     private AgentSessionMapper sessionMapper;
@@ -917,7 +924,7 @@ class AgentOrchestrationServiceImplTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -949,8 +956,8 @@ class AgentOrchestrationServiceImplTest {
 
         @Bean
         public AgentModelRuntimeService agentModelRuntimeService(
-                com.sw.ck.agent.mapper.AgentModelMapper agentModelMapper,
-                com.sw.ck.agent.mapper.AgentProviderMapper agentProviderMapper,
+                AgentModelMapper agentModelMapper,
+                AgentProviderMapper agentProviderMapper,
                 AesGcmCipher aesGcmCipher) {
             return new AgentModelRuntimeService(agentModelMapper, agentProviderMapper, aesGcmCipher);
         }

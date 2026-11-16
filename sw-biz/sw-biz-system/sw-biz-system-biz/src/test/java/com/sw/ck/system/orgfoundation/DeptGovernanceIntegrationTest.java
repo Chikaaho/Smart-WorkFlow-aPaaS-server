@@ -3,6 +3,7 @@ package com.sw.ck.system.orgfoundation;
 import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.DataScope;
 import com.sw.ck.security.holder.LoginUser;
@@ -10,10 +11,15 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.datascope.DeptScopeProviderImpl;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.mapper.SysDeptMapper;
+import com.sw.ck.system.mapper.SysPostMapper;
+import com.sw.ck.system.mapper.SysRoleMapper;
+import com.sw.ck.system.mapper.SysUserPostMapper;
+import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.system.service.SysDeptService;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.impl.SysDeptServiceImpl;
 import com.sw.ck.system.service.impl.SysUserServiceImpl;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,6 +35,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -103,7 +111,7 @@ class DeptGovernanceIntegrationTest {
         missing.setLeaderId(9999L);
         assertThatThrownBy(() -> deptService.create(missing))
                 .isInstanceOfSatisfying(BaseException.class, e -> assertThat(e.getCode())
-                        .isEqualTo(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode()));
+                        .isEqualTo(CommonErrorCode.PARAM_ERROR.getCode()));
 
         SysDept disabled = baseDept(606L, 601L, "部门B");
         disabled.setLeaderId(802L);
@@ -232,9 +240,9 @@ class DeptGovernanceIntegrationTest {
         }
 
         @Bean
-        public SysUserService sysUserService(PasswordEncoder passwordEncoder, com.sw.ck.system.mapper.SysUserRoleMapper userRoleMapper,
-                                             com.sw.ck.system.mapper.SysUserPostMapper userPostMapper, com.sw.ck.system.mapper.SysRoleMapper roleMapper,
-                                             com.sw.ck.system.mapper.SysPostMapper postMapper) {
+        public SysUserService sysUserService(PasswordEncoder passwordEncoder, SysUserRoleMapper userRoleMapper,
+                                             SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
+                                             SysPostMapper postMapper) {
             return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper);
         }
 
@@ -274,10 +282,10 @@ class DeptGovernanceIntegrationTest {
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
+                public Set<Long> getCustomDeptIds() {
                     LoginUser user = LoginUserHolder.get();
                     return user != null && user.getCustomDeptIds() != null
-                            ? user.getCustomDeptIds() : java.util.Set.of();
+                            ? user.getCustomDeptIds() : Set.of();
                 }
 
                 @Override

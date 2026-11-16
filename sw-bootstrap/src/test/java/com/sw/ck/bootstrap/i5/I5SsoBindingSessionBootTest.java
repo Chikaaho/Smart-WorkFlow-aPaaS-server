@@ -1,22 +1,44 @@
 package com.sw.ck.bootstrap.i5;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
 import com.sw.ck.system.controller.SsoTicketStore;
+import com.sw.ck.system.sso.SsoAuthService;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
+import java.security.PublicKey;
+import java.security.spec.MGF1ParameterSpec;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.Map;
+import javax.crypto.Cipher;
+import javax.crypto.spec.OAEPParameterSpec;
+import javax.crypto.spec.PSource.PSpecified;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -66,24 +88,24 @@ class I5SsoBindingSessionBootTest {
         props.put("sw.security.jwt.secret", "i5-g6b1-test-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "i5-g6b1-test-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     // addFirst：测试属性源必须压过 application.yml（默认 .properties 优先级最低）
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("i5-g6b1-test", props));
+                            new MapPropertySource("i5-g6b1-test", props));
                     // dev profile 需显式激活：getActiveProfiles 在环境准备阶段已缓存，
                     // 仅靠属性源中的 spring.profiles.active 不会生效
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getSystemProperties().put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("i5G6b1LoginContextProvider", provider);
                 })
                 .run();
@@ -103,7 +125,7 @@ class I5SsoBindingSessionBootTest {
     private String issueTicket(long userId, long tenantId, String provider) {
         // A4：票据绑定签发时刻配置指纹——与兑换时服务端计算的当前指纹同源
         // （夹具配置行 app_secret_enc='x' 不可解密，指纹以占位标记参与，签发/兑换两侧一致）
-        String digest = app.getBean(com.sw.ck.system.sso.SsoAuthService.class)
+        String digest = app.getBean(SsoAuthService.class)
                 .currentConfigDigestFor(provider, tenantId);
         return app.getBean(SsoTicketStore.class).issue(userId, tenantId, provider, digest);
     }
@@ -212,8 +234,8 @@ class I5SsoBindingSessionBootTest {
         // 新隔离对象（iteration-05 的 9501/90011 已随其测试 JVM 销毁，旧→新登记）
         long userId = 9502L;
         String sessionKey = "sw:security:login-user:" + userId;
-        org.springframework.data.redis.core.StringRedisTemplate redis =
-                app.getBean(org.springframework.data.redis.core.StringRedisTemplate.class);
+        StringRedisTemplate redis =
+                app.getBean(StringRedisTemplate.class);
         int roleBefore = roleCount();
         String secondDigest = new StringBuilder(bindingDigest).reverse().toString();
         jdbc.update("MERGE INTO sys_user (id, create_time, update_time, deleted, tenant_id, version, " +
@@ -314,24 +336,24 @@ class I5SsoBindingSessionBootTest {
     /** 预取登录 challenge（RSA 密钥生成在登录序列外完成，用于压缩 A/B 签发间隔以制造同秒条件）。 */
     private Challenge fetchChallenge() throws Exception {
         HttpResponse<String> ch = get("/auth/challenge", null);
-        com.fasterxml.jackson.databind.JsonNode data = new com.fasterxml.jackson.databind.ObjectMapper()
+        JsonNode data = new ObjectMapper()
                 .readTree(ch.body()).path("data");
         return new Challenge(data.path("captchaId").asText(), data.path("publicKey").asText());
     }
 
     /** 用预取的 challenge 提交真实登录（RSA-OAEP-SHA256 加密 + dev 固定验证码）。 */
     private HttpResponse<String> submitLogin(String username, Challenge ch) throws Exception {
-        java.security.KeyFactory kf = java.security.KeyFactory.getInstance("RSA");
-        java.security.PublicKey pub = kf.generatePublic(new java.security.spec.X509EncodedKeySpec(
-                java.util.Base64.getDecoder().decode(ch.publicKey())));
-        javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
+        KeyFactory kf = KeyFactory.getInstance("RSA");
+        PublicKey pub = kf.generatePublic(new X509EncodedKeySpec(
+                Base64.getDecoder().decode(ch.publicKey())));
+        Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
         // SunJCE 默认 MGF1 用 SHA-1，与服务端 OAEP-SHA256 不一致，必须显式指定
-        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, pub,
-                new javax.crypto.spec.OAEPParameterSpec("SHA-256", "MGF1",
-                        java.security.spec.MGF1ParameterSpec.SHA256, javax.crypto.spec.PSource.PSpecified.DEFAULT));
-        String encrypted = java.util.Base64.getEncoder().encodeToString(
-                cipher.doFinal("admin123".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        String body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(java.util.Map.of(
+        cipher.init(Cipher.ENCRYPT_MODE, pub,
+                new OAEPParameterSpec("SHA-256", "MGF1",
+                        MGF1ParameterSpec.SHA256, PSpecified.DEFAULT));
+        String encrypted = Base64.getEncoder().encodeToString(
+                cipher.doFinal("admin123".getBytes(StandardCharsets.UTF_8)));
+        String body = new ObjectMapper().writeValueAsString(Map.of(
                 "username", username, "password", encrypted,
                 "captcha", "1234", "captchaId", ch.captchaId(),
                 "timestamp", String.valueOf(System.currentTimeMillis())));
@@ -344,8 +366,8 @@ class I5SsoBindingSessionBootTest {
 
     private static String sha256Hex(String value) {
         try {
-            return java.util.HexFormat.of().formatHex(java.security.MessageDigest
-                    .getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexFormat.of().formatHex(MessageDigest
+                    .getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -358,8 +380,8 @@ class I5SsoBindingSessionBootTest {
         long userId = 9503L;
         String username = "i5g6c1user";
         String sessionKey = "sw:security:login-user:" + userId;
-        org.springframework.data.redis.core.StringRedisTemplate redis =
-                app.getBean(org.springframework.data.redis.core.StringRedisTemplate.class);
+        StringRedisTemplate redis =
+                app.getBean(StringRedisTemplate.class);
         int roleBefore = roleCount();
         String thirdDigest = new StringBuilder(bindingDigest).reverse().toString();
         char flip = thirdDigest.charAt(0) == 'f' ? 'e' : 'f';
@@ -462,11 +484,11 @@ class I5SsoBindingSessionBootTest {
     }
 
     /** 解码 JWT payload（不验签，仅读 iat/jti 用于证据记录）。 */
-    private static java.util.Map<String, Object> jwtClaims(String token) {
+    private static Map<String, Object> jwtClaims(String token) {
         try {
             String[] parts = token.split("\\.");
-            byte[] json = java.util.Base64.getUrlDecoder().decode(parts[1]);
-            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(json, java.util.Map.class);
+            byte[] json = Base64.getUrlDecoder().decode(parts[1]);
+            return new ObjectMapper().readValue(json, Map.class);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -479,8 +501,8 @@ class I5SsoBindingSessionBootTest {
         long userId = 9504L;
         String username = "i5g6c1auser";
         String sessionKey = "sw:security:login-user:" + userId;
-        org.springframework.data.redis.core.StringRedisTemplate redis =
-                app.getBean(org.springframework.data.redis.core.StringRedisTemplate.class);
+        StringRedisTemplate redis =
+                app.getBean(StringRedisTemplate.class);
         int roleBefore = roleCount();
         String fourthDigest = new StringBuilder(bindingDigest).reverse().toString();
         // 首字符取 '8'：与 90012 夹具（reversed 原值）在外部身份唯一键上区分
@@ -599,9 +621,9 @@ class I5SsoBindingSessionBootTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator g = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
             g.initialize(2048);
-            return java.util.Base64.getEncoder().encodeToString(g.generateKeyPair().getPrivate().getEncoded());
+            return Base64.getEncoder().encodeToString(g.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -609,7 +631,7 @@ class I5SsoBindingSessionBootTest {
 
     private boolean sessionRowExists() {
         try {
-            return Boolean.TRUE.equals(app.getBean(org.springframework.data.redis.core.StringRedisTemplate.class)
+            return Boolean.TRUE.equals(app.getBean(StringRedisTemplate.class)
                     .hasKey(SESSION_KEY));
         } catch (Exception e) {
             System.out.println("[G6b1] redis hasKey 失败: " + e.getClass().getSimpleName());
@@ -619,7 +641,7 @@ class I5SsoBindingSessionBootTest {
 
     private void delSessionRow() {
         try {
-            app.getBean(org.springframework.data.redis.core.StringRedisTemplate.class).delete(SESSION_KEY);
+            app.getBean(StringRedisTemplate.class).delete(SESSION_KEY);
         } catch (Exception e) {
             System.out.println("[G6b1] redis del 失败: " + e.getClass().getSimpleName());
         }
@@ -633,8 +655,8 @@ class I5SsoBindingSessionBootTest {
 
     private static String extract(String body, String field) {
         try {
-            com.fasterxml.jackson.databind.JsonNode node =
-                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+            JsonNode node =
+                    new ObjectMapper().readTree(body);
             return node.path("data").path(field).asText(null);
         } catch (Exception e) {
             return null;
@@ -658,7 +680,7 @@ class I5SsoBindingSessionBootTest {
             // 前置：Provider 启用 → 票据兑换成功
             String t1 = issueTicket(9505L, TENANT_ID, "WECOM");
             HttpResponse<String> ok = post("/auth/sso/ticket", "{\"ticket\":\"" + t1 + "\"}");
-            org.junit.jupiter.api.Assertions.assertEquals(200, ok.statusCode(),
+            Assertions.assertEquals(200, ok.statusCode(),
                     "启用态票据兑换应成功: " + snippet(ok.body()));
             // 停用 → 未兑换票据拒绝
             String t2 = issueTicket(9505L, TENANT_ID, "WECOM");
@@ -666,7 +688,7 @@ class I5SsoBindingSessionBootTest {
                     "WHERE provider='WECOM' AND deleted=0");
             HttpResponse<String> rejected = post("/auth/sso/ticket", "{\"ticket\":\"" + t2 + "\"}");
             // R 信封契约：错误业务码以 HTTP 200 信封返回——断言信封 code 而非 HTTP 状态
-            org.junit.jupiter.api.Assertions.assertTrue(
+            Assertions.assertTrue(
                     rejected.body().contains("\"code\":401")
                             && rejected.body().contains("system.sso_login_not_completed"),
                     "停用后未兑换票据必须拒绝: " + snippet(rejected.body()));
@@ -675,7 +697,7 @@ class I5SsoBindingSessionBootTest {
                     "WHERE provider='WECOM' AND deleted=0");
             String t3 = issueTicket(9505L, TENANT_ID, "WECOM");
             HttpResponse<String> recovered = post("/auth/sso/ticket", "{\"ticket\":\"" + t3 + "\"}");
-            org.junit.jupiter.api.Assertions.assertEquals(200, recovered.statusCode(),
+            Assertions.assertEquals(200, recovered.statusCode(),
                     "重新启用后票据兑换恢复: " + snippet(recovered.body()));
         } finally {
             // 无论断言结果如何恢复启用态，避免污染同类其他用例

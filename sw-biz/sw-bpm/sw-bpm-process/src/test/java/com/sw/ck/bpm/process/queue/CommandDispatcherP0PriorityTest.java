@@ -5,11 +5,14 @@ import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,7 +39,7 @@ class CommandDispatcherP0PriorityTest {
     void p0ShouldProcessWhileNormalBacklogged() throws Exception {
         BpmCommandQueue queue = mock(BpmCommandQueue.class);
         BpmCommandHandler handler = mock(BpmCommandHandler.class);
-        when(handler.types()).thenReturn(java.util.Set.of(CommandTypeEnum.TASK_APPROVE));
+        when(handler.types()).thenReturn(Set.of(CommandTypeEnum.TASK_APPROVE));
 
         // 普通车道积压：领取不到可处理命令
         when(queue.claimDue(List.of(CommandChannelEnum.NORMAL), 20)).thenReturn(List.of());
@@ -67,7 +70,7 @@ class CommandDispatcherP0PriorityTest {
     void p0LaneShouldNotClaimNormal() {
         BpmCommandQueue queue = mock(BpmCommandQueue.class);
         BpmCommandHandler handler = mock(BpmCommandHandler.class);
-        when(handler.types()).thenReturn(java.util.Set.of(CommandTypeEnum.TASK_APPROVE));
+        when(handler.types()).thenReturn(Set.of(CommandTypeEnum.TASK_APPROVE));
         when(queue.claimDue(anyList(), anyInt())).thenReturn(List.of());
 
         CommandDispatcher dispatcher = newDispatcher(queue, handler);
@@ -79,8 +82,8 @@ class CommandDispatcherP0PriorityTest {
 
     private CommandDispatcher newDispatcher(BpmCommandQueue queue, BpmCommandHandler handler) {
         CommandDispatcher dispatcher = new CommandDispatcher(queue, List.of(handler));
-        org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "batchSize", 20);
-        org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "p0BatchSize", 5);
+        ReflectionTestUtils.setField(dispatcher, "batchSize", 20);
+        ReflectionTestUtils.setField(dispatcher, "p0BatchSize", 5);
         return dispatcher;
     }
 }

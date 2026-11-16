@@ -8,11 +8,13 @@ import com.sw.ck.bpm.process.entity.UrgeRecord;
 import com.sw.ck.bpm.process.mapper.UrgeRecordMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +27,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -130,11 +133,11 @@ class BpmUrgeServiceTest {
         BpmTaskDTO task = new BpmTaskDTO();
         task.setTaskId("t-1");
         task.setAssignee("9");
-        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(java.util.Optional.of(List.of(task)));
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of(task)));
 
         when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
-                java.util.Optional.of(NotifySendResult.builder()
-                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                Optional.of(NotifySendResult.builder()
+                        .channel(NotifyChannel.IN_APP)
                         .status("SUCCESS")
                         .build()));
 
@@ -158,10 +161,10 @@ class BpmUrgeServiceTest {
         BpmTaskDTO task = new BpmTaskDTO();
         task.setTaskId("t-1");
         task.setAssignee("9");
-        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(java.util.Optional.of(List.of(task)));
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of(task)));
         when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
-                java.util.Optional.of(NotifySendResult.builder()
-                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                Optional.of(NotifySendResult.builder()
+                        .channel(NotifyChannel.IN_APP)
                         .status("SUCCESS")
                         .build()));
 
@@ -195,10 +198,10 @@ class BpmUrgeServiceTest {
         BpmTaskDTO task = new BpmTaskDTO();
         task.setTaskId("t-1");
         task.setAssignee("9");
-        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(java.util.Optional.of(List.of(task)));
+        when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of(task)));
         when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
-                java.util.Optional.of(NotifySendResult.builder()
-                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                Optional.of(NotifySendResult.builder()
+                        .channel(NotifyChannel.IN_APP)
                         .status("SUCCESS")
                         .build()));
 
@@ -221,8 +224,8 @@ class BpmUrgeServiceTest {
 
     private void acceptedNotification() {
         when(notifyFacade.send(any(NotifySendRequest.class))).thenReturn(
-                java.util.Optional.of(NotifySendResult.builder()
-                        .channel(com.sw.ck.notify.api.NotifyChannel.IN_APP)
+                Optional.of(NotifySendResult.builder()
+                        .channel(NotifyChannel.IN_APP)
                         .status("SUCCESS")
                         .build()));
     }
@@ -234,7 +237,7 @@ class BpmUrgeServiceTest {
         when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
         when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
         when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
-                java.util.Optional.of(List.of(task("t-1", "7", null))));
+                Optional.of(List.of(task("t-1", "7", null))));
         acceptedNotification();
 
         UrgeRespDTO resp = urgeService.urge(1L, null, null);
@@ -247,7 +250,7 @@ class BpmUrgeServiceTest {
     void outsiderCannotUrge() {
         when(bpmInstanceService.getById(1L)).thenReturn(instance(1L, 8L, "RUNNING", "pi-1"));
         when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
-                java.util.Optional.of(List.of(task("t-1", "9", List.of("10")))));
+                Optional.of(List.of(task("t-1", "9", List.of("10")))));
 
         assertThatThrownBy(() -> urgeService.urge(1L))
                 .isInstanceOf(BaseException.class)
@@ -263,7 +266,7 @@ class BpmUrgeServiceTest {
         when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
         when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
         when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
-                java.util.Optional.of(List.of(task("t-1", "9", null), task("t-2", "10", null))));
+                Optional.of(List.of(task("t-1", "9", null), task("t-2", "10", null))));
         acceptedNotification();
 
         UrgeRespDTO resp = urgeService.urge(1L, "请优先处理", List.of(10L));
@@ -281,7 +284,7 @@ class BpmUrgeServiceTest {
         when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
         when(urgeRecordMapper.selectList(any())).thenReturn(List.of());
         when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(
-                java.util.Optional.of(List.of(task("t-1", "9", null))));
+                Optional.of(List.of(task("t-1", "9", null))));
 
         UrgeRespDTO resp = urgeService.urge(1L, null, List.of(9999L));
         assertThat(resp.getResult()).isEqualTo("REJECTED");

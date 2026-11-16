@@ -14,9 +14,11 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -74,7 +76,7 @@ class BpmCommandControllerP0Test {
         assertThatThrownBy(() -> controller.acceptTaskAction("task-1", "complete", null, "P0"))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("P0");
-        org.mockito.Mockito.verifyNoInteractions(commandAcceptService);
+        Mockito.verifyNoInteractions(commandAcceptService);
         verify(permissionService).hasPermi("workflow:p0:dispatch");
     }
 
@@ -146,7 +148,7 @@ class BpmCommandControllerP0Test {
                 .hasMessageContaining("未知通道");
     }
 
-    @org.junit.jupiter.api.Test
+    @Test
     @DisplayName("单任务不通过意见：disapprove 段映射 DISAPPROVE（非 REJECT 流程终态）")
     void disapproveSegmentMapsToDisapproveAction() {
         login(true);

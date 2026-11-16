@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.UrgeReqDTO;
 import com.sw.ck.bpm.process.dto.UrgeRespDTO;
 import com.sw.ck.bpm.process.service.BpmUrgeService;
@@ -15,11 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/workflow/my/instances")
 public class BpmUrgeController {
 
-    private final BpmUrgeService urgeService;
-
-    public BpmUrgeController(BpmUrgeService urgeService) {
-        this.urgeService = urgeService;
-    }
+    @Autowired
+    private BpmUrgeService urgeService;
 
     /**
      * 发起人对本人运行中实例催办当前实际待办人（10 分钟冷却，重复请求返回冷却信息）。

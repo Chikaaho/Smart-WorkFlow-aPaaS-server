@@ -3,10 +3,13 @@ package com.sw.ck.bpm.process.tool;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,7 +67,7 @@ class AgentProcessQueryToolTest {
 
     @Test
     void testQuery_ReturnsRecentRecords() {
-        when(instanceService.list(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class)))
+        when(instanceService.list(any(Wrapper.class)))
                 .thenReturn(List.of(
                         instance("pi-1", "campus_activity", "RUNNING"),
                         instance("pi-2", "campus_activity", "APPROVED")));
@@ -81,7 +84,7 @@ class AgentProcessQueryToolTest {
 
     @Test
     void testQueryFailure_ExplicitErrorNotSilentEmpty() {
-        when(instanceService.list(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class)))
+        when(instanceService.list(any(Wrapper.class)))
                 .thenThrow(new RuntimeException("db down"));
 
         String output = tool.execute("{}");

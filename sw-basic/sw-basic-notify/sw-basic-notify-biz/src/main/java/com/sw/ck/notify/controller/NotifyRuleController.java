@@ -1,5 +1,7 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.notify.dto.NotifyRuleDTO;
@@ -20,33 +22,30 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/notify/rules")
 public class NotifyRuleController {
 
-    private final NotifyRuleService notifyRuleService;
-
-    public NotifyRuleController(NotifyRuleService notifyRuleService) {
-        this.notifyRuleService = notifyRuleService;
-    }
+    @Autowired
+    private NotifyRuleService notifyRuleService;
 
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:rule:view')")
-    public R<PageResult<com.sw.ck.notify.dto.NotifyRuleDTO>> list(NotifyRuleQuery query) {
+    public R<PageResult<NotifyRuleDTO>> list(NotifyRuleQuery query) {
         return R.ok(notifyRuleService.pageRules(query));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:rule:view')")
-    public R<com.sw.ck.notify.dto.NotifyRuleDTO> get(@PathVariable Long id) {
+    public R<NotifyRuleDTO> get(@PathVariable Long id) {
         return R.ok(notifyRuleService.getRule(id));
     }
 
     @PostMapping
     @PreAuthorize("@ss.hasPermi('notify:rule:manage')")
-    public R<Long> create(@RequestBody com.sw.ck.notify.dto.NotifyRuleDTO dto) {
+    public R<Long> create(@RequestBody NotifyRuleDTO dto) {
         return R.ok(notifyRuleService.createRule(dto));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:rule:manage')")
-    public R<Void> update(@PathVariable Long id, @RequestBody com.sw.ck.notify.dto.NotifyRuleDTO dto) {
+    public R<Void> update(@PathVariable Long id, @RequestBody NotifyRuleDTO dto) {
         notifyRuleService.updateRule(id, dto);
         return R.ok();
     }

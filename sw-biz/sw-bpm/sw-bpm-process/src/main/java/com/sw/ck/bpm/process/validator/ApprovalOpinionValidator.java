@@ -6,6 +6,7 @@ import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.common.exception.BaseException;
 
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +69,7 @@ public final class ApprovalOpinionValidator {
         if ("DEFAULT_REMARK".equals(formId)) {
             data.putIfAbsent("comment", request.getComment() == null ? "" : request.getComment());
         }
-        Set<String> declaredKeys = new java.util.HashSet<>();
+        Set<String> declaredKeys = new HashSet<>();
         for (Object rawField : fields) {
             if (!(rawField instanceof Map<?, ?> field)) {
                 throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);

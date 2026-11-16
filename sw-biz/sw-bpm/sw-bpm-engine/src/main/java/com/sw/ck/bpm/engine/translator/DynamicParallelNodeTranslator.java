@@ -1,7 +1,10 @@
 package com.sw.ck.bpm.engine.translator;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -9,6 +12,7 @@ import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
+
 import org.flowable.bpmn.model.CollectionHandler;
 import org.flowable.bpmn.model.ExtensionAttribute;
 import org.flowable.bpmn.model.FlowElement;
@@ -18,6 +22,7 @@ import org.flowable.bpmn.model.MultiInstanceLoopCharacteristics;
 import org.flowable.bpmn.model.UserTask;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
@@ -35,11 +40,8 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
     private static final List<String> MODES = List.of("ALL", "ANY", "RATIO", "VETO");
     private static final List<String> SOURCE_TYPES = List.of("FORM_FIELD", "VARIABLE", "FIXED");
 
-    private final ObjectMapper objectMapper;
-
-    public DynamicParallelNodeTranslator(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public Optional<String> type() {
@@ -186,7 +188,7 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
         task.setLoopCharacteristics(loop);
         FlowableListener create = listener("create");
         FlowableListener complete = listener("complete");
-        task.setTaskListeners(new java.util.ArrayList<>(List.of(create, complete)));
+        task.setTaskListeners(new ArrayList<>(List.of(create, complete)));
         try {
             ExtensionAttribute attr = new ExtensionAttribute("nodeConfig", objectMapper.writeValueAsString(config));
             attr.setNamespace(FLOWABLE_NS);

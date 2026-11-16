@@ -1,5 +1,7 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormAppContentDTO;
 import com.sw.ck.form.api.dto.FormAppDTO;
@@ -24,11 +26,8 @@ import java.util.List;
 @RequestMapping("/form/app/center")
 public class FormAppCenterController {
 
-    private final FormAppService formAppService;
-
-    public FormAppCenterController(FormAppService formAppService) {
-        this.formAppService = formAppService;
-    }
+    @Autowired
+    private FormAppService formAppService;
 
     /** 当前用户可见的应用（启用 + 可见范围命中），计数只含当前用户可用表单。 */
     @GetMapping("/apps")

@@ -1,6 +1,9 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
+import com.sw.ck.system.dto.WorkspaceLayoutDTO;
 import com.sw.ck.system.service.UserWorkspaceService;
 import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.service.WorkspaceCardTypeService;
@@ -28,19 +31,21 @@ import java.util.Map;
 @RequestMapping({"/system/workspace", "/workspace"})
 public class UserWorkspaceController {
 
-    private final UserWorkspaceService workspaceService;
-    private final WorkspaceCardTypeService cardTypeService;
-
-    public UserWorkspaceController(UserWorkspaceService workspaceService,
-                                   WorkspaceCardTypeService cardTypeService) {
-        this.workspaceService = workspaceService;
-        this.cardTypeService = cardTypeService;
-    }
+    @Autowired
+    private UserWorkspaceService workspaceService;
+    @Autowired
+    private WorkspaceCardTypeService cardTypeService;
 
     /** 当前用户布局（custom=false 表示默认布局）。 */
+    @SuppressWarnings("unchecked")
     @GetMapping("/layout")
-    public R<Map<String, Object>> layout() {
-        return R.ok(workspaceService.getLayout());
+    public R<WorkspaceLayoutDTO> layout() {
+        Map<String, Object> source = workspaceService.getLayout();
+        WorkspaceLayoutDTO result = new WorkspaceLayoutDTO();
+        result.setCustom(Boolean.TRUE.equals(source.get("custom")));
+        result.setCardTypes((List<SysWorkspaceCardType>) source.get("cardTypes"));
+        result.setLayout((Map<String, Object>) source.get("layout"));
+        return R.ok(result);
     }
 
     /** 保存当前用户布局。 */

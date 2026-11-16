@@ -7,9 +7,14 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.entity.FormStatusEnum;
@@ -17,11 +22,20 @@ import com.sw.ck.form.mapper.*;
 import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.storage.api.StorageFacade;
+import com.sw.ck.storage.api.StorageMutationOutcome;
+import com.sw.ck.storage.api.StorageUploadResult;
+import com.sw.ck.system.api.dept.DeptQueryFacade;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
@@ -33,6 +47,12 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -46,29 +66,29 @@ import static org.assertj.core.api.Assertions.*;
 @DisplayName("I2 表单收口·集成测试")
 class FormI2ClosureIntegrationTest {
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormDefService formDefService;
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private com.sw.ck.form.service.FormFieldEnrichmentService formFieldEnrichmentService;
+    @Autowired
+    private FormFieldEnrichmentService formFieldEnrichmentService;
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormDefMapper formDefMapper;
 
-    private final java.util.ArrayList<String> createdTables = new java.util.ArrayList<>();
-    private final java.util.ArrayList<String> createdFormIds = new java.util.ArrayList<>();
+    private final ArrayList<String> createdTables = new ArrayList<>();
+    private final ArrayList<String> createdFormIds = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
         // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
-        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
-            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+        if (LoginUserHolder.get() == null) {
+            LoginUser i5TenantZeroSetup = new LoginUser();
             i5TenantZeroSetup.setUserId(0L);
             i5TenantZeroSetup.setTenantId(0L);
-            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+            LoginUserHolder.set(i5TenantZeroSetup);
         }
         createCoreMetadataTables();
         createI2Tables();
@@ -423,7 +443,7 @@ class FormI2ClosureIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -442,27 +462,27 @@ class FormI2ClosureIntegrationTest {
             factory.setGlobalConfig(globalConfig);
 
             // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+            CommonMetaObjectHandler i5MetaObjectHandler =
+                    new CommonMetaObjectHandler(new LoginContextProvider() {
                         @Override public Long getUserId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getUserId() : null;
                         }
                         @Override public Long getTenantId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getTenantId() : null;
                         }
                         @Override public Long getDeptId() { return null; }
-                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        @Override public DataScopeType getDataScopeType() {
+                            return DataScopeType.ALL;
                         }
-                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                         @Override public boolean isSuperAdmin() { return false; }
                     });
             i5MetaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
-                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
+                    f.setId(new FormIdGenerator().generate());
                 }
             });
             globalConfig.setMetaObjectHandler(i5MetaObjectHandler);
@@ -504,23 +524,23 @@ class FormI2ClosureIntegrationTest {
                 FieldPermissionService fieldPermissionService,
                 FormDefMapper formDefMapper,
                 JdbcTemplate jdbcTemplate,
-                org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.service.FormExtDataService> extDataService,
-                org.springframework.beans.factory.ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade> userQueryFacade,
-                org.springframework.beans.factory.ObjectProvider<com.sw.ck.system.api.dept.DeptQueryFacade> deptQueryFacade,
-                org.springframework.beans.factory.ObjectProvider<com.sw.ck.storage.api.StorageFacade> storageFacade) {
+                ObjectProvider<FormExtDataService> extDataService,
+                ObjectProvider<UserQueryFacade> userQueryFacade,
+                ObjectProvider<DeptQueryFacade> deptQueryFacade,
+                ObjectProvider<StorageFacade> storageFacade) {
             return new FormFieldEnrichmentService(formConfigMapper, objectMapper, formulaEngine,
                     fieldPermissionService, extDataService, userQueryFacade, deptQueryFacade,
                     formDefMapper, jdbcTemplate, storageFacade);
         }
 
         @Bean
-        public com.sw.ck.storage.api.StorageFacade storageFacade() {
+        public StorageFacade storageFacade() {
             // 测试桩：exists 恒 present false，用于验证伪造 storageKey 被拒绝
-            return new com.sw.ck.storage.api.StorageFacade() {
-                @Override public java.util.Optional<com.sw.ck.storage.api.StorageUploadResult> upload(java.io.InputStream in, String name, String ct) { throw new UnsupportedOperationException(); }
-                @Override public java.util.Optional<java.io.InputStream> download(String storageKey) { throw new UnsupportedOperationException(); }
-                @Override public java.util.Optional<com.sw.ck.storage.api.StorageMutationOutcome> delete(String storageKey) { throw new UnsupportedOperationException(); }
-                @Override public java.util.Optional<Boolean> exists(String storageKey) { return java.util.Optional.of(false); }
+            return new StorageFacade() {
+                @Override public Optional<StorageUploadResult> upload(InputStream in, String name, String ct) { throw new UnsupportedOperationException(); }
+                @Override public Optional<InputStream> download(String storageKey) { throw new UnsupportedOperationException(); }
+                @Override public Optional<StorageMutationOutcome> delete(String storageKey) { throw new UnsupportedOperationException(); }
+                @Override public Optional<Boolean> exists(String storageKey) { return Optional.of(false); }
             };
         }
 
@@ -536,26 +556,26 @@ class FormI2ClosureIntegrationTest {
                                              FormLifecycleAuditMapper lifecycleAuditMapper) {
             return new FormDefServiceImpl(formDefMapper, formConfigMapper, formSnapshotMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper,
-                    new com.sw.ck.form.service.FormVisibilityRules(objectMapper),
+                    new FormVisibilityRules(objectMapper),
                     formulaEngine, fieldPermissionService, null, listConfigMapper, lifecycleAuditMapper,
                     null);
         }
     }
 
     @Test
-    @org.junit.jupiter.api.DisplayName("REFERENCE 伪造对象（非 ID 结构）与失效 ID 在写路径被拒绝")
+    @DisplayName("REFERENCE 伪造对象（非 ID 结构）与失效 ID 在写路径被拒绝")
     void enrichWrite_referenceForgedAndMissing_shouldReject() {
         FormDefEntity form = createPublishedForm("i2_ref_neg", """
                 {"fields":[{"name":"ref","type":"REFERENCE","targetFormId":"i2_ref_target_missing"}]}
                 """);
-        java.util.Map<String, Object> forged = new java.util.HashMap<>();
-        forged.put("ref", java.util.Map.of("id", "x"));
+        Map<String, Object> forged = new HashMap<>();
+        forged.put("ref", Map.of("id", "x"));
         // P61：断言语义（errorKey）而非完整文案——文案已改用字段显示名并去除内部术语
         assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), forged))
                 .isInstanceOf(BaseException.class)
                 .hasFieldOrPropertyWithValue("errorKey",
-                        com.sw.ck.form.api.exception.FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH.getErrorKey());
-        java.util.Map<String, Object> missing = new java.util.HashMap<>();
+                        FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH.getErrorKey());
+        Map<String, Object> missing = new HashMap<>();
         missing.put("ref", "00000000-0000-0000-0000-000000000000");
         // 目标表单不存在 → 拒绝；目标存在但记录缺失 → 同口径拒绝（均已行为验证）
         assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), missing))
@@ -564,13 +584,13 @@ class FormI2ClosureIntegrationTest {
     }
 
     @Test
-    @org.junit.jupiter.api.DisplayName("ATTACHMENT 伪造 storageKey 在写路径被拒绝")
+    @DisplayName("ATTACHMENT 伪造 storageKey 在写路径被拒绝")
     void enrichWrite_attachmentFakeKey_shouldReject() {
         FormDefEntity form = createPublishedForm("i2_att_neg", """
                 {"fields":[{"name":"att","type":"ATTACHMENT"}]}
                 """);
-        java.util.Map<String, Object> payload = new java.util.HashMap<>();
-        payload.put("att", java.util.List.of("fake-storage-key"));
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("att", List.of("fake-storage-key"));
         assertThatThrownBy(() -> formFieldEnrichmentService.enrichForWrite(form.getId(), payload))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("不存在或不可见");

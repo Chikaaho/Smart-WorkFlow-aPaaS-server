@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -18,8 +19,10 @@ import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.flowable.bpmn.converter.BpmnXMLConverter;
 import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.common.engine.impl.el.DefaultExpressionManager;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
 import org.flowable.engine.ProcessEngines;
@@ -178,7 +181,7 @@ class I4DynamicParallelFlowableTest {
                 processEngine.getRepositoryService(), new ObjectMapper(),
                 mock(ParticipantResolverRegistry.class), deptQueryFacade, userQueryFacade,
                 providerOf(branchPort),
-                (tenantId, formKey, recordId) -> java.util.Optional.empty(), null);
+                (tenantId, formKey, recordId) -> Optional.empty(), null);
         DynamicBranchTaskListener listener = new DynamicBranchTaskListener(runtimeService,
                 providerOf(snapshotRecorder), providerOf(votePort), providerOf(branchPort));
 
@@ -188,8 +191,8 @@ class I4DynamicParallelFlowableTest {
         beans.put("consensusCompletionEvaluator",
                 new ConsensusCompletionEvaluator(providerOf(votePort), providerOf(settlementPort)));
         // 引擎已构建：直接向表达式管理器注册受控 bean（delegateExpression 解析出口）
-        org.flowable.common.engine.impl.el.DefaultExpressionManager dem =
-                (org.flowable.common.engine.impl.el.DefaultExpressionManager)
+        DefaultExpressionManager dem =
+                (DefaultExpressionManager)
                         ((ProcessEngineConfigurationImpl) processEngine.getProcessEngineConfiguration())
                                 .getExpressionManager();
         dem.setBeans(beans);

@@ -3,9 +3,13 @@ package com.sw.ck.notify.entity;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonProperty;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * 站内信通知实体。
@@ -85,7 +89,7 @@ public class NotifyMessage extends BaseEntity {
     private Integer retryCount;
 
     @TableField("next_retry_time")
-    private java.time.LocalDateTime nextRetryTime;
+    private LocalDateTime nextRetryTime;
 
     @TableField("failure_class")
     private String failureClass;

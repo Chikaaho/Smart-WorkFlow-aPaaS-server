@@ -1,9 +1,13 @@
 package com.sw.ck.iot.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
+import com.sw.ck.common.trace.DiagnosticText;
 import com.sw.ck.iot.entity.IotCommand;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotEventRecord;
@@ -20,8 +24,7 @@ import com.sw.ck.iot.mapper.IotProductMapper;
 import com.sw.ck.iot.mapper.IotPropertyRecordMapper;
 import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +36,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 自建 MQTT 订阅消息统一入口。
  * <p>
@@ -42,47 +46,36 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Log4j2
 public class MessageIngestService {
-
-    private static final Logger log = LoggerFactory.getLogger(MessageIngestService.class);
 
     public static final String TYPE_PROPERTY = "PROPERTY";
     public static final String TYPE_EVENT = "EVENT";
     public static final String TYPE_ACTION_RESULT = "ACTION_RESULT";
     public static final String TYPE_RAW = "RAW";
 
-    private final IotTopicMapper topicMapper;
-    private final IotDeviceMapper deviceMapper;
-    private final IotMessageLogMapper messageLogMapper;
-    private final IotPropertyRecordMapper propertyRecordMapper;
-    private final IotEventRecordMapper eventRecordMapper;
-    private final IotCommandMapper commandMapper;
-    private final IotProductMapper productMapper;
-    private final IotThingModelMapper thingModelMapper;
-    private final RuleEngineService ruleEngineService;
-    private final IotScriptService scriptService;
-
-    public MessageIngestService(IotTopicMapper topicMapper,
-                                IotDeviceMapper deviceMapper,
-                                IotMessageLogMapper messageLogMapper,
-                                IotPropertyRecordMapper propertyRecordMapper,
-                                IotEventRecordMapper eventRecordMapper,
-                                IotCommandMapper commandMapper,
-                                IotProductMapper productMapper,
-                                IotThingModelMapper thingModelMapper,
-                                @Lazy RuleEngineService ruleEngineService,
-                                @Lazy IotScriptService scriptService) {
-        this.topicMapper = topicMapper;
-        this.deviceMapper = deviceMapper;
-        this.messageLogMapper = messageLogMapper;
-        this.propertyRecordMapper = propertyRecordMapper;
-        this.eventRecordMapper = eventRecordMapper;
-        this.commandMapper = commandMapper;
-        this.productMapper = productMapper;
-        this.thingModelMapper = thingModelMapper;
-        this.ruleEngineService = ruleEngineService;
-        this.scriptService = scriptService;
-    }
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired
+    private IotDeviceMapper deviceMapper;
+    @Autowired
+    private IotMessageLogMapper messageLogMapper;
+    @Autowired
+    private IotPropertyRecordMapper propertyRecordMapper;
+    @Autowired
+    private IotEventRecordMapper eventRecordMapper;
+    @Autowired
+    private IotCommandMapper commandMapper;
+    @Autowired
+    private IotProductMapper productMapper;
+    @Autowired
+    private IotThingModelMapper thingModelMapper;
+    @Autowired
+    @Lazy
+    private RuleEngineService ruleEngineService;
+    @Autowired
+    @Lazy
+    private IotScriptService scriptService;
 
     /**
      * 消息统一入口（由 MqttBrokerManager 回调）。
@@ -146,7 +139,7 @@ public class MessageIngestService {
             }
         } catch (Exception e) {
             msgLog.setParseStatus("FAILED");
-            msgLog.setParseError(com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 500));
+            msgLog.setParseError(DiagnosticText.sanitize(e.getMessage(), 500));
             log.warn("消息解析失败: topic={}, error={}", topic, e.getMessage());
         }
         messageLogMapper.insert(msgLog);

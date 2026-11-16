@@ -1,12 +1,12 @@
 package com.sw.ck.iot.hook;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.service.IotDeviceService;
 import com.sw.ck.iot.util.DeferredControlUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 腾讯云设备状态事件 Hook（对齐 Demo 实现）。
  * <p>
@@ -36,23 +37,18 @@ import java.util.Map;
 @RestController
 @RequestMapping("/iot/hook/tencent")
 @ConditionalOnProperty(prefix = "sw.iot", name = "enabled", havingValue = "true")
+@Log4j2
 public class TencentDeviceStatusHook {
-
-    private static final Logger log = LoggerFactory.getLogger(TencentDeviceStatusHook.class);
 
     /**
      * 腾讯云上线事件类型
      */
     private static final String EVENT_ONLINE = "EV_ONLINE";
 
-    private final IotDeviceService iotDeviceService;
-    private final DeferredControlUtil deferredControlUtil;
-
-    public TencentDeviceStatusHook(IotDeviceService iotDeviceService,
-                                   DeferredControlUtil deferredControlUtil) {
-        this.iotDeviceService = iotDeviceService;
-        this.deferredControlUtil = deferredControlUtil;
-    }
+    @Autowired
+    private IotDeviceService iotDeviceService;
+    @Autowired
+    private DeferredControlUtil deferredControlUtil;
 
     /**
      * 校验腾讯云 IoT 回调地址（GET）。

@@ -1,12 +1,22 @@
 package com.sw.ck.bpm.process.listener;
 
+import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.service.BpmInstanceService;
+import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
+import com.sw.ck.iot.api.IotDeviceFacade;
+import com.sw.ck.iot.api.IotDeviceQueryFacade;
+import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.util.Map;
 
@@ -21,23 +31,23 @@ import static org.mockito.Mockito.*;
 class IotProcessTriggerListenerActionTypeTest {
 
     @Mock
-    private ObjectProvider<com.sw.ck.bpm.api.facade.BpmRuntimeFacade> runtimeFacadeProvider;
+    private ObjectProvider<BpmRuntimeFacade> runtimeFacadeProvider;
     @Mock
-    private ObjectProvider<com.sw.ck.bpm.process.service.BpmProcessDefService> processDefServiceProvider;
+    private ObjectProvider<BpmProcessDefService> processDefServiceProvider;
     @Mock
-    private ObjectProvider<com.sw.ck.iot.api.IotProcessTriggerFacade> triggerFacadeProvider;
+    private ObjectProvider<IotProcessTriggerFacade> triggerFacadeProvider;
     @Mock
-    private ObjectProvider<com.sw.ck.iot.api.IotDeviceFacade> deviceFacadeProvider;
+    private ObjectProvider<IotDeviceFacade> deviceFacadeProvider;
     @Mock
-    private ObjectProvider<com.sw.ck.iot.api.IotDeviceQueryFacade> deviceQueryFacadeProvider;
+    private ObjectProvider<IotDeviceQueryFacade> deviceQueryFacadeProvider;
     @Mock
-    private ObjectProvider<com.sw.ck.bpm.process.service.BpmInstanceService> instanceServiceProvider;
+    private ObjectProvider<BpmInstanceService> instanceServiceProvider;
     @Mock
-    private ObjectProvider<com.sw.ck.bpm.process.service.ProcessThemeService> themeServiceProvider;
+    private ObjectProvider<ProcessThemeService> themeServiceProvider;
     @Mock
-    private ObjectProvider<com.sw.ck.bpm.api.facade.BpmTaskFacade> taskFacadeProvider;
+    private ObjectProvider<BpmTaskFacade> taskFacadeProvider;
     @Mock
-    private ObjectProvider<org.springframework.transaction.PlatformTransactionManager>
+    private ObjectProvider<PlatformTransactionManager>
             transactionManagerProvider;
     @Mock
     private TenantWorkAdmission tenantWorkAdmission;

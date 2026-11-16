@@ -1,10 +1,13 @@
 package com.sw.ck.form.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.system.api.dict.DictFacade;
+
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -37,7 +40,7 @@ class FormFieldValidatorConstraintsTest {
         assertThatThrownBy(() -> validator.validateFields(Map.of("account", field),
                 Map.of("account", "A😀"), dictFacade))
                 .hasMessage("账号格式不正确")
-                .satisfies(e -> org.assertj.core.api.Assertions.assertThat(((BaseException) e).getCode())
+                .satisfies(e -> Assertions.assertThat(((BaseException) e).getCode())
                         .isEqualTo(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH.getCode()));
     }
 
@@ -78,7 +81,7 @@ class FormFieldValidatorConstraintsTest {
                 longMarkup, dictFacade)).doesNotThrowAnyException();
         // 校验时已按服务端权威规则规范化并写回：脚本/事件/样式不进入持久化值。
         String normalized = String.valueOf(longMarkup.get("body"));
-        org.assertj.core.api.Assertions.assertThat(normalized)
+        Assertions.assertThat(normalized)
                 .contains("你好")
                 .contains("data-rt-font=\"song\"")
                 .doesNotContain("script")

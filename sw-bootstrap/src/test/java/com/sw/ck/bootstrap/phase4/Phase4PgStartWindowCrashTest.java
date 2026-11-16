@@ -7,6 +7,7 @@ import com.sw.ck.bpm.process.queue.ScheduledFlowCommandHandler;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.job.ProcessTriggerRecoveryJob;
 import com.sw.ck.job.scheduler.SwJobBean;
+
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.ExecutionListener;
 import org.junit.jupiter.api.AfterAll;
@@ -25,6 +26,7 @@ import org.quartz.SchedulerContext;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -53,8 +55,8 @@ class Phase4PgStartWindowCrashTest extends Phase4PgSupport {
 
     /** 故障注入开关：仅在需要注入的那一次引擎发起上触发。 */
     private static final AtomicBoolean INJECTOR_ARMED = new AtomicBoolean(false);
-    private static final java.util.concurrent.atomic.AtomicInteger INJECTIONS =
-            new java.util.concurrent.atomic.AtomicInteger();
+    private static final AtomicInteger INJECTIONS =
+            new AtomicInteger();
 
     private SwJobBean swJobBean;
     private BpmCommandQueue queue;

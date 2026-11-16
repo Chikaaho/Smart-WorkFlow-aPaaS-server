@@ -4,9 +4,13 @@ import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.common.event.DomainEventPublisher;
+
+import com.sun.net.httpserver.HttpServer;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.task.api.Task;
+import org.flowable.task.service.delegate.DelegateTask;
+import org.flowable.task.service.delegate.TaskListener;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -15,10 +19,17 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,18 +58,18 @@ class Phase4PgCommitBoundaryBehaviourTest extends Phase4PgSupport {
     private static final String CALLBACK_APP = "p4app-g3a";
 
     /** 探针模式：PUBLISH = 正常发布三类意图；CRASH = 引擎写入后立刻终止事务连接（精确故障）。 */
-    private static final java.util.concurrent.atomic.AtomicReference<String> PROBE_MODE =
-            new java.util.concurrent.atomic.AtomicReference<>("PUBLISH");
+    private static final AtomicReference<String> PROBE_MODE =
+            new AtomicReference<>("PUBLISH");
 
     private static final AtomicInteger PROBE_RUNS = new AtomicInteger();
 
     private RuntimeService runtimeService;
     private TaskService taskService;
     private DomainEventPublisher eventPublisher;
-    private com.sun.net.httpserver.HttpServer callbackServer;
+    private HttpServer callbackServer;
 
     /** t2 节点 create 回调：先（按模式）注入故障，再发布设备命令与流程终态通知。 */
-    public static class CommitBoundaryProbe implements org.flowable.task.service.delegate.TaskListener {
+    public static class CommitBoundaryProbe implements TaskListener {
 
         private final DomainEventPublisher publisher;
         private final Phase4PgSupport support;
@@ -69,11 +80,11 @@ class Phase4PgCommitBoundaryBehaviourTest extends Phase4PgSupport {
         }
 
         @Override
-        public void notify(org.flowable.task.service.delegate.DelegateTask delegateTask) {
+        public void notify(DelegateTask delegateTask) {
             PROBE_RUNS.incrementAndGet();
             System.out.println("[P4-EV] g3a.probe node=" + delegateTask.getTaskDefinitionKey()
                     + " mode=" + PROBE_MODE.get() + " inTransaction="
-                    + org.springframework.transaction.support.TransactionSynchronizationManager
+                    + TransactionSynchronizationManager
                     .isActualTransactionActive());
             if ("CRASH".equals(PROBE_MODE.get())) {
                 // 引擎已写入 t2（同一事务内），此刻终止承载事务的后端连接：
@@ -91,9 +102,9 @@ class Phase4PgCommitBoundaryBehaviourTest extends Phase4PgSupport {
 
     @BeforeAll
     void bootAll() throws Exception {
-        callbackServer = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        callbackServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         callbackServer.createContext("/callback", exchange -> {
-            byte[] body = "{\"ok\":true}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -277,9 +288,9 @@ class Phase4PgCommitBoundaryBehaviourTest extends Phase4PgSupport {
     private void seedCallbackApp(String callbackUrl) {
         String digest;
         try {
-            digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(("p4-g3a-secret-" + CALLBACK_APP).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        } catch (java.security.NoSuchAlgorithmException e) {
+            digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(("p4-g3a-secret-" + CALLBACK_APP).getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
         jdbc.update("insert into sw_openapi_app (id, create_time, update_time, deleted, tenant_id, version, app_id,"

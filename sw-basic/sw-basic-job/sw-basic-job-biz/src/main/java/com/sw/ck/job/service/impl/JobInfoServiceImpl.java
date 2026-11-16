@@ -1,7 +1,12 @@
 package com.sw.ck.job.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.page.PageParam;
@@ -11,6 +16,7 @@ import com.sw.ck.common.service.BaseServiceImpl;
 import com.sw.ck.job.entity.JobInfo;
 import com.sw.ck.job.mapper.JobInfoMapper;
 import com.sw.ck.job.service.JobInfoService;
+
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -23,14 +29,10 @@ public class JobInfoServiceImpl
         extends BaseServiceImpl<JobInfoMapper, JobInfo>
         implements JobInfoService {
 
-    private final LoginContextProvider loginContextProvider;
-    private final DeptScopeProvider deptScopeProvider;
-
-    public JobInfoServiceImpl(LoginContextProvider loginContextProvider,
-                              DeptScopeProvider deptScopeProvider) {
-        this.loginContextProvider = loginContextProvider;
-        this.deptScopeProvider = deptScopeProvider;
-    }
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    @Autowired
+    private DeptScopeProvider deptScopeProvider;
 
     @Override
     public JobInfo getByJobName(String jobName) {
@@ -42,8 +44,8 @@ public class JobInfoServiceImpl
     @Override
     public List<JobInfo> listEnabled() {
         // 调度线程无登录态：挂起租户过滤（作业注册表为系统级对象）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return lambdaQuery()
                     .eq(JobInfo::getStatus, "NORMAL")
                     .list();

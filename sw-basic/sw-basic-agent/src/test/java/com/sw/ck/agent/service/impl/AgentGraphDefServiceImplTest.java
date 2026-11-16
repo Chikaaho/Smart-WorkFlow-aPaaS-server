@@ -2,18 +2,21 @@ package com.sw.ck.agent.service.impl;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.AgentGraphDefDTO;
 import com.sw.ck.agent.dto.AgentGraphSnapshotDTO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
+import com.sw.ck.agent.mapper.AgentGraphSnapshotMapper;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
@@ -26,6 +29,8 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +53,9 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -204,7 +212,7 @@ class AgentGraphDefServiceImplTest {
 
         // 残图：仅 1 个 LLM 节点，无 START/END/边（草稿不校验，允许存）
         ProcessGraph draft = buildGraph("残图-测试");
-        draft.setElements(java.util.List.of(GraphElement.builder()
+        draft.setElements(List.of(GraphElement.builder()
                 .id("node_llm_1").kind("node").type("LLM")
                 .config(Map.of("modelConfigId", 42L)).build()));
         service.saveDraftGraph(id, draft);
@@ -243,7 +251,7 @@ class AgentGraphDefServiceImplTest {
         style.put("width", 160);
 
         ProcessGraph draft = buildGraph("透传-测试");
-        draft.setElements(java.util.List.of(
+        draft.setElements(List.of(
                 GraphElement.builder()
                         .id("node_condition").kind("node").type("CONDITION")
                         .config(config).style(style)
@@ -283,11 +291,11 @@ class AgentGraphDefServiceImplTest {
         // 同毫秒创建的行 update_time 相同会使 ORDER BY 次序不稳定：
         // 显式拉开 update_time，使「update_time 倒序」断言确定化
         jdbcTemplate.update("UPDATE sw_agent_graph_def SET update_time = ? WHERE name = '图-A'",
-                java.time.LocalDateTime.now().minusMinutes(2));
+                LocalDateTime.now().minusMinutes(2));
         jdbcTemplate.update("UPDATE sw_agent_graph_def SET update_time = ? WHERE name = '图-B'",
-                java.time.LocalDateTime.now().minusMinutes(1));
+                LocalDateTime.now().minusMinutes(1));
         jdbcTemplate.update("UPDATE sw_agent_graph_def SET update_time = ? WHERE name = '图-C'",
-                java.time.LocalDateTime.now());
+                LocalDateTime.now());
 
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(1);
@@ -378,7 +386,7 @@ class AgentGraphDefServiceImplTest {
     void publish_emptyGraph_shouldThrow() {
         Long id = service.create("空图-测试");
         // 将 graph_json 置 null（模拟图数据丢失/损坏）
-        mapper.update(null, com.baomidou.mybatisplus.core.toolkit.Wrappers.<AgentGraphDef>lambdaUpdate()
+        mapper.update(null, Wrappers.<AgentGraphDef>lambdaUpdate()
                 .eq(AgentGraphDef::getId, id)
                 .set(AgentGraphDef::getGraphJson, null));
 
@@ -415,7 +423,7 @@ class AgentGraphDefServiceImplTest {
         service.saveDraftGraph(id, draft);
         service.publish(id); // v3
 
-        java.util.List<AgentGraphSnapshotDTO> versions = service.listVersions(id);
+        List<AgentGraphSnapshotDTO> versions = service.listVersions(id);
         assertThat(versions).extracting(AgentGraphSnapshotDTO::getDefVersion).containsExactly(3, 2);
 
         Integer snapshotCount = jdbcTemplate.queryForObject(
@@ -493,7 +501,7 @@ class AgentGraphDefServiceImplTest {
 
     private ProcessGraph withHumanNode(Long id, Map<String, Object> humanConfig, boolean withOutEdge) {
         ProcessGraph graph = service.getGraph(id);
-        java.util.List<GraphElement> elements = new java.util.ArrayList<>(graph.getElements());
+        List<GraphElement> elements = new ArrayList<>(graph.getElements());
         elements.add(GraphElement.builder().id("human-1").kind("node").type("HUMAN")
                 .config(humanConfig).build());
         elements.add(GraphElement.builder().id("edge-human-in").kind("edge")
@@ -516,7 +524,7 @@ class AgentGraphDefServiceImplTest {
 
     private ProcessGraph withSubgraphNode(Long id, Long subId, Integer version) {
         ProcessGraph graph = service.getGraph(id);
-        java.util.List<GraphElement> elements = new java.util.ArrayList<>(graph.getElements());
+        List<GraphElement> elements = new ArrayList<>(graph.getElements());
         elements.add(GraphElement.builder().id("sub-1").kind("node").type("SUBGRAPH")
                 .config(Map.of("graphDefId", subId, "graphDefVersion", version)).build());
         elements.add(GraphElement.builder().id("edge-sub-in").kind("edge")
@@ -533,33 +541,33 @@ class AgentGraphDefServiceImplTest {
     void publish_humanNodeValidation_shouldThrow() {
         Long noAssignee = service.create("人工-无处理人");
         withHumanNode(noAssignee, Map.of(
-                "buttons", java.util.List.of(Map.of("keyword", "approve"))), true);
+                "buttons", List.of(Map.of("keyword", "approve"))), true);
         assertThatThrownBy(() -> service.publish(noAssignee))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("人工节点必须配置处理人");
 
         Long noOutEdge = service.create("人工-按钮无出边");
         withHumanNode(noOutEdge, Map.of(
-                "assigneeUserIds", java.util.List.of(7),
-                "buttons", java.util.List.of(Map.of("keyword", "approve"))), false);
+                "assigneeUserIds", List.of(7),
+                "buttons", List.of(Map.of("keyword", "approve"))), false);
         assertThatThrownBy(() -> service.publish(noOutEdge))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("未连接到出边");
 
         Long duplicateField = service.create("人工-字段重名");
         withHumanNode(duplicateField, Map.of(
-                "assigneeUserIds", java.util.List.of(7),
-                "fields", java.util.List.of(Map.of("name", "comment"), Map.of("name", "comment")),
-                "buttons", java.util.List.of(Map.of("keyword", "approve"))), true);
+                "assigneeUserIds", List.of(7),
+                "fields", List.of(Map.of("name", "comment"), Map.of("name", "comment")),
+                "buttons", List.of(Map.of("keyword", "approve"))), true);
         assertThatThrownBy(() -> service.publish(duplicateField))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("字段名称重复");
 
         Long valid = service.create("人工-合法");
         withHumanNode(valid, Map.of(
-                "assigneeUserIds", java.util.List.of(7),
-                "fields", java.util.List.of(Map.of("name", "comment", "label", "意见", "type", "text")),
-                "buttons", java.util.List.of(Map.of("keyword", "approve")),
+                "assigneeUserIds", List.of(7),
+                "fields", List.of(Map.of("name", "comment", "label", "意见", "type", "text")),
+                "buttons", List.of(Map.of("keyword", "approve")),
                 "timeoutSeconds", 60,
                 "timeoutKeyword", "timeout"), true);
         assertThat(service.publish(valid).getStatus()).isEqualTo("PUBLISHED");
@@ -583,7 +591,7 @@ class AgentGraphDefServiceImplTest {
 
         Long noVersion = service.create("子图-缺版本");
         ProcessGraph graph = service.getGraph(noVersion);
-        java.util.List<GraphElement> elements = new java.util.ArrayList<>(graph.getElements());
+        List<GraphElement> elements = new ArrayList<>(graph.getElements());
         elements.add(GraphElement.builder().id("sub-1").kind("node").type("SUBGRAPH")
                 .config(Map.of("graphDefId", 999)).build());
         graph.setElements(elements);
@@ -711,7 +719,7 @@ class AgentGraphDefServiceImplTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -742,7 +750,7 @@ class AgentGraphDefServiceImplTest {
 
         @Bean
         public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
-                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
             return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }

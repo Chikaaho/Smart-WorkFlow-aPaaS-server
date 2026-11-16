@@ -5,8 +5,10 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -17,6 +19,7 @@ import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifyRoutingService;
+import com.sw.ck.notify.dto.NotifyRecordDetailDTO;
 import com.sw.ck.notify.dto.NotifyRuleDTO;
 import com.sw.ck.notify.dto.NotifyRuleQuery;
 import com.sw.ck.notify.dto.NotifySubscriptionSaveReq;
@@ -40,23 +43,52 @@ import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
 import com.sw.ck.notify.service.impl.NotifyRoutingServiceImpl;
 import com.sw.ck.notify.service.impl.NotifyRuleServiceImpl;
 import com.sw.ck.notify.service.impl.NotifySubscriptionServiceImpl;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.notify.adapters.EmailNotifyChannelAdapter;
+import com.sw.ck.notify.api.NotifyTargetResolver;
+import com.sw.ck.notify.config.NotifyChannelProperties;
+import com.sw.ck.notify.dto.NotifyBatchSendReq;
+import com.sw.ck.notify.dto.NotifySubscriptionSaveReq.Item;
+import com.sw.ck.notify.dto.NotifyTemplateDTO;
+import com.sw.ck.notify.dto.TemplatePreviewRequest;
+import com.sw.ck.notify.mapper.NotifyMessageMapper;
+import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
+import com.sw.ck.notify.mapper.NotifyTemplateMapper;
+import com.sw.ck.notify.render.NotifyHtmlSanitizer;
+import com.sw.ck.notify.render.TemplateRenderService;
+import com.sw.ck.notify.service.NotifyRecordService;
+import com.sw.ck.notify.service.NotifyTemplateService;
+import com.sw.ck.notify.service.impl.NotifyRecordServiceImpl;
+import com.sw.ck.notify.service.impl.NotifyTemplateServiceImpl;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.apache.ibatis.session.SqlSessionFactory;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Set;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -95,13 +127,13 @@ class I6NotifyClosureIntegrationTest {
     private NotifyRoutingService notifyRoutingService;
 
     @Autowired
-    private com.sw.ck.notify.service.NotifyTemplateService notifyTemplateService;
+    private NotifyTemplateService notifyTemplateService;
 
     @Autowired
-    private com.sw.ck.notify.service.NotifyTemplateVersionService versionService;
+    private NotifyTemplateVersionService versionService;
 
     @Autowired
-    private com.sw.ck.notify.service.NotifyRecordService notifyRecordService;
+    private NotifyRecordService notifyRecordService;
 
     @Autowired
     private TestLoginContext testLoginContext;
@@ -270,11 +302,11 @@ class I6NotifyClosureIntegrationTest {
         assertThat(page.getTotal()).isEqualTo(0);
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G2a 模板不可变版本：编辑生效后新版本追加，既有投递仍固定旧版本号")
+    @Test
+    @DisplayName("G2a 模板不可变版本：编辑生效后新版本追加，既有投递仍固定旧版本号")
     void g2a_templateVersionImmutable() {
         clearRulesAndTemplates();
-        com.sw.ck.notify.dto.NotifyTemplateDTO dto = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+        NotifyTemplateDTO dto = new NotifyTemplateDTO();
         dto.setTemplateCode("g2_demo");
         dto.setName("G2 演示模板");
         dto.setTitleTemplate("标题 v1");
@@ -284,8 +316,8 @@ class I6NotifyClosureIntegrationTest {
         dto.setChannel("IN_APP");
         Long templateId = notifyTemplateService.createTemplate(dto);
         var snapshot1 = versionService.latestSnapshot(templateId);
-        org.assertj.core.api.Assertions.assertThat(snapshot1.getTemplateVersion()).isEqualTo(1);
-        notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+        Assertions.assertThat(snapshot1.getTemplateVersion()).isEqualTo(1);
+        notifyFacade.send(NotifySendRequest.builder()
                 .channel(NotifyChannel.IN_APP)
                 .recipientId(7L)
                 .title("v1")
@@ -300,17 +332,17 @@ class I6NotifyClosureIntegrationTest {
         dto.setContentTemplate("内容 v2");
         notifyTemplateService.updateTemplate(templateId, dto);
         var snapshot2 = versionService.latestSnapshot(templateId);
-        org.assertj.core.api.Assertions.assertThat(snapshot2.getTemplateVersion()).isEqualTo(2);
-        org.assertj.core.api.Assertions.assertThat(jdbc.queryCount(
+        Assertions.assertThat(snapshot2.getTemplateVersion()).isEqualTo(2);
+        Assertions.assertThat(jdbc.queryCount(
                 "SELECT template_version FROM sw_notify_message WHERE id = (SELECT MAX(id) FROM sw_notify_message)"))
                 .isEqualTo(1);
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G2b 模板缺失变量在发送前明确失败，不在收件箱留下坏数据")
+    @Test
+    @DisplayName("G2b 模板缺失变量在发送前明确失败，不在收件箱留下坏数据")
     void g2b_missingVariableFailsBeforeSend() {
         clearRulesAndTemplates();
-        com.sw.ck.notify.dto.NotifyTemplateDTO dto = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+        NotifyTemplateDTO dto = new NotifyTemplateDTO();
         dto.setTemplateCode("g2_missing_var");
         dto.setName("G2 缺变量模板");
         dto.setTitleTemplate("标题 ${missing_var}");
@@ -319,37 +351,37 @@ class I6NotifyClosureIntegrationTest {
         dto.setEventType("SYSTEM");
         dto.setChannel("IN_APP");
         notifyTemplateService.createTemplate(dto);
-        com.sw.ck.notify.dto.NotifyBatchSendReq req = new com.sw.ck.notify.dto.NotifyBatchSendReq();
+        NotifyBatchSendReq req = new NotifyBatchSendReq();
         req.setRecipientUserIds(List.of(7L));
         req.setTemplateCode("g2_missing_var");
-        java.util.Map<String, String> variables = new java.util.HashMap<>();
+        Map<String, String> variables = new HashMap<>();
         variables.put("provided_var", "值");
         req.setVariables(variables);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> notifyMessageService.batchSend(req))
+        Assertions.assertThatThrownBy(() -> notifyMessageService.batchSend(req))
                 .isInstanceOf(RuntimeException.class);
-        org.assertj.core.api.Assertions.assertThat(jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message")).isEqualTo(0);
+        Assertions.assertThat(jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message")).isEqualTo(0);
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G2c 危险 HTML 经净化器拒绝注入脚本/事件/任意协议")
+    @Test
+    @DisplayName("G2c 危险 HTML 经净化器拒绝注入脚本/事件/任意协议")
     void g2c_htmlSanitizer() {
         String dirty = "正常<input onerror=alert(1)><script>alert(2)</script><a href='" + "javascript" + ":evil()'>x</a>";
-        String cleaned = com.sw.ck.notify.render.NotifyHtmlSanitizer.clean(dirty);
-        org.assertj.core.api.Assertions.assertThat(cleaned).doesNotContain("<script");
-        org.assertj.core.api.Assertions.assertThat(cleaned.toLowerCase()).doesNotContain("onerror=");
-        org.assertj.core.api.Assertions.assertThat(cleaned.toLowerCase()).doesNotContain("javascript");
+        String cleaned = NotifyHtmlSanitizer.clean(dirty);
+        Assertions.assertThat(cleaned).doesNotContain("<script");
+        Assertions.assertThat(cleaned.toLowerCase()).doesNotContain("onerror=");
+        Assertions.assertThat(cleaned.toLowerCase()).doesNotContain("javascript");
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G2d 规则停用后路由回落 IN_APP；订阅变化不改写已通知历史")
+    @Test
+    @DisplayName("G2d 规则停用后路由回落 IN_APP；订阅变化不改写已通知历史")
     void g2d_ruleToggleAndSubscription() {
         clearRulesAndTemplates();
         notifyRuleService.createRule(rule("g2d_rule_todo", "TODO_CREATED", true));
         Long rowId = jdbc.queryForLong("SELECT id FROM sw_notify_rule WHERE rule_code='g2d_rule_todo'");
         notifyRuleService.toggleRule(rowId, false);
-        org.assertj.core.api.Assertions.assertThat(notifyRoutingService.channelsFor("TODO_CREATED", 7L).orElseThrow())
+        Assertions.assertThat(notifyRoutingService.channelsFor("TODO_CREATED", 7L).orElseThrow())
                 .containsExactly(NotifyChannel.IN_APP);
-        notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+        notifyFacade.send(NotifySendRequest.builder()
                 .channel(NotifyChannel.IN_APP)
                 .recipientId(7L)
                 .title("参考")
@@ -359,22 +391,22 @@ class I6NotifyClosureIntegrationTest {
                 .bizId("t-g2d")
                 .occurrenceNo(1L)
                 .build());
-        com.sw.ck.notify.dto.NotifySubscriptionSaveReq req = new com.sw.ck.notify.dto.NotifySubscriptionSaveReq();
-        com.sw.ck.notify.dto.NotifySubscriptionSaveReq.Item item = new com.sw.ck.notify.dto.NotifySubscriptionSaveReq.Item();
+        NotifySubscriptionSaveReq req = new NotifySubscriptionSaveReq();
+        Item item = new Item();
         item.setEventType("TODO_CREATED");
         item.setChannel("EMAIL");
         item.setEnabled(true);
         req.setItems(List.of(item));
         notifySubscriptionService.save(7L, req);
-        org.assertj.core.api.Assertions.assertThat(
+        Assertions.assertThat(
                 jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message WHERE biz_id='t-g2d'")).isEqualTo(1);
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G3a 双租户矩阵：跨租户模板/规则/订阅不读不可写，用户订阅互不串扰")
+    @Test
+    @DisplayName("G3a 双租户矩阵：跨租户模板/规则/订阅不读不可写，用户订阅互不串扰")
     void g3a_crossTenantMatrix() {
         clearRulesAndTemplates();
-        com.sw.ck.notify.dto.NotifyTemplateDTO dto = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+        NotifyTemplateDTO dto = new NotifyTemplateDTO();
         dto.setTemplateCode("g3_tenant_template");
         dto.setName("租户 100 模板");
         dto.setTitleTemplate("标题");
@@ -385,56 +417,56 @@ class I6NotifyClosureIntegrationTest {
         Long templateId = notifyTemplateService.createTemplate(dto);
         notifyRuleService.createRule(rule("g3_rule_todo", "TODO_CREATED", true));
         testLoginContext.set(200L, 7L);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> notifyTemplateService.getTemplate(templateId))
+        Assertions.assertThatThrownBy(() -> notifyTemplateService.getTemplate(templateId))
                 .isInstanceOf(RuntimeException.class);
-        org.assertj.core.api.Assertions.assertThat(notifyRuleService.listEnabledByEvent("TODO_CREATED")).isEmpty();
-        org.assertj.core.api.Assertions.assertThat(notifySubscriptionService.preferences(7L)).isEmpty();
+        Assertions.assertThat(notifyRuleService.listEnabledByEvent("TODO_CREATED")).isEmpty();
+        Assertions.assertThat(notifySubscriptionService.preferences(7L)).isEmpty();
         testLoginContext.set(100L, 7L);
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G3b 失效/缺失邮箱目标解析为明确失败，不冒充成功")
+    @Test
+    @DisplayName("G3b 失效/缺失邮箱目标解析为明确失败，不冒充成功")
     void g3b_targetResolutionFailClosed() {
-        com.sw.ck.notify.api.NotifyTargetResolver resolver = new com.sw.ck.notify.api.NotifyTargetResolver() {
+        NotifyTargetResolver resolver = new NotifyTargetResolver() {
             @Override
-            public java.util.Optional<String> resolveEmail(Long userId) {
-                return java.util.Optional.empty();
+            public Optional<String> resolveEmail(Long userId) {
+                return Optional.empty();
             }
 
             @Override
-            public java.util.Optional<String> resolvePhone(Long userId) {
-                return java.util.Optional.empty();
+            public Optional<String> resolvePhone(Long userId) {
+                return Optional.empty();
             }
         };
-        var adapter = new com.sw.ck.notify.adapters.EmailNotifyChannelAdapter(
-                new org.springframework.beans.factory.ObjectProvider<org.springframework.mail.javamail.JavaMailSender>() {
+        var adapter = new EmailNotifyChannelAdapter(
+                new ObjectProvider<JavaMailSender>() {
                     @Override
-                    public org.springframework.mail.javamail.JavaMailSender getObject() {
+                    public JavaMailSender getObject() {
                         return null;
                     }
                 }, resolver,
-                new com.sw.ck.notify.config.NotifyChannelProperties(),
-                new org.springframework.beans.factory.ObjectProvider<com.sw.ck.notify.service.NotifyChannelConfigService>() {
+                new NotifyChannelProperties(),
+                new ObjectProvider<NotifyChannelConfigService>() {
                     @Override
-                    public com.sw.ck.notify.service.NotifyChannelConfigService getObject() {
+                    public NotifyChannelConfigService getObject() {
                         return null;
                     }
                 });
-        var result = adapter.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+        var result = adapter.send(NotifySendRequest.builder()
                 .channel(NotifyChannel.EMAIL)
                 .recipientId(999L)
                 .title("标题")
                 .content("正文")
                 .tenantId(100L)
                 .build()).orElseThrow();
-        org.assertj.core.api.Assertions.assertThat(result.getStatus()).isEqualTo("FAILED");
-        org.assertj.core.api.Assertions.assertThat(result.getFailureReason()).contains("无法解析收件邮箱");
+        Assertions.assertThat(result.getStatus()).isEqualTo("FAILED");
+        Assertions.assertThat(result.getFailureReason()).contains("无法解析收件邮箱");
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G3c 管理员记录详情默认省略完整正文（最小暴露）")
+    @Test
+    @DisplayName("G3c 管理员记录详情默认省略完整正文（最小暴露）")
     void g3c_recordDetailMasked() {
-        notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+        notifyFacade.send(NotifySendRequest.builder()
                 .channel(NotifyChannel.IN_APP)
                 .recipientId(7L)
                 .title("机密")
@@ -445,19 +477,19 @@ class I6NotifyClosureIntegrationTest {
                 .occurrenceNo(1L)
                 .build());
         Long lastId = jdbc.queryForLong("SELECT MAX(id) FROM sw_notify_message");
-        java.util.Map<String, Object> detail = notifyRecordService.recordDetail(lastId);
-        NotifyMessage masked = (NotifyMessage) detail.get("message");
-        org.assertj.core.api.Assertions.assertThat(masked.getContent()).isNull();
+        NotifyRecordDetailDTO detail = notifyRecordService.recordDetail(lastId);
+        NotifyMessage masked = detail.getMessage();
+        Assertions.assertThat(masked.getContent()).isNull();
     }
 
 
     // ==================== 一级补充提示 01：G2e/G2f/G2g/G3d ====================
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G2e 变量矩阵：未知/类型不符/超长/非法名均在发送前失败且零残留")
+    @Test
+    @DisplayName("G2e 变量矩阵：未知/类型不符/超长/非法名均在发送前失败且零残留")
     void g2e_variableMatrixFailBeforeSend() {
         clearRulesAndTemplates();
-        com.sw.ck.notify.dto.NotifyTemplateDTO dto = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+        NotifyTemplateDTO dto = new NotifyTemplateDTO();
         dto.setTemplateCode("g2e_vars");
         dto.setName("G2e 模板");
         dto.setTitleTemplate("标题 ${name}");
@@ -482,20 +514,20 @@ class I6NotifyClosureIntegrationTest {
             String templateContent = c[0].contains("1abc") ? "标题 ${1abc}" : null;
             // 非法占位符在 createTemplate 阶段即拒绝
             if (templateContent != null) {
-                com.sw.ck.notify.dto.NotifyTemplateDTO bad = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+                NotifyTemplateDTO bad = new NotifyTemplateDTO();
                 bad.setTemplateCode("g2e_bad");
                 bad.setName("坏模板");
                 bad.setTitleTemplate("标题");
                 bad.setContentTemplate("正文 " + templateContent);
                 bad.setEnabled(true);
-                org.assertj.core.api.Assertions.assertThatThrownBy(() -> notifyTemplateService.createTemplate(bad))
+                Assertions.assertThatThrownBy(() -> notifyTemplateService.createTemplate(bad))
                         .isInstanceOf(RuntimeException.class);
             }
             // 超长变量值在发送前失败
-            com.sw.ck.notify.dto.NotifyBatchSendReq req = new com.sw.ck.notify.dto.NotifyBatchSendReq();
+            NotifyBatchSendReq req = new NotifyBatchSendReq();
             req.setRecipientUserIds(List.of(7L));
             req.setTemplateCode("g2e_vars");
-            java.util.Map<String, String> vars = new java.util.HashMap<>();
+            Map<String, String> vars = new HashMap<>();
             if ("name".equals(c[0])) {
                 vars.put("name", c[1]);
             } else {
@@ -503,27 +535,27 @@ class I6NotifyClosureIntegrationTest {
             }
             req.setVariables(vars);
             if (c[0].startsWith("$")) {
-                org.assertj.core.api.Assertions.assertThatThrownBy(() -> notifyTemplateService.createTemplate(unknownPlaceHolderTemplate()))
+                Assertions.assertThatThrownBy(() -> notifyTemplateService.createTemplate(unknownPlaceHolderTemplate()))
                         .isInstanceOf(RuntimeException.class);
             }
         }
         // 超长变量值发送前失败
-        com.sw.ck.notify.dto.NotifyBatchSendReq over = new com.sw.ck.notify.dto.NotifyBatchSendReq();
+        NotifyBatchSendReq over = new NotifyBatchSendReq();
         over.setRecipientUserIds(List.of(7L));
         over.setTemplateCode("g2e_vars");
-        java.util.Map<String, String> longVars = new java.util.HashMap<>();
+        Map<String, String> longVars = new HashMap<>();
         longVars.put("name", "值");
         over.setVariables(longVars);
         // 合法值可发送（正向对照防“全拒绝”假阳性）
         int sent = notifyMessageService.batchSend(over);
-        org.assertj.core.api.Assertions.assertThat(sent).isEqualTo(1);
+        Assertions.assertThat(sent).isEqualTo(1);
         long rowsAfterValid = jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message");
-        org.assertj.core.api.Assertions.assertThat(rowsAfterValid >= 1).isTrue();
+        Assertions.assertThat(rowsAfterValid >= 1).isTrue();
         // 明确超长拒绝
-        com.sw.ck.notify.dto.NotifyBatchSendReq bad = new com.sw.ck.notify.dto.NotifyBatchSendReq();
+        NotifyBatchSendReq bad = new NotifyBatchSendReq();
         bad.setRecipientUserIds(List.of(7L));
         bad.setTemplateCode("g2e_vars");
-        java.util.Map<String, String> invalid = new java.util.HashMap<>();
+        Map<String, String> invalid = new HashMap<>();
         invalid.put("name", "超".repeat(3000));
         bad.setVariables(invalid);
         try {
@@ -536,8 +568,8 @@ class I6NotifyClosureIntegrationTest {
         testLoginContext.set(100L, 7L);
     }
 
-    private com.sw.ck.notify.dto.NotifyTemplateDTO unknownPlaceHolderTemplate() {
-        com.sw.ck.notify.dto.NotifyTemplateDTO bad = new com.sw.ck.notify.dto.NotifyTemplateDTO();
+    private NotifyTemplateDTO unknownPlaceHolderTemplate() {
+        NotifyTemplateDTO bad = new NotifyTemplateDTO();
         bad.setTemplateCode("g2e_bad2");
         bad.setName("坏名模板");
         bad.setTitleTemplate("标题");
@@ -546,8 +578,8 @@ class I6NotifyClosureIntegrationTest {
         return bad;
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G2f 渲染安全矩阵：data:/vbscript:/非白名单跳转被拒绝或清除；合法内容不被破坏")
+    @Test
+    @DisplayName("G2f 渲染安全矩阵：data:/vbscript:/非白名单跳转被拒绝或清除；合法内容不被破坏")
     void g2f_safetyMatrix() {
         String[][] dirty = {
                 {"<a href=\"data:text/html,<script>1</script>\">x</a>", "data:"},
@@ -558,65 +590,65 @@ class I6NotifyClosureIntegrationTest {
                 {"<a OnMouseOver=\"bad()\">y</a>", "OnMouseover"},
         };
         for (String[] c : dirty) {
-            String cleaned = com.sw.ck.notify.render.NotifyHtmlSanitizer.clean(c[0]);
-            org.assertj.core.api.Assertions.assertThat(cleaned.toLowerCase())
+            String cleaned = NotifyHtmlSanitizer.clean(c[0]);
+            Assertions.assertThat(cleaned.toLowerCase())
                     .as("输入 " + c[0] + " 的危险载荷应被清除")
                     .doesNotContain(c[1].toLowerCase().replace("	", "")); // tab-encoded已由SCHEME正则排除
         }
         // 合法内容不被破坏（正向对照）
         String legal = "<p>你好 <b>张三</b></p><a href=\"https://oa.example.com/t/1\">跳转</a>";
-        String cleanedLegal = com.sw.ck.notify.render.NotifyHtmlSanitizer.clean(legal);
-        org.assertj.core.api.Assertions.assertThat(cleanedLegal).contains("<p>你好 <b>张三</b></p>");
-        org.assertj.core.api.Assertions.assertThat(cleanedLegal).contains("https://oa.example.com/t/1");
+        String cleanedLegal = NotifyHtmlSanitizer.clean(legal);
+        Assertions.assertThat(cleanedLegal).contains("<p>你好 <b>张三</b></p>");
+        Assertions.assertThat(cleanedLegal).contains("https://oa.example.com/t/1");
         // 深链跳转目标受控：仅允许登记的对象类型（WF_TASK/WF_PROCESS），任意 URL 不被构造
-        org.assertj.core.api.Assertions.assertThat(List.of("WF_TASK", "WF_PROCESS", "SYSTEM")).contains("WF_TASK");
+        Assertions.assertThat(List.of("WF_TASK", "WF_PROCESS", "SYSTEM")).contains("WF_TASK");
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G2g 规则最小正负矩阵：CRUD/启停/事件覆盖；普通用户不可管理规则与他人订阅（服务层不可改写历史）")
+    @Test
+    @DisplayName("G2g 规则最小正负矩阵：CRUD/启停/事件覆盖；普通用户不可管理规则与他人订阅（服务层不可改写历史）")
     void g2g_ruleCrudMatrix() {
         clearRulesAndTemplates();
         // create → get → update → toggle
         Long id = notifyRuleService.createRule(rule("g2g_rule_a", "PROCESS_APPROVED", true));
         var got = notifyRuleService.getRule(id);
-        org.assertj.core.api.Assertions.assertThat(got.getRuleCode()).isEqualTo("g2g_rule_a");
+        Assertions.assertThat(got.getRuleCode()).isEqualTo("g2g_rule_a");
         // 事件覆盖：改事件后按原事件查询为空，按新事件查询命中
         got.setEventType("PROCESS_REJECTED");
         notifyRuleService.updateRule(id, got);
-        org.assertj.core.api.Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_APPROVED")).isEmpty();
-        org.assertj.core.api.Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_REJECTED")).isNotEmpty();
+        Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_APPROVED")).isEmpty();
+        Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_REJECTED")).isNotEmpty();
         // 停用 → 路由回落 IN_APP；启用 → 规则命中
         notifyRuleService.toggleRule(id, false);
-        org.assertj.core.api.Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_REJECTED")).isEmpty();
+        Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_REJECTED")).isEmpty();
         notifyRuleService.toggleRule(id, true);
-        org.assertj.core.api.Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_REJECTED")).isNotEmpty();
+        Assertions.assertThat(notifyRuleService.listEnabledByEvent("PROCESS_REJECTED")).isNotEmpty();
         // delete 幂等
         notifyRuleService.deleteRule(id);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> notifyRuleService.getRule(id))
+        Assertions.assertThatThrownBy(() -> notifyRuleService.getRule(id))
                 .isInstanceOf(RuntimeException.class);
         // 他人订阅不可由服务层越权写入：同一租户内 store按 user 隔离
-        com.sw.ck.notify.dto.NotifySubscriptionSaveReq mine = new com.sw.ck.notify.dto.NotifySubscriptionSaveReq();
-        com.sw.ck.notify.dto.NotifySubscriptionSaveReq.Item item = new com.sw.ck.notify.dto.NotifySubscriptionSaveReq.Item();
+        NotifySubscriptionSaveReq mine = new NotifySubscriptionSaveReq();
+        Item item = new Item();
         item.setEventType("PROCESS_REJECTED");
         item.setChannel("EMAIL");
         item.setEnabled(true);
         mine.setItems(List.of(item));
         testLoginContext.set(100L, 7L);
         notifySubscriptionService.save(7L, mine);
-        org.assertj.core.api.Assertions.assertThat(notifySubscriptionService.preferences(99L)).isEmpty();
-        org.assertj.core.api.Assertions.assertThat(notifySubscriptionService.preferences(7L)).isNotEmpty();
+        Assertions.assertThat(notifySubscriptionService.preferences(99L)).isEmpty();
+        Assertions.assertThat(notifySubscriptionService.preferences(7L)).isNotEmpty();
     }
 
-    @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("G3d 反向护栏：登录租户与请求租户不一致的投递被拒绝且在另一租户零写入")
+    @Test
+    @DisplayName("G3d 反向护栏：登录租户与请求租户不一致的投递被拒绝且在另一租户零写入")
     void g3d_forgedTenantRejected() {
         testLoginContext.set(100L, 7L);
-        com.sw.ck.security.holder.LoginUser principal = new com.sw.ck.security.holder.LoginUser();
+        LoginUser principal = new LoginUser();
         principal.setUserId(7L);
         principal.setTenantId(100L);
-        com.sw.ck.security.holder.LoginUserHolder.set(principal);
+        LoginUserHolder.set(principal);
         var before = jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message");
-        var res = notifyFacade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+        var res = notifyFacade.send(NotifySendRequest.builder()
                 .channel(NotifyChannel.IN_APP)
                 .recipientId(7L)
                 .title("伪造")
@@ -626,17 +658,17 @@ class I6NotifyClosureIntegrationTest {
                 .bizId("t-g3d")
                 .occurrenceNo(1L)
                 .build()).orElseThrow();
-        org.assertj.core.api.Assertions.assertThat(res.getStatus()).isEqualTo("FAILED");
-        org.assertj.core.api.Assertions.assertThat(res.getFailureReason()).contains("请求租户与认证租户不一致");
+        Assertions.assertThat(res.getStatus()).isEqualTo("FAILED");
+        Assertions.assertThat(res.getFailureReason()).contains("请求租户与认证租户不一致");
         // 且该伪造业务对象在租户 200 中同样零写入
         jdbc.update("DELETE FROM sw_notify_message WHERE biz_id='t-g3d'");
-        org.assertj.core.api.Assertions.assertThat(jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message WHERE biz_id='t-g3d'")).isEqualTo(0);
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        Assertions.assertThat(jdbc.queryCount("SELECT COUNT(*) FROM sw_notify_message WHERE biz_id='t-g3d'")).isEqualTo(0);
+        LoginUserHolder.clear();
         testLoginContext.set(100L, 7L);
     }
 
-    private com.sw.ck.notify.dto.TemplatePreviewRequest previewReq(java.util.Map<String, String> vars) {
-        com.sw.ck.notify.dto.TemplatePreviewRequest r = new com.sw.ck.notify.dto.TemplatePreviewRequest();
+    private TemplatePreviewRequest previewReq(Map<String, String> vars) {
+        TemplatePreviewRequest r = new TemplatePreviewRequest();
         r.setTitleTemplate("标题 " + "$" + "{name}");
         r.setContentTemplate("正文 " + "$" + "{name}");
         r.setVariables(vars);
@@ -667,9 +699,9 @@ class I6NotifyClosureIntegrationTest {
     // ==================== JDBC 支持与配置 ====================
 
     static class JdbcTemplateSupport {
-        private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+        private final JdbcTemplate jdbc;
 
-        JdbcTemplateSupport(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        JdbcTemplateSupport(JdbcTemplate jdbc) {
             this.jdbc = jdbc;
         }
 
@@ -691,7 +723,7 @@ class I6NotifyClosureIntegrationTest {
         }
     }
 
-    static class TestLoginContext implements com.sw.ck.common.security.LoginContextProvider {
+    static class TestLoginContext implements LoginContextProvider {
 
         private volatile Long currentUserId;
         private volatile Long currentTenantId;
@@ -711,8 +743,8 @@ class I6NotifyClosureIntegrationTest {
         public Long getDeptId() { return null; }
 
         @Override
-        public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-            return com.sw.ck.common.datascope.DataScopeType.ALL;
+        public DataScopeType getDataScopeType() {
+            return DataScopeType.ALL;
         }
 
         @Override
@@ -728,7 +760,7 @@ class I6NotifyClosureIntegrationTest {
 
         @Bean
         public DataSource dataSource() {
-            return org.springframework.boot.jdbc.DataSourceBuilder.create()
+            return DataSourceBuilder.create()
                     .url("jdbc:h2:mem:notifyi6;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
                     .driverClassName("org.h2.Driver")
                     .username("sa")
@@ -738,7 +770,7 @@ class I6NotifyClosureIntegrationTest {
 
         @Bean
         public JdbcTemplateSupport jdbcTemplateSupport(DataSource dataSource) {
-            return new JdbcTemplateSupport(new org.springframework.jdbc.core.JdbcTemplate(dataSource));
+            return new JdbcTemplateSupport(new JdbcTemplate(dataSource));
         }
 
         @Bean
@@ -752,8 +784,8 @@ class I6NotifyClosureIntegrationTest {
         }
 
         @Bean
-        public com.sw.ck.notify.render.TemplateRenderService templateRenderService() {
-            return new com.sw.ck.notify.render.TemplateRenderService();
+        public TemplateRenderService templateRenderService() {
+            return new TemplateRenderService();
         }
 
         @Bean
@@ -770,13 +802,13 @@ class I6NotifyClosureIntegrationTest {
         public MybatisPlusInterceptor mybatisPlusInterceptor(TenantProperties props, TestLoginContext ctx) {
             MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
             interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(new CommonTenantLineHandler(props, ctx)));
-            interceptor.addInnerInterceptor(new com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor(DbType.POSTGRE_SQL));
+            interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.POSTGRE_SQL));
             interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
             return interceptor;
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource,
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource,
                                                                              CommonMetaObjectHandler handler,
                                                                              MybatisPlusInterceptor interceptor)
                 throws Exception {
@@ -804,16 +836,16 @@ class I6NotifyClosureIntegrationTest {
         }
 
         @Bean
-        public com.sw.ck.notify.service.NotifyTemplateService notifyTemplateService(
-                com.sw.ck.notify.mapper.NotifyTemplateMapper mapper,
-                com.sw.ck.notify.render.TemplateRenderService render,
+        public NotifyTemplateService notifyTemplateService(
+                NotifyTemplateMapper mapper,
+                TemplateRenderService render,
                 NotifyTemplateVersionService vs) {
-            return new com.sw.ck.notify.service.impl.NotifyTemplateServiceImpl(mapper, render, vs);
+            return new NotifyTemplateServiceImpl(mapper, render, vs);
         }
 
         @Bean
-        public NotifyMessageService notifyMessageService(com.sw.ck.notify.service.NotifyTemplateService ts,
-                                                         com.sw.ck.notify.render.TemplateRenderService render,
+        public NotifyMessageService notifyMessageService(NotifyTemplateService ts,
+                                                         TemplateRenderService render,
                                                          TestLoginContext ctx,
                                                          NotifyTemplateVersionService vs) {
             return new NotifyMessageServiceImpl(ts, render, ctx, vs);
@@ -821,7 +853,7 @@ class I6NotifyClosureIntegrationTest {
 
         @Bean
         public NotifyFacade notifyFacade(NotifyMessageService svc) {
-            return new com.sw.ck.notify.impl.NotifyFacadeImpl(svc, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
+            return new NotifyFacadeImpl(svc, List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
 
         @Bean
@@ -830,24 +862,24 @@ class I6NotifyClosureIntegrationTest {
         }
 
         @Bean
-        public NotifySubscriptionService notifySubscriptionService(com.sw.ck.notify.mapper.NotifySubscriptionMapper m,
+        public NotifySubscriptionService notifySubscriptionService(NotifySubscriptionMapper m,
                                                                    NotifyRuleMapper r,
                                                                    NotifyChannelConfigMapper c) {
             return new NotifySubscriptionServiceImpl(m, r, c);
         }
 
         @Bean
-        public NotifyChannelConfigService notifyChannelConfigService(com.sw.ck.notify.mapper.NotifyChannelConfigMapper c) {
+        public NotifyChannelConfigService notifyChannelConfigService(NotifyChannelConfigMapper c) {
             return new NotifyChannelConfigServiceImpl(List.of(), c,
-                    java.util.Base64.getEncoder().encodeToString(new byte[32]));
+                    Base64.getEncoder().encodeToString(new byte[32]));
         }
 
         @Bean
-        public com.sw.ck.notify.service.NotifyRecordService notifyRecordService(
-                com.sw.ck.notify.mapper.NotifyMessageMapper mm,
-                com.sw.ck.notify.mapper.NotifySendAttemptMapper am,
-                com.sw.ck.notify.api.NotifyFacade facade) {
-            return new com.sw.ck.notify.service.impl.NotifyRecordServiceImpl(mm, am, facade,
+        public NotifyRecordService notifyRecordService(
+                NotifyMessageMapper mm,
+                NotifySendAttemptMapper am,
+                NotifyFacade facade) {
+            return new NotifyRecordServiceImpl(mm, am, facade,
                     (tenantId, claim) -> claim.getAsInt());
         }
 

@@ -2,6 +2,7 @@ package com.sw.ck.bpm.process.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
@@ -13,25 +14,30 @@ import com.sw.ck.bpm.process.entity.BpmTaskDeadline;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 人工节点办理时限调度（I3 §4.8）。
  * <p>
@@ -43,48 +49,37 @@ import java.util.Objects;
  */
 @Component
 @EnableScheduling
+@Log4j2
 public class TaskDeadlineScheduler {
 
-    private static final Logger log = LoggerFactory.getLogger(TaskDeadlineScheduler.class);
-
-    private final BpmTaskDeadlineMapper deadlineMapper;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final BpmInstanceService bpmInstanceService;
-    private final ObjectProviderLike taskActionAccessor;
-    private final org.springframework.beans.factory.ObjectProvider<UserQueryFacade> userQueryFacade;
-    private final DomainEventPublisher domainEventPublisher;
-    private final ObjectMapper objectMapper;
-    private final TenantWorkAdmission tenantWorkAdmission;
+    @Autowired
+    private BpmTaskDeadlineMapper deadlineMapper;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    /** 防循环依赖的懒访问器。 */
+    @Autowired(required = false)
+    private ObjectProvider<TaskActionService> taskActionServiceProvider;
+    @Autowired(required = false)
+    private ObjectProvider<UserQueryFacade> userQueryFacade;
+    @Autowired
+    private DomainEventPublisher domainEventPublisher;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Autowired
-    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    private PlatformTransactionManager transactionManager;
 
-    private volatile org.springframework.transaction.support.TransactionTemplate notifyTx;
+    private volatile TransactionTemplate notifyTx;
 
-    private org.springframework.transaction.support.TransactionTemplate notifyTx() {
+    private TransactionTemplate notifyTx() {
         if (notifyTx == null) {
-            notifyTx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+            notifyTx = new TransactionTemplate(transactionManager);
         }
         return notifyTx;
-    }
-
-    @Autowired
-    public TaskDeadlineScheduler(BpmTaskDeadlineMapper deadlineMapper,
-                                 BpmTaskFacade bpmTaskFacade,
-                                 BpmInstanceService bpmInstanceService,
-                                 org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.TaskActionService> taskActionService,
-                                 org.springframework.beans.factory.ObjectProvider<UserQueryFacade> userQueryFacade,
-                                 DomainEventPublisher domainEventPublisher,
-                                 ObjectMapper objectMapper,
-                                 TenantWorkAdmission tenantWorkAdmission) {
-        this.deadlineMapper = deadlineMapper;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.bpmInstanceService = bpmInstanceService;
-        this.taskActionAccessor = new ObjectProviderLike(taskActionService);
-        this.userQueryFacade = userQueryFacade;
-        this.domainEventPublisher = domainEventPublisher;
-        this.objectMapper = objectMapper;
-        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
     }
 
     /** 每 60 秒扫描一批到期时限；单批次量受控，错峰触发。 */
@@ -93,8 +88,8 @@ public class TaskDeadlineScheduler {
         try {
             // 调度线程无登录态：与 PersistentBpmCommandQueue.claimDue 同口径挂起租户过滤
             List<BpmTaskDeadline> due;
-            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            try (Suspended ignored =
+                         TenantLineSuspension.suspended()) {
                 due = deadlineMapper.selectList(
                         Wrappers.<BpmTaskDeadline>lambdaQuery()
                                 .eq(BpmTaskDeadline::getRunState, "PENDING")
@@ -102,8 +97,8 @@ public class TaskDeadlineScheduler {
                                 .last("LIMIT 50"));
             }
             for (BpmTaskDeadline record : due) {
-                try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended suspended =
-                             com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                try (Suspended suspended =
+                             TenantLineSuspension.suspended()) {
                     processSafely(record);
                 }
             }
@@ -117,7 +112,7 @@ public class TaskDeadlineScheduler {
             // 任务已消失 → 时限随机失效，不再触发（幂等）。
             // 仅 PENDING→DONE 原子推进：不覆盖竞争胜者已写的 AUTO_APPROVE 等结果标注。
             // empty = 该任务不存在（原 null 返回路径）：与“任务已消失”同判
-            java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(record.getTaskId());
+            Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(record.getTaskId());
             if (taskLookup.isEmpty()) {
                 markDoneWithResult(record, "TASK_GONE");
                 return;
@@ -207,7 +202,11 @@ public class TaskDeadlineScheduler {
                 patch(record, "DONE", "AUTO_SKIPPED_NO_TARGET");
                 return;
             }
-            taskActionAccessor.execute(record.getTaskId(), request);
+            TaskActionService taskActionService = taskActionServiceProvider == null
+                    ? null : taskActionServiceProvider.getIfAvailable();
+            if (taskActionService != null) {
+                taskActionService.execute(record.getTaskId(), request);
+            }
             patch(record, "DONE", "AUTO_" + record.getAutoAction().toUpperCase());
             log.info("时限自动动作完成: taskId={}, action={}", record.getTaskId(),
                     request.getAction());
@@ -299,20 +298,4 @@ public class TaskDeadlineScheduler {
         }
     }
 
-    /** 防循环依赖的懒访问器。 */
-    private static final class ObjectProviderLike {
-        private final org.springframework.beans.factory.ObjectProvider<TaskActionService> provider;
-
-        private ObjectProviderLike(
-                org.springframework.beans.factory.ObjectProvider<TaskActionService> provider) {
-            this.provider = provider;
-        }
-
-        void execute(String taskId, ApprovalActionRequest request) {
-            TaskActionService service = provider.getIfAvailable();
-            if (service != null) {
-                service.execute(taskId, request);
-            }
-        }
-    }
 }

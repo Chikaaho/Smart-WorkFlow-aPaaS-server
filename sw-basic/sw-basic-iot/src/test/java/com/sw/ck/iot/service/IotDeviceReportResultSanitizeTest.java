@@ -1,17 +1,21 @@
 package com.sw.ck.iot.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.mapper.IotProductMapper;
 import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.service.impl.IotDeviceServiceImpl;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,7 +39,7 @@ class IotDeviceReportResultSanitizeTest {
     @BeforeEach
     void setUp() {
         service = new IotDeviceServiceImpl(commandMapper,
-                org.mockito.Mockito.mock(IotProductMapper.class), org.mockito.Mockito.mock(IotThingModelMapper.class));
+                Mockito.mock(IotProductMapper.class), Mockito.mock(IotThingModelMapper.class));
     }
 
     private IotDeviceCommand existing() {
@@ -61,7 +65,7 @@ class IotDeviceReportResultSanitizeTest {
         service.reportResult(7L, "FAILED", noisy);
 
         ArgumentCaptor<IotDeviceCommand> captor = ArgumentCaptor.forClass(IotDeviceCommand.class);
-        org.mockito.Mockito.verify(commandMapper).updateById(captor.capture());
+        Mockito.verify(commandMapper).updateById(captor.capture());
         String stored = captor.getValue().getResult();
 
         // 限长生效：远小于注入的噪声长度
@@ -78,9 +82,9 @@ class IotDeviceReportResultSanitizeTest {
     @DisplayName("非法 status → 拒绝且不落库")
     void reportResult_rejectsIllegalStatus() {
         when(commandMapper.selectById(7L)).thenReturn(existing());
-        assertThrows(com.sw.ck.common.exception.BaseException.class,
+        assertThrows(BaseException.class,
                 () -> service.reportResult(7L, "WHATEVER", "x"));
-        org.mockito.Mockito.verify(commandMapper, org.mockito.Mockito.never())
+        Mockito.verify(commandMapper, Mockito.never())
                 .updateById(any(IotDeviceCommand.class));
     }
 }

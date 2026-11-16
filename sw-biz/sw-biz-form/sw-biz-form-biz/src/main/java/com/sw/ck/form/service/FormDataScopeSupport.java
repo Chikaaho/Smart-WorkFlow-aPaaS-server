@@ -3,7 +3,12 @@ package com.sw.ck.form.service;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.security.holder.DataScope;
 import com.sw.ck.security.holder.LoginUser;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 表单记录数据范围解析（I2，方向 §4.6）。
@@ -30,28 +35,28 @@ public final class FormDataScopeSupport {
         if (user.isSuperAdmin()) {
             return DataScopeFilter.none();
         }
-        com.sw.ck.security.holder.DataScope type = user.getDataScope();
-        if (type == null || type == com.sw.ck.security.holder.DataScope.ALL) {
+        DataScope type = user.getDataScope();
+        if (type == null || type == DataScope.ALL) {
             return DataScopeFilter.none();
         }
         return switch (type) {
             case SELF -> DataScopeFilter.self(user.getUserId());
             case DEPT -> DataScopeFilter.depts(user.getDeptId() == null
-                    ? java.util.List.of() : java.util.List.of(user.getDeptId()));
+                    ? List.of() : List.of(user.getDeptId()));
             case DEPT_AND_CHILD -> {
                 if (loginContextProvider != null && deptScopeProvider != null
                         && user.getDeptId() != null) {
-                    java.util.List<Long> ids = new java.util.ArrayList<>();
+                    List<Long> ids = new ArrayList<>();
                     ids.add(user.getDeptId());
                     ids.addAll(deptScopeProvider.listChildDeptIds(user.getDeptId()));
                     yield DataScopeFilter.depts(ids);
                 }
                 // Provider 缺失时退化为本部门（fail-closed，不放大可见范围）
                 yield DataScopeFilter.depts(user.getDeptId() == null
-                        ? java.util.List.of() : java.util.List.of(user.getDeptId()));
+                        ? List.of() : List.of(user.getDeptId()));
             }
             case CUSTOM -> DataScopeFilter.depts(user.getCustomDeptIds() == null
-                    ? java.util.List.of() : new java.util.ArrayList<>(user.getCustomDeptIds()));
+                    ? List.of() : new ArrayList<>(user.getCustomDeptIds()));
             default -> DataScopeFilter.none();
         };
     }
@@ -59,7 +64,7 @@ public final class FormDataScopeSupport {
     /**
      * 把数据范围条件追加到 WHERE（create_by 归属语义，参数化绑定）。
      */
-    public static void appendWhere(StringBuilder whereBuilder, java.util.List<Object> params,
+    public static void appendWhere(StringBuilder whereBuilder, List<Object> params,
                                    DataScopeFilter scopeFilter) {
         if (scopeFilter == null) {
             return;
@@ -70,12 +75,12 @@ public final class FormDataScopeSupport {
             whereBuilder.append(" AND \"create_by\" = ?");
             params.add(scopeFilter.getUserId());
         } else if (scopeFilter.getDeptIds() != null) {
-            java.util.List<Long> deptIds = scopeFilter.getDeptIds();
+            List<Long> deptIds = scopeFilter.getDeptIds();
             if (deptIds.isEmpty()) {
                 whereBuilder.append(" AND 1 = 0");
             } else {
                 String placeholders = deptIds.stream().map(d -> "?")
-                        .collect(java.util.stream.Collectors.joining(", "));
+                        .collect(Collectors.joining(", "));
                 whereBuilder.append(" AND \"create_by\" IN (SELECT id FROM sys_user WHERE dept_id IN (")
                         .append(placeholders).append("))");
                 params.addAll(deptIds);

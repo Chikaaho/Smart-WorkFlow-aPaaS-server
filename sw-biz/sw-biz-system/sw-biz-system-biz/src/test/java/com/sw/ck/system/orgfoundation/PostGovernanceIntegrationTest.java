@@ -10,11 +10,16 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.datascope.DeptScopeProviderImpl;
 import com.sw.ck.system.entity.SysPost;
 import com.sw.ck.system.mapper.SysDeptMapper;
+import com.sw.ck.system.mapper.SysPostMapper;
+import com.sw.ck.system.mapper.SysRoleMapper;
+import com.sw.ck.system.mapper.SysUserPostMapper;
+import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.system.service.SysPostService;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.UserPostAssociation;
 import com.sw.ck.system.service.impl.SysPostServiceImpl;
 import com.sw.ck.system.service.impl.SysUserServiceImpl;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -32,6 +37,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -184,14 +190,14 @@ class PostGovernanceIntegrationTest {
         }
 
         @Bean
-        public SysPostService sysPostService(com.sw.ck.system.mapper.SysUserPostMapper userPostMapper) {
+        public SysPostService sysPostService(SysUserPostMapper userPostMapper) {
             return new SysPostServiceImpl(userPostMapper);
         }
 
         @Bean
-        public SysUserService sysUserService(PasswordEncoder passwordEncoder, com.sw.ck.system.mapper.SysUserRoleMapper userRoleMapper,
-                                             com.sw.ck.system.mapper.SysUserPostMapper userPostMapper, com.sw.ck.system.mapper.SysRoleMapper roleMapper,
-                                             com.sw.ck.system.mapper.SysPostMapper postMapper, SysDeptMapper deptMapper) {
+        public SysUserService sysUserService(PasswordEncoder passwordEncoder, SysUserRoleMapper userRoleMapper,
+                                             SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
+                                             SysPostMapper postMapper, SysDeptMapper deptMapper) {
             return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper, deptMapper, null);
         }
 
@@ -231,10 +237,10 @@ class PostGovernanceIntegrationTest {
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
+                public Set<Long> getCustomDeptIds() {
                     LoginUser user = LoginUserHolder.get();
                     return user != null && user.getCustomDeptIds() != null
-                            ? user.getCustomDeptIds() : java.util.Set.of();
+                            ? user.getCustomDeptIds() : Set.of();
                 }
 
                 @Override

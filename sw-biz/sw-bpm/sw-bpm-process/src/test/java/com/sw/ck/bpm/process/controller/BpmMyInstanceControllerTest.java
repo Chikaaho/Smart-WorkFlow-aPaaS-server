@@ -3,19 +3,32 @@ package com.sw.ck.bpm.process.controller;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
+import com.sw.ck.bpm.process.dto.InstanceRelationDTO;
+import com.sw.ck.bpm.process.dto.MyInstanceCountDTO;
+import com.sw.ck.bpm.process.dto.MyInstanceDetailDTO;
+import com.sw.ck.bpm.process.dto.MyInstanceProgressNodeDTO;
+import com.sw.ck.bpm.process.dto.MyInstanceRelationInstanceDTO;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.TaskActionService;
+import com.sw.ck.common.config.jackson.JacksonLongToStringConfig;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.util.Date;
 import java.util.List;
@@ -42,8 +55,8 @@ class BpmMyInstanceControllerTest {
     private final BpmProcessDefService bpmProcessDefService = mock(BpmProcessDefService.class);
     private final BpmTaskFacade bpmTaskFacade = mock(BpmTaskFacade.class);
     private final TaskActionService taskActionService = mock(TaskActionService.class);
-    private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService =
-            mock(com.sw.ck.bpm.process.service.ApprovalActionService.class);
+    private final ApprovalActionService approvalActionService =
+            mock(ApprovalActionService.class);
 
     private final BpmMyInstanceController controller = new BpmMyInstanceController(
             bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
@@ -92,8 +105,8 @@ class BpmMyInstanceControllerTest {
     @Test
     @DisplayName("V012-BUG-022：我发起的列表富化流程名称与发起人展示名（解析失败降级 null）")
     void enrichInstanceItems_shouldFillProcessAndInitiatorNames() {
-        com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
-                mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+        UserQueryFacade userQueryFacade =
+                mock(UserQueryFacade.class);
         BpmMyInstanceController enriched = new BpmMyInstanceController(
                 bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
                 null, null, null, userQueryFacade);
@@ -138,7 +151,7 @@ class BpmMyInstanceControllerTest {
     void enrichInstanceItems_shouldFillCurrentNode() {
         BpmMyInstanceController enriched = new BpmMyInstanceController(
                 bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
-                null, new com.fasterxml.jackson.databind.ObjectMapper(), null, null);
+                null, new ObjectMapper(), null, null);
         BpmProcessDef def = new BpmProcessDef();
         def.setName("请假流程");
         def.setGraphJson("{\"elements\":[{\"kind\":\"node\",\"type\":\"START\",\"config\":{}},"
@@ -165,27 +178,26 @@ class BpmMyInstanceControllerTest {
         def.setName("请假流程");
         def.setProcessKey("leave_flow");
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(def);
-        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of(task("t1", false))));
-        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of(task("t2", true))));
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(Optional.of(List.of(task("t1", false))));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(Optional.of(List.of(task("t2", true))));
 
-        R<Map<String, Object>> resp = controller.myInstanceDetail(1L);
+        R<MyInstanceDetailDTO> resp = controller.myInstanceDetail(1L);
 
-        Map<String, Object> result = resp.getData();
-        assertThat(result.get("processName")).isEqualTo("请假流程");
-        assertThat(result.get("formKey")).isEqualTo("leave_form");
-        assertThat(result.get("businessKey")).isEqualTo("rec-001");
-        assertThat(result.get("status")).isEqualTo("RUNNING");
+        MyInstanceDetailDTO result = resp.getData();
+        assertThat(result.getProcessName()).isEqualTo("请假流程");
+        assertThat(result.getFormKey()).isEqualTo("leave_form");
+        assertThat(result.getBusinessKey()).isEqualTo("rec-001");
+        assertThat(result.getStatus()).isEqualTo("RUNNING");
 
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> progress = (List<Map<String, Object>>) result.get("progress");
+        List<MyInstanceProgressNodeDTO> progress = result.getProgress();
         assertThat(progress).hasSize(1);
-        assertThat(progress.get(0)).containsEntry("taskId", "t1")
-                .containsEntry("taskName", "审批")
-                .containsEntry("nodeKey", "node_approve")
-                .containsEntry("assignee", "3");
+        MyInstanceProgressNodeDTO node = progress.get(0);
+        assertThat(node.getTaskId()).isEqualTo("t1");
+        assertThat(node.getTaskName()).isEqualTo("审批");
+        assertThat(node.getNodeKey()).isEqualTo("node_approve");
+        assertThat(node.getAssignee()).isEqualTo("3");
 
-        @SuppressWarnings("unchecked")
-        List<ApprovalHistoryItemDTO> history = (List<ApprovalHistoryItemDTO>) result.get("history");
+        List<ApprovalHistoryItemDTO> history = result.getHistory();
         assertThat(history).hasSize(1);
         assertThat(history.get(0).getTaskId()).isEqualTo("t2");
         assertThat(history.get(0).getAssigneeName()).isEqualTo("张三");
@@ -197,16 +209,16 @@ class BpmMyInstanceControllerTest {
     void myInstanceDetail_shouldReturnFormDataFromHistoricVariables() {
         when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);
-        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
-        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(Optional.of(List.of()));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(Optional.of(List.of()));
         when(bpmTaskFacade.getHistoricVariables("pi-001"))
-                .thenReturn(java.util.Optional.of(Map.of(
+                .thenReturn(Optional.of(Map.of(
                         "formData", Map.of("activityAssessment", "NO_EXPLANATION"),
                         "submitter", "agent")));
 
-        R<Map<String, Object>> resp = controller.myInstanceDetail(1L);
+        R<MyInstanceDetailDTO> resp = controller.myInstanceDetail(1L);
 
-        assertThat(resp.getData().get("formData"))
+        assertThat(resp.getData().getFormData())
                 .isEqualTo(Map.of("activityAssessment", "NO_EXPLANATION"));
     }
 
@@ -215,12 +227,12 @@ class BpmMyInstanceControllerTest {
     void myInstanceDetail_shouldReturnNullFormDataWithoutVariables() {
         when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);
-        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
-        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(Optional.of(List.of()));
+        when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001")).thenReturn(Optional.of(List.of()));
         when(bpmTaskFacade.getHistoricVariables("pi-001"))
-                .thenReturn(java.util.Optional.of(Map.of("submitter", "agent")));
+                .thenReturn(Optional.of(Map.of("submitter", "agent")));
 
-        assertThat(controller.myInstanceDetail(1L).getData().get("formData")).isNull();
+        assertThat(controller.myInstanceDetail(1L).getData().getFormData()).isNull();
         assertThat(controller.historicFormData(instance(2L))).isNull();
     }
 
@@ -229,17 +241,17 @@ class BpmMyInstanceControllerTest {
     void myInstanceDetail_shouldMergeActionRecordsIntoHistory() {
         BpmMyInstanceController enriched = new BpmMyInstanceController(
                 bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
-                approvalActionService, new com.fasterxml.jackson.databind.ObjectMapper(), null, null);
+                approvalActionService, new ObjectMapper(), null, null);
 
         when(bpmInstanceService.getById(1L)).thenReturn(instance(2L));
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(null);
-        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(java.util.Optional.of(List.of()));
+        when(bpmTaskFacade.queryByProcessInstance("pi-001")).thenReturn(Optional.of(List.of()));
         // 终审节点（已完成）+ 一个无动作记录节点（如取消成员）
         when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of(task("t-done", true), task("t-cancelled", true))));
+                .thenReturn(Optional.of(List.of(task("t-done", true), task("t-cancelled", true))));
 
-        com.sw.ck.bpm.process.entity.ApprovalActionRecord handled =
-                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        ApprovalActionRecord handled =
+                new ApprovalActionRecord();
         handled.setTaskId("t-done");
         handled.setAction("APPROVE");
         handled.setSettlementStatus("APPROVED");
@@ -247,10 +259,9 @@ class BpmMyInstanceControllerTest {
         when(approvalActionService.findByProcessInstanceId("pi-001"))
                 .thenReturn(List.of(handled));
 
-        R<Map<String, Object>> resp = enriched.myInstanceDetail(1L);
+        R<MyInstanceDetailDTO> resp = enriched.myInstanceDetail(1L);
 
-        @SuppressWarnings("unchecked")
-        List<ApprovalHistoryItemDTO> history = (List<ApprovalHistoryItemDTO>) resp.getData().get("history");
+        List<ApprovalHistoryItemDTO> history = resp.getData().getHistory();
         assertThat(history).hasSize(2);
         ApprovalHistoryItemDTO done = history.stream().filter(h -> "t-done".equals(h.getTaskId()))
                 .findFirst().orElseThrow();
@@ -272,31 +283,25 @@ class BpmMyInstanceControllerTest {
         BpmTaskDTO active = task("t-active", false);
         active.setAssignee("2"); // 当前登录用户（setUp 中 userId=2）
         when(bpmTaskFacade.queryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of(active)));
+                .thenReturn(Optional.of(List.of(active)));
         when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of(task("t-done", true))));
+                .thenReturn(Optional.of(List.of(task("t-done", true))));
         when(bpmTaskFacade.getHistoricVariables("pi-001"))
-                .thenReturn(java.util.Optional.of(Map.of("formData", Map.of("k", "v"))));
-        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
-        org.mockito.Mockito.doReturn(instance(999L))
+                .thenReturn(Optional.of(Map.of("formData", Map.of("k", "v"))));
+        BpmMyInstanceController spy = Mockito.spy(controller);
+        Mockito.doReturn(instance(999L))
                 .when(spy).findLatestInstance("leave_form", "rec-001");
 
-        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+        InstanceRelationDTO result = spy.instanceRelation("leave_form", "rec-001").getData();
 
-        assertThat(result.get("relation")).isEqualTo("APPROVER");
-        assertThat(result.get("pendingTaskId")).isEqualTo("t-active");
-        assertThat(result.get("formData")).isEqualTo(Map.of("k", "v"));
-        @SuppressWarnings("unchecked")
-        Map<String, Object> instanceInfo = (Map<String, Object>) result.get("instance");
-        assertThat(instanceInfo)
-                .containsEntry("processInstanceId", "pi-001")
-                .containsEntry("processDefKey", "leave_flow");
-        @SuppressWarnings("unchecked")
-        List<String> currentKeys = (List<String>) instanceInfo.get("currentNodeKeys");
-        assertThat(currentKeys).containsExactly("node_approve");
-        @SuppressWarnings("unchecked")
-        List<ApprovalHistoryItemDTO> history =
-                (List<ApprovalHistoryItemDTO>) result.get("approvalHistory");
+        assertThat(result.getRelation()).isEqualTo("APPROVER");
+        assertThat(result.getPendingTaskId()).isEqualTo("t-active");
+        assertThat(result.getFormData()).isEqualTo(Map.of("k", "v"));
+        MyInstanceRelationInstanceDTO instanceInfo = result.getInstance();
+        assertThat(instanceInfo.getProcessInstanceId()).isEqualTo("pi-001");
+        assertThat(instanceInfo.getProcessDefKey()).isEqualTo("leave_flow");
+        assertThat(instanceInfo.getCurrentNodeKeys()).containsExactly("node_approve");
+        List<ApprovalHistoryItemDTO> history = result.getApprovalHistory();
         assertThat(history).hasSize(1);
         assertThat(history.get(0).getTaskId()).isEqualTo("t-done");
         assertThat(history.get(0).getAssigneeName()).isEqualTo("张三");
@@ -306,31 +311,32 @@ class BpmMyInstanceControllerTest {
     @DisplayName("0.1.7 #30 统一详情关系：无关系 fail-closed——不回传实例与流程信息")
     void instanceRelation_shouldFailClosedForStranger() {
         when(bpmTaskFacade.queryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of(task("t-active", false))));
+                .thenReturn(Optional.of(List.of(task("t-active", false))));
         when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of(task("t-done", true))));
-        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
-        org.mockito.Mockito.doReturn(instance(999L))
+                .thenReturn(Optional.of(List.of(task("t-done", true))));
+        BpmMyInstanceController spy = Mockito.spy(controller);
+        Mockito.doReturn(instance(999L))
                 .when(spy).findLatestInstance("leave_form", "rec-001");
 
-        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+        InstanceRelationDTO result = spy.instanceRelation("leave_form", "rec-001").getData();
 
-        assertThat(result.get("relation")).isEqualTo("NONE");
-        assertThat(result).doesNotContainKeys("instance", "approvalHistory", "pendingTaskId", "formData");
+        assertThat(result.getRelation()).isEqualTo("NONE");
+        assertThat(toJsonMap(result))
+                .doesNotContainKeys("instance", "approvalHistory", "pendingTaskId", "formData");
     }
 
     @Test
     @DisplayName("0.1.7 #30 统一详情关系：无实例（表单独立存在）→ NONE，不查询任何流程数据")
     void instanceRelation_shouldReturnNoneWhenFormStandsAlone() {
-        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
-        org.mockito.Mockito.doReturn(null)
+        BpmMyInstanceController spy = Mockito.spy(controller);
+        Mockito.doReturn(null)
                 .when(spy).findLatestInstance("leave_form", "rec-001");
 
-        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+        InstanceRelationDTO result = spy.instanceRelation("leave_form", "rec-001").getData();
 
-        assertThat(result.get("relation")).isEqualTo("NONE");
-        assertThat(result).doesNotContainKeys("instance", "approvalHistory");
-        org.mockito.Mockito.verifyNoInteractions(bpmTaskFacade);
+        assertThat(result.getRelation()).isEqualTo("NONE");
+        assertThat(toJsonMap(result)).doesNotContainKeys("instance", "approvalHistory");
+        Mockito.verifyNoInteractions(bpmTaskFacade);
     }
 
     /**
@@ -341,15 +347,15 @@ class BpmMyInstanceControllerTest {
     @DisplayName("formHasProcess：无实例但表单绑定已发布流程 → true 且 relation=NONE")
     void instanceRelation_shouldReturnFormHasProcessWithoutInstance() {
         when(bpmProcessDefService.hasPublishedDefByFormKey("leave_form")).thenReturn(true);
-        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
-        org.mockito.Mockito.doReturn(null)
+        BpmMyInstanceController spy = Mockito.spy(controller);
+        Mockito.doReturn(null)
                 .when(spy).findLatestInstance("leave_form", "rec-001");
 
-        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+        InstanceRelationDTO result = spy.instanceRelation("leave_form", "rec-001").getData();
 
-        assertThat(result.get("formHasProcess")).isEqualTo(true);
-        assertThat(result.get("relation")).isEqualTo("NONE");
-        assertThat(result).doesNotContainKeys("instance", "approvalHistory");
+        assertThat(result.isFormHasProcess()).isTrue();
+        assertThat(result.getRelation()).isEqualTo("NONE");
+        assertThat(toJsonMap(result)).doesNotContainKeys("instance", "approvalHistory");
     }
 
     /** 已有实例的表单同样要带 formHasProcess，与实例存在性解耦。 */
@@ -358,17 +364,17 @@ class BpmMyInstanceControllerTest {
     void instanceRelation_shouldReturnFormHasProcessWithInstance() {
         when(bpmProcessDefService.hasPublishedDefByFormKey("leave_form")).thenReturn(true);
         when(bpmTaskFacade.queryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of(task("t-active", false))));
+                .thenReturn(Optional.of(List.of(task("t-active", false))));
         when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of()));
-        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
-        org.mockito.Mockito.doReturn(instance(2L))
+                .thenReturn(Optional.of(List.of()));
+        BpmMyInstanceController spy = Mockito.spy(controller);
+        Mockito.doReturn(instance(2L))
                 .when(spy).findLatestInstance("leave_form", "rec-001");
 
-        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+        InstanceRelationDTO result = spy.instanceRelation("leave_form", "rec-001").getData();
 
-        assertThat(result.get("formHasProcess")).isEqualTo(true);
-        assertThat(result.get("relation")).isEqualTo("PARTICIPANT");
+        assertThat(result.isFormHasProcess()).isTrue();
+        assertThat(result.getRelation()).isEqualTo("PARTICIPANT");
     }
 
     /** 反向断言：纯数据表单（无任何已发布流程定义绑定）恒为 false，不因有实例而变 true。 */
@@ -377,17 +383,17 @@ class BpmMyInstanceControllerTest {
     void instanceRelation_shouldReturnFalseForPureDataForm() {
         when(bpmProcessDefService.hasPublishedDefByFormKey("pure_form")).thenReturn(false);
         when(bpmTaskFacade.queryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of()));
+                .thenReturn(Optional.of(List.of()));
         when(bpmTaskFacade.queryHistoryByProcessInstance("pi-001"))
-                .thenReturn(java.util.Optional.of(List.of()));
-        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
-        org.mockito.Mockito.doReturn(instance(2L))
+                .thenReturn(Optional.of(List.of()));
+        BpmMyInstanceController spy = Mockito.spy(controller);
+        Mockito.doReturn(instance(2L))
                 .when(spy).findLatestInstance("pure_form", "rec-001");
 
-        Map<String, Object> result = spy.instanceRelation("pure_form", "rec-001").getData();
+        InstanceRelationDTO result = spy.instanceRelation("pure_form", "rec-001").getData();
 
-        assertThat(result.get("formHasProcess")).isEqualTo(false);
-        assertThat(result.get("relation")).isEqualTo("PARTICIPANT");
+        assertThat(result.isFormHasProcess()).isFalse();
+        assertThat(result.getRelation()).isEqualTo("PARTICIPANT");
     }
 
     /** 判定异常不得中断关系查询主链：按未绑定降级。 */
@@ -396,14 +402,14 @@ class BpmMyInstanceControllerTest {
     void instanceRelation_shouldDegradeToFalseOnLookupFailure() {
         when(bpmProcessDefService.hasPublishedDefByFormKey("leave_form"))
                 .thenThrow(new IllegalStateException("db down"));
-        BpmMyInstanceController spy = org.mockito.Mockito.spy(controller);
-        org.mockito.Mockito.doReturn(null)
+        BpmMyInstanceController spy = Mockito.spy(controller);
+        Mockito.doReturn(null)
                 .when(spy).findLatestInstance("leave_form", "rec-001");
 
-        Map<String, Object> result = spy.instanceRelation("leave_form", "rec-001").getData();
+        InstanceRelationDTO result = spy.instanceRelation("leave_form", "rec-001").getData();
 
-        assertThat(result.get("formHasProcess")).isEqualTo(false);
-        assertThat(result.get("relation")).isEqualTo("NONE");
+        assertThat(result.isFormHasProcess()).isFalse();
+        assertThat(result.getRelation()).isEqualTo("NONE");
     }
 
     /**
@@ -416,11 +422,11 @@ class BpmMyInstanceControllerTest {
         when(bpmInstanceService.countByFormKeyAndBusinessKeyAndInitiator("leave_form", "rec-001", 2L))
                 .thenReturn(1L);
 
-        Map<String, Object> result = controller.myInstanceCount("leave_form", "rec-001").getData();
+        MyInstanceCountDTO result = controller.myInstanceCount("leave_form", "rec-001").getData();
 
-        assertThat(result.get("count")).isEqualTo(1L);
-        assertThat(result.get("formKey")).isEqualTo("leave_form");
-        assertThat(result.get("businessKey")).isEqualTo("rec-001");
+        assertThat(result.getCount()).isEqualTo(1L);
+        assertThat(result.getFormKey()).isEqualTo("leave_form");
+        assertThat(result.getBusinessKey()).isEqualTo("rec-001");
     }
 
     /** 反向断言：未登录恒为 0（发起人缺失不落入「无发起人条件」的全量统计）。 */
@@ -429,15 +435,15 @@ class BpmMyInstanceControllerTest {
     void myInstanceCount_shouldFailClosedWithoutUser() {
         LoginUserHolder.clear();
 
-        Map<String, Object> anonymous = controller.myInstanceCount("leave_form", "rec-001").getData();
+        MyInstanceCountDTO anonymous = controller.myInstanceCount("leave_form", "rec-001").getData();
 
-        assertThat(anonymous.get("count")).isEqualTo(0L);
+        assertThat(anonymous.getCount()).isEqualTo(0L);
     }
 
     @Test
     @DisplayName("历史意见字段展示视图：中文标签 + 人员姓名/本地时间/多选拼接")
     void resolveOpinionFields_buildsDisplayValues() {
-        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        ObjectMapper mapper = new ObjectMapper();
         BpmMyInstanceController withMapper = new BpmMyInstanceController(
                 bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
                 null, mapper, null, null);
@@ -451,8 +457,8 @@ class BpmMyInstanceControllerTest {
                 "fieldHandler", "9",
                 "arrivalTime", "2026-11-07 21:58:00",
                 "measures", List.of("疏导", "增派安保")));
-        com.sw.ck.bpm.process.entity.ApprovalActionRecord action =
-                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        ApprovalActionRecord action =
+                new ApprovalActionRecord();
         action.setTaskId("t1");
         action.setOpinionFormSnapshot("{\"opinionForm\":{\"fields\":["
                 + "{\"key\":\"factResult\",\"type\":\"RADIO\",\"label\":\"事实核实结论\"},"
@@ -473,20 +479,81 @@ class BpmMyInstanceControllerTest {
     @Test
     @DisplayName("旧记录缺意见快照时不生成字段视图（不虚构标签）")
     void resolveOpinionFields_skipsWhenSnapshotMissing() {
-        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        ObjectMapper mapper = new ObjectMapper();
         BpmMyInstanceController withMapper = new BpmMyInstanceController(
                 bpmInstanceService, bpmProcessDefService, bpmTaskFacade, taskActionService,
                 null, mapper, null, null);
         ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
         item.setTaskId("t1");
         item.setOpinionData(Map.of("factResult", "属实"));
-        com.sw.ck.bpm.process.entity.ApprovalActionRecord action =
-                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        ApprovalActionRecord action =
+                new ApprovalActionRecord();
         action.setTaskId("t1");
         action.setOpinionFormSnapshot("{\"opinionForm\":{}}");
 
         withMapper.resolveOpinionFields(List.of(item), Map.of("t1", action));
 
         assertThat(item.getOpinionFields()).isNull();
+    }
+
+    @Test
+    @DisplayName("JSON 契约：count 保持字符串化，formKey/businessKey 回显不变")
+    void myInstanceCountJson_keepsContractKeysAndStringifiesLong() {
+        MyInstanceCountDTO dto = new MyInstanceCountDTO();
+        dto.setCount(1L);
+        dto.setFormKey("leave_form");
+        dto.setBusinessKey("rec-001");
+
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JacksonLongToStringConfig().longToStringModule());
+        Map<String, Object> json = mapper.convertValue(dto, new TypeReference<Map<String, Object>>() { });
+
+        assertThat(json).containsEntry("count", "1")
+                .containsEntry("formKey", "leave_form")
+                .containsEntry("businessKey", "rec-001");
+    }
+
+    @Test
+    @DisplayName("JSON 契约：详情顶层 key 与 progress 节点 key 保持不变")
+    void myInstanceDetailJson_keepsContractKeys() {
+        MyInstanceDetailDTO dto = new MyInstanceDetailDTO();
+        dto.setInstance(instance(2L));
+        dto.setProcessName("请假流程");
+        dto.setFormKey("leave_form");
+        dto.setBusinessKey("rec-001");
+        dto.setStatus("RUNNING");
+        MyInstanceProgressNodeDTO node = new MyInstanceProgressNodeDTO();
+        node.setTaskId("t1");
+        node.setTaskName("审批");
+        node.setNodeKey("node_approve");
+        node.setAssignee("3");
+        dto.setProgress(List.of(node));
+        dto.setHistory(List.of());
+
+        Map<String, Object> json = toJsonMap(dto);
+
+        assertThat(json).containsKeys("instance", "processName", "formKey", "businessKey",
+                "status", "progress", "history", "formData");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> progress = ((List<Map<String, Object>>) json.get("progress")).get(0);
+        assertThat(progress).containsKeys("taskId", "taskName", "nodeKey", "assignee");
+    }
+
+    @Test
+    @DisplayName("JSON 契约：NONE 关系省略实例/历史/pendingTaskId/formData，保留 formHasProcess")
+    void instanceRelationJson_omitsNullKeysForNone() {
+        InstanceRelationDTO dto = new InstanceRelationDTO();
+        dto.setFormHasProcess(false);
+        dto.setRelation("NONE");
+
+        Map<String, Object> json = toJsonMap(dto);
+
+        assertThat(json).containsEntry("formHasProcess", false)
+                .containsEntry("relation", "NONE")
+                .doesNotContainKeys("instance", "approvalHistory", "pendingTaskId", "formData");
+    }
+
+    private static Map<String, Object> toJsonMap(Object value) {
+        return new ObjectMapper().convertValue(value, new TypeReference<Map<String, Object>>() { });
     }
 }

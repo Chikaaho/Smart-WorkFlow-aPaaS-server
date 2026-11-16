@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.facade;
 
 import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.common.engine.api.FlowableOptimisticLockingException;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RepositoryService;
@@ -10,6 +11,7 @@ import org.flowable.task.api.Task;
 import org.flowable.task.api.TaskQuery;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.util.Map;
 
@@ -53,7 +55,7 @@ class BpmTaskFacadeImplCompleteConflictTest {
         when(taskQuery.taskId("t1")).thenReturn(taskQuery);
         when(taskQuery.singleResult()).thenReturn(active);
         Map<String, Object> variables = Map.of("outcome", "APPROVE");
-        org.mockito.Mockito.doThrow(new FlowableOptimisticLockingException("rev conflict"))
+        Mockito.doThrow(new FlowableOptimisticLockingException("rev conflict"))
                 .when(taskService).complete(eq("t1"), anyMap());
 
         assertThatThrownBy(() -> facade.complete("t1", variables))
@@ -70,7 +72,7 @@ class BpmTaskFacadeImplCompleteConflictTest {
         when(taskQuery.taskId("t1")).thenReturn(taskQuery);
         // 入口快照 + 前置检查返回任务；冲突后复核返回 null（竞争者已提交完成）
         when(taskQuery.singleResult()).thenReturn(active, active, null);
-        org.mockito.Mockito.doThrow(new FlowableOptimisticLockingException("rev conflict"))
+        Mockito.doThrow(new FlowableOptimisticLockingException("rev conflict"))
                 .when(taskService).complete(eq("t1"), anyMap());
 
         assertThatThrownBy(() -> facade.complete("t1", Map.of("outcome", "APPROVE")))

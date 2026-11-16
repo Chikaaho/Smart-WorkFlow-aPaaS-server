@@ -1,17 +1,22 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.bpm.process.mapper.BpmConsensusVoteMapper;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.logging.nologging.NoLoggingImpl;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
 import org.mybatis.spring.annotation.MapperScan;
@@ -21,6 +26,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.sql.SQLException;
+import java.util.Set;
 import javax.sql.DataSource;
 
 /**
@@ -50,7 +57,7 @@ public class ConsensusVoteTestSupport {
                         menu_type int not null default 2, path varchar(200), component varchar(200),
                         permission varchar(128), icon varchar(64), sort int not null default 0)
                     """);
-        } catch (java.sql.SQLException e) {
+        } catch (SQLException e) {
             throw new IllegalStateException("预置 sys_menu 失败", e);
         }
         Flyway.configure()
@@ -89,13 +96,13 @@ public class ConsensusVoteTestSupport {
             }
 
             @Override
-            public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                return com.sw.ck.common.datascope.DataScopeType.SELF;
+            public DataScopeType getDataScopeType() {
+                return DataScopeType.SELF;
             }
 
             @Override
-            public java.util.Set<Long> getCustomDeptIds() {
-                return java.util.Set.of();
+            public Set<Long> getCustomDeptIds() {
+                return Set.of();
             }
 
             @Override
@@ -121,11 +128,11 @@ public class ConsensusVoteTestSupport {
 
         MybatisConfiguration configuration = new MybatisConfiguration();
         configuration.setMapUnderscoreToCamelCase(true);
-        configuration.setLogImpl(org.apache.ibatis.logging.nologging.NoLoggingImpl.class);
+        configuration.setLogImpl(NoLoggingImpl.class);
 
         GlobalConfig globalConfig = new GlobalConfig();
         GlobalConfig.DbConfig dbConfig = new GlobalConfig.DbConfig();
-        dbConfig.setIdType(com.baomidou.mybatisplus.annotation.IdType.ASSIGN_ID);
+        dbConfig.setIdType(IdType.ASSIGN_ID);
         globalConfig.setDbConfig(dbConfig);
 
         MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();

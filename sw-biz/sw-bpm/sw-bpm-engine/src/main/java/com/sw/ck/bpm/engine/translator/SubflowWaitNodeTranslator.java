@@ -7,6 +7,8 @@ import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
+import com.sw.ck.bpm.engine.listener.SubflowWaitListener;
+
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.FlowableListener;
 import org.flowable.bpmn.model.ImplementationType;
@@ -96,7 +98,7 @@ public class SubflowWaitNodeTranslator implements NodeTypeTranslator {
         // 类委托（Flowable 反射实例化，经静态桥接转发到 Spring 单例）：
         // 避免表达式 bean 解析在部分引擎配置下不可用
         listener.setImplementationType(ImplementationType.IMPLEMENTATION_TYPE_CLASS);
-        listener.setImplementation(com.sw.ck.bpm.engine.listener.SubflowWaitListener.class.getName());
+        listener.setImplementation(SubflowWaitListener.class.getName());
         receiveTask.getExecutionListeners().add(listener);
         return receiveTask;
     }

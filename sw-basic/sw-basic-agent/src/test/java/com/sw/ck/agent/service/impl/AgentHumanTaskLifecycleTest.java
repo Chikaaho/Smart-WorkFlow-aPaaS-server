@@ -2,12 +2,16 @@ package com.sw.ck.agent.service.impl;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+
 import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
+import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
 import com.sw.ck.agent.entity.AgentGraphDef;
+import com.sw.ck.agent.entity.AgentGraphExecution;
 import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
 import com.sw.ck.agent.entity.AgentGraphHumanTask;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionEventMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionRequestMapper;
 import com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
@@ -16,14 +20,19 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatcher;
+import org.mockito.Mockito;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +59,7 @@ class AgentHumanTaskLifecycleTest {
     private AgentGraphExecutionRequestMapper requestMapper;
     private AgentGraphExecutionEventMapper eventMapper;
     private AgentGraphHumanTaskMapper humanTaskMapper;
-    private com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper;
+    private AgentGraphExecutionMapper executionMapper;
     private AgentGraphDefMapper graphDefMapper;
     private AgentGraphExecutionService executionService;
     private LoginContextProvider loginContext;
@@ -66,7 +75,7 @@ class AgentHumanTaskLifecycleTest {
         requestMapper = mock(AgentGraphExecutionRequestMapper.class);
         eventMapper = mock(AgentGraphExecutionEventMapper.class);
         humanTaskMapper = mock(AgentGraphHumanTaskMapper.class);
-        executionMapper = mock(com.sw.ck.agent.mapper.AgentGraphExecutionMapper.class);
+        executionMapper = mock(AgentGraphExecutionMapper.class);
         graphDefMapper = mock(AgentGraphDefMapper.class);
         executionService = mock(AgentGraphExecutionService.class);
         loginContext = mock(LoginContextProvider.class);
@@ -133,7 +142,7 @@ class AgentHumanTaskLifecycleTest {
 
     private void invokeRun(long id) {
         try {
-            java.lang.reflect.Method method = AgentGraphExecutionLifecycleServiceImpl.class
+            Method method = AgentGraphExecutionLifecycleServiceImpl.class
                     .getDeclaredMethod("run", Long.class, LoginUser.class);
             method.setAccessible(true);
             LoginUser user = new LoginUser();
@@ -163,9 +172,9 @@ class AgentHumanTaskLifecycleTest {
         invokeRun(5L);
 
         verify(humanTaskMapper, times(1)).insert(any(AgentGraphHumanTask.class));
-        org.mockito.ArgumentCaptor<AgentGraphExecutionRequest> updateCaptor =
-                org.mockito.ArgumentCaptor.forClass(AgentGraphExecutionRequest.class);
-        verify(requestMapper, org.mockito.Mockito.atLeastOnce()).updateById(updateCaptor.capture());
+        ArgumentCaptor<AgentGraphExecutionRequest> updateCaptor =
+                ArgumentCaptor.forClass(AgentGraphExecutionRequest.class);
+        verify(requestMapper, Mockito.atLeastOnce()).updateById(updateCaptor.capture());
         assertThat(updateCaptor.getAllValues().get(updateCaptor.getAllValues().size() - 1)
                 .getStatus()).isEqualTo("WAITING_HUMAN");
         assertThat(updateCaptor.getAllValues().get(updateCaptor.getAllValues().size() - 1)
@@ -177,8 +186,8 @@ class AgentHumanTaskLifecycleTest {
     @Test
     @DisplayName("提交人工任务：处理人校验 + 认领 + 重新派发并完成执行")
     void submitHumanTaskClaimsAndDispatches() throws Exception {
-        java.util.concurrent.atomic.AtomicReference<AgentGraphExecutionRequest> current =
-                new java.util.concurrent.atomic.AtomicReference<>(waitingRequest(5L));
+        AtomicReference<AgentGraphExecutionRequest> current =
+                new AtomicReference<>(waitingRequest(5L));
         when(requestMapper.selectById(5L)).thenAnswer(inv -> current.get());
         AgentGraphHumanTask task = new AgentGraphHumanTask();
         task.setId(77L);
@@ -265,8 +274,8 @@ class AgentHumanTaskLifecycleTest {
         overdue.setPayloadJson("{\"timeoutSeconds\":1}");
         overdue.setCreateTime(LocalDateTime.now().minusSeconds(5));
         when(humanTaskMapper.selectList(any())).thenReturn(List.of(overdue));
-        java.util.concurrent.atomic.AtomicReference<AgentGraphExecutionRequest> current =
-                new java.util.concurrent.atomic.AtomicReference<>(waitingRequest(6L));
+        AtomicReference<AgentGraphExecutionRequest> current =
+                new AtomicReference<>(waitingRequest(6L));
         when(requestMapper.selectById(6L)).thenAnswer(inv -> current.get());
         when(humanTaskMapper.claimTimeout(eq(88L), any())).thenReturn(1);
         when(humanTaskMapper.timeoutSiblings(6L, "human-1")).thenReturn(1);
@@ -312,8 +321,8 @@ class AgentHumanTaskLifecycleTest {
     void submitResumesSameExecutionRecord() throws Exception {
         AgentGraphExecutionRequest waiting = waitingRequest(5L);
         waiting.setResultExecutionId(900L);
-        java.util.concurrent.atomic.AtomicReference<AgentGraphExecutionRequest> current =
-                new java.util.concurrent.atomic.AtomicReference<>(waiting);
+        AtomicReference<AgentGraphExecutionRequest> current =
+                new AtomicReference<>(waiting);
         when(requestMapper.selectById(5L)).thenAnswer(inv -> current.get());
         AgentGraphHumanTask task = new AgentGraphHumanTask();
         task.setId(77L);
@@ -353,7 +362,7 @@ class AgentHumanTaskLifecycleTest {
                     return 1;
                 });
         when(executionService.getExecution(900L))
-                .thenReturn(new com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO());
+                .thenReturn(new AgentGraphExecutionDetailDTO());
 
         LoginUser user = new LoginUser();
         user.setUserId(1L);
@@ -372,8 +381,8 @@ class AgentHumanTaskLifecycleTest {
     @Test
     @DisplayName("G3-3：等待人工中取消——任务关闭、执行转 CANCELLED")
     void cancelWhileWaitingHumanCancelsTasks() {
-        java.util.concurrent.atomic.AtomicReference<AgentGraphExecutionRequest> current =
-                new java.util.concurrent.atomic.AtomicReference<>(waitingRequest(5L));
+        AtomicReference<AgentGraphExecutionRequest> current =
+                new AtomicReference<>(waitingRequest(5L));
         when(requestMapper.selectById(5L)).thenAnswer(inv -> current.get());
         when(requestMapper.cancelQueued(5L)).thenReturn(0);
         when(requestMapper.cancelWaiting(5L)).thenAnswer(inv -> {
@@ -415,10 +424,10 @@ class AgentHumanTaskLifecycleTest {
         });
         when(humanTaskMapper.cancelPending(5L)).thenReturn(2);
         when(executionService.getExecution(900L))
-                .thenReturn(new com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO());
+                .thenReturn(new AgentGraphExecutionDetailDTO());
         // G1：结果执行行同步取消
-        com.sw.ck.agent.entity.AgentGraphExecution resultRow =
-                new com.sw.ck.agent.entity.AgentGraphExecution();
+        AgentGraphExecution resultRow =
+                new AgentGraphExecution();
         resultRow.setId(900L);
         resultRow.setStatus("WAITING_HUMAN");
         when(executionMapper.selectById(900L)).thenReturn(resultRow);
@@ -437,7 +446,7 @@ class AgentHumanTaskLifecycleTest {
         verify(requestMapper, never()).cancelQueued(anyLong());
         verify(requestMapper, never()).requestRunningCancellation(anyLong());
         // G1：执行列表读执行行——取消必须同步把结果执行行置 CANCELLED
-        org.mockito.ArgumentMatcher<com.sw.ck.agent.entity.AgentGraphExecution> cancelledRow =
+        ArgumentMatcher<AgentGraphExecution> cancelledRow =
                 row -> "CANCELLED".equals(row.getStatus());
         verify(executionMapper).updateById(argThat(cancelledRow));
     }

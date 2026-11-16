@@ -1,7 +1,10 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.CatalogItemDTO;
 import com.sw.ck.bpm.process.dto.CategoryAssignReq;
+import com.sw.ck.bpm.process.dto.CategoryCountsDTO;
 import com.sw.ck.bpm.process.dto.CategoryDTO;
 import com.sw.ck.bpm.process.service.BpmCatalogService;
 import com.sw.ck.common.page.PageParam;
@@ -17,7 +20,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 流程中心事项目录控制器（v0.0.2）。
@@ -32,11 +34,8 @@ import java.util.Map;
 @RequestMapping("/workflow/catalog")
 public class BpmCatalogController {
 
-    private final BpmCatalogService catalogService;
-
-    public BpmCatalogController(BpmCatalogService catalogService) {
-        this.catalogService = catalogService;
-    }
+    @Autowired
+    private BpmCatalogService catalogService;
 
     /** 普通用户可发起事项目录（categoryId=0 表示未分类兜底）。 */
     @GetMapping("/items")
@@ -48,7 +47,7 @@ public class BpmCatalogController {
 
     /** 普通视角分类聚合数量（仅统计本人可见事项，未分类归入 key 0）。 */
     @GetMapping("/category-counts")
-    public R<Map<Long, Long>> categoryCounts() {
+    public R<CategoryCountsDTO> categoryCounts() {
         return R.ok(catalogService.portalCategoryCounts());
     }
 

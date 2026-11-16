@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.nodefunc;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.nodefunc.NodeFunctionContext;
 import com.sw.ck.bpm.api.nodefunc.ParticipantFunction;
 import com.sw.ck.system.api.user.UserQueryFacade;
@@ -15,11 +17,8 @@ import java.util.Optional;
 @Component("func_tenant_admins")
 public class TenantAdminParticipantFunction implements ParticipantFunction {
 
-    private final UserQueryFacade userQueryFacade;
-
-    public TenantAdminParticipantFunction(UserQueryFacade userQueryFacade) {
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     @Override
     public Optional<List<String>> resolveParticipants(NodeFunctionContext context) {

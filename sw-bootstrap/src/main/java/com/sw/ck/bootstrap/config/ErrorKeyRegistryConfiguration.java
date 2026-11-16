@@ -7,10 +7,9 @@ import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
 import com.sw.ck.system.security.AuthErrorCode;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Configuration;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 把跨模块的 {@link com.sw.ck.common.exception.ErrorCode} 枚举注册进
  * {@link ErrorKeyRegistry}，使 {@code R.fail(code, msg)} 形式的业务失败也能携带 errorKey。
@@ -19,9 +18,8 @@ import org.springframework.context.annotation.Configuration;
  * 测试与运行期注册同步覆盖，不会出现「目录里有、运行期查不到」。</p>
  */
 @Configuration
+@Log4j2
 public class ErrorKeyRegistryConfiguration {
-
-    private static final Logger log = LoggerFactory.getLogger(ErrorKeyRegistryConfiguration.class);
 
     @PostConstruct
     public void registerErrorCodes() {

@@ -1,5 +1,7 @@
 package com.sw.ck.agent.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -33,11 +35,8 @@ public class AgentProviderServiceImpl
         extends BaseServiceImpl<AgentProviderMapper, AgentProvider>
         implements AgentProviderService {
 
-    private final AesGcmCipher cipher;
-
-    public AgentProviderServiceImpl(AesGcmCipher cipher) {
-        this.cipher = cipher;
-    }
+    @Autowired
+    private AesGcmCipher cipher;
 
     @Override
     public PageResult<AgentProviderDTO> pageProviders(PageParam pageParam, String nameKeyword) {

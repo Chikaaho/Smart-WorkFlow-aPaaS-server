@@ -1,20 +1,20 @@
 package com.sw.ck.bpm.engine.translator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.node.BpmNodeDefinition;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.ExtensionAttribute;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.FlowableListener;
 import org.flowable.bpmn.model.ImplementationType;
 import org.flowable.bpmn.model.SequenceFlow;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,8 +23,14 @@ import java.util.Objects;
 import java.util.Comparator;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import org.flowable.bpmn.model.ExclusiveGateway;
+import java.util.ArrayList;
 
+import org.flowable.bpmn.model.ExclusiveGateway;
+import org.flowable.bpmn.model.GraphicInfo;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.UserTask;
+
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程图画布模型 → BPMN 2.0 模型翻译器。
  * <p>
@@ -51,9 +57,8 @@ import org.flowable.bpmn.model.ExclusiveGateway;
  *   <li>顺序边 → {@link SequenceFlow}</li>
  * </ul>
  */
+@Log4j2
 public class GraphToBpmnTranslator {
-
-    private static final Logger log = LoggerFactory.getLogger(GraphToBpmnTranslator.class);
 
     private static final String KIND_NODE = "node";
     private static final String KIND_EDGE = "edge";
@@ -87,7 +92,7 @@ public class GraphToBpmnTranslator {
         this.translatorMap = new LinkedHashMap<>();
         register(new StartEventTranslator());
         register(new EndEventTranslator());
-        register(new ApprovalUserTaskTranslator(objectMapper));
+        register(ApprovalUserTaskTranslator.forStandalone(objectMapper));
         // P58 节点由生产构造器从 BpmNodeRegistry 注入；此兼容构造器只保留
         // P57 以前的 START/END/APPROVAL 集合，避免旧调用方绕过统一注册结果。
         if (pluginTranslators != null) {
@@ -173,7 +178,7 @@ public class GraphToBpmnTranslator {
                 .toList();
 
         // 构建 BPMN Process（用全限定名解决 java.lang.Process 冲突）
-        org.flowable.bpmn.model.Process process = new org.flowable.bpmn.model.Process();
+        Process process = new Process();
         process.setId(graph.getProcessKey());
         process.setName(graph.getName() != null ? graph.getName() : graph.getProcessKey());
         process.setExecutable(true);
@@ -227,7 +232,7 @@ public class GraphToBpmnTranslator {
      * </p>
      */
     private void applyDiagramInterchange(BpmnModel bpmnModel,
-                                         org.flowable.bpmn.model.Process process,
+                                         Process process,
                                          List<GraphElement> nodes,
                                          Map<String, FlowElement> flowElementMap) {
         // 节点槽位（x, y, width, height）：按出现顺序水平排布，同一中心线
@@ -238,14 +243,14 @@ public class GraphToBpmnTranslator {
             if (element == null) {
                 continue;
             }
-            boolean isEvent = !(element instanceof org.flowable.bpmn.model.UserTask);
+            boolean isEvent = !(element instanceof UserTask);
             int width = isEvent ? DI_EVENT_SIZE : DI_TASK_WIDTH;
             int height = isEvent ? DI_EVENT_SIZE : DI_TASK_HEIGHT;
             int x = DI_START_X + slot * DI_NODE_GAP + (DI_TASK_WIDTH - width) / 2;
             int y = DI_CENTER_Y - height / 2;
             boxByNodeId.put(node.getId(), new int[] {x, y, width, height});
 
-            org.flowable.bpmn.model.GraphicInfo gi = new org.flowable.bpmn.model.GraphicInfo();
+            GraphicInfo gi = new GraphicInfo();
             gi.setX(x);
             gi.setY(y);
             gi.setWidth(width);
@@ -262,10 +267,10 @@ public class GraphToBpmnTranslator {
             if (src == null || tgt == null) {
                 continue;
             }
-            org.flowable.bpmn.model.GraphicInfo from = new org.flowable.bpmn.model.GraphicInfo();
+            GraphicInfo from = new GraphicInfo();
             from.setX(src[0] + src[2]);
             from.setY(src[1] + src[3] / 2.0);
-            org.flowable.bpmn.model.GraphicInfo to = new org.flowable.bpmn.model.GraphicInfo();
+            GraphicInfo to = new GraphicInfo();
             to.setX(tgt[0]);
             to.setY(tgt[1] + tgt[3] / 2.0);
             bpmnModel.addFlowGraphicInfoList(flow.getId(), List.of(from, to));
@@ -341,7 +346,7 @@ public class GraphToBpmnTranslator {
             branchTraceListener.setImplementationType(
                     ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION);
             branchTraceListener.setImplementation("${bpmBranchConditionEvaluator}");
-            sequenceFlow.setExecutionListeners(new java.util.ArrayList<>(List.of(branchTraceListener)));
+            sequenceFlow.setExecutionListeners(new ArrayList<>(List.of(branchTraceListener)));
             if (isDefault) {
                 gateway.setDefaultFlow(sequenceFlow.getId());
             } else {

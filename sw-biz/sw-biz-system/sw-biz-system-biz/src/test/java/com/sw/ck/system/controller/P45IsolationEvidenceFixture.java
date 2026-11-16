@@ -2,6 +2,7 @@ package com.sw.ck.system.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.security.config.SecurityProperties;
@@ -11,13 +12,16 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.jwt.JwtProperties;
 import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.spi.UserDetailsProvider;
+import com.sw.ck.security.support.PermissionService;
 import com.sw.ck.system.security.LoginChallengeService;
 import com.sw.ck.system.security.LoginChallengeStore;
 import com.sw.ck.system.security.LoginSecurityProperties;
+import com.sw.ck.system.security.PngCaptchaRenderer;
 import com.sw.ck.system.security.RedisLoginChallengeStore;
 import com.sw.ck.system.security.RsaLoginKeyManager;
 import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysUserService;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +41,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.OAEPParameterSpec;
@@ -53,6 +58,12 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import jakarta.servlet.http.Cookie;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -87,25 +98,25 @@ class P45IsolationEvidenceFixture {
     private static final String USER_B = "p45-low-isolated";
     private static final long DEFAULT_TENANT_ID = 0L;
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private AuthController authController;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private AuthMeController authMeController;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private LoginChallengeTestSupport.TestableLoginChallengeService challengeService;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private LoginChallengeStore challengeStore;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private RsaLoginKeyManager keyManager;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private LoginSecurityProperties loginProperties;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private UserDetailsProvider userDetailsProvider;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private JdbcTemplate jdbcTemplate;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private ObjectMapper objectMapper;
 
     private MockMvc mockMvc;
@@ -113,7 +124,7 @@ class P45IsolationEvidenceFixture {
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder(10);
 
     @BeforeAll
-    static void createTables(@org.springframework.beans.factory.annotation.Autowired JdbcTemplate jt) {
+    static void createTables(@Autowired JdbcTemplate jt) {
         AuthFlowIntegrationTest.createTables(jt);
     }
 
@@ -166,7 +177,7 @@ class P45IsolationEvidenceFixture {
     }
 
     @AfterAll
-    static void destroyDatabase(@org.springframework.beans.factory.annotation.Autowired JdbcTemplate jt) {
+    static void destroyDatabase(@Autowired JdbcTemplate jt) {
         try {
             jt.execute("DROP ALL OBJECTS");
         } finally {
@@ -184,14 +195,14 @@ class P45IsolationEvidenceFixture {
                 challenge.get("publicKey").asText());
         int before = countRefreshRows();
 
-        var executor = java.util.concurrent.Executors.newFixedThreadPool(8);
-        var futures = new ArrayList<java.util.concurrent.Future<MvcResult>>();
+        var executor = Executors.newFixedThreadPool(8);
+        var futures = new ArrayList<Future<MvcResult>>();
         for (int i = 0; i < 8; i++) {
             futures.add(executor.submit(() -> mockMvc.perform(post("/auth/login")
                     .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn()));
         }
         executor.shutdown();
-        assertThat(executor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(executor.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
 
         int success = 0;
         int noAccess = 0;
@@ -246,7 +257,7 @@ class P45IsolationEvidenceFixture {
         CapturingChallengeService v1Service = new CapturingChallengeService(
                 challengeStore, v1, v1Properties);
         LoginChallengeService overlapService = new LoginChallengeService(
-                challengeStore, overlap, overlapProperties, new com.sw.ck.system.security.PngCaptchaRenderer());
+                challengeStore, overlap, overlapProperties, new PngCaptchaRenderer());
 
         LoginChallengeService.ChallengeView old = v1Service.create();
         challengeIds.add(old.captchaId());
@@ -299,7 +310,7 @@ class P45IsolationEvidenceFixture {
         boolean lowNotAdmin = !lowMe.path("data").path("superAdmin").asBoolean();
         LoginUser lowLoginUser = userDetailsProvider.loadByUsername(USER_B);
         LoginUserHolder.set(lowLoginUser);
-        boolean lowPermissionDenied = !new com.sw.ck.security.support.PermissionService()
+        boolean lowPermissionDenied = !new PermissionService()
                 .hasPermi("system:user:list");
         LoginUserHolder.clear();
 
@@ -444,9 +455,9 @@ class P45IsolationEvidenceFixture {
 
     private void writeJson(String name, JsonNode node) {
         try {
-            java.nio.file.Path dir = java.nio.file.Path.of(System.getProperty(EVIDENCE_DIR_PROPERTY));
-            java.nio.file.Files.createDirectories(dir);
-            java.nio.file.Files.writeString(dir.resolve(name), objectMapper.writerWithDefaultPrettyPrinter()
+            Path dir = Path.of(System.getProperty(EVIDENCE_DIR_PROPERTY));
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve(name), objectMapper.writerWithDefaultPrettyPrinter()
                     .writeValueAsString(node) + "\n");
         } catch (Exception e) {
             throw new IllegalStateException("cannot write evidence", e);
@@ -455,15 +466,15 @@ class P45IsolationEvidenceFixture {
 
     private void writeText(String name, String content) {
         try {
-            java.nio.file.Path dir = java.nio.file.Path.of(System.getProperty(EVIDENCE_DIR_PROPERTY));
-            java.nio.file.Files.createDirectories(dir);
-            java.nio.file.Files.writeString(dir.resolve(name), content);
+            Path dir = Path.of(System.getProperty(EVIDENCE_DIR_PROPERTY));
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve(name), content);
         } catch (Exception e) {
             throw new IllegalStateException("cannot write evidence", e);
         }
     }
 
-    private record LoginResult(String accessToken, jakarta.servlet.http.Cookie refreshCookie) {
+    private record LoginResult(String accessToken, Cookie refreshCookie) {
     }
 
     private static final class CapturingChallengeService extends LoginChallengeService {
@@ -472,7 +483,7 @@ class P45IsolationEvidenceFixture {
         private CapturingChallengeService(LoginChallengeStore store,
                                           RsaLoginKeyManager keyManager,
                                           LoginSecurityProperties properties) {
-            super(store, keyManager, properties, new com.sw.ck.system.security.PngCaptchaRenderer());
+            super(store, keyManager, properties, new PngCaptchaRenderer());
         }
 
         @Override

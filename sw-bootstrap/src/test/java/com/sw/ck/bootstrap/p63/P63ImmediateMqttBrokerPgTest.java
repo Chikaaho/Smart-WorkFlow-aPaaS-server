@@ -7,20 +7,34 @@ import com.sw.ck.iot.entity.IotTopic;
 import com.sw.ck.iot.mapper.IotConnectionMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -58,7 +72,7 @@ class P63ImmediateMqttBrokerPgTest {
         broker = P63ControlledMqttBroker.start("127.0.0.1", 18830, RECEIVED_LOG);
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -68,23 +82,23 @@ class P63ImmediateMqttBrokerPgTest {
         props.put("sw.security.jwt.secret", "p63-mqtt-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p63-mqtt-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.receipt.secret", "p63-mqtt-receipt-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p63-mqtt", props));
+                            new MapPropertySource("p63-mqtt", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63MqttLoginContextProvider", provider);
                 })
                 .run();
@@ -185,12 +199,12 @@ class P63ImmediateMqttBrokerPgTest {
     // ==================== helpers ====================
 
     /** 生产 dispatch 携带认证上下文运行；测试以同构登录态调用真实入口。 */
-    private <T> T asSystemUser(java.util.concurrent.Callable<T> action) {
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+    private <T> T asSystemUser(Callable<T> action) {
+        LoginUser user = new LoginUser();
         user.setUserId(91899L);
         user.setTenantId(TENANT);
         user.setPermissions(List.of("iot:device:manage"));
-        com.sw.ck.security.holder.LoginUserHolder.set(user);
+        LoginUserHolder.set(user);
         try {
             return action.call();
         } catch (RuntimeException e) {
@@ -198,13 +212,13 @@ class P63ImmediateMqttBrokerPgTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 
     private boolean brokerReady() {
-        try (java.net.Socket socket = new java.net.Socket()) {
-            socket.connect(new java.net.InetSocketAddress("127.0.0.1", 18830), 3000);
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", 18830), 3000);
             return socket.isConnected();
         } catch (Exception e) {
             return false;
@@ -240,10 +254,10 @@ class P63ImmediateMqttBrokerPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
             gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
+            KeyPair pair = gen.generateKeyPair();
+            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

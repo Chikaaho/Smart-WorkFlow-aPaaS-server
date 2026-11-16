@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.service;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
@@ -22,12 +23,26 @@ import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmTriggerExecMapper;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
-import lombok.extern.slf4j.Slf4j;
+import com.sw.ck.bpm.api.script.ScriptFunctionContext;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
+import com.sw.ck.bpm.process.queue.CommandFingerprint;
+
+import jakarta.annotation.PostConstruct;
+import lombok.extern.log4j.Log4j2;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -37,7 +52,9 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * P64 Trigger 受控判断与配置化动作执行（ADR-P64-001 §3/§4，A03+A04；DR07 阶段区分）。
@@ -51,7 +68,7 @@ import java.util.Optional;
  * enabled）在终态提交后于独立短事务中评估，失败不回滚已成立终态，回滚的办理不产生副作用。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class TriggerExecutionService {
 
@@ -67,104 +84,56 @@ public class TriggerExecutionService {
      * BF20261019-03：判断脚本执行超时毫秒（可配置；缺省沿用主方向 §3.5 的 5000ms）。
      * 字段缺省值兜底非 Spring 装配的测试构造。
      */
-    @org.springframework.beans.factory.annotation.Value("${sw.bpm.script.timeout-ms:5000}")
+    @Value("${sw.bpm.script.timeout-ms:5000}")
     private long scriptTimeoutMs = BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS;
 
     private static final int DEFAULT_MAX_DISPATCH = 50;
     private static final int HARD_MAX_DISPATCH = 200;
 
     /** 子行预填时排除的来源行内部列：业务字段随派发冻结，系统列与父行归属不复制。 */
-    private static final java.util.Set<String> PREFILL_EXCLUDED_ROW_COLUMNS = java.util.Set.of(
+    private static final Set<String> PREFILL_EXCLUDED_ROW_COLUMNS = Set.of(
             "id", "tenant_id", "deleted", "version", "parent_record_id",
             "create_time", "create_by", "update_time", "update_by");
 
-    private final NodeFormDataService nodeFormDataService;
-    private final BpmVariableSnapshotService variableSnapshotService;
-    private final BpmScriptEvaluatePort scriptRunner;
-    private final BpmCommandQueue commandQueue;
-    private final BpmTriggerExecMapper triggerExecMapper;
-    private final BpmActionRefMapper actionRefMapper;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private NodeFormDataService nodeFormDataService;
+    @Autowired
+    private BpmVariableSnapshotService variableSnapshotService;
+    @Autowired
+    private BpmScriptEvaluatePort scriptRunner;
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private BpmTriggerExecMapper triggerExecMapper;
+    @Autowired
+    private BpmActionRefMapper actionRefMapper;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private ObjectMapper objectMapper;
     /** 阶段Ⅱ（P64 A05/A06）子流程编排（可选注入；engine/process 既有单测保持旧构造）。 */
-    private final org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
-            childOrchestrationProvider;
+    @Autowired(required = false)
+    private ObjectProvider<ChildOrchestrationService> childOrchestrationProvider;
     /** BF20261013-021 脚本函数上下文工厂（可选注入；既有单测保持旧构造）。 */
-    private final org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
-            scriptFunctionContextProvider;
+    @Autowired(required = false)
+    private ObjectProvider<BpmScriptFunctionContextFactory> scriptFunctionContextProvider;
     /** 0.3.1 意见驱动（d）：意见记录服务（可选注入）——节点级触发器脚本注入 nodeOpinions 快照。 */
-    private final org.springframework.beans.factory.ObjectProvider<ApprovalActionService>
-            approvalActionServiceProvider;
+    @Autowired(required = false)
+    private ObjectProvider<ApprovalActionService> approvalActionServiceProvider;
+    @Autowired(required = false)
+    private PlatformTransactionManager transactionManager;
     /**
      * DR07 新配置终态后评估用的独立短事务模板（REQUIRES_NEW；可选注入，
      * 缺省时终态后评估退化为逐语句提交，行为语义不变）。
      */
-    private final org.springframework.transaction.support.TransactionTemplate afterCommitTemplate;
+    private TransactionTemplate afterCommitTemplate;
 
-    public TriggerExecutionService(NodeFormDataService nodeFormDataService,
-                                   BpmVariableSnapshotService variableSnapshotService,
-                                   BpmScriptEvaluatePort scriptRunner,
-                                   BpmCommandQueue commandQueue,
-                                   BpmTriggerExecMapper triggerExecMapper,
-                                   BpmActionRefMapper actionRefMapper,
-                                   BpmTaskFacade bpmTaskFacade,
-                                   ObjectMapper objectMapper) {
-        this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
-                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper, null, null, null, null);
-    }
-
-    /** 兼容既有子流程派发单测构造（无脚本函数上下文工厂）。 */
-    public TriggerExecutionService(NodeFormDataService nodeFormDataService,
-                                   BpmVariableSnapshotService variableSnapshotService,
-                                   BpmScriptEvaluatePort scriptRunner,
-                                   BpmCommandQueue commandQueue,
-                                   BpmTriggerExecMapper triggerExecMapper,
-                                   BpmActionRefMapper actionRefMapper,
-                                   BpmTaskFacade bpmTaskFacade,
-                                   ObjectMapper objectMapper,
-                                   org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
-                                           childOrchestrationProvider) {
-        this(nodeFormDataService, variableSnapshotService, scriptRunner, commandQueue,
-                triggerExecMapper, actionRefMapper, bpmTaskFacade, objectMapper,
-                childOrchestrationProvider, null, null, null);
-    }
-
-    /** 兼容构造（无意见记录服务；nodeOpinions 注入退化为无快照）。 */
-    @org.springframework.beans.factory.annotation.Autowired
-    public TriggerExecutionService(NodeFormDataService nodeFormDataService,
-                                   BpmVariableSnapshotService variableSnapshotService,
-                                   BpmScriptEvaluatePort scriptRunner,
-                                   BpmCommandQueue commandQueue,
-                                   BpmTriggerExecMapper triggerExecMapper,
-                                   BpmActionRefMapper actionRefMapper,
-                                   BpmTaskFacade bpmTaskFacade,
-                                   ObjectMapper objectMapper,
-                                   org.springframework.beans.factory.ObjectProvider<ChildOrchestrationService>
-                                           childOrchestrationProvider,
-                                   org.springframework.beans.factory.ObjectProvider<BpmScriptFunctionContextFactory>
-                                           scriptFunctionContextProvider,
-                                   org.springframework.transaction.PlatformTransactionManager transactionManager,
-                                   org.springframework.beans.factory.ObjectProvider<ApprovalActionService>
-                                           approvalActionServiceProvider) {
-        this.nodeFormDataService = nodeFormDataService;
-        this.variableSnapshotService = variableSnapshotService;
-        this.scriptRunner = scriptRunner;
-        this.commandQueue = commandQueue;
-        this.triggerExecMapper = triggerExecMapper;
-        this.actionRefMapper = actionRefMapper;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.objectMapper = objectMapper;
-        this.childOrchestrationProvider = childOrchestrationProvider;
-        this.scriptFunctionContextProvider = scriptFunctionContextProvider;
-        this.approvalActionServiceProvider = approvalActionServiceProvider;
+    @PostConstruct
+    void initAfterCommitTemplate() {
         if (transactionManager != null) {
-            org.springframework.transaction.support.TransactionTemplate template =
-                    new org.springframework.transaction.support.TransactionTemplate(transactionManager);
-            template.setPropagationBehavior(
-                    org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            TransactionTemplate template = new TransactionTemplate(transactionManager);
+            template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
             this.afterCommitTemplate = template;
-        } else {
-            this.afterCommitTemplate = null;
         }
     }
 
@@ -173,12 +142,12 @@ public class TriggerExecutionService {
     }
 
     /** BF20261013-021：脚本函数上下文（工厂缺席时为空上下文，保持既有语义）。 */
-    private com.sw.ck.bpm.api.script.ScriptFunctionContext scriptFunctionContext(
+    private ScriptFunctionContext scriptFunctionContext(
             String script, String processInstanceId, Long tenantId) {
         BpmScriptFunctionContextFactory factory = scriptFunctionContextProvider == null
                 ? null : scriptFunctionContextProvider.getIfAvailable();
         return factory == null
-                ? com.sw.ck.bpm.api.script.ScriptFunctionContext.EMPTY
+                ? ScriptFunctionContext.EMPTY
                 : factory.build(script, processInstanceId, tenantId);
     }
 
@@ -188,8 +157,8 @@ public class TriggerExecutionService {
      * 读取，供脚本做会签聚合（如最高风险等级、最长停机时长）与超时判断。
      * 注入失败不阻断触发器（脚本按缺变量自行处置），记录事实不伪装成功。
      */
-    com.sw.ck.bpm.api.script.ScriptFunctionContext withNodeOpinions(
-            com.sw.ck.bpm.api.script.ScriptFunctionContext context,
+    ScriptFunctionContext withNodeOpinions(
+            ScriptFunctionContext context,
             String processInstanceId, String nodeKey, long round) {
         ApprovalActionService actionService = approvalActionServiceProvider == null
                 ? null : approvalActionServiceProvider.getIfAvailable();
@@ -197,8 +166,8 @@ public class TriggerExecutionService {
             return context;
         }
         try {
-            java.util.List<Map<String, Object>> opinions = new java.util.ArrayList<>();
-            for (com.sw.ck.bpm.process.entity.ApprovalActionRecord record
+            List<Map<String, Object>> opinions = new ArrayList<>();
+            for (ApprovalActionRecord record
                     : actionService.findByProcessInstanceId(processInstanceId)) {
                 // complete 路径的审批记录 roundNo 为空（仅退回记录携带轮次），按节点过滤即可；
                 // 多轮退回场景由前端意见草稿与业务语义保证，脚本聚合取该节点全部意见。
@@ -206,7 +175,7 @@ public class TriggerExecutionService {
                         || record.getOpinionData() == null || record.getOpinionData().isBlank()) {
                     continue;
                 }
-                Map<String, Object> item = new java.util.LinkedHashMap<>();
+                Map<String, Object> item = new LinkedHashMap<>();
                 item.put("actorId", record.getActorId() == null
                         ? null : String.valueOf(record.getActorId()));
                 item.put("taskId", record.getTaskId());
@@ -218,14 +187,13 @@ public class TriggerExecutionService {
             if (opinions.isEmpty()) {
                 return context;
             }
-            Map<String, Object> merged = new java.util.LinkedHashMap<>(context.instanceVariables());
+            Map<String, Object> merged = new LinkedHashMap<>(context.instanceVariables());
             merged.put("nodeOpinions", opinions);
-            return new com.sw.ck.bpm.api.script.ScriptFunctionContext(
+            return new ScriptFunctionContext(
                     context.deptParentMap(), context.deptLeaderMap(), merged);
         } catch (Exception e) {
-            org.slf4j.LoggerFactory.getLogger(TriggerExecutionService.class)
-                    .warn("nodeOpinions 快照注入失败（触发器按缺变量处置）: processInstanceId={}, nodeKey={}, round={}, error={}",
-                            processInstanceId, nodeKey, round, e.getMessage());
+            log.warn("nodeOpinions 快照注入失败（触发器按缺变量处置）: processInstanceId={}, nodeKey={}, round={}, error={}",
+                    processInstanceId, nodeKey, round, e.getMessage());
             return context;
         }
     }
@@ -327,10 +295,10 @@ public class TriggerExecutionService {
      */
     private void registerAfterTerminalCommit(BpmInstance instance, ProcessGraph graph,
                                              List<TriggerConfig> triggers, long round) {
-        if (org.springframework.transaction.support.TransactionSynchronizationManager
+        if (TransactionSynchronizationManager
                 .isSynchronizationActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager
-                    .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+            TransactionSynchronizationManager
+                    .registerSynchronization(new TransactionSynchronization() {
                         @Override
                         public void afterCommit() {
                             try {
@@ -461,7 +429,7 @@ public class TriggerExecutionService {
             }
             exec.setSnapshotText(snapshot.json());
             // BF20261013-021：按脚本引用构建函数上下文（组织目录/实例变量；未引用则空上下文零查询）
-            com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext =
+            ScriptFunctionContext functionContext =
                     scriptFunctionContext(trigger.getScript(), instance.getProcessInstanceId(), tenantId);
             // 0.3.1 意见驱动（d）：节点级事件注入 nodeOpinions 快照（本节点本流水轮全部意见）
             if (EVENT_TASK_SUBMITTED.equals(event) || EVENT_NODE_ROUND_COMPLETED.equals(event)) {
@@ -564,8 +532,8 @@ public class TriggerExecutionService {
     private boolean valuesMatch(String typeName, String expected, Object actual) {
         try {
             return switch (typeName) {
-                case "NUMBER" -> new java.math.BigDecimal(String.valueOf(actual))
-                        .compareTo(new java.math.BigDecimal(expected)) == 0;
+                case "NUMBER" -> new BigDecimal(String.valueOf(actual))
+                        .compareTo(new BigDecimal(expected)) == 0;
                 case "BOOLEAN" -> Boolean.parseBoolean(expected) == (Boolean) actual;
                 case "STRING" -> expected.equals(String.valueOf(actual));
                 default -> false;
@@ -670,7 +638,7 @@ public class TriggerExecutionService {
             if (orchestration != null) {
                 List<String> sourceRowIds = item.rows().stream()
                         .map(row -> row.get("id"))
-                        .filter(java.util.Objects::nonNull)
+                        .filter(Objects::nonNull)
                         .map(String::valueOf)
                         .map(String::trim)
                         .filter(id -> !id.isEmpty() && !"null".equals(id))
@@ -767,7 +735,7 @@ public class TriggerExecutionService {
         envelope.setTenantId(tenantId);
         envelope.setInitiatorId(instance.getInitiatorId());
         envelope.setPayload(payloadJson);
-        envelope.setPayloadFingerprint(com.sw.ck.bpm.process.queue.CommandFingerprint.of(payloadJson));
+        envelope.setPayloadFingerprint(CommandFingerprint.of(payloadJson));
         envelope.setCompletionPoint("ACTION_STARTED");
         try {
             Long commandId = commandQueue.enqueue(envelope);
@@ -777,11 +745,11 @@ public class TriggerExecutionService {
         } catch (DuplicateKeyException e) {
             // 同键并发受理：载荷一致才可吸收为幂等命中；异载荷显式冲突留痕，不冒称成功
             commandQueue.findByKey(tenantId, commandKey).ifPresentOrElse(existing -> {
-                String incoming = com.sw.ck.bpm.process.queue.CommandFingerprint.of(payloadJson);
+                String incoming = CommandFingerprint.of(payloadJson);
                 String stored = existing.getPayloadFingerprint() != null
                         && !existing.getPayloadFingerprint().isBlank()
                         ? existing.getPayloadFingerprint()
-                        : com.sw.ck.bpm.process.queue.CommandFingerprint.of(existing.getPayload());
+                        : CommandFingerprint.of(existing.getPayload());
                 if (incoming.equals(stored)) {
                     notes.add("动作 " + action.getActionId() + " 项 " + item.itemKey()
                             + ": 并发重复受理已由幂等键吸收");
@@ -881,7 +849,7 @@ public class TriggerExecutionService {
             if (mapping.getScript() == null || mapping.getScript().isBlank()) {
                 continue;
             }
-            com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext = scriptFunctionContext(
+            ScriptFunctionContext functionContext = scriptFunctionContext(
                     mapping.getScript(), instance.getProcessInstanceId(), instance.getTenantId());
             BpmScriptEvaluatePort.ScriptOutcome outcome = scriptRunner
                     .run(mapping.getScript(), snapshot, scriptTimeoutMs,

@@ -5,7 +5,10 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.api.dto.SubTableRowAction;
 import com.sw.ck.form.api.exception.FormErrorCode;
@@ -16,19 +19,22 @@ import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
+import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.HashMap;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单记录更新服务。
  * <p>
@@ -51,63 +57,40 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @Service
+@Log4j2
 public class FormDataUpdateService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormDataUpdateService.class);
 
     /** UUID v4 形态正则（防伪造 id 注入） */
     private static final String UUID_PATTERN =
             "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
-    private final FormDefService formDefService;
-    private final FormDefMapper formDefMapper;
-    private final FormConfigMapper formConfigMapper;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
-    private final FormIdGenerator idGenerator;
-    private final DictFacade dictFacade;
-    private final FormFieldValidator formFieldValidator;
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private DictFacade dictFacade;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
     /** I2 写路径增补（可选注入；既有测试构造不受影响）。 */
+    @Autowired(required = false)
     private FormFieldEnrichmentService enrichment;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setEnrichment(FormFieldEnrichmentService enrichment) {
-        this.enrichment = enrichment;
-    }
-
     /** 应用范围访问闸门（可选注入；既有测试构造不注入时不受本闸门约束）。 */
+    @Autowired(required = false)
     private FormAppAccessGuard appAccessGuard;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setAppAccessGuard(FormAppAccessGuard appAccessGuard) {
-        this.appAccessGuard = appAccessGuard;
-    }
-
     /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
-    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setC1PolicyService(com.sw.ck.form.txn.service.C1PolicyService c1PolicyService) {
-        this.c1PolicyService = c1PolicyService;
-    }
-
-    public FormDataUpdateService(FormDefService formDefService,
-                                  FormDefMapper formDefMapper,
-                                  FormConfigMapper formConfigMapper,
-                                  JdbcTemplate jdbcTemplate,
-                                  ObjectMapper objectMapper,
-                                  FormIdGenerator idGenerator,
-                                  DictFacade dictFacade,
-                                  FormFieldValidator formFieldValidator) {
-        this.formDefService = formDefService;
-        this.formDefMapper = formDefMapper;
-        this.formConfigMapper = formConfigMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-        this.idGenerator = idGenerator;
-        this.dictFacade = dictFacade;
-        this.formFieldValidator = formFieldValidator;
-    }
+    @Autowired(required = false)
+    private C1PolicyService c1PolicyService;
 
     // ==================== 主入口 ====================
 
@@ -127,7 +110,7 @@ public class FormDataUpdateService {
         // —— Step 1: 获取当前用户 ——
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         Long tenantId = loginUser.getTenantId();
         Long userId = loginUser.getUserId();
@@ -169,13 +152,13 @@ public class FormDataUpdateService {
         if (submittedData == null) {
             // 公式重算会对该 Map 做 remove/put，必须可变；Map.of() 不可变会让
             // enrichForWrite 抛 UnsupportedOperationException（500 而非业务拒绝）。
-            submittedData = new java.util.HashMap<>();
+            submittedData = new HashMap<>();
         }
         Map<String, FormFieldValidator.FieldDef> fieldDefs =
                 formFieldValidator.loadAndParseFieldDefs(formDef.getId(), submittedData);
 
         // —— Step 4: 查主记录存在且未删（I2：叠加记录数据范围；同时取 version 做乐观锁校验） ——
-        com.sw.ck.common.datascope.DataScopeFilter recordScope =
+        DataScopeFilter recordScope =
                 FormDataScopeSupport.resolve(loginUser, null, null);
         Long storedVersion = checkRecordExistsAndGetVersion(tableName, recordId, tenantId, recordScope);
 
@@ -236,7 +219,7 @@ public class FormDataUpdateService {
      * @return 当前版本号；记录不存在返回 null
      */
     private Long checkRecordExistsAndGetVersion(String tableName, String recordId, Long tenantId,
-                                                com.sw.ck.common.datascope.DataScopeFilter recordScope) {
+                                                DataScopeFilter recordScope) {
         StringBuilder sql = new StringBuilder("SELECT \"version\" FROM " + DynamicTableSql.quote(tableName)
                 + " WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?");
         List<Object> params = new ArrayList<>(List.of(recordId, tenantId));
@@ -279,7 +262,7 @@ public class FormDataUpdateService {
                                   Long currentVersion,
                                   Long tenantId,
                                   Long userId,
-                                  com.sw.ck.common.datascope.DataScopeFilter recordScope) {
+                                  DataScopeFilter recordScope) {
         // 构建 SET 子句：用户列 + 审计列
         List<String> setParts = new ArrayList<>();
         List<Object> params = new ArrayList<>();

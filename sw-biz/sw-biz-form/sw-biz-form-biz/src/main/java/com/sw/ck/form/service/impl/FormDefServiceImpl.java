@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.re2j.Pattern;
 import com.google.re2j.PatternSyntaxException;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -33,106 +34,73 @@ import com.sw.ck.form.service.FormulaEngine;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.integration.ExternalCapability;
+import com.sw.ck.common.integration.ExternalCapabilityFacade;
+import com.sw.ck.form.entity.FormLifecycleAuditEntity;
+import com.sw.ck.form.entity.FormListConfigEntity;
+import com.sw.ck.form.mapper.FormLifecycleAuditMapper;
+import com.sw.ck.form.mapper.FormListConfigMapper;
+import com.sw.ck.form.service.FormAppMembershipValidator;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单定义管理服务实现。
  */
 @Service
+@Log4j2
 public class FormDefServiceImpl implements FormDefService {
 
-    private static final Logger log = LoggerFactory.getLogger(FormDefServiceImpl.class);
-
-    private final FormDefMapper formDefMapper;
-    private final FormConfigMapper formConfigMapper;
-    private final FormSnapshotMapper formSnapshotMapper;
-    private final DynamicTableManager dynamicTableManager;
-    private final FormIdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
-    private final FormVisibilityRules visibilityRules;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private FormSnapshotMapper formSnapshotMapper;
+    @Autowired
+    private DynamicTableManager dynamicTableManager;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private FormVisibilityRules visibilityRules;
     // ==== I2 新增协作对象（可空：兼容既有测试构造；仅新契约路径使用） ====
-    private final FormulaEngine formulaEngine;
-    private final FieldPermissionService fieldPermissionService;
-    private final FormExtDataService extDataService;
-    private final com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper;
-    private final com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper;
+    @Autowired
+    private FormulaEngine formulaEngine;
+    @Autowired
+    private FieldPermissionService fieldPermissionService;
+    @Autowired(required = false)
+    private FormExtDataService extDataService;
+    @Autowired
+    private FormListConfigMapper listConfigMapper;
+    @Autowired
+    private FormLifecycleAuditMapper lifecycleAuditMapper;
     // ==== V012-BUG-015：创建人展示名解析（system 契约；兼容构造可为 null） ====
-    private final UserQueryFacade userQueryFacade;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
     // ==== 应用中心：表单归属目标校验（兼容构造可为 null，带归属路径 fail-closed） ====
-    private final com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator;
+    @Autowired
+    private FormAppMembershipValidator appMembershipValidator;
     // ==== 表单受控集成：保存/发布时按当前租户启用能力复核允许清单（测试构造可缺省） ====
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.sw.ck.common.integration.ExternalCapabilityFacade externalCapabilityFacade;
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public FormDefServiceImpl(FormDefMapper formDefMapper,
-                              FormConfigMapper formConfigMapper,
-                              FormSnapshotMapper formSnapshotMapper,
-                              DynamicTableManager dynamicTableManager,
-                              FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper,
-                              FormVisibilityRules visibilityRules,
-                              FormulaEngine formulaEngine,
-                              FieldPermissionService fieldPermissionService,
-                              @org.springframework.beans.factory.annotation.Autowired(required = false)
-                              FormExtDataService extDataService,
-                              com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper,
-                              com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper,
-                              UserQueryFacade userQueryFacade,
-                              com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator) {
-        this.formDefMapper = formDefMapper;
-        this.formConfigMapper = formConfigMapper;
-        this.formSnapshotMapper = formSnapshotMapper;
-        this.dynamicTableManager = dynamicTableManager;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-        this.visibilityRules = visibilityRules;
-        this.formulaEngine = formulaEngine;
-        this.fieldPermissionService = fieldPermissionService;
-        this.extDataService = extDataService;
-        this.listConfigMapper = listConfigMapper;
-        this.lifecycleAuditMapper = lifecycleAuditMapper;
-        this.userQueryFacade = userQueryFacade;
-        this.appMembershipValidator = appMembershipValidator;
-    }
-
-    /** 兼容既有测试装配（无归属校验注入；带归属路径 fail-closed，不静默跳过校验）。 */
-    public FormDefServiceImpl(FormDefMapper formDefMapper,
-                              FormConfigMapper formConfigMapper,
-                              FormSnapshotMapper formSnapshotMapper,
-                              DynamicTableManager dynamicTableManager,
-                              FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper,
-                              FormVisibilityRules visibilityRules,
-                              FormulaEngine formulaEngine,
-                              FieldPermissionService fieldPermissionService,
-                              FormExtDataService extDataService,
-                              com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper,
-                              com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper,
-                              UserQueryFacade userQueryFacade) {
-        this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
-                idGenerator, objectMapper, visibilityRules, formulaEngine, fieldPermissionService,
-                extDataService, listConfigMapper, lifecycleAuditMapper, userQueryFacade, null);
-    }
-
-    /** 兼容既有测试构造（无显隐规则注入时使用默认实现；I2 协作对象用默认/空实现）。 */
-    public FormDefServiceImpl(FormDefMapper formDefMapper,
-                              FormConfigMapper formConfigMapper,
-                              FormSnapshotMapper formSnapshotMapper,
-                              DynamicTableManager dynamicTableManager,
-                              FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper) {
-        this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
-                idGenerator, objectMapper, new FormVisibilityRules(objectMapper),
-                new FormulaEngine(), new FieldPermissionService(objectMapper),
-                null, null, null, null, null);
-    }
+    @Autowired(required = false)
+    private ExternalCapabilityFacade externalCapabilityFacade;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -231,10 +199,10 @@ public class FormDefServiceImpl implements FormDefService {
     public void renameFormDef(String id, String name) {
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能为空");
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能为空");
         }
         if (trimmed.length() > 200) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能超过 200 字");
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能超过 200 字");
         }
         FormDefEntity entity = formDefMapper.selectById(id);
         if (entity == null) {
@@ -312,7 +280,7 @@ public class FormDefServiceImpl implements FormDefService {
         // —— Step 2b: 显隐规则校验（v0.0.2：字段存在/op/logic/无环依赖） ——
         Set<String> fieldNames = fields.stream()
                 .map(FieldSpec::getFieldName)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         visibilityRules.parseAndValidate(definitionJson, collectFieldDisplay(definitionJson));
 
         // —— Step 2c（I2）: 公式依赖 + 字段权限配置 + 外部数据源绑定校验 ——
@@ -450,7 +418,7 @@ public class FormDefServiceImpl implements FormDefService {
         List<FieldSpec> fields = parseAndValidateFieldsFromDefinition(definition);
         Set<String> fieldNames = fields.stream()
                 .map(FieldSpec::getFieldName)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         visibilityRules.parseAndValidate(definition, collectFieldDisplay(definition));
         validateFormulaDependencies(definition, fieldNames);
         fieldPermissionService.parse(definition);
@@ -462,7 +430,7 @@ public class FormDefServiceImpl implements FormDefService {
         // 先完成全部定义校验，再执行不可回滚的增量 DDL；新版本只允许复用原表。
         // 明细表（TABLE）不产生主表列：结构未变化时允许随新版本保留（打印模板等
         // 定义级配置需要能随版本发布），新增/变更明细表仍拒绝（F2-6 验收实测暴露）。
-        java.util.Map<String, String> previousTables = tableSignatures(getDefinitionById(formId));
+        Map<String, String> previousTables = tableSignatures(getDefinitionById(formId));
         for (FieldSpec field : fields) {
             if (field.getFieldType() == FieldType.TABLE) {
                 String signature = tableSignature(definition, field.getFieldName());
@@ -510,8 +478,8 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     /** 解析定义中的全部 TABLE 字段结构签名（字段名 → 子字段 name:type 有序串）。 */
-    private java.util.Map<String, String> tableSignatures(String definitionJson) {
-        java.util.Map<String, String> result = new java.util.LinkedHashMap<>();
+    private Map<String, String> tableSignatures(String definitionJson) {
+        Map<String, String> result = new LinkedHashMap<>();
         if (definitionJson == null || definitionJson.isBlank()) {
             return result;
         }
@@ -732,7 +700,7 @@ public class FormDefServiceImpl implements FormDefService {
                 .sorted()
                 .toList();
         if (normalized.stream().anyMatch(id -> id <= 0)) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+            throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     "可见范围用户 ID 无效");
         }
         try {
@@ -848,13 +816,13 @@ public class FormDefServiceImpl implements FormDefService {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
         }
         validateListConfig(configJson);
-        LambdaQueryWrapper<com.sw.ck.form.entity.FormListConfigEntity> query =
-                Wrappers.lambdaQuery(com.sw.ck.form.entity.FormListConfigEntity.class)
-                        .eq(com.sw.ck.form.entity.FormListConfigEntity::getFormId, formId);
-        com.sw.ck.form.entity.FormListConfigEntity config = listConfigMapper.selectOne(query);
-        java.time.LocalDateTime now = LocalDateTime.now();
+        LambdaQueryWrapper<FormListConfigEntity> query =
+                Wrappers.lambdaQuery(FormListConfigEntity.class)
+                        .eq(FormListConfigEntity::getFormId, formId);
+        FormListConfigEntity config = listConfigMapper.selectOne(query);
+        LocalDateTime now = LocalDateTime.now();
         if (config == null) {
-            config = new com.sw.ck.form.entity.FormListConfigEntity();
+            config = new FormListConfigEntity();
             config.setId(idGenerator.generate());
             config.setFormId(formId);
             config.setConfigJson(configJson);
@@ -873,10 +841,10 @@ public class FormDefServiceImpl implements FormDefService {
 
     @Override
     public String getListConfig(String formId) {
-        LambdaQueryWrapper<com.sw.ck.form.entity.FormListConfigEntity> query =
-                Wrappers.lambdaQuery(com.sw.ck.form.entity.FormListConfigEntity.class)
-                        .eq(com.sw.ck.form.entity.FormListConfigEntity::getFormId, formId);
-        com.sw.ck.form.entity.FormListConfigEntity config = listConfigMapper.selectOne(query);
+        LambdaQueryWrapper<FormListConfigEntity> query =
+                Wrappers.lambdaQuery(FormListConfigEntity.class)
+                        .eq(FormListConfigEntity::getFormId, formId);
+        FormListConfigEntity config = listConfigMapper.selectOne(query);
         return config != null ? config.getConfigJson() : null;
     }
 
@@ -941,19 +909,19 @@ public class FormDefServiceImpl implements FormDefService {
             return;
         }
         try {
-            com.sw.ck.form.entity.FormLifecycleAuditEntity audit =
-                    new com.sw.ck.form.entity.FormLifecycleAuditEntity();
+            FormLifecycleAuditEntity audit =
+                    new FormLifecycleAuditEntity();
             audit.setId(idGenerator.generate());
             audit.setFormId(formId);
             audit.setAction(action);
             audit.setReason(reason);
-            var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+            var loginUser = LoginUserHolder.get();
             audit.setOperatorId(loginUser == null ? null : loginUser.getUserId());
             audit.setTenantId(loginUser == null || loginUser.getTenantId() == null
                     ? 0L : loginUser.getTenantId());
             audit.setDeleted(0);
             audit.setVersion(0L);
-            java.time.LocalDateTime now = LocalDateTime.now();
+            LocalDateTime now = LocalDateTime.now();
             audit.setCreateTime(now);
             audit.setUpdateTime(now);
             lifecycleAuditMapper.insert(audit);
@@ -976,9 +944,9 @@ public class FormDefServiceImpl implements FormDefService {
             if (!events.isObject()) {
                 throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单 events 必须是对象");
             }
-            java.util.Iterator<java.util.Map.Entry<String, JsonNode>> fields = events.fields();
+            Iterator<Entry<String, JsonNode>> fields = events.fields();
             while (fields.hasNext()) {
-                java.util.Map.Entry<String, JsonNode> event = fields.next();
+                Entry<String, JsonNode> event = fields.next();
                 if (!Set.of("onLoad", "beforeSubmitHandler", "afterSubmitHandler").contains(event.getKey())) {
                     throw new BaseException(FormErrorCode.DEFINITION_INVALID,
                             "不支持的表单事件: " + event.getKey());
@@ -1031,7 +999,7 @@ public class FormDefServiceImpl implements FormDefService {
             Set<String> seen = new HashSet<>();
             LoginUser loginUser = LoginUserHolder.get();
             Long tenantId = loginUser == null ? null : loginUser.getTenantId();
-            List<com.sw.ck.common.integration.ExternalCapability> enabled =
+            List<ExternalCapability> enabled =
                     (externalCapabilityFacade != null && tenantId != null)
                             ? externalCapabilityFacade.listEnabled(tenantId)
                             : null;
@@ -1140,23 +1108,23 @@ public class FormDefServiceImpl implements FormDefService {
     }
 
     @Override
-    public java.util.Set<String> filterVisibleFormKeys(java.util.Collection<String> formKeys) {
+    public Set<String> filterVisibleFormKeys(Collection<String> formKeys) {
         if (formKeys == null || formKeys.isEmpty()) {
-            return java.util.Set.of();
+            return Set.of();
         }
-        java.util.List<String> keys = formKeys.stream()
-                .filter(java.util.Objects::nonNull)
+        List<String> keys = formKeys.stream()
+                .filter(Objects::nonNull)
                 .distinct()
                 .toList();
         if (keys.isEmpty()) {
-            return java.util.Set.of();
+            return Set.of();
         }
-        java.util.List<FormDefEntity> entities = formDefMapper.selectList(
+        List<FormDefEntity> entities = formDefMapper.selectList(
                 Wrappers.<FormDefEntity>lambdaQuery().in(FormDefEntity::getFormKey, keys));
         return entities.stream()
                 .filter(this::isVisibleToCurrentUser)
                 .map(FormDefEntity::getFormKey)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
     }
 
     private static String trimToNull(String value) {
@@ -1458,9 +1426,9 @@ public class FormDefServiceImpl implements FormDefService {
                 throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
                         "字段缺少 type: " + fieldNode.path("name").asText(""));
             }
-            com.sw.ck.form.dynamic.FieldType fieldType;
+            FieldType fieldType;
             try {
-                fieldType = com.sw.ck.form.dynamic.FieldType.valueOf(type);
+                fieldType = FieldType.valueOf(type);
             } catch (IllegalArgumentException e) {
                 throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
                         "字段类型未知: " + type);

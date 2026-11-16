@@ -1,7 +1,9 @@
 package com.sw.ck.bpm.engine.participant;
 
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -102,7 +104,7 @@ class OrgParticipantResolverContractTest {
                 .contains("DEPT_LEADER");
         assertThat(new PostParticipantResolver(userQueryFacade).strategy()).contains("POST");
         assertThat(new DeptPostParticipantResolver(userQueryFacade).strategy()).contains("DEPT_POST");
-        assertThat(com.sw.ck.bpm.api.participant.ParticipantStrategy.ALL)
+        assertThat(ParticipantStrategy.ALL)
                 .contains("DEPT_LEADER", "POST", "DEPT_POST");
     }
 }

@@ -1,18 +1,26 @@
 package com.sw.ck.bpm.process.queue;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmCommandEffect;
+import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
 import com.sw.ck.bpm.process.service.BpmCommandService;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,8 +29,11 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 默认持久化命令队列：以 {@code sw_bpm_command} 为受理/调度事实源。
  * <p>
@@ -32,32 +43,24 @@ import java.util.Optional;
  * </p>
  */
 @Component
+@Log4j2
 public class PersistentBpmCommandQueue implements BpmCommandQueue {
-
-    private static final Logger log = LoggerFactory.getLogger(PersistentBpmCommandQueue.class);
 
     /** 准入截止合法区间（P62 分级执行合同：1—300s，受理时冻结）。 */
     public static final int DEADLINE_SECONDS_MIN = 1;
     public static final int DEADLINE_SECONDS_MAX = 300;
     public static final int DEADLINE_SECONDS_DEFAULT = 30;
 
-    private final BpmCommandService commandService;
-    private final BpmCommandEffectMapper effectMapper;
-    private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService;
-    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
-    private final com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
-
-    public PersistentBpmCommandQueue(BpmCommandService commandService,
-                                     BpmCommandEffectMapper effectMapper,
-                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
-                                     com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission) {
-        this.commandService = commandService;
-        this.effectMapper = effectMapper;
-        this.releaseService = releaseService;
-        this.admissionService = admissionService;
-        this.tenantWorkAdmission = java.util.Objects.requireNonNull(tenantWorkAdmission);
-    }
+    @Autowired
+    private BpmCommandService commandService;
+    @Autowired
+    private BpmCommandEffectMapper effectMapper;
+    @Autowired
+    private ResourceReleaseService releaseService;
+    @Autowired
+    private ResourceAdmissionService admissionService;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
@@ -141,8 +144,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         // 调度线程无登录态，租户拦截器会追加错误的 tenant_id 条件导致非零租户命令
         // 永久不可领取；命令消费的租户语义由信封 tenant_id 承载并在消费前校验，
         // 领取本身必须跨租户扫描（I5 收口：移除「仅可靠消费租户 0」的受理边界）。
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return claimDueSuspended(channels, limit, now);
         }
     }
@@ -153,7 +156,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         // 按租户切片轮流领取，保证每个活跃租户每轮都有推进机会（有界服务）；
         // 仅单租户有到期命令时取整批额度（行为与旧实现一致）。
         List<Long> activeTenants = commandService.listMaps(
-                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<BpmCommand>()
+                        new QueryWrapper<BpmCommand>()
                                 .select("DISTINCT tenant_id")
                                 .eq("status", CommandStatusEnum.PENDING.getCode())
                                 .in("channel", channels.stream().map(Enum::name).toList())
@@ -198,7 +201,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
                 }
                 // 一次性租约令牌：写回（complete/reject/fail）须匹配本令牌，
                 // stale 回收后旧持有者的迟到写回因令牌不匹配被拒。
-                String claimToken = java.util.UUID.randomUUID().toString();
+                String claimToken = UUID.randomUUID().toString();
                 // CAS 同样携带准入截止条件：候选扫描与领取之间截止到期的命令不得被领取，
                 // 与 expireDue 的 PENDING→EXPIRED 收敛在两种先后顺序下都只产生一个合法结果。
                 LambdaUpdateWrapper<BpmCommand> claim = new LambdaUpdateWrapper<BpmCommand>()
@@ -224,7 +227,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     /** 每轮批量领取上限（生效策略；未启用策略时不设限=旧行为，默认关闭零变化）。 */
     private int activeBatchPollClaimLimit() {
-        com.sw.ck.bpm.process.entity.BpmResourcePolicy policy = admissionService.findActivePolicy();
+        BpmResourcePolicy policy = admissionService.findActivePolicy();
         if (policy == null) {
             return Integer.MAX_VALUE;
         }
@@ -295,7 +298,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         }
         String currentToken = command.getClaimToken();
         if (status.equals(CommandStatusEnum.PROCESSING.getCode())
-                && !java.util.Objects.equals(currentToken, claimToken)) {
+                && !Objects.equals(currentToken, claimToken)) {
             log.warn("命令失败处理被跳过: commandId={} 租约令牌不匹配（当前持有者仍在处理，"
                     + "旧持有者迟到写回被拒）", commandId);
             return false;
@@ -304,8 +307,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         if (retryCount + 1 >= maxRetries) {
             // 调度线程可能无登录态（如"无命令处理器"拒绝路径先于身份还原）：
             // 与读取同口径挂起租户过滤，命令行 tenant_id 自承载、主键+状态+令牌定位
-            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            try (Suspended ignored =
+                         TenantLineSuspension.suspended()) {
                 boolean failed = commandService.lambdaUpdate()
                         .eq(BpmCommand::getId, commandId)
                         .eq(BpmCommand::getStatus, status)
@@ -326,8 +329,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         }
         long backoff = backoffMillis * (1L << Math.min(retryCount, 10));
         boolean retried;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             retried = commandService.lambdaUpdate()
                     .eq(BpmCommand::getId, commandId)
                     .eq(BpmCommand::getStatus, status)
@@ -351,8 +354,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     protected BpmCommand readCommandForFailure(Long commandId) {
         // 调度线程无登录态（含"无命令处理器"拒绝路径先于身份还原）：与 claimDue/reclaimStale
         // 同口径挂起租户过滤——命令行 tenant_id 自承载租户语义，主键定位不涉及租户裁剪
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return commandService.getById(commandId);
         }
     }
@@ -361,8 +364,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     public int reclaimStale(LocalDateTime staleBefore) {
         // 调度线程无登录态：与 claimDue 同口径挂起租户过滤（孤儿命令为全局对象，
         // 按状态与领取时间回收，不涉及租户语义）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             boolean updated = commandService.lambdaUpdate()
                     .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
                     .lt(BpmCommand::getClaimedAt, staleBefore)
@@ -380,8 +383,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
 
     @Override
     public void updateResourceFreeze(CommandEnvelope envelope) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             commandService.lambdaUpdate()
                     .eq(BpmCommand::getId, envelope.getCommandId())
                     .set(BpmCommand::getResourceClass, blankToNull(envelope.getResourceClass()))
@@ -395,8 +398,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     @Override
     public boolean requeueForContinuation(Long commandId, String claimToken) {
         // 分片续跑：不计失败重试、不清占用、立即重领；仅当前领取权可触发
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             boolean updated = commandService.lambdaUpdate()
                     .eq(BpmCommand::getId, commandId)
                     .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
@@ -444,8 +447,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     /** 终态释放判定：终态写入成功后调用（同一事务），按冻结字段回收占用。 */
     private void releaseOnTerminal(Long commandId) {
         BpmCommand command;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             command = commandService.getById(commandId);
         }
         if (command != null) {
@@ -461,8 +464,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
      */
     @Transactional(propagation = Propagation.REQUIRED)
     public int expireDue(LocalDateTime now) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             List<BpmCommand> candidates = commandService.lambdaQuery()
                     .eq(BpmCommand::getStatus, CommandStatusEnum.PENDING.getCode())
                     .isNotNull(BpmCommand::getDeadlineAt)
@@ -504,8 +507,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
      * @return 本次标记条数
      */
     public int markOverdue(LocalDateTime now) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             List<BpmCommand> candidates = commandService.lambdaQuery()
                     .eq(BpmCommand::getStatus, CommandStatusEnum.PROCESSING.getCode())
                     .isNotNull(BpmCommand::getDeadlineAt)
@@ -534,8 +537,8 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
         if (logicalCommandId == null || logicalCommandId.isBlank()) {
             return Optional.empty();
         }
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             BpmCommand command = commandService.lambdaQuery()
                     .eq(BpmCommand::getTenantId, tenantId)
                     .eq(BpmCommand::getLogicalCommandId, logicalCommandId)
@@ -552,10 +555,10 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     public List<CommandEnvelope> listProcessingWithEffect(int limit) {
         // 对账线程无登录态：效果/命令两表查询全程挂起租户过滤（行内 tenant_id 自承载，
         // 与 expireDue/markOverdue 同口径；主键定位不涉及租户裁剪）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             List<BpmCommandEffect> effects = effectMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<BpmCommandEffect>()
+                    new QueryWrapper<BpmCommandEffect>()
                             .orderByAsc("create_time")
                             .last("LIMIT " + Math.max(1, limit)));
             List<CommandEnvelope> result = new ArrayList<>();

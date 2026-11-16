@@ -12,6 +12,26 @@ import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
+import com.sw.ck.bpm.process.dto.StartCommand;
+import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.process.entity.ResourceClassEnum;
+import com.sw.ck.bpm.process.queue.BpmCommandQueue;
+import com.sw.ck.bpm.process.queue.CommandEnvelope;
+import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob;
+import com.sw.ck.bpm.process.service.ProcessStartService;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceFactView;
+import com.sw.ck.bpm.process.service.TenantRateBuckets;
+import com.sw.ck.bpm.process.service.impl.BpmResourceOpsService;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.form.txn.service.TxnActionService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.management.OperatingSystemMXBean;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -19,29 +39,66 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.lang.ProcessBuilder.Redirect;
+import java.lang.management.GarbageCollectorMXBean;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryUsage;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpClient.Version;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.sql.Connection;
+import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.zip.GZIPOutputStream;
+import javax.sql.DataSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -83,23 +140,23 @@ class P62ResourceAssurancePgTest {
     private static Path evidenceDir;
     private static int port;
 
-    private static final java.net.http.HttpClient HTTP = java.net.http.HttpClient.newBuilder()
-            .version(java.net.http.HttpClient.Version.HTTP_1_1)
-            .connectTimeout(java.time.Duration.ofSeconds(5))
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .version(Version.HTTP_1_1)
+            .connectTimeout(Duration.ofSeconds(5))
             .build();
-    private static final java.time.Duration REQUEST_TIMEOUT = java.time.Duration.ofSeconds(10);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
 
     private static final Map<Long, TenantFixture> fixtures = new HashMap<>();
     private final Map<Integer, Random> workerRandoms = new ConcurrentHashMap<>();
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
+    @Autowired
+    private ResourceAdmissionService admissionService;
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue queue;
+    @Autowired
+    private PersistentBpmCommandQueue queue;
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.transaction.support.TransactionTemplate txTemplate;
+    @Autowired
+    private TransactionTemplate txTemplate;
 
     private static final class TenantFixture {
         Long tenant;
@@ -112,8 +169,8 @@ class P62ResourceAssurancePgTest {
         String approvalProcessKey;
         String approvalFormKey;
         List<String> recordIds = new ArrayList<>();
-        java.util.concurrent.ConcurrentLinkedQueue<String> taskIds =
-                new java.util.concurrent.ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<String> taskIds =
+                new ConcurrentLinkedQueue<>();
     }
 
     @BeforeAll
@@ -143,9 +200,9 @@ class P62ResourceAssurancePgTest {
                 .setServerConfig("log_line_prefix", "%n|%p|%x|%a|")
                 .setServerConfig("log_lock_waits", "on")
                 .setServerConfig("deadlock_timeout", "1s")
-                .setErrorRedirector(java.lang.ProcessBuilder.Redirect.appendTo(
+                .setErrorRedirector(Redirect.appendTo(
                         evidenceDir.resolve("pg-server-ctl.log").toFile()))
-                .setOutputRedirector(java.lang.ProcessBuilder.Redirect.appendTo(
+                .setOutputRedirector(Redirect.appendTo(
                         evidenceDir.resolve("pg-server-ctl-out.log").toFile()))
                 .start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
@@ -203,10 +260,10 @@ class P62ResourceAssurancePgTest {
         props.put("sw.security.jwt.secret", "p62-resource-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", P62BudgetMeasurementPgTest.generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-resource-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.putAll(overrides);
         // 日志级别必须经系统属性进入 LoggingApplicationListener 的 environment-prepared 绑定：
         // initializer 的 propertySource 在日志系统初始化之后加入，运行期级别不会变（实测 DEBUG 仍生效）
@@ -218,22 +275,22 @@ class P62ResourceAssurancePgTest {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-resource", props));
+                            new MapPropertySource("p62-resource", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62ResourceLoginContextProvider", provider);
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
-                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                            ((DefaultListableBeanFactory) bf)
                                     .setAllowBeanDefinitionOverriding(true);
-                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                            ((DefaultListableBeanFactory) bf)
                                     .registerBeanDefinition("loginUserCacheService",
-                                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                                            new RootBeanDefinition(
                                                     P62BudgetMeasurementPgTest.NoopLoginUserCacheService.class));
                         }
                     });
@@ -286,7 +343,7 @@ class P62ResourceAssurancePgTest {
         long policyVersion = enableContractPolicy();
         // 有效画像：启用检查通过、运行画像回读（配置来源/有效值/消费者/计数勾稽）
         var profile = asTenant(0L, 91999L, () ->
-                app.getBean(com.sw.ck.bpm.process.service.impl.BpmResourceOpsService.class).profile());
+                app.getBean(BpmResourceOpsService.class).profile());
         assertThat(profile.policyEnabled()).isTrue();
         assertThat(profile.enablementViolations()).isEmpty();
         assertThat(((Number) profile.pool().get("actualMaxActive")).longValue()).isEqualTo(64L);
@@ -366,9 +423,9 @@ class P62ResourceAssurancePgTest {
         SampleCollector burstLoad = new SampleCollector("burst-load-samples.csv.gz");
         SampleCollector burstBatch = new SampleCollector("burst-batch-samples.csv.gz");
         // 配对追踪（RA02b）：受理→命令→引擎任务→目标/审批完成需逐项关联，不靠计数总和
-        List<LightSubmitTrace> lightTraces = java.util.Collections.synchronizedList(new ArrayList<>());
-        List<ApprovalTrace> approvalTraces = java.util.Collections.synchronizedList(new ArrayList<>());
-        List<BatchSubmitTrace> batchTraces = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<LightSubmitTrace> lightTraces = Collections.synchronizedList(new ArrayList<>());
+        List<ApprovalTrace> approvalTraces = Collections.synchronizedList(new ArrayList<>());
+        List<BatchSubmitTrace> batchTraces = Collections.synchronizedList(new ArrayList<>());
 
         // 配额采样（5s）：占用计数 ≤ 全局/租户上限（RG02 不突破）；分段与双租户占用同列落盘，
         // 使保留容量可对账（RA02b：保留/跨租户额度行为需真实数值）
@@ -421,12 +478,12 @@ class P62ResourceAssurancePgTest {
                     Object poolActive = null;
                     Object poolWaitThread = null;
                     Object poolWaitMax = null;
-                    for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class)
+                    for (DataSource ds : app.getBeanProvider(DataSource.class)
                             .stream().toList()) {
-                        java.util.List<Object> candidates = new ArrayList<>();
+                        List<Object> candidates = new ArrayList<>();
                         if (ds.getClass().getSimpleName().contains("DynamicRouting")) {
                             Object map = ds.getClass().getMethod("getDataSources").invoke(ds);
-                            if (map instanceof java.util.Map<?, ?> m) {
+                            if (map instanceof Map<?, ?> m) {
                                 candidates.addAll(m.values());
                             }
                         } else {
@@ -454,7 +511,7 @@ class P62ResourceAssurancePgTest {
                     }
                     Long lockWaits = jdbc.queryForObject(
                             "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type='Lock'", Long.class);
-                    long cpuNanos = ((com.sun.management.OperatingSystemMXBean) java.lang.management
+                    long cpuNanos = ((OperatingSystemMXBean) java.lang.management
                             .ManagementFactory.getOperatingSystemMXBean()).getProcessCpuTime();
                     long wallNanos = System.nanoTime();
                     double machinePct = -1;
@@ -468,13 +525,13 @@ class P62ResourceAssurancePgTest {
                     lastCpuNanos = cpuNanos;
                     lastWallNanos = wallNanos;
                     double loadAvg = ((java.lang.management.OperatingSystemMXBean)
-                            java.lang.management.ManagementFactory.getOperatingSystemMXBean())
+                            ManagementFactory.getOperatingSystemMXBean())
                             .getSystemLoadAverage();
-                    java.lang.management.MemoryUsage heap = java.lang.management.ManagementFactory
+                    MemoryUsage heap = ManagementFactory
                             .getMemoryMXBean().getHeapMemoryUsage();
                     long gcCount = 0;
                     long gcTime = 0;
-                    for (java.lang.management.GarbageCollectorMXBean gc : java.lang.management
+                    for (GarbageCollectorMXBean gc : java.lang.management
                             .ManagementFactory.getGarbageCollectorMXBeans()) {
                         if (gc.getCollectionCount() > 0) {
                             gcCount += gc.getCollectionCount();
@@ -601,8 +658,8 @@ class P62ResourceAssurancePgTest {
                         while (running.get() && fx.taskIds.size() < 40) {
                             final String recordId = "AP-" + fx.tenant + "-" + (seq++);
                             asTenant(fx.tenant, fx.userId, () -> {
-                                com.sw.ck.bpm.process.dto.StartCommand cmd =
-                                        new com.sw.ck.bpm.process.dto.StartCommand();
+                                StartCommand cmd =
+                                        new StartCommand();
                                 cmd.setFormKey(fx.approvalFormKey);
                                 cmd.setProcessDefKey(fx.approvalProcessKey);
                                 cmd.setRecordId(recordId);
@@ -610,7 +667,7 @@ class P62ResourceAssurancePgTest {
                                 cmd.setTenantId(fx.tenant);
                                 cmd.setSubmittedData(data("material", recordId,
                                         "qty_available", "100000", "qty_reserved", "0"));
-                                app.getBean(com.sw.ck.bpm.process.service.ProcessStartService.class)
+                                app.getBean(ProcessStartService.class)
                                         .start(cmd);
                                 return null;
                             });
@@ -622,7 +679,7 @@ class P62ResourceAssurancePgTest {
                                                     + " ORDER BY create_time_", String.class,
                                             String.valueOf(fx.userId)).stream()
                                             .filter(fx.taskIds::add).count();
-                                } catch (org.springframework.jdbc.BadSqlGrammarException pending) {
+                                } catch (BadSqlGrammarException pending) {
                                     // 引擎表惰性建库：下轮再查
                                 }
                                 Thread.sleep(200);
@@ -683,7 +740,7 @@ class P62ResourceAssurancePgTest {
         while (System.currentTimeMillis() < convergeDeadline) {
             long open = openCommands();
             long counter = usageOf("GLOBAL", 0L, "TOTAL");
-            long fact = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
+            long fact = app.getBean(ResourceFactView.class)
                     .factBySegment().values().stream().mapToLong(Long::longValue).sum();
             convergeTimeline.append("  t+").append(System.currentTimeMillis() - convergeStart)
                     .append("ms open=").append(open).append(" counter=").append(counter)
@@ -698,9 +755,9 @@ class P62ResourceAssurancePgTest {
         long convergeMillis = autoConvergeAtMs != null ? autoConvergeAtMs
                 : System.currentTimeMillis() - convergeStart;
         // 人工对账单列（仅在自动观测之后执行，用于揭示残余构成；不替代自动收敛断言）
-        app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class).reconcileOnce();
+        app.getBean(ResourceAssuranceReconcileJob.class).reconcileOnce();
         long counterTotal = usageOf("GLOBAL", 0L, "TOTAL");
-        long factTotal = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
+        long factTotal = app.getBean(ResourceFactView.class)
                 .factBySegment().values().stream().mapToLong(Long::longValue).sum();
         autoConvergeMsHolder = autoConvergeAtMs;
         convergeTimelineHolder = convergeTimeline.toString();
@@ -942,7 +999,7 @@ class P62ResourceAssurancePgTest {
         double maxClaimWait = protectedOaClaimWaits.stream().mapToDouble(Double::doubleValue).max().orElse(0);
         Map<String, Long> commandStatuses = new LinkedHashMap<>();
         for (Map<String, Object> row : jdbc.queryForList("SELECT status, COUNT(*) AS n FROM sw_bpm_command"
-                + " WHERE create_time >= ? GROUP BY status", new java.sql.Timestamp(formalBeginMsHolder))) {
+                + " WHERE create_time >= ? GROUP BY status", new Timestamp(formalBeginMsHolder))) {
             commandStatuses.put(String.valueOf(row.get("status")), ((Number) row.get("n")).longValue());
         }
         writeEvidence("pairing-summary.txt", "scenario=" + scenario + "\ntracedSubmissions=" + traced
@@ -955,7 +1012,7 @@ class P62ResourceAssurancePgTest {
                 + "\nprotectedApprovalClaimWaitMaxMs=" + String.format(Locale.ROOT, "%.0f", maxClaimWait)
                 + " (合同上界 5000ms)"
                 + "\nlightClaimWaitByTenant=" + lightClaimWaitsByTenant.entrySet().stream()
-                        .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey,
+                        .collect(Collectors.toMap(Map.Entry::getKey,
                                 e -> "n=" + e.getValue().size() + " maxMs="
                                         + String.format(Locale.ROOT, "%.0f",
                                                 e.getValue().stream().mapToDouble(Double::doubleValue)
@@ -1042,7 +1099,7 @@ class P62ResourceAssurancePgTest {
     }
 
     private static Long millisBetween(Object from, Object to) {
-        if (!(from instanceof java.sql.Timestamp start) || !(to instanceof java.sql.Timestamp end)) {
+        if (!(from instanceof Timestamp start) || !(to instanceof Timestamp end)) {
             return null;
         }
         return end.getTime() - start.getTime();
@@ -1114,8 +1171,8 @@ class P62ResourceAssurancePgTest {
      * 增量分开；先显式调用一次对账，把「应收敛」与「合法未完责任」分开后再对剩余对象逐条列示。
      */
     private void writeOccupancyResponsibility(String scenario) throws Exception {
-        var factView = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class);
-        var reconcileJob = app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class);
+        var factView = app.getBean(ResourceFactView.class);
+        var reconcileJob = app.getBean(ResourceAssuranceReconcileJob.class);
         long counterBefore = usageOf("GLOBAL", 0L, "TOTAL");
         Map<String, Long> factBefore = factView.factBySegment();
         long factTotalBefore = factBefore.values().stream().mapToLong(Long::longValue).sum();
@@ -1151,7 +1208,7 @@ class P62ResourceAssurancePgTest {
                         + " AND (command_type IS NULL OR command_type <> 'BATCH_INVOKE')"
                         + " GROUP BY tenant_id, resource_class, resource_segment"
                         + " ORDER BY tenant_id, resource_segment",
-                new java.sql.Timestamp(windowFormalBeginMs), new java.sql.Timestamp(windowFormalBeginMs))) {
+                new Timestamp(windowFormalBeginMs), new Timestamp(windowFormalBeginMs))) {
             sb.append("  ").append(row).append('\n');
         }
         List<Map<String, Object>> targets = jdbc.queryForList(
@@ -1169,7 +1226,7 @@ class P62ResourceAssurancePgTest {
             String recordId = commandKey != null && commandKey.startsWith("FLOW_START:")
                     ? commandKey.substring("FLOW_START:".length()) : null;
             boolean chainActive = recordId != null && factView.engineTargetChainActive(recordId);
-            boolean isBaseline = ((java.sql.Timestamp) row.get("create_time")).getTime()
+            boolean isBaseline = ((Timestamp) row.get("create_time")).getTime()
                     < windowFormalBeginMs;
             if (chainActive) {
                 activeChain++;
@@ -1391,9 +1448,9 @@ class P62ResourceAssurancePgTest {
         }
         long elapsed = System.currentTimeMillis() - begin;
         long invocations = countInvocationsByRecords(recordIds);
-        app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class).reconcileOnce();
+        app.getBean(ResourceAssuranceReconcileJob.class).reconcileOnce();
         long counterTotal = usageOf("GLOBAL", 0L, "TOTAL");
-        long factTotal = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
+        long factTotal = app.getBean(ResourceFactView.class)
                 .factBySegment().values().stream().mapToLong(Long::longValue).sum();
         // 诊断转储：绑定/实例/调用行实际状态（防键猜测错位）
         Long bindingCount = jdbc.queryForObject(
@@ -1535,11 +1592,11 @@ class P62ResourceAssurancePgTest {
             Thread.sleep(500);
         }
         // v1 在途已释放（上面排干），v2 减配后按租户上限 50 占满（50≤全局 60）再拒
-        var admission = app.getBean(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+        var admission = app.getBean(ResourceAdmissionService.class);
         asTenant(0L, 91999L, () -> {
             for (int i = 0; i < 50; i++) {
                 final int seq = i;
-                admission.admit(0L, com.sw.ck.bpm.process.entity.ResourceClassEnum.OA, 1,
+                admission.admit(0L, ResourceClassEnum.OA, 1,
                         "RA04-V2-OCC-" + seq);
             }
             return null;
@@ -1575,18 +1632,18 @@ class P62ResourceAssurancePgTest {
                         + " payload, tenant_id, initiator_id, create_time, update_time, deleted, version)"
                         + " VALUES (981001, 'LEGACY:" + runId + "', 'TASK_APPROVE', 'NORMAL', 'PENDING',"
                         + " '{}', 0, 1, current_timestamp, current_timestamp, 0, 0)");
-        var commandQueue = app.getBean(com.sw.ck.bpm.process.queue.BpmCommandQueue.class);
+        var commandQueue = app.getBean(BpmCommandQueue.class);
         Map<String, Object> legacyBeforeComplete = queryOne("SELECT id, status, resource_class,"
                 + " resource_units, resource_segment, policy_version, finished_at FROM sw_bpm_command"
                 + " WHERE id = 981001");
         long legacyGlobalUsageBefore = usageOf("GLOBAL", 0L, "TOTAL");
-        long legacyFactBefore = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
+        long legacyFactBefore = app.getBean(ResourceFactView.class)
                 .factBySegment().values().stream().mapToLong(Long::longValue).sum();
         // 真实消费路径：调度领取（跨租户扫描）→ 消费方身份还原 → 完成
         var claimToken = commandQueue.claimDue(
-                        List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 200).stream()
+                        List.of(CommandChannelEnum.NORMAL), 200).stream()
                 .filter(envelope -> envelope.getCommandId() == 981001L)
-                .map(com.sw.ck.bpm.process.queue.CommandEnvelope::getClaimToken)
+                .map(CommandEnvelope::getClaimToken)
                 .findFirst().orElse(null);
         assertThat(claimToken).as("旧无字段行可被真实调度领取").isNotNull();
         asTenant(0L, 91999L, () -> {
@@ -1600,9 +1657,9 @@ class P62ResourceAssurancePgTest {
                 .isEqualTo("COMPLETED");
         assertThat(legacyAfterComplete.get("resource_released_at")).as("旧行不参与资源释放会计").isNull();
         Long legacyUnits = usageOf("GLOBAL", 0L, "TOTAL");
-        long legacyFactAfter = app.getBean(com.sw.ck.bpm.process.service.ResourceFactView.class)
+        long legacyFactAfter = app.getBean(ResourceFactView.class)
                 .factBySegment().values().stream().mapToLong(Long::longValue).sum();
-        app.getBean(com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob.class).reconcileOnce();
+        app.getBean(ResourceAssuranceReconcileJob.class).reconcileOnce();
         assertThat(usageOf("GLOBAL", 0L, "TOTAL"))
                 .as("旧无字段行不参与资源会计（对账后仍不计费）").isEqualTo(legacyUnits);
 
@@ -1707,7 +1764,7 @@ class P62ResourceAssurancePgTest {
         long settledAtRead = ((Number) ledgerInvariant.get("settled_items")).longValue();
         long sharedAfterA = ((Number) ledgerInvariant.get("shared_used")).longValue();
         long globalAfterA = ((Number) ledgerInvariant.get("global_used")).longValue();
-        long rateTokensA = app.getBean(com.sw.ck.bpm.process.service.TenantRateBuckets.class)
+        long rateTokensA = app.getBean(TenantRateBuckets.class)
                 .availableTokens(100L, 500);
         Map<String, Object> cmdA = queryOne("SELECT command_key, status, resource_class,"
                 + " resource_segment, resource_units, completion_point, create_time, claimed_at,"
@@ -1871,19 +1928,19 @@ class P62ResourceAssurancePgTest {
         }
 
         // 7) 并发受理不超卖（真实准入路径，租户上限 1）：两笔并发 1 单位 → 恰一笔占位成功
-        var admission = app.getBean(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
-        List<String> raceOutcomes = java.util.Collections.synchronizedList(new ArrayList<>());
-        List<String> raceSegments = java.util.Collections.synchronizedList(new ArrayList<>());
+        var admission = app.getBean(ResourceAdmissionService.class);
+        List<String> raceOutcomes = Collections.synchronizedList(new ArrayList<>());
+        List<String> raceSegments = Collections.synchronizedList(new ArrayList<>());
         Runnable attempt = () -> {
             try {
                 var ticket = asTenant(0L, 91999L, () -> admission.admit(0L,
-                        com.sw.ck.bpm.process.entity.ResourceClassEnum.OA, 1,
-                        "RACE-" + runId + "-" + java.util.UUID.randomUUID()));
+                        ResourceClassEnum.OA, 1,
+                        "RACE-" + runId + "-" + UUID.randomUUID()));
                 if (ticket != null) {
                     raceSegments.add(ticket.segment());
                 }
                 raceOutcomes.add(ticket == null ? "NO_POLICY" : "ADMITTED");
-            } catch (com.sw.ck.common.exception.BaseException exceeded) {
+            } catch (BaseException exceeded) {
                 raceOutcomes.add("REJECTED");
             }
         };
@@ -1944,20 +2001,20 @@ class P62ResourceAssurancePgTest {
         jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 0 WHERE scope = 'TENANT'");
         long auditsBefore = countQuotaSegmentAudits();
 
-        javax.sql.DataSource ds = jdbc.getDataSource();
+        DataSource ds = jdbc.getDataSource();
         // 本类手工构建上下文（无 SpringExtension），@Autowired 字段不注入：显式取 bean
-        var admission = app.getBean(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
-        var txTemplate = new org.springframework.transaction.support.TransactionTemplate(
-                app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
-        java.util.concurrent.atomic.AtomicReference<String> prodResult = new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.atomic.AtomicReference<String> oaResult = new java.util.concurrent.atomic.AtomicReference<>();
+        var admission = app.getBean(ResourceAdmissionService.class);
+        var txTemplate = new TransactionTemplate(
+                app.getBean(PlatformTransactionManager.class));
+        AtomicReference<String> prodResult = new AtomicReference<>();
+        AtomicReference<String> oaResult = new AtomicReference<>();
         long t0 = System.currentTimeMillis();
-        java.sql.Connection holdProd = ds.getConnection();
-        java.sql.Connection holdOa = ds.getConnection();
+        Connection holdProd = ds.getConnection();
+        Connection holdOa = ds.getConnection();
         Thread prod = new Thread(() -> prodResult.set(admitOutcome(admission, txTemplate, 0L,
-                com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, "RA02A1-PROD-" + runId)));
+                ResourceClassEnum.PROD, "RA02A1-PROD-" + runId)));
         Thread oa = new Thread(() -> oaResult.set(admitOutcome(admission, txTemplate, 0L,
-                com.sw.ck.bpm.process.entity.ResourceClassEnum.OA, "RA02A1-OA-" + runId)));
+                ResourceClassEnum.OA, "RA02A1-OA-" + runId)));
         boolean oaFinishedWhileBorrowHeld = false;
         try {
             holdProd.setAutoCommit(false);
@@ -2024,10 +2081,10 @@ class P62ResourceAssurancePgTest {
                 + " WHERE scope = 'GLOBAL' AND segment = 'OA_RESERVED'");
         jdbc.update("UPDATE sw_bpm_resource_usage SET outstanding = 2000"
                 + " WHERE scope = 'GLOBAL' AND segment = 'TOTAL'");
-        java.sql.Connection holdOa2 = ds.getConnection();
-        java.util.concurrent.atomic.AtomicReference<String> prodTFull = new java.util.concurrent.atomic.AtomicReference<>();
+        Connection holdOa2 = ds.getConnection();
+        AtomicReference<String> prodTFull = new AtomicReference<>();
         Thread prod2 = new Thread(() -> prodTFull.set(admitOutcome(admission, txTemplate, 0L,
-                com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, "RA02A1-TFULL-" + runId)));
+                ResourceClassEnum.PROD, "RA02A1-TFULL-" + runId)));
         boolean tfailNoHop = false;
         long b0 = System.currentTimeMillis();
         try {
@@ -2098,9 +2155,9 @@ class P62ResourceAssurancePgTest {
 
     /** 受理结果（真实事务内调用准入；异常整体回滚，拒绝审计 REQUIRES_NEW 独立提交）。 */
     private String admitOutcome(
-            com.sw.ck.bpm.process.service.ResourceAdmissionService admission,
-            org.springframework.transaction.support.TransactionTemplate txTemplate,
-            Long tenantId, com.sw.ck.bpm.process.entity.ResourceClassEnum cls, String commandKey) {
+            ResourceAdmissionService admission,
+            TransactionTemplate txTemplate,
+            Long tenantId, ResourceClassEnum cls, String commandKey) {
         long started = System.currentTimeMillis();
         String outcome;
         try {
@@ -2110,7 +2167,7 @@ class P62ResourceAssurancePgTest {
                 return ticket == null ? "NO_POLICY" : "ADMITTED:" + ticket.segment();
             }));
         } catch (Exception e) {
-            String code = e instanceof com.sw.ck.common.exception.BaseException base
+            String code = e instanceof BaseException base
                     ? ":" + base.getCode() : "";
             outcome = "REJECTED:" + e.getClass().getSimpleName() + code;
         }
@@ -2164,7 +2221,7 @@ class P62ResourceAssurancePgTest {
 
     private String invokeRealtime(TenantFixture fx) {
         String recordId = pickRecord(fx);
-        String invocationKey = "RA-" + runId + "-" + fx.tenant + "-" + java.util.UUID.randomUUID();
+        String invocationKey = "RA-" + runId + "-" + fx.tenant + "-" + UUID.randomUUID();
         String body = "{\"recordId\":\"" + recordId + "\",\"quantity\":\"1\",\"invocationKey\":\""
                 + invocationKey + "\"}";
         return post("/api/form/action/" + fx.actionId + "/invoke", fx.bearer, body,
@@ -2175,7 +2232,7 @@ class P62ResourceAssurancePgTest {
     /** @return [outcome, 受理产生的 recordId（拒绝时 "-"）]，recordId 供受理→目标完成配对。 */
     private String[] submitLight(TenantFixture fx) {
         String target = pickRecord(fx);
-        String material = "L-" + runId + "-" + fx.tenant + "-" + java.util.UUID.randomUUID();
+        String material = "L-" + runId + "-" + fx.tenant + "-" + UUID.randomUUID();
         String body = "{\"material\":\"" + material + "\",\"qty_available\":\"1000\","
                 + "\"qty_reserved\":\"0\",\"target_record_id\":\"" + target + "\"}";
         // [outcome, 受理记录id, 目标记录id]——目标效果/释放配对必须对真实目标行（复核04：3810目标行不匹配系错配提交行）
@@ -2192,7 +2249,7 @@ class P62ResourceAssurancePgTest {
 
     /** @return [outcome, batchKey]，batchKey 供批次按项会计配对。 */
     private String[] submitBatch500(TenantFixture fx) {
-        String batchKey = "B-" + runId + "-" + fx.tenant + "-" + java.util.UUID.randomUUID();
+        String batchKey = "B-" + runId + "-" + fx.tenant + "-" + UUID.randomUUID();
         return new String[]{submitBatch(fx, batchKey, 500), batchKey};
     }
 
@@ -2214,21 +2271,21 @@ class P62ResourceAssurancePgTest {
 
     private String readOaTodo(TenantFixture fx) {
         try {
-            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create("http://127.0.0.1:" + port
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("http://127.0.0.1:" + port
                             + "/api/workflow/tasks/todo?pageNum=1&pageSize=10"))
                     .timeout(REQUEST_TIMEOUT)
                     .header("Authorization", fx.bearer)
                     .GET()
                     .build();
-            java.net.http.HttpResponse<String> response = HTTP.send(request,
-                    java.net.http.HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response = HTTP.send(request,
+                    BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() != 200) {
                 return "REJECTED:" + response.statusCode();
             }
             return "0".equals(extractJsonNumber(response.body(), "code")) ? "OK"
                     : "REJECTED:" + extractJsonNumber(response.body(), "code");
-        } catch (java.net.http.HttpTimeoutException e) {
+        } catch (HttpTimeoutException e) {
             return "TIMEOUT";
         } catch (Exception e) {
             return "ERROR:" + e.getClass().getSimpleName();
@@ -2256,8 +2313,8 @@ class P62ResourceAssurancePgTest {
     private Thread pacedWorker(AtomicBoolean running, long intervalMillis, int maxInFlight,
                                PacedAction action) {
         return new Thread(() -> {
-            java.util.concurrent.atomic.AtomicInteger inFlight =
-                    new java.util.concurrent.atomic.AtomicInteger();
+            AtomicInteger inFlight =
+                    new AtomicInteger();
             while (running.get()) {
                 if (inFlight.get() >= maxInFlight) {
                     try {
@@ -2347,7 +2404,7 @@ class P62ResourceAssurancePgTest {
             return latenciesOf(legalOutcome::equals);
         }
 
-        List<Double> latenciesOf(java.util.function.Predicate<String> outcomeMatch) {
+        List<Double> latenciesOf(Predicate<String> outcomeMatch) {
             synchronized (lock) {
                 List<Double> list = new ArrayList<>();
                 for (String[] row : rows) {
@@ -2360,7 +2417,7 @@ class P62ResourceAssurancePgTest {
             }
         }
 
-        long outcomeCount(java.util.function.Predicate<String> match) {
+        long outcomeCount(Predicate<String> match) {
             synchronized (lock) {
                 return rows.stream().filter(r -> inFormal(r) && match.test(r[3])).count();
             }
@@ -2390,22 +2447,22 @@ class P62ResourceAssurancePgTest {
         }
 
         /** 全部样本行（诊断分桶用）。 */
-        java.util.List<String[]> allRows() {
+        List<String[]> allRows() {
             synchronized (lock) {
                 return new ArrayList<>(rows);
             }
         }
 
         /** 发起入组样本（ts_start∈窗口；完成可在窗口外）——预算/分位数主口径。 */
-        java.util.List<String[]> startCohortRows() {
+        List<String[]> startCohortRows() {
             synchronized (lock) {
                 return rows.stream().filter(this::startedInFormal)
-                        .collect(java.util.stream.Collectors.toList());
+                        .collect(Collectors.toList());
             }
         }
 
         /** 发起入组 + 结果过滤的延迟（nearest-rank 输入）。 */
-        List<Double> latenciesOfStart(java.util.function.Predicate<String> outcomeMatch) {
+        List<Double> latenciesOfStart(Predicate<String> outcomeMatch) {
             synchronized (lock) {
                 List<Double> list = new ArrayList<>();
                 for (String[] row : rows) {
@@ -2419,11 +2476,11 @@ class P62ResourceAssurancePgTest {
         }
 
         /** 发起入组全结果延迟（含拒绝/超时/500）。 */
-        java.util.List<Double> allResultLatenciesByStart() {
+        List<Double> allResultLatenciesByStart() {
             synchronized (lock) {
                 return rows.stream().filter(this::startedInFormal)
                         .map(row -> Double.parseDouble(row[2]))
-                        .sorted().collect(java.util.stream.Collectors.toList());
+                        .sorted().collect(Collectors.toList());
             }
         }
 
@@ -2463,17 +2520,17 @@ class P62ResourceAssurancePgTest {
         }
 
         /** 完成入组样本（ts_end ≥ 窗口起点）。 */
-        java.util.List<String[]> formalRows() {
+        List<String[]> formalRows() {
             synchronized (lock) {
-                return rows.stream().filter(this::inFormal).collect(java.util.stream.Collectors.toList());
+                return rows.stream().filter(this::inFormal).collect(Collectors.toList());
             }
         }
 
         /** 最近 sinceMs 之后完成的样本行（资源采样点的慢请求配对）。 */
-        java.util.List<String[]> rowsCompletedSince(long sinceMs) {
+        List<String[]> rowsCompletedSince(long sinceMs) {
             synchronized (lock) {
                 return rows.stream().filter(row -> epochOf(row[0]) >= sinceMs)
-                        .collect(java.util.stream.Collectors.toList());
+                        .collect(Collectors.toList());
             }
         }
 
@@ -2486,16 +2543,16 @@ class P62ResourceAssurancePgTest {
         }
 
         /** 全结果延迟（含拒绝/超时/失败，不静默排除）。 */
-        java.util.List<Double> allResultLatencies() {
+        List<Double> allResultLatencies() {
             synchronized (lock) {
                 return rows.stream().filter(this::inFormal).map(row -> Double.parseDouble(row[2]))
-                        .sorted().collect(java.util.stream.Collectors.toList());
+                        .sorted().collect(Collectors.toList());
             }
         }
 
         private long epochOf(String ts) {
             try {
-                return LocalDateTime.parse(ts, TS).atZone(java.time.ZoneId.systemDefault())
+                return LocalDateTime.parse(ts, TS).atZone(ZoneId.systemDefault())
                         .toInstant().toEpochMilli();
             } catch (Exception e) {
                 return Long.MAX_VALUE;
@@ -2513,7 +2570,7 @@ class P62ResourceAssurancePgTest {
             }
             // .gz 扩展名必须真实 gzip 封装（RA06：原始 CSV 直接落 .gz 属封装错误）
             writeNew(evidenceDir.resolve(name), out -> {
-                try (var gz = new java.util.zip.GZIPOutputStream(out, 64 * 1024)) {
+                try (var gz = new GZIPOutputStream(out, 64 * 1024)) {
                     gz.write(csv.toString().getBytes(StandardCharsets.UTF_8));
                 }
             });
@@ -2643,8 +2700,8 @@ class P62ResourceAssurancePgTest {
                         + " AND menu_id = 350 AND deleted = 0) ON CONFLICT (id) DO NOTHING",
                 360000L + userId);
         FormDefService formDefService = app.getBean(FormDefService.class);
-        com.sw.ck.form.txn.service.TxnActionService actionService =
-                app.getBean(com.sw.ck.form.txn.service.TxnActionService.class);
+        TxnActionService actionService =
+                app.getBean(TxnActionService.class);
         BpmProcessDefService processDefService = app.getBean(BpmProcessDefService.class);
         FormSubmitService submitService = app.getBean(FormSubmitService.class);
 
@@ -2685,7 +2742,7 @@ class P62ResourceAssurancePgTest {
             ProcessGraph graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name("资源保障轻流程-" + tenant)
                     .formKey(formKey).version(1).elements(elements).build();
-            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            String json = app.getBean(ObjectMapper.class)
                     .writeValueAsString(graph);
             processDefService.saveDraftGraph(def.getId(), json);
             BpmProcessDef published = processDefService.publish(def.getId());
@@ -2732,7 +2789,7 @@ class P62ResourceAssurancePgTest {
             ProcessGraph graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name("资源保障审批-" + tenant)
                     .formKey(approvalFormKey).version(1).elements(elements).build();
-            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            String json = app.getBean(ObjectMapper.class)
                     .writeValueAsString(graph);
             processDefService.saveDraftGraph(def.getId(), json);
             BpmProcessDef published = processDefService.publish(def.getId());
@@ -2741,13 +2798,13 @@ class P62ResourceAssurancePgTest {
         fx.approvalProcessKey = approvalKey;
         // 该审批流程不承载动作：直接经 ProcessStartService 起实例（种子路径，不经命令队列），
         // 每个实例产生一条真实待办任务（与 r04 seedOaBusiness 同口径）
-        com.sw.ck.bpm.process.service.ProcessStartService startService =
-                app.getBean(com.sw.ck.bpm.process.service.ProcessStartService.class);
+        ProcessStartService startService =
+                app.getBean(ProcessStartService.class);
         for (int i = 0; i < count; i++) {
             final int seq = i;
             asTenant(tenant, fx.userId, () -> {
-                com.sw.ck.bpm.process.dto.StartCommand cmd =
-                        new com.sw.ck.bpm.process.dto.StartCommand();
+                StartCommand cmd =
+                        new StartCommand();
                 cmd.setFormKey(approvalFormKey);
                 cmd.setProcessDefKey(approvalKey);
                 cmd.setRecordId("AP-" + tenant + "-" + seq);
@@ -2768,7 +2825,7 @@ class P62ResourceAssurancePgTest {
                 tasks = jdbc.queryForObject(
                         "SELECT COUNT(*) FROM act_ru_task WHERE assignee_ = ?", Long.class,
                         String.valueOf(fx.userId));
-            } catch (org.springframework.jdbc.BadSqlGrammarException engineSchemaPending) {
+            } catch (BadSqlGrammarException engineSchemaPending) {
                 tasks = 0L;
             }
             if (tasks != null && tasks >= count) {
@@ -2779,7 +2836,7 @@ class P62ResourceAssurancePgTest {
         try {
             jdbc.queryForList("SELECT id_ FROM act_ru_task WHERE assignee_ = ? ORDER BY create_time_",
                     String.class, String.valueOf(fx.userId)).forEach(id -> fx.taskIds.add(id));
-        } catch (org.springframework.jdbc.BadSqlGrammarException engineSchemaPending) {
+        } catch (BadSqlGrammarException engineSchemaPending) {
             fx.taskIds.clear();
         }
         System.out.println("[P62-EV] ra approvals seeded tenant=" + tenant
@@ -2848,10 +2905,10 @@ class P62ResourceAssurancePgTest {
     }
 
     private String post(String pathWithQuery, String bearer, String jsonBody,
-                        java.util.function.Function<String, String> outcomeOf) {
+                        Function<String, String> outcomeOf) {
         try {
             return postJson(pathWithQuery, bearer, jsonBody, outcomeOf);
-        } catch (java.net.http.HttpTimeoutException e) {
+        } catch (HttpTimeoutException e) {
             return "TIMEOUT";
         } catch (Exception e) {
             String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
@@ -2861,16 +2918,16 @@ class P62ResourceAssurancePgTest {
     }
 
     private <T> T postJson(String pathWithQuery, String bearer, String jsonBody,
-                           java.util.function.Function<String, T> parser) throws Exception {
-        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                .uri(java.net.URI.create("http://127.0.0.1:" + port + pathWithQuery))
+                           Function<String, T> parser) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + port + pathWithQuery))
                 .timeout(REQUEST_TIMEOUT)
                 .header("Authorization", bearer)
                 .header("Content-Type", "application/json")
-                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
+                .POST(BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
                 .build();
-        java.net.http.HttpResponse<String> response = HTTP.send(request,
-                java.net.http.HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = HTTP.send(request,
+                BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() != 200) {
             throw new IllegalStateException("HTTP " + response.statusCode() + ": " + response.body());
         }
@@ -2957,10 +3014,10 @@ class P62ResourceAssurancePgTest {
     }
 
     private interface Sink {
-        void write(java.io.OutputStream out) throws java.io.IOException;
+        void write(OutputStream out) throws IOException;
     }
 
-    private static void writeNew(Path file, Sink sink) throws java.io.IOException {
+    private static void writeNew(Path file, Sink sink) throws IOException {
         Files.write(file, new byte[0], StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         try (var out = Files.newOutputStream(file, StandardOpenOption.WRITE,
                 StandardOpenOption.APPEND)) {
@@ -2994,11 +3051,11 @@ class P62ResourceAssurancePgTest {
         // RA01：dynamic-datasource 包裹（DynamicRouting→ItemDataSource→Druid）需先 getDataSources()
         // 展开；取值失败必须抛错而非记 0（不凭 0 判池不存在）
         long druidMax = 0;
-        for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class).stream().toList()) {
-            java.util.List<Object> candidates = new ArrayList<>();
+        for (DataSource ds : app.getBeanProvider(DataSource.class).stream().toList()) {
+            List<Object> candidates = new ArrayList<>();
             if (ds.getClass().getSimpleName().contains("DynamicRouting")) {
                 Object map = ds.getClass().getMethod("getDataSources").invoke(ds);
-                if (map instanceof java.util.Map<?, ?> m) {
+                if (map instanceof Map<?, ?> m) {
                     candidates.addAll(m.values());
                 }
             } else {
@@ -3049,7 +3106,7 @@ class P62ResourceAssurancePgTest {
                 .append('\n');
         sb.append("mybatisLogImpl=").append(app.getEnvironment()
                 .getProperty("mybatis-plus.configuration.log-impl", "(default)")).append('\n');
-        sb.append("jvmArgs=").append(java.lang.management.ManagementFactory.getRuntimeMXBean()
+        sb.append("jvmArgs=").append(ManagementFactory.getRuntimeMXBean()
                 .getInputArguments()).append('\n');
         sb.append("pgVersion=").append(jdbc.queryForObject("SELECT version()", String.class)).append('\n');
         sb.append("druidMaxActive(actual)=").append(druidMax).append('\n');
@@ -3114,16 +3171,16 @@ class P62ResourceAssurancePgTest {
         return map;
     }
 
-    private static <T> T asTenant(Long tenant, long userId, java.util.concurrent.Callable<T> action) {
-        com.sw.ck.security.holder.LoginUser previous =
-                com.sw.ck.security.holder.LoginUserHolder.get();
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+    private static <T> T asTenant(Long tenant, long userId, Callable<T> action) {
+        LoginUser previous =
+                LoginUserHolder.get();
+        LoginUser user = new LoginUser();
         user.setUserId(userId);
         user.setTenantId(tenant);
         user.setPermissions(new ArrayList<>(List.of("form:action:invoke", "form:action:manage",
                 "workflow:resource:view", "workflow:resource:manage")));
         try {
-            com.sw.ck.security.holder.LoginUserHolder.set(user);
+            LoginUserHolder.set(user);
             return action.call();
         } catch (RuntimeException e) {
             throw e;
@@ -3131,9 +3188,9 @@ class P62ResourceAssurancePgTest {
             throw new IllegalStateException(e);
         } finally {
             if (previous == null) {
-                com.sw.ck.security.holder.LoginUserHolder.clear();
+                LoginUserHolder.clear();
             } else {
-                com.sw.ck.security.holder.LoginUserHolder.set(previous);
+                LoginUserHolder.set(previous);
             }
         }
     }

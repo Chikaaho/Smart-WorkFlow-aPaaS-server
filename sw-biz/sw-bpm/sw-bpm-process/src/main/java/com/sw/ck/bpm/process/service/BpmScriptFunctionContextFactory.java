@@ -1,11 +1,13 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import com.sw.ck.system.api.dept.DeptDirectoryRow;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -20,7 +22,7 @@ import java.util.Map;
  * 实例变量值按“可 JSON 序列化”过滤（不可序列化值跳过并告警，不影响判断主链路）。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class BpmScriptFunctionContextFactory {
 
@@ -31,17 +33,12 @@ public class BpmScriptFunctionContextFactory {
     private static final List<String> VARIABLE_TOKENS = List.of(
             "流程变量取值", "获取流程变量", "getVariable", "设置流程变量", "setVariable");
 
-    private final DeptQueryFacade deptQueryFacade;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final ObjectMapper objectMapper;
-
-    public BpmScriptFunctionContextFactory(DeptQueryFacade deptQueryFacade,
-                                           BpmTaskFacade bpmTaskFacade,
-                                           ObjectMapper objectMapper) {
-        this.deptQueryFacade = deptQueryFacade;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private DeptQueryFacade deptQueryFacade;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /**
      * 按脚本引用构建上下文；未引用组织/变量函数时返回 {@link ScriptFunctionContext#EMPTY}（零查询）。

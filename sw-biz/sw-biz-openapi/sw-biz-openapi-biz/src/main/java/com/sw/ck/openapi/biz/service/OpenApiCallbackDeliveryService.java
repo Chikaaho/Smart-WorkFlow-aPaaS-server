@@ -1,17 +1,22 @@
 package com.sw.ck.openapi.biz.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.FailureCategory;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
+import com.sw.ck.openapi.biz.dto.OpenApiCallbackResendDTO;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.entity.OpenApiCallbackLog;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.mapper.OpenApiCallbackLogMapper;
+
 import cn.hutool.http.HttpRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -20,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 出站回调投递（I4 §3.4）：签名、重试、去重、失败可查、恢复重发。
  * <p>
@@ -30,20 +36,16 @@ import java.util.UUID;
  * </p>
  */
 @Service
+@Log4j2
 public class OpenApiCallbackDeliveryService {
 
-    private static final Logger log = LoggerFactory.getLogger(OpenApiCallbackDeliveryService.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int MAX_ATTEMPTS = 3;
 
-    private final OpenApiAppMapper appMapper;
-    private final OpenApiCallbackLogMapper logMapper;
-
-    public OpenApiCallbackDeliveryService(OpenApiAppMapper appMapper,
-                                          OpenApiCallbackLogMapper logMapper) {
-        this.appMapper = appMapper;
-        this.logMapper = logMapper;
-    }
+    @Autowired
+    private OpenApiAppMapper appMapper;
+    @Autowired
+    private OpenApiCallbackLogMapper logMapper;
 
     /**
      * 投递记录查询（失败可查）：应用只能读到自身 appId 的记录；
@@ -71,26 +73,26 @@ public class OpenApiCallbackDeliveryService {
      * 否则以与事件监听完全相同的签名/重试/落账路径补发一次。
      * 仅接受实例终态事件；流程动作不被重发改写（投递只读实例终态）。
      */
-    public Map<String, Object> resend(String appId, BpmNotifyTrigger trigger, String bizRef) {
+    public OpenApiCallbackResendDTO resend(String appId, BpmNotifyTrigger trigger, String bizRef) {
         OpenApiApp app = appMapper.selectOne(new LambdaQueryWrapper<OpenApiApp>()
                 .eq(OpenApiApp::getAppId, appId)
                 .eq(OpenApiApp::getStatus, "ENABLED")
                 .eq(OpenApiApp::getDeleted, 0));
         if (app == null) {
-            throw new com.sw.ck.common.exception.BaseException(OpenApiErrorCode.APP_NOT_FOUND);
+            throw new BaseException(OpenApiErrorCode.APP_NOT_FOUND);
         }
         long deliveredBefore = countSuccess(appId, trigger, bizRef);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("event", trigger.name());
-        result.put("processInstanceId", bizRef);
+        OpenApiCallbackResendDTO result = new OpenApiCallbackResendDTO();
+        result.setEvent(trigger.name());
+        result.setProcessInstanceId(bizRef);
         if (deliveredBefore > 0) {
-            result.put("deduped", true);
-            result.put("delivered", false);
+            result.setDeduped(true);
+            result.setDelivered(false);
             return result;
         }
         dispatch(app, new BpmNotifyEvent(trigger, null, app.getTenantId(), null, bizRef));
-        result.put("deduped", false);
-        result.put("delivered", countSuccess(appId, trigger, bizRef) > 0);
+        result.setDeduped(false);
+        result.setDelivered(countSuccess(appId, trigger, bizRef) > 0);
         return result;
     }
 
@@ -203,8 +205,8 @@ public class OpenApiCallbackDeliveryService {
         boolean connectionLevel = type.contains("Timeout") || type.contains("UnknownHost")
                 || type.contains("Connect");
         String category = (connectionLevel
-                ? com.sw.ck.common.exception.FailureCategory.RETRYABLE_INFRASTRUCTURE
-                : com.sw.ck.common.exception.FailureCategory.SYSTEM_FAULT).name();
+                ? FailureCategory.RETRYABLE_INFRASTRUCTURE
+                : FailureCategory.SYSTEM_FAULT).name();
         return "category=" + category
                 + "; 回调地址不可达或返回非 2xx，请检查回调地址与对端可用性";
     }

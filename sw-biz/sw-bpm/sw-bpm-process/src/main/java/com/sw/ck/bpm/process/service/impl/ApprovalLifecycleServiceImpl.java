@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
@@ -21,6 +22,7 @@ import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.BpmSignRecord;
 import com.sw.ck.bpm.process.entity.BpmTaskDeadline;
+import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
 import com.sw.ck.bpm.process.mapper.BpmAuthorizeRuleMapper;
@@ -28,11 +30,13 @@ import com.sw.ck.bpm.process.mapper.BpmCommunicationMapper;
 import com.sw.ck.bpm.process.mapper.BpmConsensusVoteMapper;
 import com.sw.ck.bpm.process.mapper.BpmSignRecordMapper;
 import com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper;
+import com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper;
 import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
 import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.ApprovalLifecycleService;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ChildOrchestrationService;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
@@ -42,8 +46,7 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
@@ -59,6 +62,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * I3 生命周期动作统一实现。
  * <p>
@@ -68,42 +72,56 @@ import java.util.Optional;
  * </p>
  */
 @Service
+@Log4j2
 public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
-
-    private static final Logger log = LoggerFactory.getLogger(ApprovalLifecycleServiceImpl.class);
 
     private static final String SIGN_TYPE_ADD = "ADD_SIGN";
     private static final String SIGN_TYPE_SUPPLEMENT = "SUPPLEMENT_SIGN";
     private static final String MODE_SERIAL = "SERIAL";
     private static final String MODE_PARALLEL = "PARALLEL";
 
-    private final BpmTaskFacade bpmTaskFacade;
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmProcessDefService bpmProcessDefService;
-    private final ApprovalActionService approvalActionService;
-    private final BpmAuthorizeRuleMapper authorizeRuleMapper;
-    private final BpmCommunicationMapper communicationMapper;
-    private final BpmSignRecordMapper signRecordMapper;
-    private final BpmTaskDeadlineMapper deadlineMapper;
-    private final BpmConsensusVoteMapper consensusVoteMapper;
-    private final ParticipantSnapshotMapper participantSnapshotMapper;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private ApprovalActionService approvalActionService;
+    @Autowired
+    private BpmAuthorizeRuleMapper authorizeRuleMapper;
+    @Autowired
+    private BpmCommunicationMapper communicationMapper;
+    @Autowired
+    private BpmSignRecordMapper signRecordMapper;
+    @Autowired
+    private BpmTaskDeadlineMapper deadlineMapper;
+    @Autowired
+    private BpmConsensusVoteMapper consensusVoteMapper;
+    @Autowired
+    private ParticipantSnapshotMapper participantSnapshotMapper;
 
     /** P63 动态分支快照（可选注入）：v2 轮次汇聚分母按分支数权威计算。 */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper dynamicBranchSnapshotMapper;
-    private final ObjectProvider<UserQueryFacade> userQueryFacade;
-    private final ObjectProvider<TaskActionService> taskActionService;
-    private final ObjectProvider<DynamicBranchPort> dynamicBranchPort;
-    private final DomainEventPublisher domainEventPublisher;
-    private final ObjectMapper objectMapper;
+    @Autowired(required = false)
+    private DynamicBranchSnapshotMapper dynamicBranchSnapshotMapper;
+    @Autowired
+    private ObjectProvider<UserQueryFacade> userQueryFacade;
+    @Autowired
+    private ObjectProvider<TaskActionService> taskActionService;
+    @Autowired
+    private ObjectProvider<DynamicBranchPort> dynamicBranchPort;
+    @Autowired
+    private DomainEventPublisher domainEventPublisher;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** P64 阶段Ⅱ：主子流程编排（可选装配；无 CHILD 批次零行为）。 */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
+    @Autowired(required = false)
+    private ObjectProvider<ChildOrchestrationService> childOrchestrationProvider;
 
     /** 撤回/废弃终态化的子流程编排钩子：本实例作为子流程计失败项、作为父流程取消未完成批次。 */
     private void childOrchestrationHooks(BpmInstance instance, String terminalStatus) {
-        com.sw.ck.bpm.process.service.ChildOrchestrationService orchestration =
+        ChildOrchestrationService orchestration =
                 childOrchestrationProvider == null ? null
                         : childOrchestrationProvider.getIfAvailable();
         if (orchestration == null || instance == null) {
@@ -111,38 +129,6 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
         orchestration.onChildProcessTerminal(instance, terminalStatus);
         orchestration.cancelBatchesForParent(instance, terminalStatus);
-    }
-
-    public ApprovalLifecycleServiceImpl(BpmTaskFacade bpmTaskFacade,
-                                        BpmInstanceService bpmInstanceService,
-                                        BpmProcessDefService bpmProcessDefService,
-                                        ApprovalActionService approvalActionService,
-                                        BpmAuthorizeRuleMapper authorizeRuleMapper,
-                                        BpmCommunicationMapper communicationMapper,
-                                        BpmSignRecordMapper signRecordMapper,
-                                        BpmTaskDeadlineMapper deadlineMapper,
-                                        BpmConsensusVoteMapper consensusVoteMapper,
-                                        ParticipantSnapshotMapper participantSnapshotMapper,
-                                        ObjectProvider<UserQueryFacade> userQueryFacade,
-                                        ObjectProvider<TaskActionService> taskActionService,
-                                        ObjectProvider<DynamicBranchPort> dynamicBranchPort,
-                                        DomainEventPublisher domainEventPublisher,
-                                        ObjectMapper objectMapper) {
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmProcessDefService = bpmProcessDefService;
-        this.approvalActionService = approvalActionService;
-        this.authorizeRuleMapper = authorizeRuleMapper;
-        this.communicationMapper = communicationMapper;
-        this.signRecordMapper = signRecordMapper;
-        this.deadlineMapper = deadlineMapper;
-        this.consensusVoteMapper = consensusVoteMapper;
-        this.participantSnapshotMapper = participantSnapshotMapper;
-        this.userQueryFacade = userQueryFacade;
-        this.taskActionService = taskActionService;
-        this.dynamicBranchPort = dynamicBranchPort;
-        this.domainEventPublisher = domainEventPublisher;
-        this.objectMapper = objectMapper;
     }
 
     // ==================== 任务级动作 ====================
@@ -158,7 +144,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         boolean assigned = String.valueOf(actor.getUserId()).equals(task.getAssignee());
         // empty = 无法判定（任务/用户标识缺失；此处任务已存在且登录用户非空）：
         // fail closed，按不可处理拒绝
-        java.util.Optional<Boolean> handleDecision = bpmTaskFacade.canHandle(
+        Optional<Boolean> handleDecision = bpmTaskFacade.canHandle(
                 taskId, String.valueOf(actor.getUserId()));
         boolean candidate = handleDecision.isPresent() && handleDecision.get();
         if (!assigned && !candidate) {
@@ -511,7 +497,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             negative = all.stream().noneMatch(item -> "APPROVE".equals(item.getResultStatus()));
         }
         // empty = 该任务不存在（原 null 返回路径）：原任务已消失，跳过结算
-        java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(settled.getTaskId());
+        Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(settled.getTaskId());
         if (taskLookup.isEmpty()) {
             log.warn("原任务已消失，跳过加签结算: taskId={}", settled.getTaskId());
             return;
@@ -698,7 +684,6 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
 
     // ==================== 引擎端口适配 ====================
 
-
     private String resolveProxy(Long tenantId, String processInstanceId, String nodeKey,
                                 String taskId, List<String> resolvedUsers) {
         if (resolvedUsers == null || resolvedUsers.size() != 1) {
@@ -715,7 +700,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                         .eq(BpmAuthorizeRule::getStatus, "ACTIVE"));
         BpmProcessDef def = findDefByInstance(processInstanceId);
         // empty = 运行期与历史均无该实例或无业务键（原 null 返回路径）：BUSINESS 作用域不命中
-        java.util.Optional<String> businessKey = bpmTaskFacade.getBusinessKey(processInstanceId);
+        Optional<String> businessKey = bpmTaskFacade.getBusinessKey(processInstanceId);
         List<BpmAuthorizeRule> matched = candidates.stream()
                 .filter(this::inEffect)
                 .filter(rule -> scopeMatches(rule, def == null ? null : def.getProcessKey(),
@@ -762,7 +747,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     }
 
     private boolean scopeMatches(BpmAuthorizeRule rule, String processDefKey,
-                                 String nodeKey, java.util.Optional<String> businessKey) {
+                                 String nodeKey, Optional<String> businessKey) {
         return switch (nullSafe(rule.getScopeType(), "GLOBAL")) {
             case "GLOBAL" -> true;
             case "PROCESS" -> processDefKey != null
@@ -894,8 +879,8 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     }
 
     @Override
-    public com.sw.ck.bpm.api.participant.ConsensusVotePort consensusVotePort() {
-        return new com.sw.ck.bpm.api.participant.ConsensusVotePort() {
+    public ConsensusVotePort consensusVotePort() {
+        return new ConsensusVotePort() {
             @Override
             public Optional<Boolean> record(String tenantId, String processInstanceId, String nodeKey,
                                             String taskId, String actorId, String outcome) {
@@ -921,7 +906,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                     vote.setTenantId(tenant);
                     // 引擎监听线程无登录态：审计列显式兜底，不允许拦截器缺省失败
                     if (vote.getCreateTime() == null) {
-                        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+                        LocalDateTime now = LocalDateTime.now();
                         vote.setCreateTime(now);
                         vote.setUpdateTime(now);
                     }
@@ -956,19 +941,19 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 try {
                     // P63 v2：分母=最新轮次有效分支数（同负责人不同部门=独立分支，DISTINCT 人数会塌缩）
                     if (dynamicBranchSnapshotMapper != null) {
-                        QueryWrapper<com.sw.ck.bpm.process.entity.DynamicBranchSnapshot> branchQw =
+                        QueryWrapper<DynamicBranchSnapshot> branchQw =
                                 new QueryWrapper<>();
                         branchQw.select("MAX(round_no) AS max_round")
                                 .eq("process_instance_id", processInstanceId)
                                 .eq("node_key", nodeKey)
                                 .eq("semantic_version", 2)
                                 .eq("deleted", 0);
-                        java.util.List<java.util.Map<String, Object>> roundRows =
+                        List<Map<String, Object>> roundRows =
                                 JdbcMaps.caseInsensitiveKeys(
                                         dynamicBranchSnapshotMapper.selectMaps(branchQw));
                         Object maxRound = roundRows.isEmpty() ? null : roundRows.get(0).get("max_round");
                         if (maxRound instanceof Number latestRound) {
-                            QueryWrapper<com.sw.ck.bpm.process.entity.DynamicBranchSnapshot> countQw =
+                            QueryWrapper<DynamicBranchSnapshot> countQw =
                                     new QueryWrapper<>();
                             countQw.select("COUNT(*) AS branch_total")
                                     .eq("process_instance_id", processInstanceId)
@@ -977,7 +962,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                                     .eq("round_no", latestRound.longValue())
                                     .ne("status", "CANCELED")
                                     .eq("deleted", 0);
-                            java.util.List<java.util.Map<String, Object>> countRows =
+                            List<Map<String, Object>> countRows =
                                     JdbcMaps.caseInsensitiveKeys(
                                             dynamicBranchSnapshotMapper.selectMaps(countQw));
                             Object branchTotal = countRows.isEmpty() ? null
@@ -992,7 +977,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                             .eq("process_instance_id", processInstanceId)
                             .eq("node_key", nodeKey)
                             .eq("deleted", 0);
-                    java.util.List<java.util.Map<String, Object>> rows =
+                    List<Map<String, Object>> rows =
                             JdbcMaps.caseInsensitiveKeys(
                                     participantSnapshotMapper.selectMaps(qw));
                     Object total = rows.isEmpty() ? null : rows.get(0).get("total");
@@ -1006,13 +991,12 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         };
     }
 
-
     @Override
-    public com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort lifecycleTaskEntryPort() {
-        return new com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort() {
+    public LifecycleTaskEntryPort lifecycleTaskEntryPort() {
+        return new LifecycleTaskEntryPort() {
             @Override
             public Optional<String> onTaskCreate(Long tenantId, String processInstanceId, String nodeKey,
-                                                 String taskId, java.util.List<String> resolvedUsers,
+                                                 String taskId, List<String> resolvedUsers,
                                                  String nodeConfig) {
                 String proxyAgent = resolveProxy(tenantId, processInstanceId, nodeKey, taskId,
                         resolvedUsers);
@@ -1022,10 +1006,10 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             }
 
             @Override
-            public Optional<java.util.List<String>> resolveParticipantsByFunction(Long tenantId,
+            public Optional<List<String>> resolveParticipantsByFunction(Long tenantId,
                                                                                   String processInstanceId,
                                                                                   String nodeKey, String taskId,
-                                                                                  java.util.Map<String, Object> variables,
+                                                                                  Map<String, Object> variables,
                                                                                   String nodeConfig) {
                 // 函数型参与人由配置适配器直连实现（见 BpmLifecyclePortConfiguration）
                 return Optional.empty();
@@ -1088,7 +1072,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             // I3 意见表单不可变快照：生命周期动作（加签/补签表态等）执行意见表单时
             // 与主审批同口径落快照，保证五类轮次的历史回显不漂移（§4.10）。
             if (request.getOpinionFormId() != null) {
-                Map<String, Object> opinionSnapshot = new java.util.LinkedHashMap<>();
+                Map<String, Object> opinionSnapshot = new LinkedHashMap<>();
                 opinionSnapshot.put("opinionForm", taskActionService.getObject().resolveOpinionForm(task));
                 opinionSnapshot.put("opinionFormId", request.getOpinionFormId());
                 opinionSnapshot.put("opinionFormVersion", request.getOpinionFormVersion());

@@ -1,6 +1,10 @@
 package com.sw.ck.system.controller;
 
+import com.sw.ck.system.security.LoginChallengeService;
 import com.sw.ck.system.security.LoginChallengeStore;
+import com.sw.ck.system.security.LoginSecurityProperties;
+import com.sw.ck.system.security.PngCaptchaRenderer;
+import com.sw.ck.system.security.RsaLoginKeyManager;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.OAEPParameterSpec;
@@ -15,6 +19,7 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 
 /**
  * P45 认证测试支撑：测试专用 RSA 密钥对、OAEP 加密辅助与内存挑战存储测试替身。
@@ -39,7 +44,7 @@ public final class LoginChallengeTestSupport {
             cipher.init(Cipher.ENCRYPT_MODE, TEST_KEY_PAIR.getPublic(), new OAEPParameterSpec(
                     "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT));
             return Base64.getEncoder().encodeToString(
-                    cipher.doFinal(plaintext.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException("测试加密失败", e);
         }
@@ -95,14 +100,14 @@ public final class LoginChallengeTestSupport {
      * 可测挑战服务：捕获最近一次生成的验证码原文，供测试按真实签发链路提交登录
      * （答案只经服务端生成路径捕获，不从图像载荷反解——与生产自动化约束一致）。
      */
-    static class TestableLoginChallengeService extends com.sw.ck.system.security.LoginChallengeService {
+    static class TestableLoginChallengeService extends LoginChallengeService {
 
         private String lastCaptchaCode;
 
         TestableLoginChallengeService(LoginChallengeStore store,
-                                      com.sw.ck.system.security.RsaLoginKeyManager keyManager,
-                                      com.sw.ck.system.security.LoginSecurityProperties properties,
-                                      com.sw.ck.system.security.PngCaptchaRenderer renderer) {
+                                      RsaLoginKeyManager keyManager,
+                                      LoginSecurityProperties properties,
+                                      PngCaptchaRenderer renderer) {
             super(store, keyManager, properties, renderer);
         }
 

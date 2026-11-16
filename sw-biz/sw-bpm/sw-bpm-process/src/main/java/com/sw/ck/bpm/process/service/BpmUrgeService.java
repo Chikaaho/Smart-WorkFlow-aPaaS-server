@@ -2,6 +2,8 @@ package com.sw.ck.bpm.process.service;
 
 import com.sw.ck.bpm.process.dto.UrgeRespDTO;
 
+import java.util.List;
+
 /** 催办服务（v0.0.2 OA）。 */
 public interface BpmUrgeService {
 
@@ -28,7 +30,7 @@ public interface BpmUrgeService {
      * <p>接收人必须是服务端核定的当前实例合法待办人的子集；空表示全部待办人（旧语义）。
      * 越权/越界接收人明确拒绝，不向非本实例参与人发送。</p>
      */
-    default UrgeRespDTO urge(Long instanceRecordId, String message, java.util.List<Long> recipientIds) {
+    default UrgeRespDTO urge(Long instanceRecordId, String message, List<Long> recipientIds) {
         return urge(instanceRecordId, message);
     }
 }

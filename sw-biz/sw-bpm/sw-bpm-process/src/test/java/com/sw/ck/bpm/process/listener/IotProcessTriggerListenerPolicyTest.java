@@ -10,8 +10,15 @@ import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.iot.api.IotDeviceQueryFacade;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+
+import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -78,9 +85,9 @@ class IotProcessTriggerListenerPolicyTest {
                 + "\"failurePolicy\":\"" + policy + "\"}");
         when(processDefs.findByProcessKey("p21-policy-test")).thenReturn(def);
         when(runtime.startProcess(eq("p21-policy-test"), eq("policy-" + policy), anyMap(), eq("0")))
-                .thenReturn(java.util.Optional.of("process-" + policy));
+                .thenReturn(Optional.of("process-" + policy));
         // 契约返回 Optional<String>：设备不存在必须用 empty 表达（旧契约的 null 返回已废除）
-        when(deviceQuery.getDeviceKeyById(99999L)).thenReturn(java.util.Optional.empty());
+        when(deviceQuery.getDeviceKeyById(99999L)).thenReturn(Optional.empty());
 
         IotProcessTriggerEvent event = new IotProcessTriggerEvent();
         event.setTenantId(0L);
@@ -89,12 +96,12 @@ class IotProcessTriggerListenerPolicyTest {
         event.setTriggerId(999L);
         event.setDeviceId(2097131606828916738L);
 
-        org.springframework.transaction.PlatformTransactionManager txManager =
-                mock(org.springframework.transaction.PlatformTransactionManager.class);
-        when(txManager.getTransaction(any(org.springframework.transaction.TransactionDefinition.class)))
-                .thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
-        ObjectProvider<org.springframework.transaction.PlatformTransactionManager> txProvider = provider(txManager);
-        ObjectProvider<com.sw.ck.bpm.process.service.ProcessThemeService> themeProvider =
+        PlatformTransactionManager txManager =
+                mock(PlatformTransactionManager.class);
+        when(txManager.getTransaction(any(TransactionDefinition.class)))
+                .thenReturn(new SimpleTransactionStatus());
+        ObjectProvider<PlatformTransactionManager> txProvider = provider(txManager);
+        ObjectProvider<ProcessThemeService> themeProvider =
                 provider(null);
         TenantWorkAdmission admission = (tenantId, claim) -> claim.getAsInt();
         new IotProcessTriggerListener(runtimeProvider, processProvider, triggerProvider,

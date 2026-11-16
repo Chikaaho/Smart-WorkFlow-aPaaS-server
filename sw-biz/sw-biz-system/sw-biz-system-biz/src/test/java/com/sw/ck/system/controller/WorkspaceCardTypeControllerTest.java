@@ -1,6 +1,7 @@
 package com.sw.ck.system.controller;
 
 import com.sw.ck.common.response.R;
+import com.sw.ck.system.dto.WorkspaceLayoutDTO;
 import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.service.UserWorkspaceService;
 import com.sw.ck.system.service.WorkspaceCardTypeService;
@@ -23,10 +24,10 @@ class WorkspaceCardTypeControllerTest {
     void layout_shouldExposeUserLayout() {
         when(workspaceService.getLayout()).thenReturn(Map.of("custom", true));
 
-        R<Map<String, Object>> result = controller.layout();
+        R<WorkspaceLayoutDTO> result = controller.layout();
 
         assertThat(result.getCode()).isZero();
-        assertThat(result.getData()).containsEntry("custom", true);
+        assertThat(result.getData().isCustom()).isTrue();
     }
 
     @Test

@@ -24,22 +24,43 @@ import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.dto.StartCommand;
+import com.sw.ck.bpm.process.entity.BpmFormBinding;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.job.BpmInstanceStateSyncJob;
+import com.sw.ck.bpm.process.port.FlowStartPortImpl;
+import com.sw.ck.bpm.process.queue.CommandDispatcher;
+import com.sw.ck.bpm.process.queue.FlowStartCommandHandler;
+import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.form.txn.service.TxnActionExecutor;
+import com.sw.ck.security.spi.UserDetailsProvider;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
+import java.security.KeyPairGenerator;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -86,11 +107,11 @@ class P62NodeLevelGuaranteePgTest {
     private BpmProcessDefService processDefService;
     private BpmCommandBatchMapper batchMapper;
     private BpmCommandBatchItemMapper itemMapper;
-    private com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler batchHandler;
-    private com.sw.ck.bpm.process.queue.FlowStartCommandHandler flowHandler;
-    private com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue queue;
-    private com.sw.ck.security.spi.UserDetailsProvider userDetailsProvider;
-    private com.sw.ck.form.txn.service.TxnActionExecutor executor;
+    private BatchInvokeCommandHandler batchHandler;
+    private FlowStartCommandHandler flowHandler;
+    private PersistentBpmCommandQueue queue;
+    private UserDetailsProvider userDetailsProvider;
+    private TxnActionExecutor executor;
 
     @BeforeAll
     void boot() throws Exception {
@@ -106,22 +127,22 @@ class P62NodeLevelGuaranteePgTest {
         props.put("sw.security.jwt.secret", "p62-node-g-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-node-g-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.txn-batch.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-node-g", props));
+                            new MapPropertySource("p62-node-g", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62NodeGLoginContextProvider", provider);
                 })
                 .run();
@@ -134,11 +155,11 @@ class P62NodeLevelGuaranteePgTest {
         processDefService = app.getBean(BpmProcessDefService.class);
         batchMapper = app.getBean(BpmCommandBatchMapper.class);
         itemMapper = app.getBean(BpmCommandBatchItemMapper.class);
-        batchHandler = app.getBean(com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler.class);
-        flowHandler = app.getBean(com.sw.ck.bpm.process.queue.FlowStartCommandHandler.class);
-        queue = app.getBean(com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue.class);
-        userDetailsProvider = app.getBean(com.sw.ck.security.spi.UserDetailsProvider.class);
-        executor = app.getBean(com.sw.ck.form.txn.service.TxnActionExecutor.class);
+        batchHandler = app.getBean(BatchInvokeCommandHandler.class);
+        flowHandler = app.getBean(FlowStartCommandHandler.class);
+        queue = app.getBean(PersistentBpmCommandQueue.class);
+        userDetailsProvider = app.getBean(UserDetailsProvider.class);
+        executor = app.getBean(TxnActionExecutor.class);
 
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'node-g-operator', 'seed-not-a-login-secret', 'G3操作员', ?, 0) "
@@ -258,8 +279,8 @@ class P62NodeLevelGuaranteePgTest {
 
         // 消费（生产语义 dispatcher：正式身份回查）；常驻调度器可能抢先消费，容错处理
         claimBatch(accepted.getCommandId()).ifPresent(claim -> {
-            var dispatcher = new com.sw.ck.bpm.process.queue.CommandDispatcher(queue,
-                    List.of(app.getBean(com.sw.ck.bpm.process.queue.FlowStartCommandHandler.class),
+            var dispatcher = new CommandDispatcher(queue,
+                    List.of(app.getBean(FlowStartCommandHandler.class),
                             batchHandler),
                     userDetailsProvider);
             dispatcher.dispatchOneForTest(claim);
@@ -304,8 +325,8 @@ class P62NodeLevelGuaranteePgTest {
                 + " AND item_key = 'item-w'", batchIdOf("g3-diverge"));
 
         claimBatch(accepted.getCommandId()).ifPresent(claim -> {
-            var dispatcher = new com.sw.ck.bpm.process.queue.CommandDispatcher(queue,
-                    List.of(app.getBean(com.sw.ck.bpm.process.queue.FlowStartCommandHandler.class),
+            var dispatcher = new CommandDispatcher(queue,
+                    List.of(app.getBean(FlowStartCommandHandler.class),
                             batchHandler),
                     userDetailsProvider);
             dispatcher.dispatchOneForTest(claim);
@@ -337,14 +358,14 @@ class P62NodeLevelGuaranteePgTest {
         String recordV = asOperator(() -> submitService.submitForm("p62_node_g_unbound",
                 data("material", "NODE-V", "qty_available", "5", "qty_reserved", "0"),
                 null, null, null));
-        com.sw.ck.bpm.process.dto.StartCommand cmd = new com.sw.ck.bpm.process.dto.StartCommand();
+        StartCommand cmd = new StartCommand();
         cmd.setFormKey("p62_node_g_unbound");
         cmd.setRecordId(recordV);
         cmd.setSubmitter(USER);
         cmd.setTenantId(TENANT);
-        Map<String, Object> payload = com.sw.ck.bpm.process.port.FlowStartPortImpl.buildPayload(cmd);
+        Map<String, Object> payload = FlowStartPortImpl.buildPayload(cmd);
         payload.put("processDefKey", null);
-        com.sw.ck.bpm.process.entity.BpmFormBinding binding = new com.sw.ck.bpm.process.entity.BpmFormBinding();
+        BpmFormBinding binding = new BpmFormBinding();
         // 无绑定表单：ProcessStartService.start 走合法 no-op；两次 handle 均完成且实例恒为零
         String first = asOperator(() -> flowHandler.handle(envelopeOf(payload)));
         String second = asOperator(() -> flowHandler.handle(envelopeOf(payload)));
@@ -357,15 +378,15 @@ class P62NodeLevelGuaranteePgTest {
         System.out.println("[P62-EV] g3.flow-handler both-completed instances=0 no-op-consistent=true");
     }
 
-    private com.sw.ck.bpm.process.queue.CommandEnvelope envelopeOf(Map<String, Object> payload) {
+    private CommandEnvelope envelopeOf(Map<String, Object> payload) {
         try {
-            com.sw.ck.bpm.process.queue.CommandEnvelope envelope = new com.sw.ck.bpm.process.queue.CommandEnvelope();
-            envelope.setCommandType(com.sw.ck.bpm.process.entity.CommandTypeEnum.FLOW_START);
-            envelope.setChannel(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL);
-            envelope.setCommandKey("FLOW_START:g3-" + java.util.UUID.randomUUID());
+            CommandEnvelope envelope = new CommandEnvelope();
+            envelope.setCommandType(CommandTypeEnum.FLOW_START);
+            envelope.setChannel(CommandChannelEnum.NORMAL);
+            envelope.setCommandKey("FLOW_START:g3-" + UUID.randomUUID());
             envelope.setTenantId(TENANT);
             envelope.setInitiatorId(USER);
-            envelope.setPayload(app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            envelope.setPayload(app.getBean(ObjectMapper.class)
                     .writeValueAsString(payload));
             return envelope;
         } catch (Exception e) {
@@ -375,7 +396,7 @@ class P62NodeLevelGuaranteePgTest {
 
     // ==================== 辅助 ====================
 
-    private java.util.Optional<CommandEnvelope> claimBatch(Long commandId) {
+    private Optional<CommandEnvelope> claimBatch(Long commandId) {
         List<CommandEnvelope> claimed = queue.claimDue(List.of(CommandChannelEnum.NORMAL), 100);
         return claimed.stream().filter(e -> e.getCommandId().equals(commandId)).findFirst();
     }
@@ -386,7 +407,7 @@ class P62NodeLevelGuaranteePgTest {
         long deadline = System.currentTimeMillis() + 60_000L;
         while (System.currentTimeMillis() < deadline) {
             BpmCommandBatchItem item = asOperator(() -> itemMapper.selectOne(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmCommandBatchItem>lambdaQuery()
+                    Wrappers.<BpmCommandBatchItem>lambdaQuery()
                             .eq(BpmCommandBatchItem::getBatchId, batchId)
                             .eq(BpmCommandBatchItem::getItemKey, itemKey)));
             if (item != null && !"PENDING".equals(item.getStatus())) {
@@ -404,7 +425,7 @@ class P62NodeLevelGuaranteePgTest {
 
     private Long batchIdOf(String batchKey) {
         BpmCommandBatch batch = asOperator(() -> batchMapper.selectOne(
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmCommandBatch>lambdaQuery()
+                Wrappers.<BpmCommandBatch>lambdaQuery()
                         .eq(BpmCommandBatch::getBatchKey, batchKey)));
         return batch.getId();
     }
@@ -418,7 +439,7 @@ class P62NodeLevelGuaranteePgTest {
                 return String.valueOf(rows.get(0).get("process_instance_id"));
             }
             // 触发实例状态对账（async 竞态的业务行收敛，不依赖调度时序）
-            asOperator(() -> app.getBean(com.sw.ck.bpm.process.job.BpmInstanceStateSyncJob.class).sweepOnce());
+            asOperator(() -> app.getBean(BpmInstanceStateSyncJob.class).sweepOnce());
             try {
                 Thread.sleep(300);
             } catch (InterruptedException e) {
@@ -436,7 +457,7 @@ class P62NodeLevelGuaranteePgTest {
             ProcessGraph graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name(name).formKey(formKey).version(1)
                     .elements(elements).build();
-            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            String json = app.getBean(ObjectMapper.class)
                     .writeValueAsString(graph);
             svc.saveDraftGraph(def.getId(), json);
             svc.publish(def.getId());
@@ -548,9 +569,9 @@ class P62NodeLevelGuaranteePgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);

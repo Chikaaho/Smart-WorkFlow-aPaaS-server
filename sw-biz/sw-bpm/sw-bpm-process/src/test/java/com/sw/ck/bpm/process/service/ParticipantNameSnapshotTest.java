@@ -4,6 +4,7 @@ import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
 import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
 import com.sw.ck.bpm.process.service.impl.ParticipantSnapshotRecorderImpl;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +14,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -65,7 +68,7 @@ class ParticipantNameSnapshotTest {
         frozen.setParticipantName("冻结名");
         frozen.setParticipantStatus("HANDLED");
         when(snapshotMapper.selectList(any())).thenReturn(List.of(frozen));
-        when(userQueryFacade.getUserDisplayNames(java.util.Set.of(102L))).thenReturn(java.util.Optional.of(Map.of(102L, "实时名")));
+        when(userQueryFacade.getUserDisplayNames(Set.of(102L))).thenReturn(Optional.of(Map.of(102L, "实时名")));
 
         ParticipantNameService service = new ParticipantNameService(snapshotMapper, userQueryFacade);
         Map<Long, String> names = service.resolveDisplayNames("pi-1", List.of(101L, 102L));
@@ -77,7 +80,7 @@ class ParticipantNameSnapshotTest {
     @DisplayName("快照查询异常时整批回落实时查询，不阻断调用方")
     void participantNameService_shouldDegradeOnSnapshotFailure() {
         when(snapshotMapper.selectList(any())).thenThrow(new RuntimeException("db down"));
-        when(userQueryFacade.getUserDisplayNames(java.util.Set.of(101L))).thenReturn(java.util.Optional.of(Map.of(101L, "实时名")));
+        when(userQueryFacade.getUserDisplayNames(Set.of(101L))).thenReturn(Optional.of(Map.of(101L, "实时名")));
 
         ParticipantNameService service = new ParticipantNameService(snapshotMapper, userQueryFacade);
         Map<Long, String> names = service.resolveDisplayNames("pi-1", List.of(101L));

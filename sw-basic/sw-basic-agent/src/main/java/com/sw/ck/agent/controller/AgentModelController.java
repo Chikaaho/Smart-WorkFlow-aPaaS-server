@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentModelDTO;
 import com.sw.ck.agent.dto.AgentModelSaveReqDTO;
 import com.sw.ck.agent.dto.AgentModelTestConnectionRespDTO;
@@ -32,11 +34,8 @@ import java.util.List;
 @RequestMapping("/agent/models")
 public class AgentModelController {
 
-    private final AgentModelService agentModelService;
-
-    public AgentModelController(AgentModelService agentModelService) {
-        this.agentModelService = agentModelService;
-    }
+    @Autowired
+    private AgentModelService agentModelService;
 
     /** 分页查询（可按供应商过滤） */
     @GetMapping

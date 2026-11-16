@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
@@ -14,8 +16,6 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +25,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程交接实现（I4 §3.6）。
  * <p>
@@ -34,27 +35,19 @@ import java.util.Set;
  * </p>
  */
 @Service
+@Log4j2
 public class BpmHandoverServiceImpl implements BpmHandoverService {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmHandoverServiceImpl.class);
-
-    private final BpmHandoverMapper handoverMapper;
-    private final BpmHandoverItemMapper itemMapper;
-    private final BpmAuthorizeRuleMapper authorizeRuleMapper;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final UserQueryFacade userQueryFacade;
-
-    public BpmHandoverServiceImpl(BpmHandoverMapper handoverMapper,
-                                  BpmHandoverItemMapper itemMapper,
-                                  BpmAuthorizeRuleMapper authorizeRuleMapper,
-                                  BpmTaskFacade bpmTaskFacade,
-                                  UserQueryFacade userQueryFacade) {
-        this.handoverMapper = handoverMapper;
-        this.itemMapper = itemMapper;
-        this.authorizeRuleMapper = authorizeRuleMapper;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private BpmHandoverMapper handoverMapper;
+    @Autowired
+    private BpmHandoverItemMapper itemMapper;
+    @Autowired
+    private BpmAuthorizeRuleMapper authorizeRuleMapper;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     @Override
     @Transactional

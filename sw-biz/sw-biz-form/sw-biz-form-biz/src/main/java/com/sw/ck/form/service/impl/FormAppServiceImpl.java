@@ -1,7 +1,10 @@
 package com.sw.ck.form.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.dto.FormAppContentDTO;
@@ -28,8 +31,7 @@ import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,14 +41,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 业务应用服务实现（应用中心与表单分类统一）。
  */
 @Service
+@Log4j2
 public class FormAppServiceImpl implements FormAppService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormAppServiceImpl.class);
 
     private static final String SCOPE_ALL = "ALL";
     private static final String SCOPE_SPECIFIED = "SPECIFIED";
@@ -56,32 +59,22 @@ public class FormAppServiceImpl implements FormAppService {
     private static final String FORM_STATUS_PUBLISHED = "PUBLISHED";
     private static final String SOURCE_MANUAL = "MANUAL";
 
-    private final FormAppMapper appMapper;
-    private final FormAppDirMapper dirMapper;
-    private final FormAppScopeMapper appScopeMapper;
-    private final FormAppScopeMatcher scopeMatcher;
-    private final FormDefMapper formDefMapper;
-    private final FormDefService formDefService;
-    private final FormAppMembershipValidator membershipValidator;
-    private final FormIdGenerator idGenerator;
-
-    public FormAppServiceImpl(FormAppMapper appMapper,
-                              FormAppDirMapper dirMapper,
-                              FormAppScopeMapper appScopeMapper,
-                              FormDefMapper formDefMapper,
-                              FormDefService formDefService,
-                              FormAppMembershipValidator membershipValidator,
-                              FormAppScopeMatcher scopeMatcher,
-                              FormIdGenerator idGenerator) {
-        this.appMapper = appMapper;
-        this.dirMapper = dirMapper;
-        this.appScopeMapper = appScopeMapper;
-        this.formDefMapper = formDefMapper;
-        this.formDefService = formDefService;
-        this.membershipValidator = membershipValidator;
-        this.scopeMatcher = scopeMatcher;
-        this.idGenerator = idGenerator;
-    }
+    @Autowired
+    private FormAppMapper appMapper;
+    @Autowired
+    private FormAppDirMapper dirMapper;
+    @Autowired
+    private FormAppScopeMapper appScopeMapper;
+    @Autowired
+    private FormAppScopeMatcher scopeMatcher;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormAppMembershipValidator membershipValidator;
+    @Autowired
+    private FormIdGenerator idGenerator;
 
     // ==================== 管理端 ====================
 
@@ -631,7 +624,7 @@ public class FormAppServiceImpl implements FormAppService {
                 .build();
     }
 
-    private static java.util.stream.Stream<String> scopeRowsOf(List<FormAppScopeEntity> rows,
+    private static Stream<String> scopeRowsOf(List<FormAppScopeEntity> rows,
                                                                String scopeType) {
         return rows.stream()
                 .filter(row -> scopeType.equals(row.getScopeType()))

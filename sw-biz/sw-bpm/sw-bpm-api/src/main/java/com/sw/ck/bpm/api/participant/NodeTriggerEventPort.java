@@ -1,5 +1,8 @@
 package com.sw.ck.bpm.api.participant;
 
+import java.util.Optional;
+
+
 /**
  * BF20261013-022：节点/流程生命周期触发事件端口（engine → process 回调）。
  * <p>
@@ -22,7 +25,7 @@ public interface NodeTriggerEventPort {
      * @param nodeKey           节点 key（任务 definition key）
      * @return 本次实际评估的触发器数量（含幂等去重跳过）；实例不可达时 empty
      */
-    java.util.Optional<Long> onNodeEntering(String processInstanceId, String nodeKey);
+    Optional<Long> onNodeEntering(String processInstanceId, String nodeKey);
 
     /**
      * 流程发起（BF20261013-022⑥「流程发起」触发器）：实例创建成功后评估。
@@ -30,5 +33,5 @@ public interface NodeTriggerEventPort {
      * @param processInstanceId 流程实例 ID
      * @return 本次实际评估的触发器数量（含幂等去重跳过）；实例不可达时 empty
      */
-    java.util.Optional<Long> onProcessStarted(String processInstanceId);
+    Optional<Long> onProcessStarted(String processInstanceId);
 }

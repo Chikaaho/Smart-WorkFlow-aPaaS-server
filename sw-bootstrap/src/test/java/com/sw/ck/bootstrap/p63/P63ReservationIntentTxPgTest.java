@@ -21,20 +21,42 @@ import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.iot.job.IotReservationDispatchJob;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.flowable.engine.TaskService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import com.sw.ck.bpm.process.listener.BpmIotReservationIntentRecorder;
-import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.jdbc.core.JdbcTemplate;
 
+import com.sw.ck.bpm.process.listener.BpmIotReservationIntentRecorder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -78,7 +100,7 @@ class P63ReservationIntentTxPgTest {
     void setUp() throws Exception {
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -88,24 +110,24 @@ class P63ReservationIntentTxPgTest {
         props.put("sw.security.jwt.secret", "p63-intent-tx-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p63-intent-tx-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         // IoT 启用但不含 loopback provider：调度失败路径由设备失效触发，不依赖传输对端
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.receipt.secret", "p63-intent-tx-receipt-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p63-intent-tx", props));
+                            new MapPropertySource("p63-intent-tx", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63IntentTxLoginContextProvider", provider);
                 })
                 .run();
@@ -169,10 +191,10 @@ class P63ReservationIntentTxPgTest {
     @DisplayName("重放 PROCESS_APPROVED 事件只产生一个意图；表单批准时刻=冻结预约时刻（精确到秒）")
     void replayKeepsSingleIntentAndFrozenTime() {
         // 动态未来时刻（原硬编码日期跨天后会正确地被判 EXPIRED——那是过期语义而非缺陷）
-        java.time.LocalDateTime dueLocal = java.time.LocalDateTime
-                .now(java.time.ZoneId.of("Asia/Shanghai")).plusHours(2)
-                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
-        String dueText = dueLocal.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        LocalDateTime dueLocal = LocalDateTime
+                .now(ZoneId.of("Asia/Shanghai")).plusHours(2)
+                .truncatedTo(ChronoUnit.SECONDS);
+        String dueText = dueLocal.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         String recordId = asUser(INITIATOR, () -> submitService.submitForm(FORM_KEY,
                 data("topic", "意图重放验收", "plan_time", dueText),
                 null, null, null));
@@ -191,9 +213,9 @@ class P63ReservationIntentTxPgTest {
 
         // 真实重放：按命令消费同口径（消费身份回查 + 消费事务内）以同身份事件再触发一次
         asUser(APPROVER, () -> {
-            org.springframework.transaction.support.TransactionTemplate tx =
-                    new org.springframework.transaction.support.TransactionTemplate(
-                            app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+            TransactionTemplate tx =
+                    new TransactionTemplate(
+                            app.getBean(PlatformTransactionManager.class));
             tx.executeWithoutResult(status -> intentRecorder.onProcessApproved(
                     new BpmNotifyEvent(BpmNotifyTrigger.PROCESS_APPROVED,
                             INITIATOR, TENANT, APPROVER, processInstanceId)));
@@ -208,9 +230,9 @@ class P63ReservationIntentTxPgTest {
         assertThat(count).as("重放不产生第二条意图").isEqualTo(1);
         assertThat(((Number) after.get("id")).longValue()).as("意图身份复用不变").isEqualTo(intentId);
         // 表单批准时刻=冻结预约时刻：due_local(Asia/Shanghai) 的 UTC 转换精确一致
-        String dueUtcExpected = java.time.LocalDateTime.ofInstant(
-                dueLocal.atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant(),
-                java.time.ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        String dueUtcExpected = LocalDateTime.ofInstant(
+                dueLocal.atZone(ZoneId.of("Asia/Shanghai")).toInstant(),
+                ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         Object dueUtc = after.get("due_at_utc");
         assertThat(String.valueOf(dueUtc)).as("冻结预约时刻与表单批准时刻精确一致")
                 .startsWith(dueUtcExpected);
@@ -241,7 +263,7 @@ class P63ReservationIntentTxPgTest {
 
         String instanceStatus = jdbc.queryForObject(
                 "SELECT status FROM sw_bpm_instance WHERE business_key = ?", String.class, recordId);
-        int tasksLeft = app.getBean(org.flowable.engine.TaskService.class)
+        int tasksLeft = app.getBean(TaskService.class)
                 .createTaskQuery().processInstanceId(processInstanceId).list().size();
         int intents = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sw_iot_command_reservation WHERE process_instance_id = ?",
@@ -287,7 +309,7 @@ class P63ReservationIntentTxPgTest {
         publishApprovalProcessWithTz("Asia/Shanghai");
         String recordId = asUser(INITIATOR, () -> submitService.submitForm(FORM_KEY,
                 data("topic", "提交后失败验收", "plan_time",
-                        futureDueText(java.time.Duration.ofSeconds(3))),
+                        futureDueText(Duration.ofSeconds(3))),
                 null, null, null));
         String processInstanceId = awaitInstanceStarted(recordId);
         String taskId = awaitTask(processInstanceId);
@@ -383,11 +405,11 @@ class P63ReservationIntentTxPgTest {
                 + "\",\"lateWindowSeconds\":60}}";
     }
 
-    private String futureDueText(java.time.Duration ahead) {
+    private String futureDueText(Duration ahead) {
         // 与提交侧同口径：YYYY-MM-DD HH:mm:ss（Asia/Shanghai 语义，由 recorder 冻结为 UTC）
-        java.time.LocalDateTime due = java.time.LocalDateTime
-                .now(java.time.ZoneId.of("Asia/Shanghai")).plus(ahead);
-        return due.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        LocalDateTime due = LocalDateTime
+                .now(ZoneId.of("Asia/Shanghai")).plus(ahead);
+        return due.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
     private String awaitInstanceStarted(String recordId) {
@@ -404,7 +426,7 @@ class P63ReservationIntentTxPgTest {
     }
 
     private String awaitTask(String processInstanceId) {
-        org.flowable.engine.TaskService taskService = app.getBean(org.flowable.engine.TaskService.class);
+        TaskService taskService = app.getBean(TaskService.class);
         long deadline = System.currentTimeMillis() + 60_000L;
         while (System.currentTimeMillis() < deadline) {
             var task = taskService.createTaskQuery().processInstanceId(processInstanceId).singleResult();
@@ -470,7 +492,7 @@ class P63ReservationIntentTxPgTest {
     }
 
     private Map<String, Object> data(String... kv) {
-        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) {
             m.put(kv[i], kv[i + 1]);
         }
@@ -479,7 +501,7 @@ class P63ReservationIntentTxPgTest {
 
     private String toJson(Object obj) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj);
+            return new ObjectMapper().writeValueAsString(obj);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -517,10 +539,10 @@ class P63ReservationIntentTxPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
             gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
+            KeyPair pair = gen.generateKeyPair();
+            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

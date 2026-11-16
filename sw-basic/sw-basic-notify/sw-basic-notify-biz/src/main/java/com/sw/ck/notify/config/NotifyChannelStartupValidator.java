@@ -1,7 +1,5 @@
 package com.sw.ck.notify.config;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,6 +7,7 @@ import org.springframework.context.annotation.Configuration;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 渠道配置启动校验（I6 fail-fast）。
  * <p>系统级启用（enabled=true）的渠道若缺必需配置或仍为占位值，
@@ -16,9 +15,8 @@ import java.util.Map;
  */
 @Configuration
 @EnableConfigurationProperties(NotifyChannelProperties.class)
+@Log4j2
 public class NotifyChannelStartupValidator {
-
-    private static final Logger log = LoggerFactory.getLogger(NotifyChannelStartupValidator.class);
 
     private static final List<String> PLACEHOLDERS = List.of(
             "change-me", "changeme", "your-", "your_", "xxx", "todo", "placeholder", "example");

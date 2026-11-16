@@ -1,6 +1,5 @@
 package com.sw.ck.bpm.engine.translator;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -15,7 +14,6 @@ import java.util.Optional;
 /** 通知节点：统一参与人/模板/渠道配置，经 NotifyFacade 发送。 */
 @Component
 public class NotificationNodeTranslator extends ServiceTaskNodeTranslator {
-    public NotificationNodeTranslator(ObjectMapper objectMapper) { super(objectMapper); }
     @Override public Optional<String> type() { return Optional.of("NOTIFICATION"); }
     @Override protected String delegateBean() { return "notificationNodeDelegate"; }
     @Override protected String nodeName() { return "通知"; }

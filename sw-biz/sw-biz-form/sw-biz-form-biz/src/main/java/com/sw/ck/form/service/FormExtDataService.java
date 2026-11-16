@@ -1,8 +1,11 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.ExtQueryResult;
 import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
@@ -18,13 +21,15 @@ import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormExtQueryMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
+import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 受控外部数据源表单链路服务（I2，方向 §4.3）。
  *
@@ -46,33 +51,23 @@ import java.util.*;
  * </ul>
  */
 @Service
+@Log4j2
 public class FormExtDataService {
 
-    private static final Logger log = LoggerFactory.getLogger(FormExtDataService.class);
-
-    private final FormExtQueryMapper extQueryMapper;
-    private final ObjectProvider<ExtDatasourceQueryPort> queryPort;
-    private final ObjectProvider<ExtDatasourceGrantPort> grantPort;
-    private final FormDefMapper formDefMapper;
-    private final FormConfigMapper formConfigMapper;
-    private final FieldPermissionService fieldPermissionService;
-    private final ObjectMapper objectMapper;
-
-    public FormExtDataService(FormExtQueryMapper extQueryMapper,
-                              ObjectProvider<ExtDatasourceQueryPort> queryPort,
-                              ObjectProvider<ExtDatasourceGrantPort> grantPort,
-                              FormDefMapper formDefMapper,
-                              FormConfigMapper formConfigMapper,
-                              FieldPermissionService fieldPermissionService,
-                              ObjectMapper objectMapper) {
-        this.extQueryMapper = extQueryMapper;
-        this.queryPort = queryPort;
-        this.grantPort = grantPort;
-        this.formDefMapper = formDefMapper;
-        this.formConfigMapper = formConfigMapper;
-        this.fieldPermissionService = fieldPermissionService;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormExtQueryMapper extQueryMapper;
+    @Autowired
+    private ObjectProvider<ExtDatasourceQueryPort> queryPort;
+    @Autowired
+    private ObjectProvider<ExtDatasourceGrantPort> grantPort;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private FieldPermissionService fieldPermissionService;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 契约注册表 ====================
 
@@ -112,7 +107,7 @@ public class FormExtDataService {
         entity.setSqlText(sqlText.trim());
         entity.setOutputFields(outputJson);
         entity.setEnabled(1);
-        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now();
         entity.setCreateTime(now);
         entity.setUpdateTime(now);
         entity.setTenantId(currentTenantId());
@@ -158,7 +153,7 @@ public class FormExtDataService {
                         .orderByAsc(FormExtQueryEntity::getQueryKey)
                         .orderByDesc(FormExtQueryEntity::getQueryVersion));
         Set<Long> allowed = grantPort.getIfAvailable().referenceAllowedDatasourceIds()
-                .orElseGet(java.util.Set::of);
+                .orElseGet(Set::of);
         Map<String, FormExtQueryEntity> latestByKey = new LinkedHashMap<>();
         for (FormExtQueryEntity row : rows) {
             latestByKey.putIfAbsent(row.getQueryKey(), row);

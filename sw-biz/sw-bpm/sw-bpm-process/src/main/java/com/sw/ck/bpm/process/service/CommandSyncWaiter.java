@@ -1,12 +1,13 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.process.entity.BpmCommand;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * P0 同步等待器：受理后对单次命令做有界等待。
  * <p>
@@ -21,23 +22,19 @@ import org.springframework.stereotype.Component;
  * </p>
  */
 @Component
+@Log4j2
 public class CommandSyncWaiter {
 
-    private static final Logger log = LoggerFactory.getLogger(CommandSyncWaiter.class);
-
-    private final BpmCommandService commandService;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private BpmCommandService commandService;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Value("${sw.bpm.command.p0-wait-timeout-millis:5000}")
     private long timeoutMillis;
 
     @Value("${sw.bpm.command.p0-wait-poll-millis:100}")
     private long pollMillis;
-
-    public CommandSyncWaiter(BpmCommandService commandService, ObjectMapper objectMapper) {
-        this.commandService = commandService;
-        this.objectMapper = objectMapper;
-    }
 
     public enum Outcome { COMPLETED, FAILED, TIMEOUT }
 

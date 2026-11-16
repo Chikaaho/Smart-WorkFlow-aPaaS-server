@@ -1,5 +1,7 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.notify.api.NotifyBizType;
 import com.sw.ck.notify.api.NotifyChannel;
@@ -25,17 +27,12 @@ import org.springframework.web.bind.annotation.RestController;
 @Profile("dev")
 public class P58DebugNotifyController {
 
-    private final NotifyFacade notifyFacade;
-    private final ObjectProvider<NotifyTargetResolver> targetResolver;
-    private final JdbcTemplate jdbcTemplate;
-
-    public P58DebugNotifyController(NotifyFacade notifyFacade,
-                                    ObjectProvider<NotifyTargetResolver> targetResolver,
-                                    JdbcTemplate jdbcTemplate) {
-        this.notifyFacade = notifyFacade;
-        this.targetResolver = targetResolver;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private ObjectProvider<NotifyTargetResolver> targetResolver;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @PostMapping("/send")
     public R<NotifySendResult> send(@RequestBody Request request) {

@@ -7,6 +7,7 @@ import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.bpm.engine.translator.NodeTypeTranslator;
+
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.ImplementationType;
 import org.flowable.bpmn.model.ServiceTask;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * P57 隔离验证节点，仅存在于测试夹具，不进入正式业务节点目录。
@@ -30,13 +32,13 @@ public class P57IsolatedVerificationNode implements NodeTypeTranslator {
     public static final String DELEGATE_EXPRESSION = "${p57VerificationNodeDelegate}";
 
     @Override
-    public java.util.Optional<String> type() {
-        return java.util.Optional.of(TYPE);
+    public Optional<String> type() {
+        return Optional.of(TYPE);
     }
 
     @Override
-    public java.util.Optional<BpmNodeMetadata> metadata() {
-        return java.util.Optional.of(new BpmNodeMetadata(
+    public Optional<BpmNodeMetadata> metadata() {
+        return Optional.of(new BpmNodeMetadata(
                 "隔离验证",
                 "P57 隔离节点运行验证夹具",
                 "TASK",
@@ -52,16 +54,16 @@ public class P57IsolatedVerificationNode implements NodeTypeTranslator {
     }
 
     @Override
-    public java.util.Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
+    public Optional<List<GraphValidationError>> validateConfig(GraphElement node) {
         Object message = node.getConfig() == null ? null : node.getConfig().get("message");
         if (message == null || message.toString().isBlank()) {
-            return java.util.Optional.of(List.of(GraphValidationError.builder()
+            return Optional.of(List.of(GraphValidationError.builder()
                     .elementId(node.getId())
                     .errorCode(2106)
                     .message("隔离验证节点缺少 message 配置")
                     .build()));
         }
-        return java.util.Optional.of(List.of());
+        return Optional.of(List.of());
     }
 
     @Override

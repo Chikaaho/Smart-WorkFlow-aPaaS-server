@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
+import com.sw.ck.bpm.process.dto.PendingSignDTO;
 import com.sw.ck.bpm.process.entity.BpmSignRecord;
 import com.sw.ck.bpm.process.mapper.BpmSignRecordMapper;
 import com.sw.ck.bpm.process.service.ApprovalLifecycleService;
@@ -21,7 +22,6 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -64,12 +64,13 @@ class BpmLifecycleControllerSignTest {
         task.setProcessDefinitionKey("leave");
         when(taskFacade.getTask("task-1")).thenReturn(Optional.of(task));
 
-        List<Map<String, Object>> result = controller.pendingSigns().getData();
+        List<PendingSignDTO> result = controller.pendingSigns().getData();
         assertThat(result).hasSize(2);
-        assertThat(result.get(0)).containsEntry("signPosition", "AFTER")
-                .containsEntry("serialBlocked", false).containsEntry("taskName", "部门审批");
-        assertThat(result.get(1)).containsEntry("signPosition", "AFTER")
-                .containsEntry("serialBlocked", true);
+        assertThat(result.get(0).getSignPosition()).isEqualTo("AFTER");
+        assertThat(result.get(0).isSerialBlocked()).isFalse();
+        assertThat(result.get(0).getTaskName()).isEqualTo("部门审批");
+        assertThat(result.get(1).getSignPosition()).isEqualTo("AFTER");
+        assertThat(result.get(1).isSerialBlocked()).isTrue();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<BpmSignRecord>> queryCaptor = ArgumentCaptor.forClass(Wrapper.class);

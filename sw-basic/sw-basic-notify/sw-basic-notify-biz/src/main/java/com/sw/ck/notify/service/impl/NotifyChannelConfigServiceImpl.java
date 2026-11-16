@@ -12,8 +12,7 @@ import com.sw.ck.notify.dto.NotifyChannelStatusDTO;
 import com.sw.ck.notify.entity.NotifyChannelConfig;
 import com.sw.ck.notify.mapper.NotifyChannelConfigMapper;
 import com.sw.ck.notify.service.NotifyChannelConfigService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -26,29 +25,23 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /** 租户级渠道启停服务实现（I6；0.2.4 追加渠道凭据密文入库）。 */
 @Service
+@Log4j2
 public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigService {
-
-    private static final Logger log = LoggerFactory.getLogger(NotifyChannelConfigServiceImpl.class);
 
     private static final ObjectMapper JSON_OBJECT_MAPPER = new ObjectMapper();
 
     /** 系统级已装配适配器（未装配=生产无投递能力，租户不可启用）。 */
-    private final List<NotifyChannelAdapter> adapters;
-    private final NotifyChannelConfigMapper configMapper;
+    @Autowired
+    private List<NotifyChannelAdapter> adapters;
+    @Autowired
+    private NotifyChannelConfigMapper configMapper;
 
     /** 渠道凭据加密主键：优先独立键，缺省复用 SW_CIPHER_KEY（与模型 Key 同口径）。 */
-    private final String cipherKey;
-
-    public NotifyChannelConfigServiceImpl(List<NotifyChannelAdapter> adapters,
-                                          NotifyChannelConfigMapper configMapper,
-                                          @Value("${sw.notify.channel.cipher-key:${SW_CIPHER_KEY:}}")
-                                          String cipherKey) {
-        this.adapters = adapters;
-        this.configMapper = configMapper;
-        this.cipherKey = cipherKey;
-    }
+    @Value("${sw.notify.channel.cipher-key:${SW_CIPHER_KEY:}}")
+    private String cipherKey;
 
     @Override
     public List<NotifyChannelStatusDTO> listChannelStatus() {

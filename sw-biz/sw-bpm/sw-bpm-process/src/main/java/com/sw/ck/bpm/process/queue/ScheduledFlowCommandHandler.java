@@ -1,19 +1,23 @@
 package com.sw.ck.bpm.process.queue;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.port.ScheduledFlowStartPortImpl;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.ProcessStartService;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 定时任务流程发起命令处理器（Phase 4：可靠业务事件 —— Scheduled FLOW）。
  *
@@ -28,28 +32,21 @@ import java.util.Map;
  * </ol>
  */
 @Component
+@Log4j2
 public class ScheduledFlowCommandHandler implements BpmCommandHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(ScheduledFlowCommandHandler.class);
-
-    private final ProcessStartService processStartService;
-    private final BpmInstanceService bpmInstanceService;
-    private final ObjectMapper objectMapper;
-    private final ObjectProvider<FormDataSubmitFacade> formDataSubmitFacade;
-
-    public ScheduledFlowCommandHandler(ProcessStartService processStartService,
-                                       BpmInstanceService bpmInstanceService,
-                                       ObjectMapper objectMapper,
-                                       ObjectProvider<FormDataSubmitFacade> formDataSubmitFacade) {
-        this.processStartService = processStartService;
-        this.bpmInstanceService = bpmInstanceService;
-        this.objectMapper = objectMapper;
-        this.formDataSubmitFacade = formDataSubmitFacade;
-    }
+    @Autowired
+    private ProcessStartService processStartService;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private ObjectProvider<FormDataSubmitFacade> formDataSubmitFacade;
 
     @Override
-    public java.util.Set<CommandTypeEnum> types() {
-        return java.util.Set.of(CommandTypeEnum.SCHEDULED_FLOW_START);
+    public Set<CommandTypeEnum> types() {
+        return Set.of(CommandTypeEnum.SCHEDULED_FLOW_START);
     }
 
     @Override

@@ -1,8 +1,11 @@
 package com.sw.ck.form.txn.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.entity.FormIdGenerator;
@@ -20,11 +23,11 @@ import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.model.TxnInvokeResult;
 import com.sw.ck.form.txn.model.TxnLedgerView;
 import com.sw.ck.form.txn.model.TxnReservationView;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -33,38 +36,29 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 事务动作执行器（编排层，无事务）：
  * 幂等判重（同键同指纹重放 / 同键不同指纹冲突）→ 事务内核执行 → 业务拒绝独立事务记录。
  */
 @Service
+@Log4j2
 public class TxnActionExecutor {
 
-    private static final Logger log = LoggerFactory.getLogger(TxnActionExecutor.class);
-
-    private final TxnActionService actionService;
-    private final TxnActionTxOperations txOps;
-    private final TxnInvocationMapper invocationMapper;
-    private final TxnReservationMapper reservationMapper;
-    private final TxnLedgerMapper ledgerMapper;
-    private final FormIdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
-
-    public TxnActionExecutor(TxnActionService actionService,
-                             TxnActionTxOperations txOps,
-                             TxnInvocationMapper invocationMapper,
-                             TxnReservationMapper reservationMapper,
-                             TxnLedgerMapper ledgerMapper,
-                             FormIdGenerator idGenerator,
-                             ObjectMapper objectMapper) {
-        this.actionService = actionService;
-        this.txOps = txOps;
-        this.invocationMapper = invocationMapper;
-        this.reservationMapper = reservationMapper;
-        this.ledgerMapper = ledgerMapper;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private TxnActionService actionService;
+    @Autowired
+    private TxnActionTxOperations txOps;
+    @Autowired
+    private TxnInvocationMapper invocationMapper;
+    @Autowired
+    private TxnReservationMapper reservationMapper;
+    @Autowired
+    private TxnLedgerMapper ledgerMapper;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 调用入口 ====================
 
@@ -229,9 +223,9 @@ public class TxnActionExecutor {
                     "相同调用标识已存在且请求内容不同，已拒绝（原结果可凭该标识回查）");
         }
         String reservationId = null;
-        java.math.BigDecimal quantity = null;
-        java.math.BigDecimal balanceAfter = null;
-        java.math.BigDecimal reservedAfter = null;
+        BigDecimal quantity = null;
+        BigDecimal balanceAfter = null;
+        BigDecimal reservedAfter = null;
         if (existing.getResultJson() != null && !existing.getResultJson().isBlank()) {
             try {
                 Map<?, ?> map = objectMapper.readValue(existing.getResultJson(), Map.class);
@@ -249,12 +243,12 @@ public class TxnActionExecutor {
                 existing.getErrorCode(), existing.getErrorMsg(), existing.getDurationMs(), true);
     }
 
-    private java.math.BigDecimal decimalOrNull(Object value) {
+    private BigDecimal decimalOrNull(Object value) {
         if (value == null) {
             return null;
         }
         try {
-            return new java.math.BigDecimal(String.valueOf(value));
+            return new BigDecimal(String.valueOf(value));
         } catch (NumberFormatException e) {
             return null;
         }

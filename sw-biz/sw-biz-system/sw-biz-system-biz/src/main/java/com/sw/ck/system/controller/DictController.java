@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -25,17 +27,12 @@ import java.util.Optional;
 @RequestMapping("/system/dict")
 public class DictController {
 
-    private final SysDictTypeService sysDictTypeService;
-    private final SysDictDataService sysDictDataService;
-    private final DictFacade dictFacade;
-
-    public DictController(SysDictTypeService sysDictTypeService,
-                          SysDictDataService sysDictDataService,
-                          DictFacade dictFacade) {
-        this.sysDictTypeService = sysDictTypeService;
-        this.sysDictDataService = sysDictDataService;
-        this.dictFacade = dictFacade;
-    }
+    @Autowired
+    private SysDictTypeService sysDictTypeService;
+    @Autowired
+    private SysDictDataService sysDictDataService;
+    @Autowired
+    private DictFacade dictFacade;
 
     // ========== 字典类型 ==========
 

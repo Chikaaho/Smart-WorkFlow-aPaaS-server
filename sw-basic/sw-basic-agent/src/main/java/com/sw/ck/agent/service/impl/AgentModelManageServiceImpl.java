@@ -1,8 +1,11 @@
 package com.sw.ck.agent.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.agent.dto.AgentModelDTO;
 import com.sw.ck.agent.dto.AgentModelSaveReqDTO;
 import com.sw.ck.agent.dto.AgentModelTestConnectionRespDTO;
@@ -17,6 +20,7 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.service.BaseServiceImpl;
+
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.exception.HttpException;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -25,6 +29,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
@@ -42,14 +47,10 @@ public class AgentModelManageServiceImpl
         extends BaseServiceImpl<AgentModelMapper, AgentModel>
         implements AgentModelService {
 
-    private final AgentProviderMapper providerMapper;
-    private final AgentModelRuntimeService modelRuntimeService;
-
-    public AgentModelManageServiceImpl(AgentProviderMapper providerMapper,
-                                       AgentModelRuntimeService modelRuntimeService) {
-        this.providerMapper = providerMapper;
-        this.modelRuntimeService = modelRuntimeService;
-    }
+    @Autowired
+    private AgentProviderMapper providerMapper;
+    @Autowired
+    private AgentModelRuntimeService modelRuntimeService;
 
     @Override
     public PageResult<AgentModelDTO> pageModels(PageParam pageParam, Long providerId, String nameKeyword) {
@@ -167,8 +168,8 @@ public class AgentModelManageServiceImpl
             if (cur instanceof TimeoutException) {
                 return "请求超时：请检查地址与超时配置";
             }
-            if (cur instanceof java.io.IOException
-                    || cur.getCause() instanceof java.io.IOException) {
+            if (cur instanceof IOException
+                    || cur.getCause() instanceof IOException) {
                 return "网络不可达：请检查服务地址";
             }
             cur = cur.getCause();

@@ -6,41 +6,37 @@ import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.engine.RuntimeService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.flowable.task.service.delegate.DelegateTask;
 import org.flowable.task.service.delegate.TaskListener;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 动态并行分支任务监听器（I4 §3.1）：分支创建冻结快照、完成记票并回写分支动作。
  * 计数权威复用 I3 会签唯一键端口（ConsensusVotePort），保证并发/重复请求只结算一次。
  */
 @Component("dynamicBranchTaskListener")
+@Log4j2
 public class DynamicBranchTaskListener implements TaskListener {
-    private static final Logger log = LoggerFactory.getLogger(DynamicBranchTaskListener.class);
     private static final ConcurrentMap<String, Object> LOCKS = new ConcurrentHashMap<>();
-    private final RuntimeService runtimeService;
-    private final ParticipantSnapshotRecorder snapshotRecorder;
-    private final ObjectProvider<ConsensusVotePort> votePortProvider;
-    private final ObjectProvider<DynamicBranchPort> branchPortProvider;
-
-    @Autowired
-    public DynamicBranchTaskListener(RuntimeService runtimeService,
-                                     ObjectProvider<ParticipantSnapshotRecorder> recorder,
-                                     ObjectProvider<ConsensusVotePort> votePortProvider,
-                                     ObjectProvider<DynamicBranchPort> branchPortProvider) {
-        this.runtimeService = runtimeService;
-        this.snapshotRecorder = recorder.getIfAvailable();
-        this.votePortProvider = votePortProvider;
-        this.branchPortProvider = branchPortProvider;
-    }
+    @Autowired(required = false)
+    private RuntimeService runtimeService;
+    @Autowired(required = false)
+    private ParticipantSnapshotRecorder snapshotRecorder;
+    @Autowired(required = false)
+    private ObjectProvider<ConsensusVotePort> votePortProvider;
+    @Autowired(required = false)
+    private ObjectProvider<DynamicBranchPort> branchPortProvider;
 
     @Override
     public void notify(DelegateTask task) {
@@ -50,8 +46,8 @@ public class DynamicBranchTaskListener implements TaskListener {
         if ("create".equals(task.getEventName())) {
             if (snapshotRecorder != null && leaderId != null) {
                 snapshotRecorder.record(task.getProcessInstanceId(), task.getTaskDefinitionKey(),
-                        task.getId(), java.util.List.of(leaderId),
-                        java.util.Collections.emptyMap(), tenantOf(task))
+                        task.getId(), List.of(leaderId),
+                        Collections.emptyMap(), tenantOf(task))
                 .orElseThrow(() -> new IllegalStateException(
                         "ParticipantSnapshotRecorder#record 契约恒 present，empty 属契约违约"));
             }
@@ -73,7 +69,7 @@ public class DynamicBranchTaskListener implements TaskListener {
                 ConsensusVotePort votePort = votePortProvider == null ? null : votePortProvider.getIfAvailable();
                 if (votePort != null) {
                     // empty = 投票服务不可用：不得据此认为重复，按旧变量计数兜底
-                    java.util.Optional<Boolean> recorded = votePort.record(
+                    Optional<Boolean> recorded = votePort.record(
                             String.valueOf(task.getVariable("tenantId")),
                             task.getProcessInstanceId(), task.getTaskDefinitionKey(), task.getId(),
                             task.getAssignee() == null ? leaderId : task.getAssignee(), outcome);
@@ -103,7 +99,7 @@ public class DynamicBranchTaskListener implements TaskListener {
             throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_LEADER_MISSING.getCode(),
                     "动态分支记录端口不可用");
         }
-        java.util.Optional<MutationOutcome> recorded = port.recordAction(
+        Optional<MutationOutcome> recorded = port.recordAction(
                 String.valueOf(task.getVariable("tenantId")), task.getProcessInstanceId(),
                 task.getTaskDefinitionKey(), leaderId, task.getId(), action, reason);
         if (recorded.isEmpty()) {

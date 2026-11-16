@@ -1,13 +1,16 @@
 package com.sw.ck.system.mapper;
 
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
+
 import com.sw.ck.common.mapper.BaseMapperX;
 import com.sw.ck.system.entity.SysDept;
+
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 部门 Mapper。
@@ -24,5 +27,5 @@ public interface SysDeptMapper extends BaseMapperX<SysDept> {
             + "AND l.tenant_id = d.tenant_id "
             + "WHERE d.deleted = 0 AND d.status = 0 AND d.tenant_id = #{tenantId}")
     @InterceptorIgnore(tenantLine = "true")
-    List<java.util.Map<String, Object>> selectDeptDirectory(@Param("tenantId") Long tenantId);
+    List<Map<String, Object>> selectDeptDirectory(@Param("tenantId") Long tenantId);
 }

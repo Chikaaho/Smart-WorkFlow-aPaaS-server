@@ -1,6 +1,9 @@
 package com.sw.ck.bpm.process.service;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
@@ -12,19 +15,25 @@ import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmChildItem;
 import com.sw.ck.bpm.process.entity.BpmInstance;
+import com.sw.ck.bpm.process.entity.BpmTriggerExec;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildBatchMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildItemMapper;
 import com.sw.ck.bpm.process.mapper.BpmTriggerExecMapper;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
+
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,15 +58,15 @@ import static org.mockito.Mockito.when;
 @DisplayName("P64 CHILD 动作派发登记测试")
 class TriggerExecutionServiceChildDispatchTest {
 
-    @org.junit.jupiter.api.BeforeAll
+    @BeforeAll
     static void initTableInfo() {
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 BpmChildBatch.class);
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 BpmChildItem.class);
     }
 
@@ -186,8 +195,8 @@ class TriggerExecutionServiceChildDispatchTest {
         ArgumentCaptor<BpmActionRef> refCaptor = ArgumentCaptor.forClass(BpmActionRef.class);
         verify(actionRefMapper, times(2)).insert(refCaptor.capture());
         ObjectMapper mapper = new ObjectMapper();
-        List<List<String>> prefilledRowIds = new java.util.ArrayList<>();
-        List<List<Map<String, Object>>> prefilledRows = new java.util.ArrayList<>();
+        List<List<String>> prefilledRowIds = new ArrayList<>();
+        List<List<Map<String, Object>>> prefilledRows = new ArrayList<>();
         for (BpmActionRef ref : refCaptor.getAllValues()) {
             Map<String, Object> payload = mapper.readValue(ref.getPayloadJson(), Map.class);
             Map<String, Object> data = (Map<String, Object>) payload.get("data");
@@ -237,12 +246,12 @@ class TriggerExecutionServiceChildDispatchTest {
         verify(orchestration, never()).freezeBatch(any(), anyString(), any(), anyString(),
                 anyInt(), anyLong(), any(), anyLong());
         verify(actionRefMapper, never()).insert(any(BpmActionRef.class));
-        ArgumentCaptor<com.sw.ck.bpm.process.entity.BpmTriggerExec> execCaptor =
-                ArgumentCaptor.forClass(com.sw.ck.bpm.process.entity.BpmTriggerExec.class);
+        ArgumentCaptor<BpmTriggerExec> execCaptor =
+                ArgumentCaptor.forClass(BpmTriggerExec.class);
         verify(triggerExecMapper, atLeastOnce()).updateById(execCaptor.capture());
-        java.util.List<String> notes = execCaptor.getAllValues().stream()
-                .map(com.sw.ck.bpm.process.entity.BpmTriggerExec::getErrorText)
-                .filter(java.util.Objects::nonNull)
+        List<String> notes = execCaptor.getAllValues().stream()
+                .map(BpmTriggerExec::getErrorText)
+                .filter(Objects::nonNull)
                 .toList();
         assertThat(notes).anySatisfy(text -> {
             assertThat(text).contains("超过上限");

@@ -1,9 +1,12 @@
 package com.sw.ck.form.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.security.holder.DataScope;
 import com.sw.ck.security.holder.LoginUser;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -87,7 +90,7 @@ class FieldPermissionServiceTest {
                 Map.of("note", "ok", "salary", 100)))
                 .isInstanceOf(BaseException.class)
                 .satisfies(e -> assertThat(((BaseException) e).getCode())
-                        .isEqualTo(com.sw.ck.form.api.exception.FormErrorCode.FIELD_EDIT_DENIED.getCode()));
+                        .isEqualTo(FormErrorCode.FIELD_EDIT_DENIED.getCode()));
         // 不含受控字段 → 放行
         service.assertEditablePayload(emp, perms, Map.of("note", "ok"));
     }

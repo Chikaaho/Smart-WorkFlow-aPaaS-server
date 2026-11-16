@@ -1,8 +1,11 @@
 package com.sw.ck.bpm.engine.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.api.participant.ConsensusSettlementPort;
+import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.bpm.api.result.MutationOutcome;
@@ -13,12 +16,15 @@ import com.sw.ck.bpm.engine.listener.DynamicBranchTaskListener;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 import com.sw.ck.bpm.engine.resolver.DesignatedApproverResolver;
 import com.sw.ck.bpm.engine.translator.ApprovalUserTaskTranslator;
+import com.sw.ck.bpm.engine.translator.DynamicParallelNodeTranslator;
 import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
 import com.sw.ck.bpm.engine.translator.ParallelGatewayTranslator;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.flowable.bpmn.converter.BpmnXMLConverter;
 import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.common.engine.impl.el.DefaultExpressionManager;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
 import org.flowable.engine.ProcessEngines;
@@ -116,8 +122,8 @@ class P63ManualParallelFlowableTest {
                 return Optional.of(MutationOutcome.APPLIED);
             }
         };
-        com.sw.ck.bpm.api.participant.ConsensusVotePort votePort =
-                new com.sw.ck.bpm.api.participant.ConsensusVotePort() {
+        ConsensusVotePort votePort =
+                new ConsensusVotePort() {
                     @Override
                     public Optional<Boolean> record(String tenantId, String processInstanceId, String nodeKey,
                                                     String taskId, String actorId, String outcome) {
@@ -130,7 +136,7 @@ class P63ManualParallelFlowableTest {
                         return Optional.of(0L);
                     }
                 };
-        com.sw.ck.bpm.api.participant.ConsensusSettlementPort settlementPort =
+        ConsensusSettlementPort settlementPort =
                 (tenantId, processInstanceId, nodeKey, reason) -> Optional.of(MutationOutcome.APPLIED);
         ParticipantSnapshotRecorder snapshotRecorder = (processInstanceId, nodeKey, taskId,
                                                         participantIds, tenantId) ->
@@ -157,8 +163,8 @@ class P63ManualParallelFlowableTest {
         beans.put("approvalTaskListener", approvalListener);
         beans.put("consensusCompletionEvaluator",
                 new ConsensusCompletionEvaluator(providerOf(votePort), providerOf(settlementPort)));
-        org.flowable.common.engine.impl.el.DefaultExpressionManager dem =
-                (org.flowable.common.engine.impl.el.DefaultExpressionManager)
+        DefaultExpressionManager dem =
+                (DefaultExpressionManager)
                         ((ProcessEngineConfigurationImpl) processEngine.getProcessEngineConfiguration())
                                 .getExpressionManager();
         dem.setBeans(beans);
@@ -248,7 +254,7 @@ class P63ManualParallelFlowableTest {
         // 内置 START/END/APPROVAL 由插件构造器自带；此处仅补并行网关与动态并行
         GraphToBpmnTranslator translator = new GraphToBpmnTranslator(new ObjectMapper(),
                 List.of(new ParallelGatewayTranslator(),
-                        new com.sw.ck.bpm.engine.translator.DynamicParallelNodeTranslator(new ObjectMapper())));
+                        new DynamicParallelNodeTranslator(new ObjectMapper())));
         BpmnModel model = translator.translate(graph);
         deployment = processEngine.getRepositoryService().createDeployment()
                 .addBytes(processKey + ".bpmn20.xml", new BpmnXMLConverter().convertToXML(model))

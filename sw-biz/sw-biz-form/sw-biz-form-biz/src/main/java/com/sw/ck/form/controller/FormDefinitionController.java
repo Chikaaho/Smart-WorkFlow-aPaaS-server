@@ -1,5 +1,7 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -13,14 +15,19 @@ import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
 import com.sw.ck.form.api.dto.FormUpdateReq;
 import com.sw.ck.form.api.dto.FormVisibilityUpdateReq;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.dynamic.FieldType;
+import com.sw.ck.form.dto.FieldTypeOptionDTO;
+import com.sw.ck.form.dto.PublishedFormOptionDTO;
 import com.sw.ck.form.service.FormDefService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单定义管理 + 渲染接口。
  * <p>
@@ -29,15 +36,11 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/form/def")
+@Log4j2
 public class FormDefinitionController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormDefinitionController.class);
-
-    private final FormDefService formDefService;
-
-    public FormDefinitionController(FormDefService formDefService) {
-        this.formDefService = formDefService;
-    }
+    @Autowired
+    private FormDefService formDefService;
 
     // ==================== 能力目录 ====================
 
@@ -47,12 +50,12 @@ public class FormDefinitionController {
      * 不接受源码枚举或前端常量替代。
      */
     @GetMapping("/field-types")
-    public R<java.util.List<java.util.Map<String, Object>>> fieldTypes() {
-        java.util.List<java.util.Map<String, Object>> list = new java.util.ArrayList<>();
-        for (com.sw.ck.form.dynamic.FieldType ft : com.sw.ck.form.dynamic.FieldType.values()) {
-            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
-            row.put("type", ft.name());
-            row.put("enabled", ft.isEnabled());
+    public R<List<FieldTypeOptionDTO>> fieldTypes() {
+        List<FieldTypeOptionDTO> list = new ArrayList<>();
+        for (FieldType ft : FieldType.values()) {
+            FieldTypeOptionDTO row = new FieldTypeOptionDTO();
+            row.setType(ft.name());
+            row.setEnabled(ft.isEnabled());
             list.add(row);
         }
         return R.ok(list);
@@ -148,16 +151,13 @@ public class FormDefinitionController {
      * formKey/name/formVersion 最小集，且仅 PUBLISHED。
      */
     @GetMapping("/published")
-    public R<java.util.List<java.util.Map<String, Object>>> listPublishedForDraft() {
-        com.sw.ck.common.page.PageParam pageParam = new com.sw.ck.common.page.PageParam();
-        pageParam.setPageNum(1);
-        pageParam.setPageSize(200);
-        java.util.List<java.util.Map<String, Object>> candidates = formDefService.listPublishedForCurrentUser().stream()
+    public R<List<PublishedFormOptionDTO>> listPublishedForDraft() {
+        List<PublishedFormOptionDTO> candidates = formDefService.listPublishedForCurrentUser().stream()
                 .map(d -> {
-                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-                    m.put("formKey", d.getFormKey());
-                    m.put("name", d.getName());
-                    m.put("formVersion", d.getFormVersion());
+                    PublishedFormOptionDTO m = new PublishedFormOptionDTO();
+                    m.setFormKey(d.getFormKey());
+                    m.setName(d.getName());
+                    m.setFormVersion(d.getFormVersion());
                     return m;
                 })
                 .toList();
@@ -208,7 +208,7 @@ public class FormDefinitionController {
     @PreAuthorize("@ss.hasPermi('form:design:publish')")
     @PostMapping("/{id}/disable")
     public R<Void> disable(@PathVariable("id") String id,
-                           @RequestBody(required = false) java.util.Map<String, String> body) {
+                           @RequestBody(required = false) Map<String, String> body) {
         formDefService.disable(id, body == null ? null : body.get("reason"));
         return R.ok();
     }
@@ -217,7 +217,7 @@ public class FormDefinitionController {
     @PreAuthorize("@ss.hasPermi('form:design:publish')")
     @PostMapping("/{id}/enable")
     public R<Void> enable(@PathVariable("id") String id,
-                          @RequestBody(required = false) java.util.Map<String, String> body) {
+                          @RequestBody(required = false) Map<String, String> body) {
         formDefService.enable(id, body == null ? null : body.get("reason"));
         return R.ok();
     }
@@ -226,7 +226,7 @@ public class FormDefinitionController {
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PutMapping("/{id}/list-config")
     public R<Void> saveListConfig(@PathVariable("id") String id,
-                                  @RequestBody java.util.Map<String, String> body) {
+                                  @RequestBody Map<String, String> body) {
         formDefService.saveListConfig(id, body == null ? null : body.get("config"));
         return R.ok();
     }

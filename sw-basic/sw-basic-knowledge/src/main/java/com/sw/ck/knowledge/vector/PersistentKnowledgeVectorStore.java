@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.vector;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.sw.ck.common.security.LoginContextProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -27,14 +29,10 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "sw.knowledge", name = "vector-store", havingValue = "database")
 public class PersistentKnowledgeVectorStore implements KnowledgeVectorStore {
 
-    private final JdbcTemplate jdbcTemplate;
-    private final LoginContextProvider loginContextProvider;
-
-    public PersistentKnowledgeVectorStore(JdbcTemplate jdbcTemplate,
-                                          LoginContextProvider loginContextProvider) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.loginContextProvider = loginContextProvider;
-    }
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private LoginContextProvider loginContextProvider;
 
     @Override
     public void store(Long chunkId, float[] embedding) {

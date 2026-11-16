@@ -6,12 +6,14 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.dto.NotifyBatchFailureCategory;
 import com.sw.ck.notify.dto.NotifyBatchItemFailure;
 import com.sw.ck.notify.dto.NotifyBatchSendReq;
@@ -24,11 +26,14 @@ import com.sw.ck.notify.service.NotifyTemplateService;
 import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -43,6 +48,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Set;
+import java.util.ArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -221,7 +227,7 @@ class NotifyBatchSendIntegrationTest {
     void over500Rejected() {
         for (int i = 100; i < 601; i++)
             jdbcTemplate.update("INSERT INTO sys_user VALUES(?,?,?,1,0,100,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", i, "u" + i, "U" + i);
-        List<Long> ids = new java.util.ArrayList<>();
+        List<Long> ids = new ArrayList<>();
         for (long i = 100; i <= 600; i++) ids.add(i);
         long before = countMessages();
         NotifyBatchSendReq req = new NotifyBatchSendReq();
@@ -255,7 +261,7 @@ class NotifyBatchSendIntegrationTest {
     void exactly500Success() {
         for (int i = 100; i < 600; i++)
             jdbcTemplate.update("INSERT INTO sys_user VALUES(?,?,?,1,0,100,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", i, "u" + i, "U" + i);
-        List<Long> ids = new java.util.ArrayList<>();
+        List<Long> ids = new ArrayList<>();
         for (long i = 100; i < 600; i++) ids.add(i);
         long before = countMessages();
         NotifyBatchSendReq req = new NotifyBatchSendReq();
@@ -400,7 +406,7 @@ class NotifyBatchSendIntegrationTest {
         @Bean public MybatisPlusInterceptor mybatisPlusInterceptor(TenantLineInnerInterceptor t) {
             MybatisPlusInterceptor i = new MybatisPlusInterceptor(); i.addInnerInterceptor(t); i.addInnerInterceptor(new OptimisticLockerInnerInterceptor()); return i;
         }
-        @Bean public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource ds, CommonMetaObjectHandler m, MybatisPlusInterceptor i) throws Exception {
+        @Bean public SqlSessionFactory sqlSessionFactory(DataSource ds, CommonMetaObjectHandler m, MybatisPlusInterceptor i) throws Exception {
             MybatisSqlSessionFactoryBean f = new MybatisSqlSessionFactoryBean(); f.setDataSource(ds); f.setTypeAliasesPackage("com.sw.ck.notify.entity");
             MybatisConfiguration c = new MybatisConfiguration(); c.setMapUnderscoreToCamelCase(true); c.setUseGeneratedKeys(true); f.setConfiguration(c);
             GlobalConfig g = new GlobalConfig(); GlobalConfig.DbConfig d = new GlobalConfig.DbConfig(); d.setLogicDeleteField("deleted"); d.setLogicDeleteValue("1"); d.setLogicNotDeleteValue("0");
@@ -409,6 +415,6 @@ class NotifyBatchSendIntegrationTest {
         @Bean public TemplateRenderService templateRenderService() { return new TemplateRenderService(); }
         @Bean public NotifyTemplateService notifyTemplateService() { return mock(NotifyTemplateService.class); }
         @Bean public NotifyMessageService notifyMessageService(NotifyTemplateService ts, TemplateRenderService rs, LoginContextProvider lp) { return new NotifyMessageServiceImpl(ts, rs, lp); }
-        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class)); }
+        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s, Mockito.mock(NotifyFacade.class)); }
     }
 }

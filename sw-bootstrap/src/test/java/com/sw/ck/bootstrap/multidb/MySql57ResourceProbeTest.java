@@ -2,6 +2,7 @@ package com.sw.ck.bootstrap.multidb;
 
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
 import com.sw.ck.bpm.process.service.ResourceRowLockProbe;
+
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterAll;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
@@ -181,7 +183,7 @@ class MySql57ResourceProbeTest {
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger successes = new AtomicInteger();
-        List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
+        List<Future<?>> futures = new ArrayList<>();
         for (int i = 0; i < workers; i++) {
             futures.add(pool.submit(() -> {
                 start.await();

@@ -1,7 +1,10 @@
 package com.sw.ck.bpm.process.tool;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
@@ -12,18 +15,22 @@ import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Agent 内部工具：发起指定已发布流程（0.2.4，通用能力，经工具白名单注册）。
  * <p>
@@ -35,30 +42,21 @@ import java.util.UUID;
  * </p>
  */
 @Component("agentProcessStartTool")
+@Log4j2
 public class AgentProcessStartTool {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentProcessStartTool.class);
-
-    private final ObjectProvider<BpmRuntimeFacade> runtimeFacadeProvider;
-    private final ObjectProvider<BpmProcessDefService> processDefServiceProvider;
-    private final ObjectProvider<BpmInstanceService> instanceServiceProvider;
-    private final ObjectProvider<ProcessThemeService> themeServiceProvider;
-    private final ObjectProvider<BpmTaskFacade> taskFacadeProvider;
-    private final ObjectProvider<PlatformTransactionManager> transactionManagerProvider;
-
-    public AgentProcessStartTool(ObjectProvider<BpmRuntimeFacade> runtimeFacadeProvider,
-                                 ObjectProvider<BpmProcessDefService> processDefServiceProvider,
-                                 ObjectProvider<BpmInstanceService> instanceServiceProvider,
-                                 ObjectProvider<ProcessThemeService> themeServiceProvider,
-                                 ObjectProvider<BpmTaskFacade> taskFacadeProvider,
-                                 ObjectProvider<PlatformTransactionManager> transactionManagerProvider) {
-        this.runtimeFacadeProvider = runtimeFacadeProvider;
-        this.processDefServiceProvider = processDefServiceProvider;
-        this.instanceServiceProvider = instanceServiceProvider;
-        this.themeServiceProvider = themeServiceProvider;
-        this.taskFacadeProvider = taskFacadeProvider;
-        this.transactionManagerProvider = transactionManagerProvider;
-    }
+    @Autowired
+    private ObjectProvider<BpmRuntimeFacade> runtimeFacadeProvider;
+    @Autowired
+    private ObjectProvider<BpmProcessDefService> processDefServiceProvider;
+    @Autowired
+    private ObjectProvider<BpmInstanceService> instanceServiceProvider;
+    @Autowired
+    private ObjectProvider<ProcessThemeService> themeServiceProvider;
+    @Autowired
+    private ObjectProvider<BpmTaskFacade> taskFacadeProvider;
+    @Autowired
+    private ObjectProvider<PlatformTransactionManager> transactionManagerProvider;
 
     /**
      * 实例业务键。{@code sw_bpm_instance.business_key} 为 VARCHAR(36)：缺省用 UUID；
@@ -73,14 +71,14 @@ public class AgentProcessStartTool {
             return idempotencyKey;
         }
         try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(idempotencyKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(idempotencyKey.getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder("at-");
             for (int i = 0; i < 17; i++) {
                 hex.append(String.format("%02x", digest[i]));
             }
             return hex.substring(0, 36);
-        } catch (java.security.NoSuchAlgorithmException e) {
+        } catch (NoSuchAlgorithmException e) {
             return UUID.randomUUID().toString();
         }
     }
@@ -146,7 +144,7 @@ public class AgentProcessStartTool {
                     boolean processActive = true;
                     BpmTaskFacade taskFacade = taskFacadeProvider.getIfAvailable();
                     if (taskFacade != null) {
-                        java.util.Optional<Boolean> activeDecision =
+                        Optional<Boolean> activeDecision =
                                 taskFacade.isProcessActive(instanceId);
                         if (activeDecision.isPresent()) {
                             processActive = activeDecision.get();

@@ -75,7 +75,7 @@ class BpmTaskFacadeImplClaimTest {
         // lockFor 快照 + 存在性检查 + 候选判定：三次 singleResult 均命中本任务
         when(taskQuery.singleResult()).thenReturn(task);
         // link mock 先在 when() 外构建，避免嵌套 stubbing
-        java.util.List<IdentityLink> links = java.util.List.of(
+        List<IdentityLink> links = List.of(
                 candidateUser("2"), candidateUser("3"), candidateGroup("g-ops"));
         when(taskService.getIdentityLinksForTask("t1")).thenReturn(links);
 

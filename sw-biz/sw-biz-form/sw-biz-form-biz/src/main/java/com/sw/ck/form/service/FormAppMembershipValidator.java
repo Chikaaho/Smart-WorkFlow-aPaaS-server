@@ -1,5 +1,7 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.exception.FormErrorCode;
@@ -22,13 +24,10 @@ public class FormAppMembershipValidator {
     /** 应用启用状态（停用应用不能接收新内容）。 */
     public static final String STATUS_ENABLED = "ENABLED";
 
-    private final FormAppMapper appMapper;
-    private final FormAppDirMapper dirMapper;
-
-    public FormAppMembershipValidator(FormAppMapper appMapper, FormAppDirMapper dirMapper) {
-        this.appMapper = appMapper;
-        this.dirMapper = dirMapper;
-    }
+    @Autowired
+    private FormAppMapper appMapper;
+    @Autowired
+    private FormAppDirMapper dirMapper;
 
     /**
      * 校验归属目标合法性。

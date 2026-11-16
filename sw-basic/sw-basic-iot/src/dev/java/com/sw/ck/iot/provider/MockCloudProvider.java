@@ -1,12 +1,10 @@
 package com.sw.ck.iot.provider;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Mock 设备控制提供者。
  * <p>
@@ -18,9 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 不引用本实现。
  * </p>
  */
+@Log4j2
 public class MockCloudProvider implements DeviceControlProvider {
-
-    private static final Logger log = LoggerFactory.getLogger(MockCloudProvider.class);
 
     /**
      * 模拟设备在线状态（productId:deviceName → status）。

@@ -6,11 +6,18 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.port.FlowStartPort;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
+import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
@@ -21,14 +28,20 @@ import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
+import com.sw.ck.system.api.dict.DictItemDTO;
+import com.sw.ck.system.api.dict.DictTypeDetailDTO;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -38,6 +51,11 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -97,11 +115,11 @@ class FormDataDeleteServiceTest {
     @BeforeEach
     void setUp() {
         // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
-        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
-            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+        if (LoginUserHolder.get() == null) {
+            LoginUser i5TenantZeroSetup = new LoginUser();
             i5TenantZeroSetup.setUserId(0L);
             i5TenantZeroSetup.setTenantId(0L);
-            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+            LoginUserHolder.set(i5TenantZeroSetup);
         }
         createMetadataTables();
 
@@ -222,7 +240,7 @@ class FormDataDeleteServiceTest {
     }
 
     /** 收集子表名加入清理列表 */
-    private void collectSubTables(com.sw.ck.form.entity.FormDefEntity entity) {
+    private void collectSubTables(FormDefEntity entity) {
         String subMappingJson = entity.getSubTableMapping();
         if (subMappingJson != null && !subMappingJson.isBlank()) {
             try {
@@ -549,7 +567,7 @@ class FormDataDeleteServiceTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -568,27 +586,27 @@ class FormDataDeleteServiceTest {
             factory.setGlobalConfig(globalConfig);
 
             // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+            CommonMetaObjectHandler i5MetaObjectHandler =
+                    new CommonMetaObjectHandler(new LoginContextProvider() {
                         @Override public Long getUserId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getUserId() : null;
                         }
                         @Override public Long getTenantId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getTenantId() : null;
                         }
                         @Override public Long getDeptId() { return null; }
-                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        @Override public DataScopeType getDataScopeType() {
+                            return DataScopeType.ALL;
                         }
-                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                         @Override public boolean isSuperAdmin() { return false; }
                     });
             i5MetaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
-                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
+                    f.setId(new FormIdGenerator().generate());
                 }
             });
             globalConfig.setMetaObjectHandler(i5MetaObjectHandler);
@@ -633,7 +651,7 @@ class FormDataDeleteServiceTest {
                 }
 
                 @Override
-                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
+                public Optional<List<DictItemDTO>> listByType(String dictType) {
                     if (dictType == null || dictType.isBlank()) {
                         return Optional.empty();
                     }
@@ -641,10 +659,10 @@ class FormDataDeleteServiceTest {
                 }
 
                 @Override
-                public Optional<Map<String, com.sw.ck.system.api.dict.DictTypeDetailDTO>> findDictTypeDetails(
-                        java.util.Collection<String> codes) {
+                public Optional<Map<String, DictTypeDetailDTO>> findDictTypeDetails(
+                        Collection<String> codes) {
                     return codes == null || codes.isEmpty()
-                            ? Optional.empty() : Optional.of(java.util.Map.of());
+                            ? Optional.empty() : Optional.of(Map.of());
                 }
 
                 @Override
@@ -655,7 +673,7 @@ class FormDataDeleteServiceTest {
                 @Override
                 public Optional<Boolean> createDictTypeForImport(String code, String name,
                                                                  Integer status, String description,
-                                                                 java.util.List<com.sw.ck.system.api.dict.DictItemDTO> items) {
+                                                                 List<DictItemDTO> items) {
                     return Optional.of(false);
                 }
             };
@@ -663,7 +681,7 @@ class FormDataDeleteServiceTest {
 
         @Bean
         public DomainEventPublisher domainEventPublisher(
-                org.springframework.context.ApplicationEventPublisher delegate) {
+                ApplicationEventPublisher delegate) {
             return new DomainEventPublisher(delegate);
         }
 
@@ -684,9 +702,9 @@ class FormDataDeleteServiceTest {
                                                     FormFieldValidator formFieldValidator) {
             return new FormSubmitService(formDefMapper, formTraceMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper, jdbcTemplate,
-                    dictFacade, eventPublisher, java.util.Optional.empty(), formFieldValidator,
-                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
-                @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+                    dictFacade, eventPublisher, Optional.empty(), formFieldValidator,
+                    new ObjectProvider<FlowStartPort>() {
+                @Override public FlowStartPort getIfAvailable() { return null; }
             });
         }
 

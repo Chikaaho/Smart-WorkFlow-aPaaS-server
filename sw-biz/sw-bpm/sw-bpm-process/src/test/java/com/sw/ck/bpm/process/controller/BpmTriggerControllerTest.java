@@ -2,6 +2,8 @@ package com.sw.ck.bpm.process.controller;
 
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
+import com.sw.ck.bpm.process.dto.ActionRefDTO;
+import com.sw.ck.bpm.process.dto.RetryResultDTO;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
@@ -10,16 +12,18 @@ import com.sw.ck.bpm.process.service.ActionRefRecoveryService;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmVariableSnapshotService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -92,12 +96,11 @@ class BpmTriggerControllerTest {
         target.setProcessInstanceId("pi-target-9");
         when(bpmInstanceService.findByBusinessKey("rec-target-1")).thenReturn(Optional.of(target));
 
-        R<List<Map<String, Object>>> result = controller.listActionRefs("pi-1");
+        R<List<ActionRefDTO>> result = controller.listActionRefs("pi-1");
 
         assertThat(result.getData()).hasSize(1);
-        assertThat(result.getData().get(0))
-                .containsEntry("targetRecordId", "rec-target-1")
-                .containsEntry("targetInstanceId", "pi-target-9");
+        assertThat(result.getData().get(0).getTargetRecordId()).isEqualTo("rec-target-1");
+        assertThat(result.getData().get(0).getTargetInstanceId()).isEqualTo("pi-target-9");
     }
 
     @Test
@@ -116,11 +119,11 @@ class BpmTriggerControllerTest {
         when(bpmInstanceService.findByBusinessKey("rec-target-1")).thenReturn(Optional.empty());
         when(bpmInstanceService.findByBusinessKey("rec-done-2")).thenReturn(Optional.of(target));
 
-        R<List<Map<String, Object>>> result = controller.listActionRefs("pi-1");
+        R<List<ActionRefDTO>> result = controller.listActionRefs("pi-1");
 
         assertThat(result.getData()).hasSize(2);
-        assertThat(result.getData().get(0)).containsEntry("status", "STARTING");
-        assertThat(result.getData().get(1)).containsEntry("status", "STARTED");
+        assertThat(result.getData().get(0).getStatus()).isEqualTo("STARTING");
+        assertThat(result.getData().get(1).getStatus()).isEqualTo("STARTED");
     }
 
     @Test
@@ -133,8 +136,8 @@ class BpmTriggerControllerTest {
         target.setProcessInstanceId("pi-target-9");
         when(bpmInstanceService.findByBusinessKey("rec-target-1")).thenReturn(Optional.of(target));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.retryActionRef(1L))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+        Assertions.assertThatThrownBy(() -> controller.retryActionRef(1L))
+                .isInstanceOf(BaseException.class)
                 .hasMessageContaining("已成功启动");
         verify(actionRefRecoveryService, never()).retry(any());
     }
@@ -150,11 +153,10 @@ class BpmTriggerControllerTest {
                 new ActionRefRecoveryService.RetryOutcome(
                         "RECOVERY_ENQUEUED", "已按当前绑定受理恢复发起（目标实例由既有消费链创建，原失败行保留）", 78L));
 
-        R<Map<String, Object>> result = controller.retryActionRef(1L);
+        R<RetryResultDTO> result = controller.retryActionRef(1L);
 
-        assertThat(result.getData())
-                .containsEntry("status", "RECOVERY_ENQUEUED")
-                .containsEntry("commandId", 78L);
+        assertThat(result.getData().getStatus()).isEqualTo("RECOVERY_ENQUEUED");
+        assertThat(result.getData().getCommandId()).isEqualTo(78L);
     }
 
     @Test
@@ -168,12 +170,11 @@ class BpmTriggerControllerTest {
                 new ActionRefRecoveryService.RetryOutcome(
                         "DISPOSED_NO_BINDING", "表单当前无启用流程绑定：按明确安全处置零目标启动；如需发起请先恢复绑定后再次恢复", null));
 
-        R<Map<String, Object>> result = controller.retryActionRef(1L);
+        R<RetryResultDTO> result = controller.retryActionRef(1L);
 
-        assertThat(result.getData())
-                .containsEntry("status", "DISPOSED_NO_BINDING")
-                .containsEntry("commandId", null);
-        assertThat((String) result.getData().get("message")).contains("零目标");
+        assertThat(result.getData().getStatus()).isEqualTo("DISPOSED_NO_BINDING");
+        assertThat(result.getData().getCommandId()).isNull();
+        assertThat(result.getData().getMessage()).contains("零目标");
     }
 
     @Test
@@ -187,11 +188,10 @@ class BpmTriggerControllerTest {
                 new ActionRefRecoveryService.RetryOutcome(
                         "INTENT_SUBMITTED", "失败意图已重新入队（复用同键命令，原失败记录保留）", 77L));
 
-        R<Map<String, Object>> result = controller.retryActionRef(1L);
+        R<RetryResultDTO> result = controller.retryActionRef(1L);
 
-        assertThat(result.getData())
-                .containsEntry("commandId", 77L)
-                .containsEntry("status", "INTENT_SUBMITTED");
+        assertThat(result.getData().getCommandId()).isEqualTo(77L);
+        assertThat(result.getData().getStatus()).isEqualTo("INTENT_SUBMITTED");
         // 恢复路径零图配置依赖：触发器在当前/冻结版本中是否仍存在不影响恢复
         verify(nodeFormDataService, never()).loadGraph(anyString(), any());
     }

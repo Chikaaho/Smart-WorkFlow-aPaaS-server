@@ -8,9 +8,11 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormAppContentDTO;
@@ -21,6 +23,7 @@ import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormAppDirMapper;
@@ -33,6 +36,8 @@ import com.sw.ck.form.service.impl.FormAppServiceImpl;
 import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -49,6 +54,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -567,7 +573,7 @@ class FormAppServiceTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -595,11 +601,11 @@ class FormAppServiceTest {
                 @Override public Long getDeptId() {
                     return null;
                 }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() {
-                    return java.util.Set.of();
+                @Override public Set<Long> getCustomDeptIds() {
+                    return Set.of();
                 }
                 @Override public boolean isSuperAdmin() {
                     return false;
@@ -608,7 +614,7 @@ class FormAppServiceTest {
             CommonMetaObjectHandler metaObjectHandler = new CommonMetaObjectHandler(loginContextProvider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
                     f.setId(new FormIdGenerator().generate());
                 }
             });

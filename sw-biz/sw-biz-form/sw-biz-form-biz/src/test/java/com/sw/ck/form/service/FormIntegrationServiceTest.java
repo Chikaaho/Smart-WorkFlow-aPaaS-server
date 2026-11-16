@@ -1,6 +1,8 @@
 package com.sw.ck.form.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.integration.ExternalCapability;
 import com.sw.ck.common.integration.ExternalCapabilityFacade;
@@ -15,6 +17,7 @@ import com.sw.ck.form.mapper.FormIntegrationInvocationMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -82,7 +85,7 @@ class FormIntegrationServiceTest {
         FormIntegrationInvokeResult result = service.invoke(req("cap_q", "BEFORE_SUBMIT", null, null));
 
         assertEquals("QUERY", result.getEffectScope());
-        assertEquals("ok", ((com.fasterxml.jackson.databind.JsonNode) result.getResult())
+        assertEquals("ok", ((JsonNode) result.getResult())
                 .get("echo").asText());
         verify(invocationMapper, never()).insert(any(FormIntegrationInvocationEntity.class));
     }
@@ -141,7 +144,7 @@ class FormIntegrationServiceTest {
         FormIntegrationInvokeResult first =
                 service.invoke(req("cap_w", "AFTER_SUBMIT", "rec-1", "rec-1"));
         assertTrue(!first.isReplayed());
-        assertEquals(1, ((com.fasterxml.jackson.databind.JsonNode) first.getResult())
+        assertEquals(1, ((JsonNode) first.getResult())
                 .get("count").asInt());
 
         FormIntegrationInvocationEntity succeeded = new FormIntegrationInvocationEntity();
@@ -152,7 +155,7 @@ class FormIntegrationServiceTest {
         FormIntegrationInvokeResult replay =
                 service.invoke(req("cap_w", "AFTER_SUBMIT", "rec-1", "rec-1"));
         assertTrue(replay.isReplayed());
-        assertEquals(1, ((com.fasterxml.jackson.databind.JsonNode) replay.getResult())
+        assertEquals(1, ((JsonNode) replay.getResult())
                 .get("count").asInt());
     }
 

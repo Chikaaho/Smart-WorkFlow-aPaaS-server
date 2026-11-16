@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
 import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
 import com.sw.ck.agent.entity.AgentMessage;
@@ -30,7 +31,9 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 
 import java.util.Set;
+
 import com.sun.net.httpserver.HttpServer;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.state.AgentState;
@@ -55,6 +58,7 @@ import javax.sql.DataSource;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -122,7 +126,7 @@ class AgentTokenUsageBehaviorTest {
 
     /** 测试加密密钥：32 字节 "0123456789abcdef0123456789abcdef" 的 Base64 */
     static final String TEST_BASE64_KEY =
-            java.util.Base64.getEncoder().encodeToString("0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8));
+            Base64.getEncoder().encodeToString("0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8));
 
     @Configuration
     @EnableTransactionManagement
@@ -223,7 +227,7 @@ class AgentTokenUsageBehaviorTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {

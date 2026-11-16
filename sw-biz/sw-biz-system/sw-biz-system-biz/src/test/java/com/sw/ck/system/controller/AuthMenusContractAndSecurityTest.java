@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -26,11 +27,14 @@ import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.system.security.UserDetailsProviderImpl;
 import com.sw.ck.system.service.SysMenuService;
 import com.sw.ck.system.service.SysUserService;
+
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -585,11 +589,11 @@ class AuthMenusContractAndSecurityTest {
     }
 
     /** 种子数据所属租户 0 的测试身份（service 级直调用）。 */
-    private com.sw.ck.security.holder.LoginUser tenantZeroUser() {
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+    private LoginUser tenantZeroUser() {
+        LoginUser user = new LoginUser();
         user.setUserId(1L);
         user.setTenantId(0L);
-        user.setPermissions(java.util.List.of());
+        user.setPermissions(List.of());
         return user;
     }
 
@@ -660,7 +664,7 @@ class AuthMenusContractAndSecurityTest {
         // service 级 getMenuTree 直调无认证过滤器：显式建立租户 0 上下文（I5 fail-closed）
         LoginUserHolder.set(tenantZeroUser());
         // ---- 启用角色用户 u3：roles=[admin]，permissions 含绑定按钮权限 ----
-        com.sw.ck.security.holder.LoginUser active = userDetailsProvider.loadByUserId(3L);
+        LoginUser active = userDetailsProvider.loadByUserId(3L);
         assertThat(active.getRoles())
                 .as("启用角色应装配进 roles")
                 .containsExactly("admin");
@@ -672,7 +676,7 @@ class AuthMenusContractAndSecurityTest {
                 .isNotEmpty();
 
         // ---- 停用角色用户 u4（status=0，绑定 [100,110,111,120] 保留）----
-        com.sw.ck.security.holder.LoginUser disabled = userDetailsProvider.loadByUserId(4L);
+        LoginUser disabled = userDetailsProvider.loadByUserId(4L);
         assertThat(disabled.getRoles())
                 .as("停用角色应被 status=1 过滤，roles 为空")
                 .isEmpty();
@@ -791,7 +795,7 @@ class AuthMenusContractAndSecurityTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {

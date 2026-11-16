@@ -1,5 +1,7 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.model.DeviceReceipt;
 import com.sw.ck.iot.model.DeviceReceiptDecision;
@@ -28,14 +30,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/iot/commands")
 public class IotDeviceReceiptController {
 
-    private final DeviceReceiptService deviceReceiptService;
-    private final DeviceReceiptServiceImpl signatureVerifier;
-
-    public IotDeviceReceiptController(DeviceReceiptService deviceReceiptService,
-                                      DeviceReceiptServiceImpl signatureVerifier) {
-        this.deviceReceiptService = deviceReceiptService;
-        this.signatureVerifier = signatureVerifier;
-    }
+    @Autowired
+    private DeviceReceiptService deviceReceiptService;
+    @Autowired
+    private DeviceReceiptServiceImpl signatureVerifier;
 
     /** 外部传输对端回执（来源签名守卫；无登录态）。 */
     @PostMapping("/receipt")

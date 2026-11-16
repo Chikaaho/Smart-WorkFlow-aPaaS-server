@@ -1,6 +1,7 @@
 package com.sw.ck.form.api.port;
 
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 实时动作运行时画像 Port（form-api 定义，form-biz 实现）。
@@ -18,7 +19,7 @@ public interface TxnActionRuntimePort {
      * {@code Optional.of(画像)}——画像由生效配置即时构造、恒可构造；
      * Port 未装配以调用方 {@code getIfAvailable()} 判定，不用 empty 表达。</p>
      */
-    java.util.Optional<RealtimeGuardProfile> realtimeGuardProfile();
+    Optional<RealtimeGuardProfile> realtimeGuardProfile();
 
     record RealtimeGuardProfile(int globalMaxConcurrent, int tenantMaxConcurrent,
                                 int globalInFlight, Map<Long, Integer> tenantInFlight) {

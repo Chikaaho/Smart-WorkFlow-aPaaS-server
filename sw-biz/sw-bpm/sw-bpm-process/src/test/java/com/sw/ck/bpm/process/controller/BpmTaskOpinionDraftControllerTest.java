@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.dto.OpinionDraftDTO;
 import com.sw.ck.bpm.process.entity.BpmTaskOpinionDraft;
 import com.sw.ck.bpm.process.mapper.BpmTaskOpinionDraftMapper;
 import com.sw.ck.common.exception.BaseException;
@@ -51,9 +52,9 @@ class BpmTaskOpinionDraftControllerTest {
         draft.setOpinionData("{\"result\":\"同意\"}");
         when(mapper.selectOne(any())).thenReturn(draft);
 
-        Map<String, Object> restored = controller.get("task-1").getData();
-        assertThat(restored).containsEntry("comment", "保留意见");
-        assertThat(restored.get("opinionData")).isEqualTo(Map.of("result", "同意"));
+        OpinionDraftDTO restored = controller.get("task-1").getData();
+        assertThat(restored.getComment()).isEqualTo("保留意见");
+        assertThat(restored.getOpinionData()).isEqualTo(Map.of("result", "同意"));
     }
 
     @Test

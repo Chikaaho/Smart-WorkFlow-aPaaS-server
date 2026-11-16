@@ -1,43 +1,110 @@
 package com.sw.ck.bootstrap;
 
+import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
+import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
+import com.sw.ck.bpm.process.queue.BpmCommandHandler;
+import com.sw.ck.bpm.process.queue.CommandDispatcher;
+import com.sw.ck.bpm.process.queue.CommandEnvelope;
+import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
+import com.sw.ck.bpm.process.service.impl.BpmCommandServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyChannel;
+import com.sw.ck.notify.api.NotifyChannelAdapter;
+import com.sw.ck.notify.api.NotifySendRequest;
+import com.sw.ck.notify.api.NotifySendResult;
+import com.sw.ck.notify.impl.NotifyFacadeImpl;
+import com.sw.ck.notify.mapper.NotifyMessageMapper;
+import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
+import com.sw.ck.notify.service.impl.NotifyDeliveryRecoveryServiceImpl;
+import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.SecurityLoginContextProvider;
+import com.sw.ck.system.controller.DeptController;
+import com.sw.ck.system.controller.UserController;
+import com.sw.ck.system.controller.UserController.PostAssignment;
+import com.sw.ck.system.controller.UserController.UserFormRequest;
+import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.mapper.SysDeptMapper;
+import com.sw.ck.system.mapper.SysMenuMapper;
+import com.sw.ck.system.mapper.SysPostMapper;
+import com.sw.ck.system.mapper.SysRoleDeptMapper;
 import com.sw.ck.system.mapper.SysRoleMapper;
 import com.sw.ck.system.mapper.SysRoleMenuMapper;
 import com.sw.ck.system.mapper.SysTenantMapper;
+import com.sw.ck.system.mapper.SysTenantStatusAuditMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
+import com.sw.ck.system.mapper.SysUserPostMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
+import com.sw.ck.system.security.UserDetailsProviderImpl;
+import com.sw.ck.system.service.ManagementTenantContext;
+import com.sw.ck.system.service.SysDeptService;
+import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.TenantAdminService;
+import com.sw.ck.system.service.TenantValidityService;
+import com.sw.ck.system.service.TenantWorkAdmissionService;
+import com.sw.ck.system.service.UserImportExportService;
+import com.sw.ck.system.service.UserPageQuery;
+import com.sw.ck.system.service.impl.SysDeptServiceImpl;
+import com.sw.ck.system.service.impl.SysUserServiceImpl;
+
+import com.sun.net.httpserver.HttpServer;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -86,7 +153,7 @@ class TenantAdministrationDatabaseTest {
             Long adminId = f.service.detail(tenantId).adminUserId();
             LoginUser actor = new LoginUser(); actor.setUserId(adminId); actor.setTenantId(tenantId); LoginUserHolder.set(actor);
             var facade = f.notifications(peer.adapter());
-            var recovery = new com.sw.ck.notify.service.impl.NotifyDeliveryRecoveryServiceImpl(f.notificationMapper, f.notificationAttempts, facade, f.workAdmission);
+            var recovery = new NotifyDeliveryRecoveryServiceImpl(f.notificationMapper, f.notificationAttempts, facade, f.workAdmission);
             var request = notificationRequest(tenantId, adminId, "paused-notification");
             assertThat(facade.recordIntent(request).orElseThrow().getStatus()).isEqualTo("PENDING");
             Long id = f.jdbc.queryForObject("SELECT id FROM sw_notify_message WHERE tenant_id = ? AND idempotency_key = ?", Long.class, tenantId, request.getIdempotencyKey());
@@ -119,7 +186,7 @@ class TenantAdministrationDatabaseTest {
             LoginUser actor = new LoginUser(); actor.setUserId(adminId); actor.setTenantId(tenantId); LoginUserHolder.set(actor);
             var facade = f.notifications(peer.adapter());
             var request = notificationRequest(tenantId, adminId, "transactional-notification");
-            var tx = new org.springframework.transaction.support.TransactionTemplate(new DataSourceTransactionManager(f.dataSource));
+            var tx = new TransactionTemplate(new DataSourceTransactionManager(f.dataSource));
             tx.executeWithoutResult(status -> {
                 assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("PENDING");
                 assertThat(peer.requests).hasValue(0);
@@ -129,7 +196,7 @@ class TenantAdministrationDatabaseTest {
             assertThat(peer.requests).hasValue(0);
             tx.executeWithoutResult(status -> assertThat(facade.send(request).orElseThrow().getStatus()).isEqualTo("PENDING"));
             assertThat(peer.requests).hasValue(0);
-            var recovery = new com.sw.ck.notify.service.impl.NotifyDeliveryRecoveryServiceImpl(f.notificationMapper, f.notificationAttempts, facade, f.workAdmission);
+            var recovery = new NotifyDeliveryRecoveryServiceImpl(f.notificationMapper, f.notificationAttempts, facade, f.workAdmission);
             assertThat(recovery.recoverDue()).isEqualTo(1);
             assertThat(peer.requests).hasValue(1);
         }
@@ -159,21 +226,21 @@ class TenantAdministrationDatabaseTest {
         }
     }
 
-    private static com.sw.ck.notify.api.NotifySendRequest notificationRequest(Long tenantId, Long recipient, String key) {
-        return com.sw.ck.notify.api.NotifySendRequest.builder().tenantId(tenantId).recipientId(recipient)
-                .channel(com.sw.ck.notify.api.NotifyChannel.SMS).title("T020 controlled notification").content("fixture")
-                .bizType(com.sw.ck.notify.api.NotifyBizType.SYSTEM).bizId(key).eventType("T020").idempotencyKey(key).build();
+    private static NotifySendRequest notificationRequest(Long tenantId, Long recipient, String key) {
+        return NotifySendRequest.builder().tenantId(tenantId).recipientId(recipient)
+                .channel(NotifyChannel.SMS).title("T020 controlled notification").content("fixture")
+                .bizType(NotifyBizType.SYSTEM).bizId(key).eventType("T020").idempotencyKey(key).build();
     }
 
     private static final class ControlledNotificationPeer implements AutoCloseable {
-        final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
-        final com.sun.net.httpserver.HttpServer server;
-        final java.util.concurrent.ExecutorService executor = Executors.newSingleThreadExecutor();
-        final java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build();
+        final AtomicInteger requests = new AtomicInteger();
+        final HttpServer server;
+        final ExecutorService executor = Executors.newSingleThreadExecutor();
+        final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
         volatile Runnable onSend = () -> {};
 
         ControlledNotificationPeer() throws Exception {
-            server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.setExecutor(executor);
             server.createContext("/delivery", exchange -> {
                 requests.incrementAndGet();
@@ -184,19 +251,19 @@ class TenantAdministrationDatabaseTest {
             server.start();
         }
 
-        com.sw.ck.notify.api.NotifyChannelAdapter adapter() {
-            return new com.sw.ck.notify.api.NotifyChannelAdapter() {
-                public java.util.Optional<com.sw.ck.notify.api.NotifyChannel> channel() {
-                    return java.util.Optional.of(com.sw.ck.notify.api.NotifyChannel.SMS);
+        NotifyChannelAdapter adapter() {
+            return new NotifyChannelAdapter() {
+                public Optional<NotifyChannel> channel() {
+                    return Optional.of(NotifyChannel.SMS);
                 }
-                public java.util.Optional<com.sw.ck.notify.api.NotifySendResult> send(com.sw.ck.notify.api.NotifySendRequest request) {
+                public Optional<NotifySendResult> send(NotifySendRequest request) {
                     try {
-                        var response = client.send(java.net.http.HttpRequest.newBuilder(
-                                java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/delivery"))
-                                .timeout(java.time.Duration.ofSeconds(3)).POST(java.net.http.HttpRequest.BodyPublishers.noBody()).build(),
-                                java.net.http.HttpResponse.BodyHandlers.discarding());
-                        return java.util.Optional.of(com.sw.ck.notify.api.NotifySendResult.builder()
-                                .channel(com.sw.ck.notify.api.NotifyChannel.SMS).status(response.statusCode() == 200 ? "SUCCESS" : "FAILED").build());
+                        var response = client.send(HttpRequest.newBuilder(
+                                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/delivery"))
+                                .timeout(Duration.ofSeconds(3)).POST(BodyPublishers.noBody()).build(),
+                                BodyHandlers.discarding());
+                        return Optional.of(NotifySendResult.builder()
+                                .channel(NotifyChannel.SMS).status(response.statusCode() == 200 ? "SUCCESS" : "FAILED").build());
                     } catch (Exception failed) { throw new IllegalStateException(failed); }
                 }
             };
@@ -215,19 +282,19 @@ class TenantAdministrationDatabaseTest {
             Long tenantId = f.service.create(command());
             Long adminId = f.service.detail(tenantId).adminUserId();
             f.jdbc.update("INSERT INTO sw_bpm_command (id, tenant_id, command_key, command_type, channel, status, payload, retry_count, initiator_id, deleted, create_time) VALUES (882211, ?, 't020-claimed-dispatch', 'TASK_APPROVE', 'NORMAL', 'PENDING', '{}', 0, ?, 0, ?)",
-                    tenantId, adminId, java.time.LocalDateTime.now());
-            var queue = org.mockito.Mockito.spy(f.commandQueue);
-            org.mockito.Mockito.doAnswer(call -> {
+                    tenantId, adminId, LocalDateTime.now());
+            var queue = Mockito.spy(f.commandQueue);
+            Mockito.doAnswer(call -> {
                 Object claimed = call.callRealMethod();
                 f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
                 return claimed;
-            }).when(queue).claimDue(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyInt());
-            var executions = new java.util.concurrent.atomic.AtomicInteger();
-            var handler = new com.sw.ck.bpm.process.queue.BpmCommandHandler() {
-                public java.util.Set<com.sw.ck.bpm.process.entity.CommandTypeEnum> types() {
-                    return java.util.Set.of(com.sw.ck.bpm.process.entity.CommandTypeEnum.TASK_APPROVE);
+            }).when(queue).claimDue(ArgumentMatchers.anyList(), ArgumentMatchers.anyInt());
+            var executions = new AtomicInteger();
+            var handler = new BpmCommandHandler() {
+                public Set<CommandTypeEnum> types() {
+                    return Set.of(CommandTypeEnum.TASK_APPROVE);
                 }
-                public String handle(com.sw.ck.bpm.process.queue.CommandEnvelope envelope) {
+                public String handle(CommandEnvelope envelope) {
                     assertThat(LoginUserHolder.get().getUserId()).isEqualTo(adminId);
                     assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(tenantId);
                     assertThat(LoginUserHolder.get().isSuperAdmin()).isFalse();
@@ -235,10 +302,10 @@ class TenantAdministrationDatabaseTest {
                     return "{\"controlled\":true}";
                 }
             };
-            var dispatcher = new com.sw.ck.bpm.process.queue.CommandDispatcher(queue, java.util.List.of(handler), f.identities);
-            org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "batchSize", 1);
-            org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "staleSeconds", 60L);
-            org.springframework.test.util.ReflectionTestUtils.invokeMethod(dispatcher, "pollNormal");
+            var dispatcher = new CommandDispatcher(queue, List.of(handler), f.identities);
+            ReflectionTestUtils.setField(dispatcher, "batchSize", 1);
+            ReflectionTestUtils.setField(dispatcher, "staleSeconds", 60L);
+            ReflectionTestUtils.invokeMethod(dispatcher, "pollNormal");
             assertThat(executions).hasValue(1);
             assertThat(f.jdbc.queryForObject("SELECT status FROM sw_bpm_command WHERE id = 882211", String.class)).isEqualTo("COMPLETED");
             assertThat(LoginUserHolder.get()).isNull();
@@ -259,13 +326,13 @@ class TenantAdministrationDatabaseTest {
             Long adminId = f.service.detail(tenantId).adminUserId();
             long commandId = 882210L;
             f.jdbc.update("INSERT INTO sw_bpm_command (id, tenant_id, command_key, command_type, channel, status, payload, retry_count, initiator_id, deleted, create_time) VALUES (?, ?, ?, 'TASK_APPROVE', 'NORMAL', 'PENDING', '{}', 0, ?, 0, ?)",
-                    commandId, tenantId, "t020-controlled-claim", adminId, java.time.LocalDateTime.now());
+                    commandId, tenantId, "t020-controlled-claim", adminId, LocalDateTime.now());
             f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
-            assertThat(f.commandQueue.claimDue(java.util.List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 10)).isEmpty();
+            assertThat(f.commandQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 10)).isEmpty();
             assertThat(f.jdbc.queryForObject("SELECT status FROM sw_bpm_command WHERE id = ?", String.class, commandId)).isEqualTo("PENDING");
             assertThat(f.jdbc.queryForObject("SELECT claim_token FROM sw_bpm_command WHERE id = ?", String.class, commandId)).isNull();
             f.jdbc.update("UPDATE sys_tenant SET status = 0 WHERE id = ?", tenantId);
-            var claimed = f.commandQueue.claimDue(java.util.List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 10);
+            var claimed = f.commandQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 10);
             assertThat(claimed).hasSize(1);
             assertThat(claimed.getFirst().getCommandId()).isEqualTo(commandId);
             assertThat(claimed.getFirst().getTenantId()).isEqualTo(tenantId);
@@ -275,7 +342,7 @@ class TenantAdministrationDatabaseTest {
             f.commandQueue.complete(commandId, claimed.getFirst().getClaimToken(), "{\"controlled\":true}");
             assertThat(f.jdbc.queryForObject("SELECT status FROM sw_bpm_command WHERE id = ?", String.class, commandId)).isEqualTo("COMPLETED");
             f.jdbc.update("UPDATE sys_tenant SET status = 0 WHERE id = ?", tenantId);
-            assertThat(f.commandQueue.claimDue(java.util.List.of(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL), 10)).isEmpty();
+            assertThat(f.commandQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 10)).isEmpty();
             assertThat(f.count("SELECT COUNT(*) FROM sw_bpm_command WHERE command_key = ?", "t020-controlled-claim")).isEqualTo(1);
             assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(0L);
         }
@@ -289,9 +356,9 @@ class TenantAdministrationDatabaseTest {
             Long tenantId = f.service.create(command());
             f.jdbc.execute("CREATE TABLE t020_admission_work (id INT PRIMARY KEY, state VARCHAR(32))");
             f.jdbc.update("INSERT INTO t020_admission_work VALUES (1, 'PENDING'), (2, 'PENDING')");
-            var entered = new java.util.concurrent.CountDownLatch(1);
-            var finishClaim = new java.util.concurrent.CountDownLatch(1);
-            var disableStarted = new java.util.concurrent.CountDownLatch(1);
+            var entered = new CountDownLatch(1);
+            var finishClaim = new CountDownLatch(1);
+            var disableStarted = new CountDownLatch(1);
             var claimed = executor.submit(() -> f.workAdmission.claim(tenantId, () -> {
                 entered.countDown();
                 try {
@@ -310,11 +377,11 @@ class TenantAdministrationDatabaseTest {
             try {
                 assertThat(disableStarted.await(5, TimeUnit.SECONDS)).isTrue();
                 assertThatThrownBy(() -> disabled.get(200, TimeUnit.MILLISECONDS))
-                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                        .isInstanceOf(TimeoutException.class);
             } finally { finishClaim.countDown(); }
             assertThat(claimed.get(10, TimeUnit.SECONDS)).isEqualTo(1);
             assertThat(disabled.get(10, TimeUnit.SECONDS)).isEqualTo(1);
-            var attempts = new java.util.concurrent.atomic.AtomicInteger();
+            var attempts = new AtomicInteger();
             assertThat(f.workAdmission.claim(tenantId, () -> {
                 attempts.incrementAndGet();
                 return f.jdbc.update("UPDATE t020_admission_work SET state = 'PROCESSING' WHERE id = 2");
@@ -324,7 +391,7 @@ class TenantAdministrationDatabaseTest {
             // 已认领动作可真实结束；停用不伪造其他对象状态。
             assertThat(f.jdbc.update("UPDATE t020_admission_work SET state = 'DONE' WHERE id = 1 AND state = 'PROCESSING'")).isEqualTo(1);
             f.jdbc.update("UPDATE sys_tenant SET status = 0, expire_time = ? WHERE id = ?",
-                    java.time.LocalDateTime.now().minusMinutes(1), tenantId);
+                    LocalDateTime.now().minusMinutes(1), tenantId);
             assertThat(f.workAdmission.claim(tenantId, () -> { attempts.incrementAndGet(); return 1; })).isZero();
             f.jdbc.update("UPDATE sys_tenant SET expire_time = NULL WHERE id = ?", tenantId);
             assertThatThrownBy(() -> f.workAdmission.claim(tenantId, () -> {
@@ -350,17 +417,17 @@ class TenantAdministrationDatabaseTest {
             LoginUser cached = new LoginUser();
             cached.setUserId(adminId);
             cached.setTenantId(tenantId);
-            var provider = new com.sw.ck.system.security.UserDetailsProviderImpl(
+            var provider = new UserDetailsProviderImpl(
                     f.users, null, null, null, null, null, f.validity);
             // 身份缓存未变；每次准入读取真实租户行，不依赖清理 Redis 的时机。
             assertThat(provider.isCachedIdentityValid(cached)).isTrue();
             f.jdbc.update("UPDATE sys_tenant SET status = 1 WHERE id = ?", tenantId);
             assertThat(provider.isCachedIdentityValid(cached)).isFalse();
             f.jdbc.update("UPDATE sys_tenant SET status = 0, expire_time = ? WHERE id = ?",
-                    java.time.LocalDateTime.now().minusMinutes(1), tenantId);
+                    LocalDateTime.now().minusMinutes(1), tenantId);
             assertThat(provider.isCachedIdentityValid(cached)).isFalse();
             f.jdbc.update("UPDATE sys_tenant SET expire_time = ? WHERE id = ?",
-                    java.time.LocalDateTime.now().plusDays(1), tenantId);
+                    LocalDateTime.now().plusDays(1), tenantId);
             assertThat(provider.isCachedIdentityValid(cached)).isTrue();
             f.jdbc.update("UPDATE sys_tenant SET deleted = 1 WHERE id = ?", tenantId);
             assertThat(provider.isCachedIdentityValid(cached)).isFalse();
@@ -408,7 +475,7 @@ class TenantAdministrationDatabaseTest {
         try (Fixture f = new Fixture(database, false); var executor = Executors.newFixedThreadPool(2)) {
             var command = command();
             var barrier = new CyclicBarrier(2);
-            java.util.concurrent.Callable<Long> create = () -> {
+            Callable<Long> create = () -> {
                 rootIdentity();
                 try {
                     barrier.await(5, TimeUnit.SECONDS);
@@ -515,7 +582,7 @@ class TenantAdministrationDatabaseTest {
             var reserved = managementUser(0L, null, "reserved_edit"); reserved.setId(1L);
             assertThatThrownBy(() -> f.userController.update(reserved)).isInstanceOf(BaseException.class);
             assertThatThrownBy(() -> f.userController.delete(1L)).isInstanceOf(BaseException.class);
-            assertThatThrownBy(() -> f.users.updateRoleIds(1L, java.util.List.of())).isInstanceOf(BaseException.class);
+            assertThatThrownBy(() -> f.users.updateRoleIds(1L, List.of())).isInstanceOf(BaseException.class);
             assertThat(f.jdbc.queryForObject("SELECT username FROM sys_user WHERE id = 1", String.class)).isEqualTo("admin");
             Long first = f.service.create(command());
             Long second = f.service.create(command());
@@ -526,7 +593,7 @@ class TenantAdministrationDatabaseTest {
             f.jdbc.update("INSERT INTO sys_post (id, tenant_id, code, name, status) VALUES (99101, ?, 'target_post', '本租户岗位', 1)", first);
             f.jdbc.update("INSERT INTO sys_post (id, tenant_id, code, name, status) VALUES (99102, ?, 'target_post', '另一租户岗位', 1)", second);
 
-            var department = new com.sw.ck.system.entity.SysDept();
+            var department = new SysDept();
             department.setTenantId(first); department.setParentId(firstRoot);
             department.setName("目标部门"); department.setCode("target_dept");
             Long departmentId = f.deptController.create(department).getData();
@@ -535,15 +602,15 @@ class TenantAdministrationDatabaseTest {
             assertThat(LoginUserHolder.get().getTenantId()).isZero();
 
             var request = managementUser(first, departmentId, "shared_username");
-            request.setRoleIds(java.util.List.of(firstRole));
-            request.setPosts(java.util.List.of(new com.sw.ck.system.controller.UserController.PostAssignment(99101L, departmentId)));
+            request.setRoleIds(List.of(firstRole));
+            request.setPosts(List.of(new PostAssignment(99101L, departmentId)));
             Long userId = f.userController.create(request).getData();
             assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user WHERE id = ?", Long.class, userId)).isEqualTo(first);
             assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user_role WHERE user_id = ? AND deleted = 0", Long.class, userId)).isEqualTo(first);
             assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user_post WHERE user_id = ? AND deleted = 0", Long.class, userId)).isEqualTo(first);
-            f.users.updateRoleIds(userId, java.util.List.of());
-            f.users.updateRoleIds(userId, java.util.List.of(firstRole));
-            f.users.updateRoleIds(userId, java.util.List.of(firstRole));
+            f.users.updateRoleIds(userId, List.of());
+            f.users.updateRoleIds(userId, List.of(firstRole));
+            f.users.updateRoleIds(userId, List.of(firstRole));
             assertThat(f.count("SELECT COUNT(*) FROM sys_user_role WHERE user_id = ? AND tenant_id = ? AND deleted = 0", userId, first)).isEqualTo(1);
             f.userController.create(managementUser(second, secondRoot, "shared_username"));
             assertThat(f.count("SELECT COUNT(*) FROM sys_user WHERE username = 'shared_username' AND deleted = 0")).isEqualTo(2);
@@ -554,19 +621,19 @@ class TenantAdministrationDatabaseTest {
             var foreignDept = managementUser(first, secondRoot, "foreign_department");
             assertThatThrownBy(() -> f.userController.create(foreignDept)).isInstanceOf(BaseException.class);
             var foreignRole = managementUser(first, departmentId, "foreign_role");
-            foreignRole.setRoleIds(java.util.List.of(secondRole));
+            foreignRole.setRoleIds(List.of(secondRole));
             assertThatThrownBy(() -> f.userController.create(foreignRole)).isInstanceOf(IllegalArgumentException.class);
             var foreignPost = managementUser(first, departmentId, "foreign_post");
-            foreignPost.setPosts(java.util.List.of(new com.sw.ck.system.controller.UserController.PostAssignment(99102L, departmentId)));
+            foreignPost.setPosts(List.of(new PostAssignment(99102L, departmentId)));
             assertThatThrownBy(() -> f.userController.create(foreignPost)).isInstanceOf(IllegalArgumentException.class);
             assertThat(f.count("SELECT COUNT(*) FROM sys_user WHERE username IN ('foreign_department','foreign_role','foreign_post')")).isZero();
             request.setId(userId); request.setTenantId(second);
             assertThatThrownBy(() -> f.userController.update(request)).isInstanceOf(BaseException.class);
             assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_user WHERE id = ?", Long.class, userId)).isEqualTo(first);
-            var badParent = new com.sw.ck.system.entity.SysDept();
+            var badParent = new SysDept();
             badParent.setTenantId(first); badParent.setParentId(secondRoot); badParent.setName("跨租户部门"); badParent.setCode("foreign_parent");
             assertThatThrownBy(() -> f.deptController.create(badParent)).isInstanceOf(BaseException.class);
-            var badLeader = new com.sw.ck.system.entity.SysDept();
+            var badLeader = new SysDept();
             badLeader.setTenantId(first); badLeader.setParentId(firstRoot); badLeader.setName("错误负责人"); badLeader.setCode("foreign_leader");
             badLeader.setLeaderId(f.service.detail(second).adminUserId());
             assertThatThrownBy(() -> f.deptController.create(badLeader)).isInstanceOf(BaseException.class);
@@ -574,7 +641,7 @@ class TenantAdministrationDatabaseTest {
             assertThatThrownBy(() -> f.deptController.update(department)).isInstanceOf(BaseException.class);
             assertThat(f.jdbc.queryForObject("SELECT tenant_id FROM sys_dept WHERE id = ?", Long.class, departmentId)).isEqualTo(first);
 
-            var query = new com.sw.ck.system.service.UserPageQuery(); query.setTenantId(first);
+            var query = new UserPageQuery(); query.setTenantId(first);
             var page = f.userController.page(1, 200, query).getData();
             assertThat(page.getRecords()).allMatch(row -> first.equals(row.getTenantId()));
             assertThat(page.getRecords()).allMatch(row -> row.getTenantName() != null);
@@ -604,7 +671,7 @@ class TenantAdministrationDatabaseTest {
             assertThat(f.management.options(null, true)).noneMatch(row -> row.id().equals(tenantId));
             assertThat(f.management.options(null, false)).anyMatch(row -> row.id().equals(tenantId) && !row.writable());
             assertThatThrownBy(() -> f.management.createTarget(tenantId)).isInstanceOf(BaseException.class);
-            f.jdbc.update("UPDATE sys_tenant SET status = 0, expire_time = ? WHERE id = ?", java.time.LocalDateTime.now().minusSeconds(5), tenantId);
+            f.jdbc.update("UPDATE sys_tenant SET status = 0, expire_time = ? WHERE id = ?", LocalDateTime.now().minusSeconds(5), tenantId);
             assertThat(f.management.options(null, true)).noneMatch(row -> row.id().equals(tenantId));
             assertThatThrownBy(() -> f.management.createTarget(tenantId)).isInstanceOf(BaseException.class);
             assertThatThrownBy(() -> f.management.createTarget(999999L)).isInstanceOf(BaseException.class);
@@ -616,8 +683,8 @@ class TenantAdministrationDatabaseTest {
         }
     }
 
-    private static com.sw.ck.system.controller.UserController.UserFormRequest managementUser(Long tenantId, Long deptId, String username) {
-        var request = new com.sw.ck.system.controller.UserController.UserFormRequest();
+    private static UserFormRequest managementUser(Long tenantId, Long deptId, String username) {
+        var request = new UserFormRequest();
         request.setTenantId(tenantId); request.setDeptId(deptId); request.setUsername(username);
         request.setPlainPassword("test-only-password"); request.setStatus(0);
         return request;
@@ -645,18 +712,18 @@ class TenantAdministrationDatabaseTest {
         final TenantAdminService service;
         final String vendor;
         final boolean oldVersion;
-        final com.sw.ck.system.service.SysUserService users;
-        final com.sw.ck.system.service.SysDeptService departments;
-        final com.sw.ck.system.service.ManagementTenantContext management;
-        final com.sw.ck.system.service.TenantValidityService validity;
-        final com.sw.ck.system.service.TenantWorkAdmissionService workAdmission;
-        final com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue commandQueue;
-        final com.sw.ck.system.security.UserDetailsProviderImpl identities;
-        final com.sw.ck.notify.mapper.NotifyMessageMapper notificationMapper;
-        final com.sw.ck.notify.mapper.NotifySendAttemptMapper notificationAttempts;
-        final com.sw.ck.notify.service.impl.NotifyMessageServiceImpl notificationMessages;
-        final com.sw.ck.system.controller.UserController userController;
-        final com.sw.ck.system.controller.DeptController deptController;
+        final SysUserService users;
+        final SysDeptService departments;
+        final ManagementTenantContext management;
+        final TenantValidityService validity;
+        final TenantWorkAdmissionService workAdmission;
+        final PersistentBpmCommandQueue commandQueue;
+        final UserDetailsProviderImpl identities;
+        final NotifyMessageMapper notificationMapper;
+        final NotifySendAttemptMapper notificationAttempts;
+        final NotifyMessageServiceImpl notificationMessages;
+        final UserController userController;
+        final DeptController deptController;
 
         Fixture(Database database, boolean oldVersion) throws Exception {
             this.oldVersion = oldVersion;
@@ -664,7 +731,7 @@ class TenantAdministrationDatabaseTest {
             if (database == Database.POSTGRES) {
                 postgres = EmbeddedPostgres.builder().start();
                 dataSource = new DriverManagerDataSource(postgres.getJdbcUrl("postgres", "postgres"), "postgres", "postgres");
-                var connectionProperties = new java.util.Properties();
+                var connectionProperties = new Properties();
                 connectionProperties.setProperty("socketTimeout", "15");
                 connectionProperties.setProperty("options", "-c lock_timeout=5000 -c statement_timeout=10000");
                 dataSource.setConnectionProperties(connectionProperties);
@@ -684,62 +751,62 @@ class TenantAdministrationDatabaseTest {
                 var interceptor = new MybatisPlusInterceptor();
                 interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(new CommonTenantLineHandler(new TenantProperties(), context)));
                 interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
-                interceptor.addInnerInterceptor(new com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor(
-                        database == Database.H2 ? com.baomidou.mybatisplus.annotation.DbType.H2 : com.baomidou.mybatisplus.annotation.DbType.POSTGRE_SQL));
+                interceptor.addInnerInterceptor(new PaginationInnerInterceptor(
+                        database == Database.H2 ? DbType.H2 : DbType.POSTGRE_SQL));
                 var factory = new MybatisSqlSessionFactoryBean();
                 factory.setDataSource(dataSource); factory.setConfiguration(config); factory.setGlobalConfig(global); factory.setPlugins(interceptor);
                 var sessions = factory.getObject();
                 for (Class<?> mapper : new Class<?>[]{SysTenantMapper.class, SysDeptMapper.class, SysUserMapper.class, SysRoleMapper.class, SysRoleMenuMapper.class, SysUserRoleMapper.class,
-                        com.sw.ck.system.mapper.SysPostMapper.class, com.sw.ck.system.mapper.SysUserPostMapper.class,
-                        com.sw.ck.system.mapper.SysMenuMapper.class, com.sw.ck.system.mapper.SysRoleDeptMapper.class,
-                        com.sw.ck.system.mapper.SysTenantStatusAuditMapper.class,
-                        com.sw.ck.notify.mapper.NotifyMessageMapper.class, com.sw.ck.notify.mapper.NotifySendAttemptMapper.class,
-                        com.sw.ck.bpm.process.mapper.BpmCommandMapper.class}) {
+                        SysPostMapper.class, SysUserPostMapper.class,
+                        SysMenuMapper.class, SysRoleDeptMapper.class,
+                        SysTenantStatusAuditMapper.class,
+                        NotifyMessageMapper.class, NotifySendAttemptMapper.class,
+                        BpmCommandMapper.class}) {
                     sessions.getConfiguration().addMapper(mapper);
                 }
                 var template = new SqlSessionTemplate(sessions);
                 var transactions = new DataSourceTransactionManager(dataSource);
-                workAdmission = new com.sw.ck.system.service.TenantWorkAdmissionService(template.getMapper(SysTenantMapper.class), transactions);
-                notificationMapper = template.getMapper(com.sw.ck.notify.mapper.NotifyMessageMapper.class);
-                notificationAttempts = template.getMapper(com.sw.ck.notify.mapper.NotifySendAttemptMapper.class);
-                notificationMessages = new com.sw.ck.notify.service.impl.NotifyMessageServiceImpl(null, null, context, null);
-                org.springframework.test.util.ReflectionTestUtils.setField(notificationMessages, "baseMapper", notificationMapper);
-                var commandService = new com.sw.ck.bpm.process.service.impl.BpmCommandServiceImpl();
-                org.springframework.test.util.ReflectionTestUtils.setField(commandService, "baseMapper",
-                        template.getMapper(com.sw.ck.bpm.process.mapper.BpmCommandMapper.class));
-                var resourceAdmission = org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
-                commandQueue = new com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue(commandService, null,
-                        org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.ResourceReleaseService.class), resourceAdmission, workAdmission);
+                workAdmission = new TenantWorkAdmissionService(template.getMapper(SysTenantMapper.class), transactions);
+                notificationMapper = template.getMapper(NotifyMessageMapper.class);
+                notificationAttempts = template.getMapper(NotifySendAttemptMapper.class);
+                notificationMessages = new NotifyMessageServiceImpl(null, null, context, null);
+                ReflectionTestUtils.setField(notificationMessages, "baseMapper", notificationMapper);
+                var commandService = new BpmCommandServiceImpl();
+                ReflectionTestUtils.setField(commandService, "baseMapper",
+                        template.getMapper(BpmCommandMapper.class));
+                var resourceAdmission = Mockito.mock(ResourceAdmissionService.class);
+                commandQueue = new PersistentBpmCommandQueue(commandService, null,
+                        Mockito.mock(ResourceReleaseService.class), resourceAdmission, workAdmission);
                 var target = new TenantAdminService(template.getMapper(SysTenantMapper.class), template.getMapper(SysDeptMapper.class),
                         template.getMapper(SysUserMapper.class), template.getMapper(SysRoleMapper.class), template.getMapper(SysRoleMenuMapper.class),
                         template.getMapper(SysUserRoleMapper.class),
-                        template.getMapper(com.sw.ck.system.mapper.SysTenantStatusAuditMapper.class), encoder, transactions);
+                        template.getMapper(SysTenantStatusAuditMapper.class), encoder, transactions);
                 var proxy = new ProxyFactory(target);
                 proxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
                 service = (TenantAdminService) proxy.getProxy();
-                var userTarget = new com.sw.ck.system.service.impl.SysUserServiceImpl(encoder,
-                        template.getMapper(SysUserRoleMapper.class), template.getMapper(com.sw.ck.system.mapper.SysUserPostMapper.class),
-                        template.getMapper(SysRoleMapper.class), template.getMapper(com.sw.ck.system.mapper.SysPostMapper.class),
+                var userTarget = new SysUserServiceImpl(encoder,
+                        template.getMapper(SysUserRoleMapper.class), template.getMapper(SysUserPostMapper.class),
+                        template.getMapper(SysRoleMapper.class), template.getMapper(SysPostMapper.class),
                         template.getMapper(SysDeptMapper.class), null);
-                org.springframework.test.util.ReflectionTestUtils.setField(userTarget, "baseMapper", template.getMapper(SysUserMapper.class));
+                ReflectionTestUtils.setField(userTarget, "baseMapper", template.getMapper(SysUserMapper.class));
                 var userProxy = new ProxyFactory(userTarget);
                 userProxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
-                users = (com.sw.ck.system.service.SysUserService) userProxy.getProxy();
-                identities = new com.sw.ck.system.security.UserDetailsProviderImpl(users,
+                users = (SysUserService) userProxy.getProxy();
+                identities = new UserDetailsProviderImpl(users,
                         template.getMapper(SysUserRoleMapper.class), template.getMapper(SysRoleMapper.class),
-                        template.getMapper(SysRoleMenuMapper.class), template.getMapper(com.sw.ck.system.mapper.SysMenuMapper.class),
-                        template.getMapper(com.sw.ck.system.mapper.SysRoleDeptMapper.class),
-                        new com.sw.ck.system.service.TenantValidityService(template.getMapper(SysTenantMapper.class)));
-                var deptTarget = new com.sw.ck.system.service.impl.SysDeptServiceImpl(users);
-                org.springframework.test.util.ReflectionTestUtils.setField(deptTarget, "baseMapper", template.getMapper(SysDeptMapper.class));
+                        template.getMapper(SysRoleMenuMapper.class), template.getMapper(SysMenuMapper.class),
+                        template.getMapper(SysRoleDeptMapper.class),
+                        new TenantValidityService(template.getMapper(SysTenantMapper.class)));
+                var deptTarget = new SysDeptServiceImpl(users);
+                ReflectionTestUtils.setField(deptTarget, "baseMapper", template.getMapper(SysDeptMapper.class));
                 var deptProxy = new ProxyFactory(deptTarget);
                 deptProxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
-                departments = (com.sw.ck.system.service.SysDeptService) deptProxy.getProxy();
-                validity = new com.sw.ck.system.service.TenantValidityService(template.getMapper(SysTenantMapper.class));
-                management = new com.sw.ck.system.service.ManagementTenantContext(template.getMapper(SysTenantMapper.class), validity);
-                userController = new com.sw.ck.system.controller.UserController(users, null, management,
-                        new com.sw.ck.system.service.UserImportExportService(null, null, null, null, users, null));
-                deptController = new com.sw.ck.system.controller.DeptController(departments, management);
+                departments = (SysDeptService) deptProxy.getProxy();
+                validity = new TenantValidityService(template.getMapper(SysTenantMapper.class));
+                management = new ManagementTenantContext(template.getMapper(SysTenantMapper.class), validity);
+                userController = new UserController(users, null, management,
+                        new UserImportExportService(null, null, null, null, users, null));
+                deptController = new DeptController(departments, management);
             } catch (Exception failure) {
                 if (postgres != null) postgres.close();
                 throw failure;
@@ -752,14 +819,14 @@ class TenantAdministrationDatabaseTest {
             String[] locations = oldVersion
                     ? new String[]{"db/upgrade/0.2.0/legacy-0.1.10/", "db/migration/bpm/", "db/migration/notify/", "db/migration/form/", "db/migration/storage/", "db/migration/job/", "db/migration/agent/", "db/migration/iot/", "db/migration/openapi/", "db/migration/system/"}
                     : new String[]{"db/migration/", "db/migration/bpm/", "db/migration/notify/", "db/migration/form/", "db/migration/storage/", "db/migration/job/", "db/migration/agent/", "db/migration/iot/", "db/migration/openapi/", "db/migration/system/"};
-            var configuration = Flyway.configure().dataSource(dataSource).locations(java.util.Arrays.stream(locations).map(path -> "classpath:" + path + vendor).toArray(String[]::new));
+            var configuration = Flyway.configure().dataSource(dataSource).locations(Arrays.stream(locations).map(path -> "classpath:" + path + vendor).toArray(String[]::new));
             if (target != null) configuration.target(target);
             return configuration.load();
         }
 
         long count(String sql, Object... args) { return jdbc.queryForObject(sql, Long.class, args); }
-        com.sw.ck.notify.impl.NotifyFacadeImpl notifications(com.sw.ck.notify.api.NotifyChannelAdapter adapter) {
-            return new com.sw.ck.notify.impl.NotifyFacadeImpl(notificationMessages, java.util.List.of(adapter), notificationAttempts, workAdmission);
+        NotifyFacadeImpl notifications(NotifyChannelAdapter adapter) {
+            return new NotifyFacadeImpl(notificationMessages, List.of(adapter), notificationAttempts, workAdmission);
         }
         public void close() throws Exception { if (postgres != null) postgres.close(); }
     }

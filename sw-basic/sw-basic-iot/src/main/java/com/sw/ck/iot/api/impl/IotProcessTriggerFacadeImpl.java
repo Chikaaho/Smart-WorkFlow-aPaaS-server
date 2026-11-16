@@ -1,5 +1,7 @@
 package com.sw.ck.iot.api.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.entity.IotProcessTrigger;
@@ -19,11 +21,8 @@ import java.util.Optional;
 @Service
 public class IotProcessTriggerFacadeImpl implements IotProcessTriggerFacade {
 
-    private final IotProcessTriggerMapper triggerMapper;
-
-    public IotProcessTriggerFacadeImpl(IotProcessTriggerMapper triggerMapper) {
-        this.triggerMapper = triggerMapper;
-    }
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
 
     @Override
     public Optional<Boolean> markTriggerResult(String idempotentKey, String processInstanceId, String error) {

@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -25,14 +27,10 @@ import java.util.List;
 @RequestMapping({"/system/auth", "/auth"})
 public class AuthMeController {
 
-    private final SysUserService sysUserService;
-    private final SysMenuService sysMenuService;
-
-    public AuthMeController(SysUserService sysUserService,
-                            SysMenuService sysMenuService) {
-        this.sysUserService = sysUserService;
-        this.sysMenuService = sysMenuService;
-    }
+    @Autowired
+    private SysUserService sysUserService;
+    @Autowired
+    private SysMenuService sysMenuService;
 
     /**
      * 获取当前登录用户会话信息。

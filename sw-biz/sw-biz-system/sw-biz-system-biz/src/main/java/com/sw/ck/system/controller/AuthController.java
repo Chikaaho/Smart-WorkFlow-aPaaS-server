@@ -1,5 +1,9 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.trace.EventRef;
@@ -20,14 +24,15 @@ import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.service.AuditLogService;
 import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.TenantValidityService;
 import com.sw.ck.system.util.CookieUtils;
+
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+
 import lombok.Data;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,26 +41,37 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 认证控制器：登录挑战、登录、刷新 token、登出。
  */
 @RestController
 @RequestMapping("/auth")
+@Log4j2
 public class AuthController {
 
-    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
-
-    private final UserDetailsProvider userDetailsProvider;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtTokenProvider jwtTokenProvider;
-    private final SysUserService sysUserService;
-    private final JwtProperties jwtProperties;
-    private final RefreshTokenService refreshTokenService;
-    private final LoginUserLoader loginUserLoader;
-    private final LoginChallengeService loginChallengeService;
-    private final RsaLoginKeyManager rsaLoginKeyManager;
-    private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
-    private final com.sw.ck.system.service.AuditLogService auditLogService;
+    @Autowired
+    private UserDetailsProvider userDetailsProvider;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
+    @Autowired
+    private SysUserService sysUserService;
+    @Autowired
+    private JwtProperties jwtProperties;
+    @Autowired
+    private RefreshTokenService refreshTokenService;
+    @Autowired
+    private LoginUserLoader loginUserLoader;
+    @Autowired
+    private LoginChallengeService loginChallengeService;
+    @Autowired
+    private RsaLoginKeyManager rsaLoginKeyManager;
+    @Autowired
+    private TenantValidityService tenantValidityService;
+    @Autowired
+    private AuditLogService auditLogService;
 
     /** 首登改密的新密码最小长度（1.0.0 F1-4）。 */
     private static final int FIRST_CHANGE_MIN_PASSWORD_LENGTH = 8;
@@ -66,30 +82,6 @@ public class AuthController {
     /** refresh cookie 的浏览器可见 Path；生产按公开 API 前缀配置（如 /sw-server/api/） */
     @Value("${sw.security.cookie.path:/api/auth/}")
     private String cookiePath;
-
-    public AuthController(UserDetailsProvider userDetailsProvider,
-                          PasswordEncoder passwordEncoder,
-                          JwtTokenProvider jwtTokenProvider,
-                          SysUserService sysUserService,
-                          JwtProperties jwtProperties,
-                          RefreshTokenService refreshTokenService,
-                          LoginUserLoader loginUserLoader,
-                          LoginChallengeService loginChallengeService,
-                          RsaLoginKeyManager rsaLoginKeyManager,
-                          com.sw.ck.system.service.TenantValidityService tenantValidityService,
-                          com.sw.ck.system.service.AuditLogService auditLogService) {
-        this.userDetailsProvider = userDetailsProvider;
-        this.passwordEncoder = passwordEncoder;
-        this.jwtTokenProvider = jwtTokenProvider;
-        this.sysUserService = sysUserService;
-        this.jwtProperties = jwtProperties;
-        this.refreshTokenService = refreshTokenService;
-        this.loginUserLoader = loginUserLoader;
-        this.loginChallengeService = loginChallengeService;
-        this.rsaLoginKeyManager = rsaLoginKeyManager;
-        this.tenantValidityService = tenantValidityService;
-        this.auditLogService = auditLogService;
-    }
 
     /**
      * 登录前置挑战（P45）：一次性签发验证码、RSA 公钥、密钥版本、有效期与服务器时间。
@@ -278,8 +270,8 @@ public class AuthController {
             //    撤销刚轮换出的新 refresh token + 清除 cookie）
             // refresh 链路无 access 会话；用户按主键全局装载（I1 G2b 同口径）
             SysUser user;
-            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            try (Suspended ignored =
+                         TenantLineSuspension.suspended()) {
                 user = sysUserService.getById(rotation.userId());
             }
             String statusDenyMessage = user == null ? "账号已停用" : statusDenyMessage(user.getStatus());

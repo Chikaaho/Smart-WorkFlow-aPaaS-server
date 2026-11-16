@@ -1,10 +1,14 @@
 package com.sw.ck.agent.orchestration;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
@@ -22,6 +26,9 @@ import org.springframework.web.client.RestClient;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,17 +69,12 @@ public class AgentToolCallbackFactory {
     public record ToolHandle(ToolSpecification specification, ToolExecutor executor) {
     }
 
-    private final AgentToolInternalConfigMapper internalMapper;
-    private final AgentToolExternalConfigMapper externalMapper;
-    private final ApplicationContext applicationContext;
-
-    public AgentToolCallbackFactory(AgentToolInternalConfigMapper internalMapper,
-                                    AgentToolExternalConfigMapper externalMapper,
-                                    ApplicationContext applicationContext) {
-        this.internalMapper = internalMapper;
-        this.externalMapper = externalMapper;
-        this.applicationContext = applicationContext;
-    }
+    @Autowired
+    private AgentToolInternalConfigMapper internalMapper;
+    @Autowired
+    private AgentToolExternalConfigMapper externalMapper;
+    @Autowired
+    private ApplicationContext applicationContext;
 
     /**
      * 加载启用工具并构造句柄列表（内部 + 外部）。
@@ -188,7 +190,7 @@ public class AgentToolCallbackFactory {
             String args = unwrapArguments(request);
             String targetUrl = httpMethod == HttpMethod.GET ? getUrlWithArgs(url, args) : url;
             RestClient.RequestBodySpec spec = restClient.method(httpMethod)
-                    .uri(java.net.URI.create(targetUrl))
+                    .uri(URI.create(targetUrl))
                     .contentType(MediaType.APPLICATION_JSON);
             String result = (httpMethod == HttpMethod.GET ? spec : spec.body(args))
                     .retrieve()
@@ -201,8 +203,8 @@ public class AgentToolCallbackFactory {
 
     /** GET 入参编码：URL 已以 ? 或 = 结尾时直接追加，否则用 input 参数追加。 */
     static String getUrlWithArgs(String url, String args) {
-        String encoded = java.net.URLEncoder.encode(args == null ? "" : args,
-                java.nio.charset.StandardCharsets.UTF_8);
+        String encoded = URLEncoder.encode(args == null ? "" : args,
+                StandardCharsets.UTF_8);
         if (url.endsWith("?") || url.endsWith("=")) {
             return url + encoded;
         }

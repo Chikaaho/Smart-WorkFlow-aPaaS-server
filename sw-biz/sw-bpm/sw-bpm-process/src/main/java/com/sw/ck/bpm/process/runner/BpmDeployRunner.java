@@ -1,13 +1,13 @@
 package com.sw.ck.bpm.process.runner;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.facade.BpmDeployFacade;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.env.Environment;
@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 启动时部署 BPMN 并插入表单↔流程绑定（仅 dev/test 骨架初始化资产）。
  * <p>
@@ -41,9 +42,8 @@ import java.util.List;
  */
 @Component
 @ConditionalOnProperty(prefix = "sw.bpm", name = "enabled", havingValue = "true")
+@Log4j2
 public class BpmDeployRunner implements CommandLineRunner {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmDeployRunner.class);
 
     /** 骨架流程定义 key */
     static final String PROCESS_KEY = "skeleton_approval";
@@ -54,17 +54,12 @@ public class BpmDeployRunner implements CommandLineRunner {
     /** IT申请 formKey（以 form 模块种子数据为准） */
     static final String IT_APPLICATION_FORM_KEY = "it_application";
 
-    private final BpmDeployFacade bpmDeployFacade;
-    private final BpmFormBindingService bindingService;
-    private final Environment environment;
-
-    public BpmDeployRunner(BpmDeployFacade bpmDeployFacade,
-                           BpmFormBindingService bindingService,
-                           Environment environment) {
-        this.bpmDeployFacade = bpmDeployFacade;
-        this.bindingService = bindingService;
-        this.environment = environment;
-    }
+    @Autowired
+    private BpmDeployFacade bpmDeployFacade;
+    @Autowired
+    private BpmFormBindingService bindingService;
+    @Autowired
+    private Environment environment;
 
     @Override
     public void run(String... args) {

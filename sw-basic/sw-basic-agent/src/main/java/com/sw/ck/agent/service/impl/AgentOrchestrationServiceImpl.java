@@ -1,6 +1,7 @@
 package com.sw.ck.agent.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
 import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
 import com.sw.ck.agent.entity.AgentMessage;
@@ -10,6 +11,7 @@ import com.sw.ck.agent.entity.AgentToolCallLog;
 import com.sw.ck.agent.mapper.AgentMessageMapper;
 import com.sw.ck.agent.mapper.AgentSessionMapper;
 import com.sw.ck.agent.mapper.AgentToolCallLogMapper;
+import com.sw.ck.agent.orchestration.AgentFailureSummarizer;
 import com.sw.ck.agent.orchestration.AgentGraphFactory;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
@@ -17,7 +19,10 @@ import com.sw.ck.agent.orchestration.ToolCallRecord;
 import com.sw.ck.agent.service.AgentOrchestrationService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.exception.HttpException;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.state.AgentState;
@@ -53,8 +58,10 @@ import java.util.Set;
 @Service
 public class AgentOrchestrationServiceImpl implements AgentOrchestrationService {
 
-    private final AgentModelRuntimeService modelRuntimeService;
-    private final CompiledGraph<AgentState> agentCompiledGraph;
+    @Autowired
+    private AgentModelRuntimeService modelRuntimeService;
+    @Autowired
+    private CompiledGraph<AgentState> agentCompiledGraph;
 
     /** 可选注入（同 M07 惯例）：{@code sw.agent.enabled} 未开启时为 null，不加载工具 */
     @Autowired(required = false)
@@ -75,12 +82,6 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
     private static final String ROLE_USER = "USER";
 
     private static final String ROLE_ASSISTANT = "ASSISTANT";
-
-    public AgentOrchestrationServiceImpl(AgentModelRuntimeService modelRuntimeService,
-                                         CompiledGraph<AgentState> agentCompiledGraph) {
-        this.modelRuntimeService = modelRuntimeService;
-        this.agentCompiledGraph = agentCompiledGraph;
-    }
 
     @Override
     public AgentOrchestrationRunRespDTO run(AgentOrchestrationRunReqDTO req) {
@@ -181,7 +182,7 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
                     }
                 }
                 resp.setSuccess(false);
-                resp.setErrorMessage(com.sw.ck.agent.orchestration.AgentFailureSummarizer.summarize(e));
+                resp.setErrorMessage(AgentFailureSummarizer.summarize(e));
                 break;
             }
         }
@@ -201,9 +202,9 @@ public class AgentOrchestrationServiceImpl implements AgentOrchestrationService 
         List<ChatMessage> messages = new ArrayList<>(dbMessages.size());
         for (AgentMessage db : dbMessages) {
             if (ROLE_USER.equals(db.getRole())) {
-                messages.add(dev.langchain4j.data.message.UserMessage.from(db.getContent()));
+                messages.add(UserMessage.from(db.getContent()));
             } else if (ROLE_ASSISTANT.equals(db.getRole())) {
-                messages.add(dev.langchain4j.data.message.AiMessage.from(db.getContent()));
+                messages.add(AiMessage.from(db.getContent()));
             }
         }
         return messages;

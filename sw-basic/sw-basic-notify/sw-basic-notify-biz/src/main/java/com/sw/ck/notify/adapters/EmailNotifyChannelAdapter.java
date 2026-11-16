@@ -5,10 +5,11 @@ import com.sw.ck.notify.api.NotifyChannelAdapter;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.api.NotifyTargetResolver;
+import com.sw.ck.notify.config.NotifyChannelProperties;
+import com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps;
 import com.sw.ck.notify.render.NotifyHtmlSanitizer;
 import com.sw.ck.notify.service.NotifyChannelConfigService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -16,12 +17,16 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.HtmlUtils;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.mail.internet.MimeMessage;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 邮件生产渠道适配器（I6）。
  * <p>系统级装配：{@code sw.notify.channels.EMAIL.enabled=true} 即注册；
@@ -32,29 +37,27 @@ import java.util.Properties;
  */
 @Component
 @ConditionalOnProperty(prefix = "sw.notify.channels.EMAIL", name = "enabled", havingValue = "true")
+@Log4j2
 public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
-
-    private static final Logger log = LoggerFactory.getLogger(EmailNotifyChannelAdapter.class);
 
     private static final NotifyChannel CHANNEL = NotifyChannel.EMAIL;
 
     /** yml/env 装配的发信器（未配置 spring.mail 时可为空）。 */
-    private final ObjectProvider<JavaMailSender> mailSenderProvider;
-    private final NotifyTargetResolver targetResolver;
-    /** 懒解析：渠道配置服务依赖适配器清单，构造期取用会形成循环。 */
-    private final ObjectProvider<NotifyChannelConfigService> channelConfigServiceProvider;
-    private final String from;
-    private final Integer port;
-
     @Autowired
-    public EmailNotifyChannelAdapter(ObjectProvider<JavaMailSender> mailSenderProvider,
-                                     NotifyTargetResolver targetResolver,
-                                     com.sw.ck.notify.config.NotifyChannelProperties props,
-                                     ObjectProvider<NotifyChannelConfigService> channelConfigServiceProvider) {
-        this.mailSenderProvider = mailSenderProvider;
-        this.targetResolver = targetResolver;
-        this.channelConfigServiceProvider = channelConfigServiceProvider;
-        com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps emailProps = props.getChannels() == null ? null : props.getChannels().get("EMAIL");
+    private ObjectProvider<JavaMailSender> mailSenderProvider;
+    @Autowired
+    private NotifyTargetResolver targetResolver;
+    /** 懒解析：渠道配置服务依赖适配器清单，构造期取用会形成循环。 */
+    @Autowired
+    private ObjectProvider<NotifyChannelConfigService> channelConfigServiceProvider;
+    @Autowired
+    private NotifyChannelProperties props;
+    private String from;
+    private Integer port;
+
+    @PostConstruct
+    void initChannelProps() {
+        ChannelProps emailProps = props.getChannels() == null ? null : props.getChannels().get("EMAIL");
         this.from = emailProps == null ? null : emailProps.getFrom();
         this.port = emailProps == null ? null : emailProps.getPort();
     }
@@ -90,11 +93,11 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
                 return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
                         .failureReason("发件人未配置（from/username）").build());
             }
-            jakarta.mail.internet.MimeMessage message = sender.createMimeMessage();
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
             helper.setFrom(effectiveFrom);
             helper.setTo(to.orElseThrow());
-            helper.setSubject(org.springframework.web.util.HtmlUtils.htmlEscape(request.getTitle() == null ? "" : request.getTitle()));
+            helper.setSubject(HtmlUtils.htmlEscape(request.getTitle() == null ? "" : request.getTitle()));
             helper.setText("<html><body>" + NotifyHtmlSanitizer.clean(request.getContent()) + "</body></html>", true);
             sender.send(message);
             log.info("邮件投递成功: recipient={}, source={}, external=smtp-{}", request.getRecipientId(),

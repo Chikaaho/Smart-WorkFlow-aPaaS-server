@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -16,11 +18,8 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/system/post")
 public class PostController {
 
-    private final SysPostService sysPostService;
-
-    public PostController(SysPostService sysPostService) {
-        this.sysPostService = sysPostService;
-    }
+    @Autowired
+    private SysPostService sysPostService;
 
     /**
      * 分页查询岗位。

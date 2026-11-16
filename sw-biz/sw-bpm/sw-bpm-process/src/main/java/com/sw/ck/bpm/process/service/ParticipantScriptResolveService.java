@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -33,27 +35,19 @@ import java.util.Set;
 @Service
 public class ParticipantScriptResolveService implements ParticipantScriptResolvePort {
 
-    private final BpmScriptEvaluatePort scriptEvaluatePort;
-    private final ObjectProvider<BpmScriptFunctionContextFactory> contextFactoryProvider;
-    private final BpmInstanceService instanceService;
-    private final NodeFormDataService nodeFormDataService;
-    private final BpmVariableSnapshotService variableSnapshotService;
+    @Autowired
+    private BpmScriptEvaluatePort scriptEvaluatePort;
+    @Autowired
+    private ObjectProvider<BpmScriptFunctionContextFactory> contextFactoryProvider;
+    @Autowired
+    private BpmInstanceService instanceService;
+    @Autowired
+    private NodeFormDataService nodeFormDataService;
+    @Autowired
+    private BpmVariableSnapshotService variableSnapshotService;
 
     @Value("${sw.bpm.script.timeout-ms:5000}")
     private long timeoutMs = BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS;
-
-    public ParticipantScriptResolveService(
-            BpmScriptEvaluatePort scriptEvaluatePort,
-            ObjectProvider<BpmScriptFunctionContextFactory> contextFactoryProvider,
-            BpmInstanceService instanceService,
-            NodeFormDataService nodeFormDataService,
-            BpmVariableSnapshotService variableSnapshotService) {
-        this.scriptEvaluatePort = scriptEvaluatePort;
-        this.contextFactoryProvider = contextFactoryProvider;
-        this.instanceService = instanceService;
-        this.nodeFormDataService = nodeFormDataService;
-        this.variableSnapshotService = variableSnapshotService;
-    }
 
     @Override
     public Optional<List<String>> resolve(Long tenantId, String processInstanceId,

@@ -2,6 +2,7 @@ package com.sw.ck.bpm.process.service.impl;
 
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
 import com.sw.ck.bpm.process.entity.BpmHandover;
 import com.sw.ck.bpm.process.entity.BpmHandoverItem;
@@ -13,12 +14,16 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -71,13 +76,13 @@ class BpmHandoverServiceTest {
 
     @Test
     void shouldMigrateScopedTasksAndRecordPerItemList() {
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of(20L)));
-        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(java.util.Optional.of(List.of(
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(Optional.of(List.of(20L)));
+        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(Optional.of(List.of(
                 task("t1", "leave_def", "10"),
                 task("t2", "expense_def", "10"),
                 task("t3", "leave_def", "30")))); // 办理人已变化 → FAILED 不改写
         when(taskFacade.setAssignee(anyString(), anyString()))
-                .thenReturn(java.util.Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.APPLIED));
+                .thenReturn(Optional.of(MutationOutcome.APPLIED));
 
         BpmHandover handover = service.handover(10L, 20L, List.of("leave_def"), false);
 
@@ -97,8 +102,8 @@ class BpmHandoverServiceTest {
 
     @Test
     void shouldSkipAlreadyMigratedTaskOnRetry() {
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of(20L)));
-        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(java.util.Optional.of(List.of(
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(Optional.of(List.of(20L)));
+        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(Optional.of(List.of(
                 task("t1", "leave_def", "20")))); // 上轮已迁给目标用户
         BpmHandover handover = service.handover(10L, 20L, List.of(), false);
         assertThat(handover.getMigratedItems()).isZero();
@@ -110,15 +115,15 @@ class BpmHandoverServiceTest {
     void shouldRejectSameUserAndInactiveTarget() {
         assertThatThrownBy(() -> service.handover(10L, 10L, List.of(), false))
                 .isInstanceOf(BaseException.class);
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of()));
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(Optional.of(List.of()));
         assertThatThrownBy(() -> service.handover(10L, 99L, List.of(), false))
                 .isInstanceOf(BaseException.class).hasMessageContaining("目标用户无效");
     }
 
     @Test
     void shouldMigrateProxyRulesOnlyWhenExplicit() {
-        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(java.util.Optional.of(List.of(20L)));
-        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(java.util.Optional.of(List.of()));
+        when(userQueryFacade.findActiveUserIds(anyCollection(), eq(0L))).thenReturn(Optional.of(List.of(20L)));
+        when(taskFacade.queryTodo(anyString(), eq("10"))).thenReturn(Optional.of(List.of()));
         BpmAuthorizeRule rule = new BpmAuthorizeRule();
         rule.setId(7L);
         rule.setPrincipalId(10L);
@@ -139,9 +144,9 @@ class BpmHandoverServiceTest {
     }
 
     private List<BpmHandoverItem> itemsCaptor() {
-        org.mockito.ArgumentCaptor<BpmHandoverItem> captor =
-                org.mockito.ArgumentCaptor.forClass(BpmHandoverItem.class);
-        verify(itemMapper, org.mockito.Mockito.atLeast(0)).insert(captor.capture());
+        ArgumentCaptor<BpmHandoverItem> captor =
+                ArgumentCaptor.forClass(BpmHandoverItem.class);
+        verify(itemMapper, Mockito.atLeast(0)).insert(captor.capture());
         return captor.getAllValues();
     }
 }

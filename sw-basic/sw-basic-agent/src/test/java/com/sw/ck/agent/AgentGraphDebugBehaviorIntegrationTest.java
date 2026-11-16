@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.AgentGraphDebugNodeDTO;
 import com.sw.ck.agent.dto.AgentGraphDebugSessionDTO;
 import com.sw.ck.agent.dto.graph.GraphElement;
@@ -26,12 +27,15 @@ import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
+
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+
 import com.sw.ck.agent.service.AgentGraphDebugService;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
@@ -51,6 +55,14 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
+import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
+import com.sw.ck.agent.mapper.AgentGraphSnapshotMapper;
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
+import com.sw.ck.common.datascope.DeptScopeProvider;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -116,9 +128,9 @@ class AgentGraphDebugBehaviorIntegrationTest {
     @Autowired
     private AgentGraphExecutionService executionService;
     @Autowired
-    private com.sw.ck.agent.mapper.AgentProviderMapper providerMapper;
+    private AgentProviderMapper providerMapper;
     @Autowired
-    private com.sw.ck.agent.mapper.AgentModelMapper modelMapper;
+    private AgentModelMapper modelMapper;
     @Autowired
     private AgentToolInternalConfigMapper internalToolMapper;
     @Autowired
@@ -651,16 +663,16 @@ class AgentGraphDebugBehaviorIntegrationTest {
                             new StubChatModel("exit"));
         var loopExecResp = executionService.execute(loopGraphId, loopInput);
         assertThat(loopExecResp.isSuccess()).isTrue();
-        List<com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO> loopExecNodes =
+        List<AgentGraphExecutionNodeDTO> loopExecNodes =
                 executionService.listExecutionNodes(loopExecResp.getExecutionId());
 
         assertThat(loopDebugResult.getResultText()).isEqualTo(loopExecResp.getOutput());
         assertThat(loopDebugNodes.stream().map(AgentGraphDebugNodeDTO::getNodeSeq).toList())
-                .isEqualTo(loopExecNodes.stream().map(com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO::getNodeSeq).toList());
+                .isEqualTo(loopExecNodes.stream().map(AgentGraphExecutionNodeDTO::getNodeSeq).toList());
         assertThat(loopDebugNodes.stream().map(AgentGraphDebugNodeDTO::getBranchId).toList())
-                .isEqualTo(loopExecNodes.stream().map(com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO::getBranchId).toList());
+                .isEqualTo(loopExecNodes.stream().map(AgentGraphExecutionNodeDTO::getBranchId).toList());
         assertThat(loopDebugNodes.stream().map(AgentGraphDebugNodeDTO::getNodeId).toList())
-                .isEqualTo(loopExecNodes.stream().map(com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO::getNodeId).toList());
+                .isEqualTo(loopExecNodes.stream().map(AgentGraphExecutionNodeDTO::getNodeId).toList());
         // LOOP 重复 nodeId 不合并证据：两侧均 3 次 node_loop
         assertThat(loopDebugNodes.stream().filter(n -> "node_loop".equals(n.getNodeId()))).hasSize(3);
         assertThat(loopExecNodes.stream().filter(n -> "node_loop".equals(n.getNodeId()))).hasSize(3);
@@ -683,20 +695,20 @@ class AgentGraphDebugBehaviorIntegrationTest {
                             new StubChatModel("branch2"));
         var forkExecResp = executionService.execute(forkGraphId, forkInput);
         assertThat(forkExecResp.isSuccess()).isTrue();
-        List<com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO> forkExecNodes =
+        List<AgentGraphExecutionNodeDTO> forkExecNodes =
                 executionService.listExecutionNodes(forkExecResp.getExecutionId());
 
         assertThat(forkDebugNodes.stream().map(AgentGraphDebugNodeDTO::getNodeSeq).toList())
-                .isEqualTo(forkExecNodes.stream().map(com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO::getNodeSeq).toList());
+                .isEqualTo(forkExecNodes.stream().map(AgentGraphExecutionNodeDTO::getNodeSeq).toList());
         assertThat(forkDebugNodes.stream().map(AgentGraphDebugNodeDTO::getBranchId).toList())
-                .isEqualTo(forkExecNodes.stream().map(com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO::getBranchId).toList());
+                .isEqualTo(forkExecNodes.stream().map(AgentGraphExecutionNodeDTO::getBranchId).toList());
         assertThat(forkDebugNodes.stream().map(AgentGraphDebugNodeDTO::getNodeId).toList())
-                .isEqualTo(forkExecNodes.stream().map(com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO::getNodeId).toList());
+                .isEqualTo(forkExecNodes.stream().map(AgentGraphExecutionNodeDTO::getNodeId).toList());
         // FORK 扇出 branchId 区分证据：两侧均含 0-0/0-1
         assertThat(forkDebugNodes.stream().filter(n -> n.getNodeId().startsWith("node_llm"))
                 .map(AgentGraphDebugNodeDTO::getBranchId).toList()).containsExactlyInAnyOrder("0-0", "0-1");
         assertThat(forkExecNodes.stream().filter(n -> n.getNodeId().startsWith("node_llm"))
-                .map(com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO::getBranchId).toList()).containsExactlyInAnyOrder("0-0", "0-1");
+                .map(AgentGraphExecutionNodeDTO::getBranchId).toList()).containsExactlyInAnyOrder("0-0", "0-1");
     }
 
     // ==================== D) 标准5: 断点 ====================
@@ -958,7 +970,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
         assertThat(debugPage.getRecords()).anyMatch(d -> d.getId().equals(debugSession.getId()));
 
         // pageExecutions 只含执行记录
-        PageResult<com.sw.ck.agent.dto.AgentGraphExecutionDTO> execPage = executionService.pageExecutions(new PageParam(), null);
+        PageResult<AgentGraphExecutionDTO> execPage = executionService.pageExecutions(new PageParam(), null);
         assertThat(execPage.getTotal()).isGreaterThanOrEqualTo(1);
         assertThat(execPage.getRecords()).anyMatch(e -> e.getId().equals(execResp.getExecutionId()));
 
@@ -974,7 +986,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
         // 过滤维度：按 graphDefId 过滤互不串
         PageResult<AgentGraphDebugSessionDTO> debugFiltered = debugService.pageSessions(new PageParam(), execGraphId);
         assertThat(debugFiltered.getRecords()).noneMatch(d -> d.getId().equals(debugSession.getId()));
-        PageResult<com.sw.ck.agent.dto.AgentGraphExecutionDTO> execFiltered = executionService.pageExecutions(new PageParam(), debugGraphId);
+        PageResult<AgentGraphExecutionDTO> execFiltered = executionService.pageExecutions(new PageParam(), debugGraphId);
         assertThat(execFiltered.getRecords()).noneMatch(e -> e.getId().equals(execResp.getExecutionId()));
     }
 
@@ -1159,18 +1171,18 @@ class AgentGraphDebugBehaviorIntegrationTest {
         provider.setName("stub-provider");
         provider.setApiFormat("OPENAI_CHAT");
         provider.setEnabled(true);
-        var instances = java.util.Arrays.stream(chatModels)
+        var instances = Arrays.stream(chatModels)
                 .map(cm -> new AgentModelRuntimeService.ModelInstance(model, provider, cm))
                 .toArray(AgentModelRuntimeService.ModelInstance[]::new);
         when(modelRuntimeService.acquire(any())).thenReturn(instances[0],
-                java.util.Arrays.copyOfRange(instances, 1, instances.length));
+                Arrays.copyOfRange(instances, 1, instances.length));
         // D022-05 轮换入口：委托回 acquire 打桩（按序消费 ModelInstance，计数语义不变）
         when(modelRuntimeService.chatWithRotation(any(), anyList(), any())).thenAnswer(inv -> {
-        java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
+        List<?> msgs = (List<?>) inv.getArgument(1);
         if (msgs == null || msgs.isEmpty()) { return null; }
         return modelRuntimeService.acquire(1L).chatModel().chat(
-                                dev.langchain4j.model.chat.request.ChatRequest.builder()
-                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1)).build());
+                                ChatRequest.builder()
+                                .messages((List<ChatMessage>) inv.getArgument(1)).build());
         });
     }
 
@@ -1273,7 +1285,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -1301,7 +1313,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
 
         @Bean
         public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
-                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
             return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
@@ -1333,7 +1345,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
                 AgentModelRuntimeService modelRuntimeService,
                 AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+                DeptScopeProvider deptScopeProvider) {
             // AgentToolCallbackFactory 为 @Autowired(required=false) 字段注入，mock bean 由 Spring 自动填充
             return new AgentGraphDebugServiceImpl(objectMapper, graphDefMapper, sessionMapper,
                     debugNodeMapper, internalToolMapper, externalToolMapper,
@@ -1350,7 +1362,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
                 AgentModelRuntimeService modelRuntimeService,
                 AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+                DeptScopeProvider deptScopeProvider) {
             AgentGraphExecutionServiceImpl service = new AgentGraphExecutionServiceImpl(objectMapper,
                     modelRuntimeService, snapshotService, internalToolMapper, externalToolMapper,
                     executionMapper, executionNodeMapper, loginContextProvider, deptScopeProvider);
@@ -1358,7 +1370,7 @@ class AgentGraphDebugBehaviorIntegrationTest {
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() {
+        public DeptScopeProvider testDeptScopeProvider() {
             return deptId -> List.of();
         }
     }

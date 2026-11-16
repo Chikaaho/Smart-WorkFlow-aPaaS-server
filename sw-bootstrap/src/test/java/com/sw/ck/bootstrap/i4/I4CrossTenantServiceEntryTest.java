@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.i4;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.engine.delegate.DynamicBranchCollectionResolver;
 import com.sw.ck.bpm.process.entity.BpmHandover;
@@ -15,13 +16,24 @@ import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.engine.facade.BpmTaskFacadeImpl;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.service.impl.DeptFacadeImpl;
 import com.sw.ck.system.service.impl.UserFacadeImpl;
+import com.sw.ck.bpm.api.variable.BpmVariableReadPort;
+import com.sw.ck.bpm.process.mapper.BpmAuthorizeRuleMapper;
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.system.api.dept.DeptQueryFacade;
+import com.sw.ck.system.api.user.UserQueryFacade;
+import com.sw.ck.system.mapper.SysDeptMapper;
+import com.sw.ck.system.mapper.SysUserMapper;
+
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
@@ -43,11 +55,28 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.config.GlobalConfig;
+import com.baomidou.mybatisplus.core.config.GlobalConfig.DbConfig;
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
+import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.UserTask;
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 
 import javax.sql.DataSource;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -66,7 +95,7 @@ import static org.mockito.Mockito.when;
  * </p>
  */
 @SpringJUnitConfig(I4CrossTenantServiceEntryTest.R1Config.class)
-@org.junit.jupiter.api.TestInstance(org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS)
+@TestInstance(Lifecycle.PER_CLASS)
 @DisplayName("R1 真实双租户服务入口：跨租户部门解析与用户交接确定拒绝 + 零增量")
 class I4CrossTenantServiceEntryTest {
 
@@ -91,7 +120,7 @@ class I4CrossTenantServiceEntryTest {
     @BeforeAll
     void outputPgFingerprint(@Autowired JdbcTemplate jdbc) throws Exception {
         // PG 指纹证据：JDBC url + server_version（明确证明真实 PostgreSQL）
-        String url = jdbc.getDataSource().unwrap(javax.sql.DataSource.class).toString();
+        String url = jdbc.getDataSource().unwrap(DataSource.class).toString();
         String version = jdbc.queryForObject("select version()", String.class);
         String pgPort = String.valueOf(I4CrossTenantServiceEntryTest.DataSourceHolder.PG.getPort());
         String dir = System.getProperty("r1EvidenceDir");
@@ -109,8 +138,8 @@ class I4CrossTenantServiceEntryTest {
     private static void writeFingerprint(String dir, String content) {
         if (dir == null || dir.isBlank()) return;
         try {
-            java.nio.file.Files.createDirectories(java.nio.file.Path.of(dir));
-            java.nio.file.Files.writeString(java.nio.file.Path.of(dir, "pg-runtime.txt"), content);
+            Files.createDirectories(Path.of(dir));
+            Files.writeString(Path.of(dir, "pg-runtime.txt"), content);
         } catch (Exception ignored) {
         }
     }
@@ -141,7 +170,7 @@ class I4CrossTenantServiceEntryTest {
         when(execution.getProcessInstanceId()).thenReturn(processInstanceId);
         when(execution.getProcessDefinitionId()).thenReturn(definitionId);
         when(execution.getCurrentActivityId()).thenReturn("dyn");
-        org.flowable.bpmn.model.FlowElement element = new org.flowable.bpmn.model.UserTask();
+        FlowElement element = new UserTask();
         element.setId("dyn");
         when(execution.getCurrentFlowElement()).thenReturn(element);
         return execution;
@@ -226,8 +255,8 @@ class I4CrossTenantServiceEntryTest {
             DynamicBranchSnapshotMapper.class,
             BpmHandoverMapper.class,
             BpmHandoverItemMapper.class,
-            com.sw.ck.system.mapper.SysDeptMapper.class,
-            com.sw.ck.system.mapper.SysUserMapper.class,
+            SysDeptMapper.class,
+            SysUserMapper.class,
     })
     static class R1Config {
 
@@ -262,13 +291,13 @@ class I4CrossTenantServiceEntryTest {
                 }
 
                 @Override
-                public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.SELF;
+                public DataScopeType getDataScopeType() {
+                    return DataScopeType.SELF;
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
-                    return java.util.Set.of();
+                public Set<Long> getCustomDeptIds() {
+                    return Set.of();
                 }
 
                 @Override
@@ -287,30 +316,30 @@ class I4CrossTenantServiceEntryTest {
         public SqlSessionFactory sqlSessionFactory(DataSource dataSource,
                                                    LoginContextProvider loginContextProvider) {
             TenantProperties tenantProperties = new TenantProperties();
-            com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor interceptor =
-                    new com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor();
+            MybatisPlusInterceptor interceptor =
+                    new MybatisPlusInterceptor();
             interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(
                     new CommonTenantLineHandler(tenantProperties, loginContextProvider)));
             interceptor.addInnerInterceptor(
-                    new com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor());
+                    new OptimisticLockerInnerInterceptor());
 
-            com.baomidou.mybatisplus.core.MybatisConfiguration configuration =
-                    new com.baomidou.mybatisplus.core.MybatisConfiguration();
+            MybatisConfiguration configuration =
+                    new MybatisConfiguration();
             configuration.setMapUnderscoreToCamelCase(true);
 
-            com.baomidou.mybatisplus.core.config.GlobalConfig globalConfig =
-                    new com.baomidou.mybatisplus.core.config.GlobalConfig();
-            com.baomidou.mybatisplus.core.config.GlobalConfig.DbConfig dbConfig =
-                    new com.baomidou.mybatisplus.core.config.GlobalConfig.DbConfig();
+            GlobalConfig globalConfig =
+                    new GlobalConfig();
+            DbConfig dbConfig =
+                    new DbConfig();
             dbConfig.setLogicDeleteField("deleted");
             dbConfig.setLogicDeleteValue("1");
             dbConfig.setLogicNotDeleteValue("0");
             globalConfig.setDbConfig(dbConfig);
             globalConfig.setMetaObjectHandler(
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(loginContextProvider));
+                    new CommonMetaObjectHandler(loginContextProvider));
 
-            com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean factoryBean =
-                    new com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean();
+            MybatisSqlSessionFactoryBean factoryBean =
+                    new MybatisSqlSessionFactoryBean();
             factoryBean.setDataSource(dataSource);
             factoryBean.setConfiguration(configuration);
             factoryBean.setPlugins(interceptor);
@@ -323,15 +352,15 @@ class I4CrossTenantServiceEntryTest {
         }
 
         @Bean
-        public com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade(
-                com.sw.ck.system.mapper.SysDeptMapper mapper) {
+        public DeptQueryFacade deptQueryFacade(
+                SysDeptMapper mapper) {
             return new DeptFacadeImpl(mapper);
         }
 
         @Bean
-        public com.sw.ck.system.api.user.UserQueryFacade userQueryFacade(
-                com.sw.ck.system.mapper.SysUserMapper mapper,
-                com.sw.ck.system.mapper.SysDeptMapper deptMapper) {
+        public UserQueryFacade userQueryFacade(
+                SysUserMapper mapper,
+                SysDeptMapper deptMapper) {
             return new UserFacadeImpl(mapper, deptMapper);
         }
 
@@ -342,8 +371,8 @@ class I4CrossTenantServiceEntryTest {
 
         @Bean
         public DynamicBranchCollectionResolver dynamicBranchCollectionResolver(
-                com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade,
-                com.sw.ck.system.api.user.UserQueryFacade userQueryFacade,
+                DeptQueryFacade deptQueryFacade,
+                UserQueryFacade userQueryFacade,
                 DynamicBranchPort dynamicBranchPort) {
             ObjectProvider<DynamicBranchPort> provider = new ObjectProvider<>() {
                 @Override
@@ -368,21 +397,21 @@ class I4CrossTenantServiceEntryTest {
             };
             return new DynamicBranchCollectionResolver(R1Engine.REPOSITORY_SERVICE,
                     new ObjectMapper(), null, deptQueryFacade, userQueryFacade, provider,
-                    (tenantId, formKey, recordId) -> java.util.Optional.empty(),
-                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.variable.BpmVariableReadPort>() {
+                    (tenantId, formKey, recordId) -> Optional.empty(),
+                    new ObjectProvider<BpmVariableReadPort>() {
                         @Override
-                        public com.sw.ck.bpm.api.variable.BpmVariableReadPort getObject(Object... args) {
+                        public BpmVariableReadPort getObject(Object... args) {
                             return null;
                         }
 
                         @Override
-                        public com.sw.ck.bpm.api.variable.BpmVariableReadPort getIfAvailable() {
+                        public BpmVariableReadPort getIfAvailable() {
                             return null;
                         }
 
                         @Override
-                        public java.util.Iterator<com.sw.ck.bpm.api.variable.BpmVariableReadPort> iterator() {
-                            return java.util.List.<com.sw.ck.bpm.api.variable.BpmVariableReadPort>of().iterator();
+                        public Iterator<BpmVariableReadPort> iterator() {
+                            return List.<BpmVariableReadPort>of().iterator();
                         }
                     });
         }
@@ -390,9 +419,9 @@ class I4CrossTenantServiceEntryTest {
         @Bean
         public BpmHandoverService bpmHandoverService(BpmHandoverMapper handoverMapper,
                                                      BpmHandoverItemMapper itemMapper,
-                                                     com.sw.ck.bpm.process.mapper.BpmAuthorizeRuleMapper ruleMapper,
+                                                     BpmAuthorizeRuleMapper ruleMapper,
                                                      BpmTaskFacade bpmTaskFacade,
-                                                     com.sw.ck.system.api.user.UserQueryFacade userQueryFacade) {
+                                                     UserQueryFacade userQueryFacade) {
             return new BpmHandoverServiceImpl(handoverMapper, itemMapper, ruleMapper,
                     bpmTaskFacade, userQueryFacade);
         }
@@ -407,22 +436,22 @@ class I4CrossTenantServiceEntryTest {
 
     /** 真实 PostgreSQL（zonky 内嵌）+ postgresql 全目录迁移（R1 指定环境）。 */
     static class DataSourceHolder {
-        static final javax.sql.DataSource DATA_SOURCE = build();
-        static volatile io.zonky.test.db.postgres.embedded.EmbeddedPostgres PG;
+        static final DataSource DATA_SOURCE = build();
+        static volatile EmbeddedPostgres PG;
 
-        private static javax.sql.DataSource build() {
+        private static DataSource build() {
             try {
-                io.zonky.test.db.postgres.embedded.EmbeddedPostgres pg =
-                        io.zonky.test.db.postgres.embedded.EmbeddedPostgres.builder().start();
+                EmbeddedPostgres pg =
+                        EmbeddedPostgres.builder().start();
                 PG = pg;
-                org.springframework.boot.jdbc.DataSourceBuilder builder =
-                        org.springframework.boot.jdbc.DataSourceBuilder.create();
+                DataSourceBuilder builder =
+                        DataSourceBuilder.create();
                 builder.url(pg.getJdbcUrl("postgres", "postgres"));
                 builder.driverClassName("org.postgresql.Driver");
                 builder.username("postgres");
                 builder.password("postgres");
-                javax.sql.DataSource ds = builder.build();
-                org.flywaydb.core.Flyway flyway = org.flywaydb.core.Flyway.configure()
+                DataSource ds = builder.build();
+                Flyway flyway = Flyway.configure()
                         .dataSource(ds)
                         .locations("classpath:db/migration/postgresql",
                                 "classpath:db/migration/bpm/postgresql",

@@ -9,6 +9,9 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.dto.ApprovalAction;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,6 +25,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -53,14 +57,14 @@ class CommandLeaseHandoverOverlapTest {
     /** 受控任务状态：taskId -> (assignee, status)；effects 只允许一条完成记录。 */
     private static final Map<String, String> TASK_ASSIGNEE = Map.of("t9", "7");
     private static final Set<Long> CAN_HANDLE = Set.of(7L, 8L);
-    private static final Map<String, String> TASK_STATUS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, String> TASK_STATUS = new ConcurrentHashMap<>();
     private static final ConcurrentLinkedQueue<String> EFFECTS = new ConcurrentLinkedQueue<>();
     private static final ConcurrentLinkedQueue<String> ATTEMPTS = new ConcurrentLinkedQueue<>();
     /** 第一次（旧持有者）业务执行中途阻塞；B 完成后放行，制造真实重叠窗口。 */
     private static volatile CountDownLatch firstHandleBlock;
     /** 旧持有者领取时签发的租约令牌（其迟到写回应带此令牌并被拒）。 */
-    private final java.util.concurrent.atomic.AtomicReference<String> firstGenToken =
-            new java.util.concurrent.atomic.AtomicReference<>();
+    private final AtomicReference<String> firstGenToken =
+            new AtomicReference<>();
 
     /** 受控 TaskActionService：镜像真实语义（越权/任务不存在确定性拒绝 + 单次完成）。 */
     static class ControlledTaskActionService extends TaskActionService {
@@ -69,7 +73,7 @@ class CommandLeaseHandoverOverlapTest {
         }
 
         @Override
-        public com.sw.ck.common.response.R<Void> execute(String taskId, ApprovalActionRequest request,
+        public R<Void> execute(String taskId, ApprovalActionRequest request,
                                                          Long commandId) {
             LoginUser user = LoginUserHolder.get();
             ATTEMPTS.add(user.getUserId() + "->" + taskId + "@" + System.nanoTime());
@@ -98,7 +102,7 @@ class CommandLeaseHandoverOverlapTest {
 
     private final ControlledTaskActionService controlledService = new ControlledTaskActionService();
     private final TaskActionCommandHandler realHandler =
-            new TaskActionCommandHandler(controlledService, new com.fasterxml.jackson.databind.ObjectMapper());
+            new TaskActionCommandHandler(controlledService, new ObjectMapper());
 
     private final AtomicReference<Throwable> oldClaimantFailure = new AtomicReference<>();
 
@@ -133,9 +137,9 @@ class CommandLeaseHandoverOverlapTest {
         envelope.setInitiatorId(initiator);
         ApprovalActionRequest request = new ApprovalActionRequest();
         request.setTaskId("t9");
-        request.setAction(com.sw.ck.bpm.process.dto.ApprovalAction.APPROVE);
+        request.setAction(ApprovalAction.APPROVE);
         try {
-            envelope.setPayload(new com.fasterxml.jackson.databind.ObjectMapper()
+            envelope.setPayload(new ObjectMapper()
                     .writeValueAsString(request));
         } catch (Exception e) {
             throw new IllegalStateException(e);

@@ -1,14 +1,18 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.service.BaseServiceImpl;
+import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.service.DeptQuery;
 import com.sw.ck.system.service.SysDeptService;
 import com.sw.ck.system.service.SysUserService;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,11 +39,8 @@ public class SysDeptServiceImpl
     /** 部门状态：停用 */
     private static final int STATUS_DISABLED = 1;
 
-    private final SysUserService sysUserService;
-
-    public SysDeptServiceImpl(SysUserService sysUserService) {
-        this.sysUserService = sysUserService;
-    }
+    @Autowired
+    private SysUserService sysUserService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -236,7 +237,7 @@ public class SysDeptServiceImpl
     }
 
     private Long resolveCreationTenant(Long requested) {
-        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        var actor = LoginUserHolder.get();
         if (actor == null || actor.getTenantId() == null)
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少登录租户上下文");
         if (actor.isSuperAdmin() && Long.valueOf(0).equals(actor.getTenantId())) {
@@ -249,7 +250,7 @@ public class SysDeptServiceImpl
     }
 
     private void assertOwner(Long tenantId) {
-        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        var actor = LoginUserHolder.get();
         if (tenantId == null || actor == null || actor.getTenantId() == null)
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少对象租户或登录上下文");
         if (!(actor.isSuperAdmin() && Long.valueOf(0).equals(actor.getTenantId()))

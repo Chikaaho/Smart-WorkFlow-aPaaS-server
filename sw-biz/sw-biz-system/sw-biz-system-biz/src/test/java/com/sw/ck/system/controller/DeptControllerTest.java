@@ -3,7 +3,10 @@ package com.sw.ck.system.controller;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.service.DeptQuery;
+import com.sw.ck.system.service.ManagementTenantContext;
 import com.sw.ck.system.service.SysDeptService;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -24,13 +27,13 @@ import static org.mockito.Mockito.*;
 class DeptControllerTest {
 
     private final SysDeptService sysDeptService = mock(SysDeptService.class);
-    private final com.sw.ck.system.service.ManagementTenantContext tenantContext =
-            mock(com.sw.ck.system.service.ManagementTenantContext.class);
+    private final ManagementTenantContext tenantContext =
+            mock(ManagementTenantContext.class);
     private final DeptController controller = new DeptController(sysDeptService, tenantContext);
 
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void defaultOwnedObject() {
-        com.sw.ck.system.entity.SysDept owner = new com.sw.ck.system.entity.SysDept();
+        SysDept owner = new SysDept();
         owner.setId(1L);
         owner.setTenantId(1L);
         when(sysDeptService.getById(1L)).thenReturn(owner);

@@ -1,13 +1,29 @@
 package com.sw.ck.common.exception;
 
+import com.sw.ck.common.audit.UnhandledExceptionAudit;
+import com.sw.ck.common.i18n.LocalizedMessages;
 import com.sw.ck.common.response.R;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.common.trace.EventRef;
-import lombok.extern.slf4j.Slf4j;
+
+import lombok.extern.log4j.Log4j2;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.MessageSource;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.authorization.AuthorizationDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 统一异常出口。
@@ -24,40 +40,30 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * <p>HTTP 状态语义（保持 0.1.0 不变）：业务可预期异常走 200 + body code；已认证无权限落 403；
  * 畸形请求落 400；未分类/基础设施故障落 5xx。</p>
  */
-@Slf4j
+@Log4j2
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     /** 消息目录；为空（未装配）时全部回退到枚举中的 zh-CN 默认文案。 */
-    private final org.springframework.context.MessageSource messageSource;
+    @Autowired
+    private MessageSource messageSource;
 
     /**
      * 未处理异常审计发布器（1.0.0 F3-3）；为 null（手工构造的单参路径）时不发布。
      * 审计载体 {@link com.sw.ck.common.audit.UnhandledExceptionAudit} 由业务侧监听落库，
      * 框架层不反向依赖业务模块。
      */
-    private final org.springframework.context.ApplicationEventPublisher auditPublisher;
+    @Autowired
+    private ApplicationEventPublisher auditPublisher;
 
     /** 登录上下文延迟引用；手工构造（单参）或无安全装配时为空，操作人字段留空。 */
-    private final org.springframework.beans.factory.ObjectProvider<com.sw.ck.common.security.LoginContextProvider> loginContext;
-
-    public GlobalExceptionHandler(org.springframework.context.MessageSource messageSource) {
-        this(messageSource, null, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public GlobalExceptionHandler(org.springframework.context.MessageSource messageSource,
-                                  org.springframework.context.ApplicationEventPublisher auditPublisher,
-                                  org.springframework.beans.factory.ObjectProvider<com.sw.ck.common.security.LoginContextProvider> loginContext) {
-        this.messageSource = messageSource;
-        this.auditPublisher = auditPublisher;
-        this.loginContext = loginContext;
-    }
+    @Autowired
+    private ObjectProvider<LoginContextProvider> loginContext;
 
     /** 按当前请求语言解析文案；目录缺失或未装配时回退到缺省文案。 */
     private String text(String errorKey, String fallback) {
-        return com.sw.ck.common.i18n.LocalizedMessages
-                .text(messageSource, errorKey, fallback, com.sw.ck.common.i18n.LocalizedMessages.current());
+        return LocalizedMessages
+                .text(messageSource, errorKey, fallback, LocalizedMessages.current());
     }
 
     /**
@@ -72,11 +78,11 @@ public class GlobalExceptionHandler {
         // P61 R3：带目录参数的业务异常按参数填充，避免无参目录条目覆盖字段显示名等业务细节
         String message = ex.getMessageArgs() == null || ex.getMessageArgs().length == 0
                 ? text(ex.getErrorKey(), ex.getMessage())
-                : com.sw.ck.common.i18n.LocalizedMessages.textArgs(ex.getErrorKey(), ex.getMessage(), ex.getMessageArgs());
+                : LocalizedMessages.textArgs(ex.getErrorKey(), ex.getMessage(), ex.getMessageArgs());
         log.warn("business exception: code={} errorKey={} eventRef={} message={}",
                 ex.getCode(), ex.getErrorKey(), eventRef, message);
         // msg 已按目录+参数解析完成，必须用 failResolved，避免 R.fail 再查一次目录把细节覆盖
-        return com.sw.ck.common.response.R.failResolved(
+        return R.failResolved(
                 ex.getCode(), ex.getErrorKey(), message, eventRef);
     }
 
@@ -104,13 +110,13 @@ public class GlobalExceptionHandler {
      * P61：Jackson 的原文（含目标类名、字段路径、行号）只进日志，不进 {@code msg}。
      * </p>
      */
-    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    @ExceptionHandler(HttpMessageNotReadableException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public R<Void> handleMessageNotReadable(org.springframework.http.converter.HttpMessageNotReadableException ex) {
+    public R<Void> handleMessageNotReadable(HttpMessageNotReadableException ex) {
         String eventRef = EventRef.current();
         log.warn("request body not readable: eventRef={} cause={}", eventRef,
                 ex.getMostSpecificCause().getMessage());
-        return com.sw.ck.common.response.R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.request_body_unreadable",
+        return R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.request_body_unreadable",
                 text("common.request_body_unreadable", "请求数据格式不正确，请检查后重试"), eventRef);
     }
 
@@ -122,12 +128,12 @@ public class GlobalExceptionHandler {
      * 业务层 5MB 上限仍由表单导入导出以 1499 精确拒绝；两层口径见 application.yml 注释。
      * </p>
      */
-    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public R<Void> handleMaxUploadSize(org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+    public R<Void> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
         String eventRef = EventRef.current();
         log.warn("upload size exceeded: eventRef={} message={}", eventRef, ex.getMessage());
-        return com.sw.ck.common.response.R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.upload_too_large",
+        return R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.upload_too_large",
                 text("common.upload_too_large", "上传的文件过大，请压缩或拆分后重试"), eventRef);
     }
 
@@ -135,26 +141,26 @@ public class GlobalExceptionHandler {
      * 参数类型/取值不匹配 → HTTP 400 + 受控业务码。
      * <p>P61：Java 参数名只进日志，不进 {@code msg}。</p>
      */
-    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public R<Void> handleTypeMismatch(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
+    public R<Void> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         String eventRef = EventRef.current();
         log.warn("argument type mismatch: eventRef={} name={} value={}", eventRef,
                 ex.getName(), ex.getValue());
-        return com.sw.ck.common.response.R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.param_type_mismatch",
+        return R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.param_type_mismatch",
                 text("common.param_type_mismatch", "请求参数类型不正确，请检查后重试"), eventRef);
     }
 
     /**
      * 业务参数校验类异常（对象不存在等）→ HTTP 400 受控错误，不得落入 500。
      */
-    @ExceptionHandler(java.lang.IllegalArgumentException.class)
+    @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public R<Void> handleIllegalArgument(java.lang.IllegalArgumentException ex) {
+    public R<Void> handleIllegalArgument(IllegalArgumentException ex) {
         String eventRef = EventRef.current();
         log.warn("illegal argument: eventRef={} message={}", eventRef, ex.getMessage());
         // 原文只进日志；公共响应为安全分类文案，避免部分 IllegalArgumentException 携带内部细节
-        return com.sw.ck.common.response.R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.illegal_argument",
+        return R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.illegal_argument",
                 text("common.illegal_argument", "请求参数不合法，请检查后重试"), eventRef);
     }
 
@@ -162,9 +168,9 @@ public class GlobalExceptionHandler {
      * {@code @Valid} 参数校验失败 → HTTP 400 受控错误，不得落入 500。
      * <p>P61：除首条失败外还回传失败字段总数，便于前端定位；Java 字段名只进日志。</p>
      */
-    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    @ExceptionHandler(MethodArgumentNotValidException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public R<Void> handleValidation(org.springframework.web.bind.MethodArgumentNotValidException ex) {
+    public R<Void> handleValidation(MethodArgumentNotValidException ex) {
         String eventRef = EventRef.current();
         String diagnostic = ex.getBindingResult().getFieldErrors().stream()
                 .map(f -> f.getField() + " " + f.getDefaultMessage())
@@ -175,7 +181,7 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .map(f -> f.getDefaultMessage())
                 .orElse("请检查填写内容");
-        return com.sw.ck.common.response.R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.validation_failed",
+        return R.failResolved(CommonErrorCode.PARAM_ERROR.getCode(), "common.validation_failed",
                 text("common.validation_failed", "表单填写有误，请按提示修改后重试")
                         + (detail == null || detail.isBlank() ? "" : "：" + detail), eventRef);
     }
@@ -185,9 +191,9 @@ public class GlobalExceptionHandler {
      * {@code MissingServletRequestParameterException} 原先落 {@link #handleException}，
      * 客户端漏传参数被误报为系统异常）。参数名只进日志。
      */
-    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    @ExceptionHandler(MissingServletRequestParameterException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public R<Void> handleMissingParam(org.springframework.web.bind.MissingServletRequestParameterException ex) {
+    public R<Void> handleMissingParam(MissingServletRequestParameterException ex) {
         String eventRef = EventRef.current();
         log.warn("missing request parameter: eventRef={} name={} type={}", eventRef,
                 ex.getParameterName(), ex.getParameterType());
@@ -198,9 +204,9 @@ public class GlobalExceptionHandler {
      * 静态资源/未映射路径 → HTTP 404 受控结果，不得落入 500（I5 复验 G2a：
      * 匿名或路径错误必须是可判定结果，"系统异常" 不得掩盖认证/路由语义）。
      */
-    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    @ExceptionHandler(NoResourceFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
-    public R<Void> handleNoResource(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+    public R<Void> handleNoResource(NoResourceFoundException ex) {
         String eventRef = EventRef.current();
         log.warn("no resource: eventRef={} path={}", eventRef, ex.getResourcePath());
         return fail(CommonErrorCode.NOT_FOUND, eventRef);
@@ -231,8 +237,8 @@ public class GlobalExceptionHandler {
         try {
             String uri = null;
             String method = null;
-            if (org.springframework.web.context.request.RequestContextHolder.getRequestAttributes()
-                    instanceof org.springframework.web.context.request.ServletRequestAttributes attrs) {
+            if (RequestContextHolder.getRequestAttributes()
+                    instanceof ServletRequestAttributes attrs) {
                 uri = attrs.getRequest().getRequestURI();
                 String contextPath = attrs.getRequest().getContextPath();
                 if (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)) {
@@ -240,9 +246,9 @@ public class GlobalExceptionHandler {
                 }
                 method = attrs.getRequest().getMethod();
             }
-            com.sw.ck.common.security.LoginContextProvider login =
+            LoginContextProvider login =
                     loginContext != null ? loginContext.getIfAvailable() : null;
-            auditPublisher.publishEvent(new com.sw.ck.common.audit.UnhandledExceptionAudit(
+            auditPublisher.publishEvent(new UnhandledExceptionAudit(
                     uri, method, null,
                     login == null ? null : login.getUserId(),
                     login == null ? null : login.getTenantId(),
@@ -257,7 +263,7 @@ public class GlobalExceptionHandler {
     private R<Void> fail(CommonErrorCode errorCode, String eventRef) {
         // 文案已按目录解析，errorKey 亦为调用方权威：不得再经 R.fail 按数值码二次解析，
         // 否则 400 等复用数值码的分支会被 param_error 的目录文案整体覆盖（errorKey 与 msg 不一致）
-        return com.sw.ck.common.response.R.failResolved(errorCode.getCode(), errorCode.getErrorKey(),
+        return R.failResolved(errorCode.getCode(), errorCode.getErrorKey(),
                 text(errorCode.getErrorKey(), errorCode.getMessage()), eventRef);
     }
 }

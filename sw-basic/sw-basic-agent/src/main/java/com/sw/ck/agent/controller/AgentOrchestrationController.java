@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
 import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
 import com.sw.ck.agent.service.AgentOrchestrationService;
@@ -23,11 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/agent/orchestration")
 public class AgentOrchestrationController {
 
-    private final AgentOrchestrationService agentOrchestrationService;
-
-    public AgentOrchestrationController(AgentOrchestrationService agentOrchestrationService) {
-        this.agentOrchestrationService = agentOrchestrationService;
-    }
+    @Autowired
+    private AgentOrchestrationService agentOrchestrationService;
 
     /** 触发一次编排执行（单轮同步调用，模型服务不可达返回 success=false 而非 500） */
     @PostMapping("/run")

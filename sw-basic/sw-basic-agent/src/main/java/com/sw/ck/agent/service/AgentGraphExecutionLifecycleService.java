@@ -6,6 +6,7 @@ import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
 import com.sw.ck.agent.dto.AgentHumanTaskDTO;
 
 import java.util.List;
+import java.util.Map;
 
 public interface AgentGraphExecutionLifecycleService {
     /**
@@ -17,7 +18,7 @@ public interface AgentGraphExecutionLifecycleService {
      * @param idempotencyKey 幂等键（可空）
      */
     AgentGraphExecutionAcceptedDTO submit(Long graphDefId, String input,
-                                          java.util.Map<String, String> inputs, String idempotencyKey);
+                                          Map<String, String> inputs, String idempotencyKey);
 
     /** 旧三参入口（IoT 桥等既有调用方）：等价于 inputs = null。 */
     default AgentGraphExecutionAcceptedDTO submit(Long graphDefId, String input, String idempotencyKey) {
@@ -29,7 +30,7 @@ public interface AgentGraphExecutionLifecycleService {
 
     /** 提交人工任务（G3-2）：处理人填写并选择决策后继续执行。 */
     AgentGraphExecutionLifecycleDTO submitHumanTask(Long executionId, Long taskId,
-                                                    java.util.Map<String, String> values,
+                                                    Map<String, String> values,
                                                     String decision);
 
     /** 待我处理列表（G3-2：按当前用户/角色匹配的 PENDING 人工任务）。 */

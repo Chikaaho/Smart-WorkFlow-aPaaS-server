@@ -4,18 +4,24 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.baomidou.mybatisplus.extension.conditions.update.LambdaUpdateChainWrapper;
+
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.service.BpmCommandService;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,10 +46,10 @@ class CommandQueueTest {
     private final LambdaQueryChainWrapper<BpmCommand> queryChain = mock(LambdaQueryChainWrapper.class);
     private final LambdaUpdateChainWrapper<BpmCommand> updateChain = mock(LambdaUpdateChainWrapper.class);
 
-    private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService =
-            mock(com.sw.ck.bpm.process.service.ResourceReleaseService.class);
-    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService =
-            mock(com.sw.ck.bpm.process.service.ResourceAdmissionService.class);
+    private final ResourceReleaseService releaseService =
+            mock(ResourceReleaseService.class);
+    private final ResourceAdmissionService admissionService =
+            mock(ResourceAdmissionService.class);
 
     private final PersistentBpmCommandQueue queue =
             new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService,
@@ -125,10 +131,10 @@ class CommandQueueTest {
         var deniedQueue = new PersistentBpmCommandQueue(commandService, null, releaseService, admissionService,
                 (tenantId, claim) -> 0);
         BpmCommand candidate = command(1L);
-        when(commandService.listMaps(any(Wrapper.class))).thenReturn(List.of(java.util.Map.of("tenant_id", 1L)));
+        when(commandService.listMaps(any(Wrapper.class))).thenReturn(List.of(Map.of("tenant_id", 1L)));
         when(queryChain.list()).thenReturn(List.of(candidate));
         assertThat(deniedQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 10)).isEmpty();
-        verify(commandService, org.mockito.Mockito.never()).update(any(Wrapper.class));
+        verify(commandService, Mockito.never()).update(any(Wrapper.class));
         assertThat(candidate.getStatus()).isEqualTo("PENDING");
     }
 
@@ -138,7 +144,7 @@ class CommandQueueTest {
         BpmCommand candidate = command(1L);
         // 租户公平领取的活跃租户发现查询（Mockito 单测桩：单租户 1 有到期命令）
         when(commandService.listMaps(any(Wrapper.class)))
-                .thenReturn(List.of(java.util.Map.of("tenant_id", 1L)));
+                .thenReturn(List.of(Map.of("tenant_id", 1L)));
         when(queryChain.list()).thenReturn(List.of(candidate));
         when(commandService.update(any(Wrapper.class))).thenReturn(true);
 
@@ -172,7 +178,7 @@ class CommandQueueTest {
         queue.complete(1L, "token-1", "{\"status\":\"DONE\"}");
 
         ArgumentCaptor<Object> values = ArgumentCaptor.forClass(Object.class);
-        verify(updateChain, org.mockito.Mockito.atLeastOnce()).set(any(SFunction.class), values.capture());
+        verify(updateChain, Mockito.atLeastOnce()).set(any(SFunction.class), values.capture());
         assertThat(values.getAllValues()).contains(CommandStatusEnum.COMPLETED.getCode(), "{\"status\":\"DONE\"}");
         verify(updateChain).update();
     }
@@ -190,7 +196,7 @@ class CommandQueueTest {
 
         assertThat(retried).isTrue();
         ArgumentCaptor<Object> values = ArgumentCaptor.forClass(Object.class);
-        verify(updateChain, org.mockito.Mockito.atLeastOnce()).set(any(SFunction.class), values.capture());
+        verify(updateChain, Mockito.atLeastOnce()).set(any(SFunction.class), values.capture());
         assertThat(values.getAllValues()).contains(CommandStatusEnum.PENDING.getCode(), 1);
         assertThat(values.getAllValues()).anySatisfy(v -> assertThat(v).isInstanceOf(LocalDateTime.class));
     }
@@ -206,7 +212,7 @@ class CommandQueueTest {
 
         assertThat(retried).isFalse();
         ArgumentCaptor<Object> values = ArgumentCaptor.forClass(Object.class);
-        verify(updateChain, org.mockito.Mockito.atLeastOnce()).set(any(SFunction.class), values.capture());
+        verify(updateChain, Mockito.atLeastOnce()).set(any(SFunction.class), values.capture());
         assertThat(values.getAllValues()).contains(CommandStatusEnum.FAILED.getCode(), "boom");
         assertThat(values.getAllValues()).noneMatch(CommandStatusEnum.PENDING.getCode()::equals);
     }

@@ -1,10 +1,11 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
+
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -23,6 +25,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * P64 判断脚本隔离执行池（审查02 P1-02a/P1-02b 实现修订）。
  * <p>
@@ -41,9 +44,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </p>
  */
 @Component
+@Log4j2
 public class ScriptWorkerPool {
-
-    private static final Logger log = LoggerFactory.getLogger(ScriptWorkerPool.class);
 
     public static final String HEAP_CAP = "128m";
 
@@ -454,14 +456,14 @@ public class ScriptWorkerPool {
             long begin = System.currentTimeMillis();
             String requestId = UUID.randomUUID().toString();
             try {
-                Map<String, Object> request = new java.util.LinkedHashMap<>();
+                Map<String, Object> request = new LinkedHashMap<>();
                 request.put("id", requestId);
                 request.put("script", script == null ? "" : script);
                 request.put("variables", variables == null ? Map.of() : variables);
                 request.put("timeoutMs", timeoutMs);
                 // BF20261013-021：函数上下文仅在非空时下发（既有脚本请求报文零变化）
                 if (functionContext != null && !functionContext.isEmpty()) {
-                    Map<String, Object> ctx = new java.util.LinkedHashMap<>();
+                    Map<String, Object> ctx = new LinkedHashMap<>();
                     ctx.put("deptParentMap", functionContext.deptParentMap());
                     ctx.put("deptLeaderMap", functionContext.deptLeaderMap());
                     ctx.put("instanceVariables", functionContext.instanceVariables());
@@ -485,7 +487,7 @@ public class ScriptWorkerPool {
                 Map<?, ?> response = mapper.readValue(line, Map.class);
                 @SuppressWarnings("unchecked")
                 Map<String, Object> writes = response.get("variableWrites") instanceof Map<?, ?> map
-                        ? new java.util.LinkedHashMap<>((Map<String, Object>) map)
+                        ? new LinkedHashMap<>((Map<String, Object>) map)
                         : Map.of();
                 return new BpmScriptRunner.Result(
                         BpmScriptRunner.Result.Kind.valueOf(String.valueOf(response.get("kind"))),

@@ -1,6 +1,7 @@
 package com.sw.ck.iot.script;
 
 import com.alibaba.fastjson2.JSON;
+
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.iot.entity.IotCommand;
 import com.sw.ck.iot.entity.IotConnection;
@@ -22,8 +23,10 @@ import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
 import com.sw.ck.iot.script.api.IotScriptApi;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -34,6 +37,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 宿主函数服务端实现。
  * <p>
@@ -42,9 +46,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 所有返回均为可序列化 Map，凭证明文永不进入脚本上下文。
  * </p>
  */
+@Log4j2
 public class ScriptHostFunctions implements IotScriptApi {
-
-    private static final Logger log = LoggerFactory.getLogger(ScriptHostFunctions.class);
 
     private final IotDeviceMapper deviceMapper;
     private final IotConnectionMapper connectionMapper;
@@ -101,7 +104,7 @@ public class ScriptHostFunctions implements IotScriptApi {
             throw new IllegalArgumentException("topic 不能为空");
         }
         IotTopic topicCfg = topicMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotTopic>()
+                new LambdaQueryWrapper<IotTopic>()
                         .eq(IotTopic::getTopic, topic)
                         .last("limit 1"));
         if (topicCfg == null || topicCfg.getEnabled() == null || topicCfg.getEnabled() != 1) {
@@ -163,7 +166,7 @@ public class ScriptHostFunctions implements IotScriptApi {
             throw new IllegalArgumentException("topicFilter 不能为空");
         }
         IotTopic topicCfg = topicMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotTopic>()
+                new LambdaQueryWrapper<IotTopic>()
                         .eq(IotTopic::getTopic, topicFilter)
                         .last("limit 1"));
         if (topicCfg == null || topicCfg.getEnabled() == null || topicCfg.getEnabled() != 1) {
@@ -180,7 +183,7 @@ public class ScriptHostFunctions implements IotScriptApi {
     public Map<String, Object> funGetProperty(Long deviceId, String propertyId) {
         requireAuthorizedDevice(deviceId);
         IotPropertyRecord latest = propertyRecordMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotPropertyRecord>()
+                new LambdaQueryWrapper<IotPropertyRecord>()
                         .eq(IotPropertyRecord::getDeviceId, deviceId)
                         .eq(IotPropertyRecord::getPropertyId, propertyId)
                         .orderByDesc(IotPropertyRecord::getReportTime)
@@ -392,16 +395,16 @@ public class ScriptHostFunctions implements IotScriptApi {
         if (model == null) {
             throw new IllegalArgumentException("已发布物模型不存在");
         }
-        com.alibaba.fastjson2.JSONObject content = JSON.parseObject(model.getContentJson());
+        JSONObject content = JSON.parseObject(model.getContentJson());
         String arrayKey = switch (kind) {
             case "setProperty" -> "properties";
             case "event" -> "events";
             case "action" -> "actions";
             default -> throw new IllegalArgumentException("未知能力类型: " + kind);
         };
-        com.alibaba.fastjson2.JSONArray arr = content.getJSONArray(arrayKey);
+        JSONArray arr = content.getJSONArray(arrayKey);
         boolean found = arr != null && arr.stream().anyMatch(p -> capabilityId.equals(
-                ((com.alibaba.fastjson2.JSONObject) p).getString("id")));
+                ((JSONObject) p).getString("id")));
         if (!found) {
             throw new IllegalArgumentException("能力未在已发布物模型中声明: " + arrayKey + "." + capabilityId);
         }

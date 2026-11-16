@@ -7,6 +7,7 @@ import com.sw.ck.iot.mqtt.MqttDownlinkPublisher;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
+import java.time.Clock;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -46,9 +48,9 @@ class DeferredControlUtilTest {
     void setUp() {
         // provider 可缺省：装配存在与否决定控制通道是否可用
         deferredControlUtil = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(deviceControlProvider), mqttDownlinkPublisher, java.time.Clock.systemUTC());
+                provider(deviceControlProvider), mqttDownlinkPublisher, Clock.systemUTC());
         deferredControlUtilWithoutProvider = new DeferredControlUtil(iotDeviceService, commandQueueService,
-                provider(null), mqttDownlinkPublisher, java.time.Clock.systemUTC());
+                provider(null), mqttDownlinkPublisher, Clock.systemUTC());
 
         testDevice = new IotDevice();
         testDevice.setId(1L);
@@ -124,7 +126,7 @@ class DeferredControlUtilTest {
     void testControlProperty_DeviceNotFound() {
         when(iotDeviceService.getByProductAndDeviceName("test-product", "test-device")).thenReturn(null);
 
-        assertThrows(com.sw.ck.common.exception.BaseException.class, () ->
+        assertThrows(BaseException.class, () ->
                 deferredControlUtil.controlProperty(
                         "test-product", "test-device", "{\"power\":true}", null));
     }

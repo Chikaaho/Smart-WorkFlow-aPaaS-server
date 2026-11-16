@@ -1,5 +1,6 @@
 package com.sw.ck.iot.api;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,7 +24,7 @@ public interface IotCommandReservationFacade {
                                 Integer defVersion, String formKey, String recordId,
                                 String deviceKey, String productId, String deviceName,
                                 String commandKey, String commandType, String payloadJson,
-                                java.time.LocalDateTime dueAtUtc, String timezoneId,
+                                LocalDateTime dueAtUtc, String timezoneId,
                                 String dueLocalText, int lateWindowSeconds);
 
     /**
@@ -50,11 +51,11 @@ public interface IotCommandReservationFacade {
                               Integer defVersion, String formKey, String recordId,
                               String deviceKey, String productId, String deviceName,
                               String commandKey, String commandType, String payloadJson,
-                              java.time.LocalDateTime dueAtUtc, String timezoneId,
+                              LocalDateTime dueAtUtc, String timezoneId,
                               String dueLocalText, int lateWindowSeconds,
                               String status, Long commandId, String rejectReason,
                               Long cancelBy, String cancelReason,
-                              java.time.LocalDateTime cancelTime,
-                              java.time.LocalDateTime createTime) {
+                              LocalDateTime cancelTime,
+                              LocalDateTime createTime) {
     }
 }

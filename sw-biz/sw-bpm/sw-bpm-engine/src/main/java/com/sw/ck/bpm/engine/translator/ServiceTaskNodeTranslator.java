@@ -2,6 +2,7 @@ package com.sw.ck.bpm.engine.translator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -10,10 +11,13 @@ import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
+import com.sw.ck.bpm.engine.script.ScriptSugar;
+
 import org.flowable.bpmn.model.FieldExtension;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.ImplementationType;
 import org.flowable.bpmn.model.ServiceTask;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -24,11 +28,8 @@ import java.util.Optional;
 /** P58 服务节点翻译公共基类：配置只作为 BPMN 扩展属性传给受控委托。 */
 abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
 
-    protected final ObjectMapper objectMapper;
-
-    ServiceTaskNodeTranslator(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    protected ObjectMapper objectMapper;
 
     protected abstract String delegateBean();
 
@@ -94,7 +95,7 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
                         "POST 必须配置非空岗位编码")));
             }
         } else if (ParticipantStrategy.DEPT_POST.equalsIgnoreCase(selected)) {
-            if (!(participant.get("value") instanceof java.util.Map<?, ?> mapping)
+            if (!(participant.get("value") instanceof Map<?, ?> mapping)
                     || mapping.get("deptId") == null
                     || mapping.get("postCode") == null
                     || String.valueOf(mapping.get("postCode")).isBlank()) {
@@ -126,7 +127,7 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
             }
             // 流程表达式＝计算值适配器：脚本以 return 返回参与人
             try {
-                com.sw.ck.bpm.engine.script.ScriptSugar.transpile(text);
+                ScriptSugar.transpile(text);
             } catch (IllegalArgumentException e) {
                 return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
                         "EXPRESSION 脚本语法不合法: " + e.getMessage())));

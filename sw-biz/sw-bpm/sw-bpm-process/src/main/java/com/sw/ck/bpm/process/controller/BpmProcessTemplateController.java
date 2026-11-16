@@ -1,5 +1,8 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.bpm.process.dto.TemplateDeleteResultDTO;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.BpmProcessTemplate;
 import com.sw.ck.bpm.process.service.BpmProcessTemplateService;
@@ -8,7 +11,7 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUserHolder;
 import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,21 +23,16 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
-
 /**
  * 流程模板中心（I4 §3.2）：分类/状态/版本/管理范围集中维护，复制后编辑并发布。
  */
-@Slf4j
+@Log4j2
 @RestController
 @RequestMapping("/workflow/templates")
 public class BpmProcessTemplateController {
 
-    private final BpmProcessTemplateService templateService;
-
-    public BpmProcessTemplateController(BpmProcessTemplateService templateService) {
-        this.templateService = templateService;
-    }
+    @Autowired
+    private BpmProcessTemplateService templateService;
 
     @Data
     public static class TemplateSaveRequest {
@@ -103,8 +101,10 @@ public class BpmProcessTemplateController {
 
     @PreAuthorize("@ss.hasPermi('workflow:template:delete')")
     @DeleteMapping("/{id}")
-    public R<Map<String, Object>> delete(@PathVariable Long id) {
+    public R<TemplateDeleteResultDTO> delete(@PathVariable Long id) {
         templateService.delete(id);
-        return R.ok(Map.of("id", id));
+        TemplateDeleteResultDTO result = new TemplateDeleteResultDTO();
+        result.setId(id);
+        return R.ok(result);
     }
 }

@@ -1,5 +1,9 @@
 package com.sw.ck.bpm.process.queue;
 
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import java.util.Set;
+
+
 /**
  * 命令处理器 SPI：每种 {@link com.sw.ck.bpm.process.entity.CommandTypeEnum}
  * 一个实现，由 {@link CommandDispatcher} 按类型分发。
@@ -11,7 +15,7 @@ package com.sw.ck.bpm.process.queue;
 public interface BpmCommandHandler {
 
     /** 声明处理的命令类型（可多个）。 */
-    java.util.Set<com.sw.ck.bpm.process.entity.CommandTypeEnum> types();
+    Set<CommandTypeEnum> types();
 
     /**
      * 处理命令。

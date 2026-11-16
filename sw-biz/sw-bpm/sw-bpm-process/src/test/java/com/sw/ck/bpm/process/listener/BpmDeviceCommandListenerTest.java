@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.listener;
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -12,7 +13,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.Set;
 
@@ -81,8 +84,8 @@ class BpmDeviceCommandListenerTest {
             assertFalse(leaked, "监听器字段不得引用 IoT 实现类型: " + field.getName() + " -> " + typeName);
         }
         // 构造器只接受契约门面提供者：没有任何可写入 IoT 实现表的协作者
-        long constructorParams = java.util.Arrays.stream(BpmDeviceCommandListener.class.getDeclaredConstructors())
-                .mapToLong(java.lang.reflect.Constructor::getParameterCount)
+        long constructorParams = Arrays.stream(BpmDeviceCommandListener.class.getDeclaredConstructors())
+                .mapToLong(Constructor::getParameterCount)
                 .sum();
         assertEquals(1L, constructorParams, "监听器只应依赖 1 个契约门面提供者");
     }

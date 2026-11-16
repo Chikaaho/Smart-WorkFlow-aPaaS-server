@@ -1,5 +1,7 @@
 package com.sw.ck.iot.api.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.iot.api.IotDeviceQueryFacade;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.mapper.IotDeviceMapper;
@@ -14,11 +16,8 @@ import java.util.Optional;
 @Service
 public class IotDeviceQueryFacadeImpl implements IotDeviceQueryFacade {
 
-    private final IotDeviceMapper deviceMapper;
-
-    public IotDeviceQueryFacadeImpl(IotDeviceMapper deviceMapper) {
-        this.deviceMapper = deviceMapper;
-    }
+    @Autowired
+    private IotDeviceMapper deviceMapper;
 
     @Override
     public Optional<String> getDeviceKeyById(Long deviceId) {

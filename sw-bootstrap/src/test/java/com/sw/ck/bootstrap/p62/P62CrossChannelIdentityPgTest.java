@@ -3,6 +3,7 @@ package com.sw.ck.bootstrap.p62;
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.ProcessStartService;
@@ -10,6 +11,11 @@ import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -17,8 +23,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.net.URI;
@@ -29,9 +40,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -68,7 +81,7 @@ class P62CrossChannelIdentityPgTest {
 
     private final HttpClient http = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .connectTimeout(Duration.ofSeconds(5))
             .build();
 
     private Path evidenceDir;
@@ -98,10 +111,10 @@ class P62CrossChannelIdentityPgTest {
         props.put("sw.security.jwt.secret", "p62-g3b-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", P62BudgetMeasurementPgTest.generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-g3b-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("spring.datasource.dynamic.druid.initial-size", "5");
         props.put("spring.datasource.dynamic.druid.min-idle", "5");
         props.put("spring.datasource.dynamic.druid.max-active", "16");
@@ -114,30 +127,30 @@ class P62CrossChannelIdentityPgTest {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-g3b", props));
+                            new MapPropertySource("p62-g3b", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62G3bLoginContextProvider", provider);
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
-                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                            ((DefaultListableBeanFactory) bf)
                                     .setAllowBeanDefinitionOverriding(true);
-                            ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
+                            ((BeanDefinitionRegistry) bf)
                                     .registerBeanDefinition("loginUserCacheService",
-                                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                                            new RootBeanDefinition(
                                                     P62BudgetMeasurementPgTest.NoopLoginUserCacheService.class));
                         }
                     });
                 })
                 .run();
-        ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
-                org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
-        root.setLevel(ch.qos.logback.classic.Level.WARN);
+        Logger root = (Logger)
+                LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        root.setLevel(Level.WARN);
         jdbc = app.getBean(JdbcTemplate.class);
         port = Integer.parseInt(app.getEnvironment().getProperty("local.server.port"));
         raw.append("pgPort=").append(pg.getPort()).append(" httpPort=").append(port).append('\n');
@@ -199,7 +212,7 @@ class P62CrossChannelIdentityPgTest {
             ProcessGraph graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name(PROCESS_NAME)
                     .formKey(FORM_KEY).version(1).elements(elements).build();
-            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            String json = app.getBean(ObjectMapper.class)
                     .writeValueAsString(graph);
             processDefService.saveDraftGraph(def.getId(), json);
             BpmProcessDef published = processDefService.publish(def.getId());
@@ -217,7 +230,7 @@ class P62CrossChannelIdentityPgTest {
         ProcessStartService startService = app.getBean(ProcessStartService.class);
         String recordId = "XCHAN-" + tag + "-" + System.nanoTime();
         asTenant(() -> {
-            com.sw.ck.bpm.process.dto.StartCommand cmd = new com.sw.ck.bpm.process.dto.StartCommand();
+            StartCommand cmd = new StartCommand();
             cmd.setFormKey(FORM_KEY);
             cmd.setRecordId(recordId);
             cmd.setSubmitter(USER);
@@ -344,7 +357,7 @@ class P62CrossChannelIdentityPgTest {
     private String post(String path, String bearer, String body) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + path))
-                .timeout(java.time.Duration.ofSeconds(30))
+                .timeout(Duration.ofSeconds(30))
                 .header("Authorization", bearer)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
@@ -361,7 +374,7 @@ class P62CrossChannelIdentityPgTest {
         while (System.currentTimeMillis() < deadline) {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("http://127.0.0.1:" + port + "/api/workflow/commands/" + commandId))
-                    .timeout(java.time.Duration.ofSeconds(10))
+                    .timeout(Duration.ofSeconds(10))
                     .header("Authorization", bearer)
                     .GET()
                     .build();
@@ -421,7 +434,7 @@ class P62CrossChannelIdentityPgTest {
         row.put("notificationsBefore", effectsBefore);
         row.put("notificationsAfter", effectsAfter);
         row.put("recordedAt", LocalDateTime.now().format(TS));
-        String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+        String json = app.getBean(ObjectMapper.class)
                 .writeValueAsString(row);
         Files.writeString(evidenceDir.resolve("cross-channel-" + scenario + ".json"), json + "\n",
                 StandardCharsets.UTF_8, StandardOpenOption.CREATE,

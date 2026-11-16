@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.service;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 
@@ -183,7 +184,7 @@ public interface BpmProcessDefService {
      * @param defId 流程定义 ID
      * @return 版本行列表（按版本号降序）
      */
-    List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> listVersions(Long defId);
+    List<BpmProcessDefVersion> listVersions(Long defId);
 
     /**
      * 读取指定发布版本的冻结图（ProcessGraph）。

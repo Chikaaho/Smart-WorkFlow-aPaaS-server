@@ -9,8 +9,11 @@ import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 
 import java.util.HashMap;
 import java.util.List;
@@ -83,7 +86,7 @@ class OrchActionStartCommandHandlerTest {
         when(actionRefMapper.selectById(1L)).thenReturn(ref(1L, "INTENT_SUBMITTED", null));
         String payload = "{\"refId\":1,\"targetFormKey\":\"target_form\",\"data\":{\"owner\":\"11\"}}";
         when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
-                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                ArgumentMatchers.<Map<String, Object>>any(),
                 eq(IDEM_KEY), eq(7L)))
                 .thenAnswer(invocation -> {
                     Map<String, Object> submitted = invocation.getArgument(1);
@@ -117,7 +120,7 @@ class OrchActionStartCommandHandlerTest {
         String result = handler.handle(envelope("{\"refId\":1}"));
 
         assertThat(result).contains("SKIP_DUPLICATE").contains("rec-target-1");
-        org.mockito.Mockito.verifyNoInteractions(formDataSubmitFacade);
+        Mockito.verifyNoInteractions(formDataSubmitFacade);
     }
 
     @Test
@@ -128,9 +131,9 @@ class OrchActionStartCommandHandlerTest {
         String result = handler.handle(envelope("{\"refId\":1}"));
 
         assertThat(result).contains("SKIP_DUPLICATE").contains("rec-target-1");
-        verify(actionRefMapper, org.mockito.Mockito.never())
-                .updateById(org.mockito.ArgumentMatchers.any(BpmActionRef.class));
-        org.mockito.Mockito.verifyNoInteractions(formDataSubmitFacade);
+        verify(actionRefMapper, Mockito.never())
+                .updateById(ArgumentMatchers.any(BpmActionRef.class));
+        Mockito.verifyNoInteractions(formDataSubmitFacade);
     }
 
     @Test
@@ -140,7 +143,7 @@ class OrchActionStartCommandHandlerTest {
         String payload = "{\"refId\":1,\"targetFormKey\":\"target_form\",\"data\":{\"owner\":\"11\"}}";
         // 首次消费：目标记录创建失败（抛出 → 命令层按既有 failAndScheduleRetry 重试）
         when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
-                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                ArgumentMatchers.<Map<String, Object>>any(),
                 eq(IDEM_KEY), eq(7L)))
                 .thenThrow(new IllegalStateException("目标表单暂不可用"))
                 .thenAnswer(invocation -> Optional.of("rec-target-1"));
@@ -154,9 +157,9 @@ class OrchActionStartCommandHandlerTest {
         assertThat(result).contains("STARTED").contains("rec-target-1");
         verify(actionRefMapper).updateById(ref(1L, "STARTING", "rec-target-1"));
         // 同一幂等键共受理两次（1 失败 + 1 成功），成功路径只回填一条目标记录
-        verify(formDataSubmitFacade, org.mockito.Mockito.times(2)).submitOnBehalfOf(
+        verify(formDataSubmitFacade, Mockito.times(2)).submitOnBehalfOf(
                 eq("target_form"),
-                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                ArgumentMatchers.<Map<String, Object>>any(),
                 eq(IDEM_KEY), eq(7L));
     }
 
@@ -195,15 +198,15 @@ class OrchActionStartCommandHandlerTest {
         when(nodeFormDataService.loadGraph("def_target", 3))
                 .thenReturn(graphWithFirstNodeParticipant(binding));
         when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
-                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                ArgumentMatchers.<Map<String, Object>>any(),
                 eq(IDEM_KEY), eq(ownerId)))
                 .thenReturn(Optional.of("rec-target-1"));
 
         String result = handler.handle(envelope(payload));
 
         assertThat(result).contains("STARTED").contains("rec-target-1");
-        verify(formDataSubmitFacade, org.mockito.Mockito.never())
-                .submit(anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString());
+        verify(formDataSubmitFacade, Mockito.never())
+                .submit(anyString(), ArgumentMatchers.anyMap(), anyString());
         verify(actionRefMapper).updateById(ref(1L, "STARTING", "rec-target-1"));
     }
 
@@ -221,15 +224,15 @@ class OrchActionStartCommandHandlerTest {
         when(nodeFormDataService.loadGraph("def_target", 3))
                 .thenReturn(graphWithFirstNodeParticipant(tableBinding));
         when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
-                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                ArgumentMatchers.<Map<String, Object>>any(),
                 eq(IDEM_KEY), eq(7L)))
                 .thenReturn(Optional.of("rec-target-2"));
 
         String result = handler.handle(envelope(payload));
 
         assertThat(result).contains("STARTED").contains("rec-target-2");
-        verify(formDataSubmitFacade, org.mockito.Mockito.never())
-                .submit(anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString());
+        verify(formDataSubmitFacade, Mockito.never())
+                .submit(anyString(), ArgumentMatchers.anyMap(), anyString());
     }
 
     @Test
@@ -239,14 +242,14 @@ class OrchActionStartCommandHandlerTest {
         String payload = "{\"refId\":3,\"targetFormKey\":\"target_form\",\"data\":{\"owner_id\":\"1\"}}";
         when(processDefService.findByProcessKey("def_target")).thenReturn(null);
         when(formDataSubmitFacade.submitOnBehalfOf(eq("target_form"),
-                org.mockito.ArgumentMatchers.<Map<String, Object>>any(),
+                ArgumentMatchers.<Map<String, Object>>any(),
                 eq(IDEM_KEY), eq(7L)))
                 .thenReturn(Optional.of("rec-target-3"));
 
         String result = handler.handle(envelope(payload));
 
         assertThat(result).contains("STARTED").contains("rec-target-3");
-        verify(formDataSubmitFacade, org.mockito.Mockito.never())
-                .submit(anyString(), org.mockito.ArgumentMatchers.anyMap(), anyString());
+        verify(formDataSubmitFacade, Mockito.never())
+                .submit(anyString(), ArgumentMatchers.anyMap(), anyString());
     }
 }

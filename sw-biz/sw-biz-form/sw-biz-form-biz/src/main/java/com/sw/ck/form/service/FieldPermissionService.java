@@ -1,16 +1,20 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.security.holder.LoginUser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 字段级查看/编辑权限评估（I2，方向 §4.6）。
  *
@@ -25,15 +29,11 @@ import java.util.*;
  * </ul>
  */
 @Component
+@Log4j2
 public class FieldPermissionService {
 
-    private static final Logger log = LoggerFactory.getLogger(FieldPermissionService.class);
-
-    private final ObjectMapper objectMapper;
-
-    public FieldPermissionService(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private ObjectMapper objectMapper;
 
     public enum Action { VIEW, EDIT }
 
@@ -107,7 +107,7 @@ public class FieldPermissionService {
      */
     public void assertEditablePayload(LoginUser user, Map<String, Map<Action, Set<String>>> perms,
                                       Map<String, Object> payload) {
-        assertEditablePayload(user, perms, payload, java.util.Map.of());
+        assertEditablePayload(user, perms, payload, Map.of());
     }
 
     /**

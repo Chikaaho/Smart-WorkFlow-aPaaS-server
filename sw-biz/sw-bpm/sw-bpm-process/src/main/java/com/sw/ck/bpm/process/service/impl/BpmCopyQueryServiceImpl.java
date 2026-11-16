@@ -1,9 +1,11 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.CopyItemDTO;
-import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
+import com.sw.ck.bpm.process.dto.MyCopyDetailDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.CopyRecord;
 import com.sw.ck.bpm.process.mapper.CopyRecordMapper;
@@ -16,35 +18,26 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /** 抄送我的查询服务实现。 */
 @Service
+@Log4j2
 public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmCopyQueryServiceImpl.class);
-
-    private final CopyRecordMapper copyRecordMapper;
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final ApprovalActionService approvalActionService;
-
-    public BpmCopyQueryServiceImpl(CopyRecordMapper copyRecordMapper,
-                                   BpmInstanceService bpmInstanceService,
-                                   BpmTaskFacade bpmTaskFacade,
-                                   ApprovalActionService approvalActionService) {
-        this.copyRecordMapper = copyRecordMapper;
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.approvalActionService = approvalActionService;
-    }
+    @Autowired
+    private CopyRecordMapper copyRecordMapper;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private ApprovalActionService approvalActionService;
 
     @Override
     public PageResult<CopyItemDTO> myCopies(String processInstanceId, String keyword,
@@ -72,7 +65,7 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
     }
 
     @Override
-    public Map<String, Object> myCopyDetail(Long copyId) {
+    public MyCopyDetailDTO myCopyDetail(Long copyId) {
         LoginUser loginUser = LoginUserHolder.get();
         CopyRecord copy = copyRecordMapper.selectById(copyId);
         if (copy == null) {
@@ -84,14 +77,14 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "仅接收人可查看该抄送");
         }
 
-        Map<String, Object> detail = new LinkedHashMap<>();
-        detail.put("copy", copy);
+        MyCopyDetailDTO detail = new MyCopyDetailDTO();
+        detail.setCopy(copy);
 
         BpmInstance instance = bpmInstanceService.lambdaQuery()
                 .eq(BpmInstance::getProcessInstanceId, copy.getProcessInstanceId())
                 .last("LIMIT 1")
                 .one();
-        detail.put("instance", instance);
+        detail.setInstance(instance);
 
         if (instance != null) {
             // 只读表单快照（历史变量中的 formData，与审批意见初始化同源；实例已结束仍可读）
@@ -100,17 +93,15 @@ public class BpmCopyQueryServiceImpl implements BpmCopyQueryService {
                     .getHistoricVariables(instance.getProcessInstanceId())
                     .orElseThrow(() -> new IllegalStateException(
                             "历史变量查询未返回结果: processInstanceId=" + instance.getProcessInstanceId()));
-            Object formData = variables.get("formData");
-            detail.put("formData", formData);
+            detail.setFormData(variables.get("formData"));
 
             // 审批进度（活动任务）与流转记录（含审批意见），只读
             // empty = 实例标识缺失：无活动任务（对外响应字段保持原列表形状，不漂移为 Optional）
             List<BpmTaskDTO> activeTasks = bpmTaskFacade
                     .queryByProcessInstance(instance.getProcessInstanceId())
                     .orElse(List.of());
-            detail.put("progress", activeTasks);
-            detail.put("history",
-                    approvalActionService.findByProcessInstanceId(instance.getProcessInstanceId()));
+            detail.setProgress(activeTasks);
+            detail.setHistory(approvalActionService.findByProcessInstanceId(instance.getProcessInstanceId()));
         }
         return detail;
     }

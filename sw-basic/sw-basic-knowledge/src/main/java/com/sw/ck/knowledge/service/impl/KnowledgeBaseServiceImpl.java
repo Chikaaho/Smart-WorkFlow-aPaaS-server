@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -30,20 +32,14 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private static final int MIN_CHUNK_SIZE = 100;
     private static final int MAX_CHUNK_SIZE = 4000;
 
-    private final KnowledgeBaseMapper baseMapper;
-    private final KnowledgeDocumentMapper documentMapper;
-    private final KnowledgeVectorStore vectorStore;
-    private final KnowledgeEmbeddingClient embeddingClient;
-
-    public KnowledgeBaseServiceImpl(KnowledgeBaseMapper baseMapper,
-                                    KnowledgeDocumentMapper documentMapper,
-                                    KnowledgeVectorStore vectorStore,
-                                    KnowledgeEmbeddingClient embeddingClient) {
-        this.baseMapper = baseMapper;
-        this.documentMapper = documentMapper;
-        this.vectorStore = vectorStore;
-        this.embeddingClient = embeddingClient;
-    }
+    @Autowired
+    private KnowledgeBaseMapper baseMapper;
+    @Autowired
+    private KnowledgeDocumentMapper documentMapper;
+    @Autowired
+    private KnowledgeVectorStore vectorStore;
+    @Autowired
+    private KnowledgeEmbeddingClient embeddingClient;
 
     @Override
     public PageResult<KnowledgeBaseDTO> page(PageParam pageParam, String nameKeyword) {

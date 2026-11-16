@@ -5,6 +5,7 @@ import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.queue.support.QueueH2TestConfig;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -12,15 +13,20 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -43,7 +49,7 @@ class CommandQueueIntegrationTest {
     private TransactionTemplate txTemplate;
 
     @Autowired
-    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private JdbcTemplate jdbcTemplate;
 
     private final Map<String, AtomicInteger> effects = new ConcurrentHashMap<>();
     private final List<String> timeline = new CopyOnWriteArrayList<>();
@@ -79,8 +85,8 @@ class CommandQueueIntegrationTest {
     private BpmCommandHandler idempotentHandler() {
         return new BpmCommandHandler() {
             @Override
-            public java.util.Set<CommandTypeEnum> types() {
-                return java.util.Set.of(CommandTypeEnum.values());
+            public Set<CommandTypeEnum> types() {
+                return Set.of(CommandTypeEnum.values());
             }
 
             @Override
@@ -106,9 +112,9 @@ class CommandQueueIntegrationTest {
 
     private CommandDispatcher dispatcherWith(BpmCommandHandler handler) {
         CommandDispatcher dispatcher = new CommandDispatcher(queue, List.of(handler));
-        org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "batchSize", 20);
-        org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "p0BatchSize", 5);
-        org.springframework.test.util.ReflectionTestUtils.setField(dispatcher, "staleSeconds", 60);
+        ReflectionTestUtils.setField(dispatcher, "batchSize", 20);
+        ReflectionTestUtils.setField(dispatcher, "p0BatchSize", 5);
+        ReflectionTestUtils.setField(dispatcher, "staleSeconds", 60);
         return dispatcher;
     }
 
@@ -280,7 +286,7 @@ class CommandQueueIntegrationTest {
         List<CommandEnvelope> occupied = queue.claimDue(List.of(CommandChannelEnum.NORMAL), 2);
         assertThat(occupied).hasSize(2);
         // 领取受租户公平/准入策略影响，具体是哪两条不保证；按状态计数断言积压形态。
-        java.util.List<String> normalKeys = java.util.stream.IntStream.range(0, 5)
+        List<String> normalKeys = IntStream.range(0, 5)
                 .mapToObj(i -> "G5-B2-N-" + i)
                 .toList();
         long normalPending = normalKeys.stream()
@@ -306,10 +312,10 @@ class CommandQueueIntegrationTest {
         // 集合为准：被长期占用的保持 PROCESSING，其余正常命令被处理。
         dispatcherWith(idempotentHandler()).pollNormal();
         ensureLogin();
-        java.util.Set<String> occupiedKeys = occupied.stream()
+        Set<String> occupiedKeys = occupied.stream()
                 .map(CommandEnvelope::getCommandKey)
-                .collect(java.util.stream.Collectors.toSet());
-        java.util.List<String> remainingKeys = normalKeys.stream()
+                .collect(Collectors.toSet());
+        List<String> remainingKeys = normalKeys.stream()
                 .filter(key -> !occupiedKeys.contains(key))
                 .toList();
         for (String key : occupiedKeys) {

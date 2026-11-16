@@ -7,18 +7,31 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.config.FormAutoConfiguration;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormIdGenerator;
+import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
+import com.sw.ck.form.mapper.FormSnapshotMapper;
+import com.sw.ck.form.service.FieldPermissionService;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormVisibilityRules;
+import com.sw.ck.form.service.FormulaEngine;
 import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,12 +42,15 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.util.UUID;
+import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -188,7 +204,7 @@ class TenantOwnershipBehaviorTest {
         formDefService.createDraft(formKey, "第一个", null, null);
         assertThatThrownBy(() -> formDefService.createDraft(formKey, "第二个", null, null))
                 .as("同租户重复 formKey 必须拒绝")
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
     }
 
     @Configuration
@@ -212,7 +228,7 @@ class TenantOwnershipBehaviorTest {
 
         @Bean
         public PlatformTransactionManager transactionManager(DataSource dataSource) {
-            return new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource);
+            return new DataSourceTransactionManager(dataSource);
         }
 
         @Bean
@@ -221,7 +237,7 @@ class TenantOwnershipBehaviorTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -247,17 +263,17 @@ class TenantOwnershipBehaviorTest {
                     return u != null ? u.getTenantId() : null;
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
             CommonMetaObjectHandler metaObjectHandler = new CommonMetaObjectHandler(loginContextProvider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
-                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
+                    f.setId(new FormIdGenerator().generate());
                 }
             });
             globalConfig.setMetaObjectHandler(metaObjectHandler);
@@ -277,23 +293,23 @@ class TenantOwnershipBehaviorTest {
         public TenantProperties tenantProperties() {
             TenantProperties props = new TenantProperties();
             props.setEnabled(true);
-            props.setIgnoreTables(java.util.List.of("sys_menu"));
+            props.setIgnoreTables(List.of("sys_menu"));
             return props;
         }
 
         @Bean
         public FormDefService formDefService(FormDefMapper formDefMapper,
-                                             com.sw.ck.form.mapper.FormConfigMapper formConfigMapper,
-                                             com.sw.ck.form.mapper.FormSnapshotMapper formSnapshotMapper) {
+                                             FormConfigMapper formConfigMapper,
+                                             FormSnapshotMapper formSnapshotMapper) {
             // 本测试只覆盖元数据路径（草稿/读回），DynamicTableManager 不参与
             return new FormDefServiceImpl(formDefMapper, formConfigMapper, formSnapshotMapper, null,
-                    new com.sw.ck.form.entity.FormIdGenerator(),
-                    new com.fasterxml.jackson.databind.ObjectMapper(),
-                    new com.sw.ck.form.service.FormVisibilityRules(
-                            new com.fasterxml.jackson.databind.ObjectMapper()),
-                    new com.sw.ck.form.service.FormulaEngine(),
-                    new com.sw.ck.form.service.FieldPermissionService(
-                            new com.fasterxml.jackson.databind.ObjectMapper()),
+                    new FormIdGenerator(),
+                    new ObjectMapper(),
+                    new FormVisibilityRules(
+                            new ObjectMapper()),
+                    new FormulaEngine(),
+                    new FieldPermissionService(
+                            new ObjectMapper()),
                     null, null, null, null);
         }
     }

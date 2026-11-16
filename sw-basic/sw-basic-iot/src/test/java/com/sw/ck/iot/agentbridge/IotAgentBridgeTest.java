@@ -18,6 +18,8 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.alibaba.fastjson2.JSON;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -210,7 +213,7 @@ class IotAgentBridgeTest {
         assertEquals("p0_ticket", escalation.getProcessTemplateKey());
         assertEquals("iot-esc-666", escalation.getIdempotentKey());
         assertEquals("AGENT_FAIL", escalation.getTriggerSource());
-        Map<String, Object> formData = com.alibaba.fastjson2.JSON.parseObject(
+        Map<String, Object> formData = JSON.parseObject(
                 escalation.getFormSnapshot());
         assertEquals("P0", formData.get("level"));
         assertEquals("35.0", formData.get("temperature"));
@@ -260,14 +263,14 @@ class IotAgentBridgeTest {
         verify(triggerMapper).insert(insertCaptor.capture());
         IotProcessTrigger escalation = insertCaptor.getValue();
         assertEquals("agent_fail_escalation", escalation.getProcessTemplateKey());
-        Map<String, Object> formData = com.alibaba.fastjson2.JSON.parseObject(
+        Map<String, Object> formData = JSON.parseObject(
                 escalation.getFormSnapshot());
         assertEquals("P0", formData.get("level"));
         assertEquals("值班长", formData.get("advisor"));
 
         ArgumentCaptor<NotifySendRequest> notifyCaptor = ArgumentCaptor.forClass(NotifySendRequest.class);
         verify(notifyFacade, times(2)).send(notifyCaptor.capture());
-        assertEquals(java.util.List.of(NotifyChannel.IN_APP, NotifyChannel.EMAIL),
+        assertEquals(List.of(NotifyChannel.IN_APP, NotifyChannel.EMAIL),
                 notifyCaptor.getAllValues().stream().map(NotifySendRequest::getChannel).toList());
         assertEquals("iot-fail-666-IN_APP", notifyCaptor.getAllValues().get(0).getIdempotencyKey());
         assertEquals("iot-fail-666-EMAIL", notifyCaptor.getAllValues().get(1).getIdempotencyKey());

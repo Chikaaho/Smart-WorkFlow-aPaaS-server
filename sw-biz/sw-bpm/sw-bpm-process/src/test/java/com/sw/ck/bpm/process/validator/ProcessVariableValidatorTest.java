@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.validator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
@@ -13,8 +14,12 @@ import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 
 import java.util.List;
 import java.util.Map;
@@ -38,13 +43,13 @@ class ProcessVariableValidatorTest {
 
     private final FormDefinitionService formDefinitionService = mock(FormDefinitionService.class);
     private final BpmFormBindingService formBindingService = mock(BpmFormBindingService.class);
-    private final com.sw.ck.bpm.api.script.BpmScriptEvaluatePort scriptPort =
-            mock(com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.class);
-    { org.mockito.Mockito.when(scriptPort.validate(org.mockito.ArgumentMatchers.anyString()))
-            .thenReturn(java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome("OK", null, null, null, 0L))); }
+    private final BpmScriptEvaluatePort scriptPort =
+            mock(BpmScriptEvaluatePort.class);
+    { Mockito.when(scriptPort.validate(ArgumentMatchers.anyString()))
+            .thenReturn(Optional.of(new BpmScriptEvaluatePort.ScriptOutcome("OK", null, null, null, 0L))); }
 
-    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
-            mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+    private final UserQueryFacade userQueryFacade =
+            mock(UserQueryFacade.class);
 
     private final ProcessVariableValidator validator = new ProcessVariableValidator(
             formDefinitionService, formBindingService, scriptPort, new ObjectMapper(),
@@ -216,8 +221,8 @@ class ProcessVariableValidatorTest {
     @DisplayName("脚本语法错误：发布拒绝")
     void shouldRejectUncompilableScript() {
         stubForms();
-        when(scriptPort.validate(org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
+        when(scriptPort.validate(ArgumentMatchers.anyString()))
+                .thenReturn(Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
                         BpmScriptEvaluatePort.ScriptOutcome.KIND_SCRIPT_ERROR,
                         null, null, "语法错误", 0L)));
         ProcessGraph graph = ProcessGraph.builder()

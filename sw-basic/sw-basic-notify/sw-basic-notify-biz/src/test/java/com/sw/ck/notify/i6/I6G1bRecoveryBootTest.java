@@ -5,6 +5,7 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.entity.NotifyMessage;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -28,7 +30,7 @@ import static org.awaitility.Awaitility.await;
 class I6G1bRecoveryBootTest {
 
     @Autowired
-    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private JdbcTemplate jdbc;
 
     @BeforeAll
     static void prepareRecoveryState(@Autowired JdbcTemplate jt) {
@@ -46,7 +48,7 @@ class I6G1bRecoveryBootTest {
         assertThat(before).as("上一 JVM 应已持久化失败业务通知").isNotNull();
         final Long rowId = before.getId();
 
-        await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> {
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
             Integer attempt2 = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM sw_notify_send_attempt WHERE message_id = ? AND attempt_no >= 2",
                     Integer.class, rowId);

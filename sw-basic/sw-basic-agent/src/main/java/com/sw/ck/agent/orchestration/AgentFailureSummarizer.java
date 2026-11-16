@@ -2,12 +2,12 @@ package com.sw.ck.agent.orchestration;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.FailureCategory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.trace.EventRef;
 
 import java.io.IOException;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Agent 执行失败摘要（P61 §3.2）。
  *
@@ -21,9 +21,8 @@ import java.util.List;
  * </ul>
  * <p>被替换掉的原始原因写结构化日志并带事件引用，便于运维按引用还原。</p>
  */
+@Log4j2
 public final class AgentFailureSummarizer {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentFailureSummarizer.class);
 
     /** 传输/服务商异常类型名特征；按类型判定，不解析文案。 */
     private static final List<String> TRANSPORT_TYPE_HINTS = List.of(
@@ -60,7 +59,7 @@ public final class AgentFailureSummarizer {
             return deepestMessage;
         }
         if (hasTransport) {
-            String eventRef = com.sw.ck.common.trace.EventRef.current();
+            String eventRef = EventRef.current();
             log.warn("Agent 执行失败（传输/服务商类）: eventRef={} type={} detail={}",
                     eventRef, t.getClass().getSimpleName(), deepestMessage, t);
             return contentWithRef(

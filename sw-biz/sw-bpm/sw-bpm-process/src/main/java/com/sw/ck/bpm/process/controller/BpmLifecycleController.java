@@ -1,10 +1,13 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
+import com.sw.ck.bpm.process.dto.PendingSignDTO;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmSignRecord;
@@ -15,16 +18,22 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.bpm.process.service.BpmInstanceService;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * I3 人工审批生命周期端点：转办/委托/代理/撤回/沟通/废弃/加签/补签。
  * <p>
@@ -34,24 +43,17 @@ import java.util.Objects;
  */
 @RestController
 @RequestMapping("/workflow")
+@Log4j2
 public class BpmLifecycleController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmLifecycleController.class);
-
-    private final ApprovalLifecycleService lifecycleService;
-    private final BpmSignRecordMapper signRecordMapper;
-    private final com.sw.ck.bpm.process.service.BpmInstanceService bpmInstanceService;
-    private final BpmTaskFacade bpmTaskFacade;
-
-    public BpmLifecycleController(ApprovalLifecycleService lifecycleService,
-                                  BpmSignRecordMapper signRecordMapper,
-                                  com.sw.ck.bpm.process.service.BpmInstanceService bpmInstanceService,
-                                  BpmTaskFacade bpmTaskFacade) {
-        this.lifecycleService = lifecycleService;
-        this.signRecordMapper = signRecordMapper;
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmTaskFacade = bpmTaskFacade;
-    }
+    @Autowired
+    private ApprovalLifecycleService lifecycleService;
+    @Autowired
+    private BpmSignRecordMapper signRecordMapper;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
 
     @Transactional
     @PreAuthorize("@ss.hasPermi('workflow:task:transfer')")
@@ -99,7 +101,7 @@ public class BpmLifecycleController {
         LoginUser actor = LoginUserHolder.get();
         BpmInstance instance = bpmInstanceService.findByProcessInstanceId(instanceId)
                 .orElseThrow(() -> new BaseException(
-                        com.sw.ck.common.exception.CommonErrorCode.NOT_FOUND.getCode(), "实例不存在"));
+                        CommonErrorCode.NOT_FOUND.getCode(), "实例不存在"));
         if (instance.getStatus() == null || "RUNNING".equalsIgnoreCase(instance.getStatus())) {
             throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                     "补签仅适用于已越过终态的实例");
@@ -122,11 +124,11 @@ public class BpmLifecycleController {
             }
             // 幂等门：同实例同参与人已存在待处理补签 → 拒绝重复（二级提示 G9b）
             long duplicate = signRecordMapper.selectCount(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.bpm.process.entity.BpmSignRecord>lambdaQuery()
-                            .eq(com.sw.ck.bpm.process.entity.BpmSignRecord::getProcessInstanceId, instanceId)
-                            .eq(com.sw.ck.bpm.process.entity.BpmSignRecord::getSignType, "SUPPLEMENT_SIGN")
-                            .eq(com.sw.ck.bpm.process.entity.BpmSignRecord::getParticipantId, participant)
-                            .eq(com.sw.ck.bpm.process.entity.BpmSignRecord::getSignStatus, "PENDING"));
+                    Wrappers.<BpmSignRecord>lambdaQuery()
+                            .eq(BpmSignRecord::getProcessInstanceId, instanceId)
+                            .eq(BpmSignRecord::getSignType, "SUPPLEMENT_SIGN")
+                            .eq(BpmSignRecord::getParticipantId, participant)
+                            .eq(BpmSignRecord::getSignStatus, "PENDING"));
             if (duplicate > 0) {
                 throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                         "该参与人已有待处理补签，不得重复补签");
@@ -154,14 +156,14 @@ public class BpmLifecycleController {
 
     private String toJsonString(Object value) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value);
+            return new ObjectMapper().writeValueAsString(value);
         } catch (Exception e) {
             return "{}";
         }
     }
 
-    private java.util.Map<String, Object> mapOf(Object... pairs) {
-        java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+    private Map<String, Object> mapOf(Object... pairs) {
+        Map<String, Object> map = new LinkedHashMap<>();
         for (int i = 0; i < pairs.length; i += 2) {
             map.put(String.valueOf(pairs[i]), pairs[i + 1]);
         }
@@ -170,7 +172,7 @@ public class BpmLifecycleController {
 
     private String extractDetail(String json, String key, String fallback) {
         try {
-            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper()
+            JsonNode node = new ObjectMapper()
                     .readTree(json == null ? "{}" : json);
             return node.path(key).asText(fallback);
         } catch (Exception ignored) {
@@ -181,10 +183,10 @@ public class BpmLifecycleController {
     @Transactional
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/sign/pending")
-    public R<List<Map<String, Object>>> pendingSigns() {
+    public R<List<PendingSignDTO>> pendingSigns() {
         LoginUser actor = requireAuthenticatedActor();
         List<BpmSignRecord> records = signRecordMapper.selectList(
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmSignRecord>lambdaQuery()
+                Wrappers.<BpmSignRecord>lambdaQuery()
                         .eq(BpmSignRecord::getParticipantId, actor.getUserId())
                         .eq(BpmSignRecord::getTenantId, actor.getTenantId())
                         .eq(BpmSignRecord::getSignStatus, "PENDING")
@@ -192,31 +194,31 @@ public class BpmLifecycleController {
                         .orderByAsc(BpmSignRecord::getSeqNo));
         List<String> taskIds = records.stream().map(BpmSignRecord::getTaskId).distinct().toList();
         List<BpmSignRecord> allPendingForTasks = taskIds.isEmpty() ? List.of() : signRecordMapper.selectList(
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmSignRecord>lambdaQuery()
+                Wrappers.<BpmSignRecord>lambdaQuery()
                         .in(BpmSignRecord::getTaskId, taskIds)
                         .eq(BpmSignRecord::getTenantId, actor.getTenantId())
                         .eq(BpmSignRecord::getSignStatus, "PENDING"));
-        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        List<PendingSignDTO> out = new ArrayList<>();
         for (BpmSignRecord record : records) {
             boolean serialBlocked = "SERIAL".equalsIgnoreCase(record.getModeType())
                     && allPendingForTasks.stream().anyMatch(other -> Objects.equals(record.getTaskId(), other.getTaskId())
                     && other.getSeqNo() != null && record.getSeqNo() != null
                     && other.getSeqNo() < record.getSeqNo());
-            Map<String, Object> item = mapOf(
-                    "recordId", record.getId(),
-                    "taskId", record.getTaskId(),
-                    "processInstanceId", record.getProcessInstanceId(),
-                    "nodeKey", record.getNodeKey(),
-                    "signType", record.getSignType(),
-                    "modeType", record.getModeType(),
-                    "seqNo", record.getSeqNo(),
-                    "signPosition", extractDetail(record.getDetail(), "signPosition", "BEFORE"),
-                    "comment", extractDetail(record.getDetail(), "comment", ""),
-                    "serialBlocked", serialBlocked);
+            PendingSignDTO item = new PendingSignDTO();
+            item.setRecordId(record.getId());
+            item.setTaskId(record.getTaskId());
+            item.setProcessInstanceId(record.getProcessInstanceId());
+            item.setNodeKey(record.getNodeKey());
+            item.setSignType(record.getSignType());
+            item.setModeType(record.getModeType());
+            item.setSeqNo(record.getSeqNo());
+            item.setSignPosition(extractDetail(record.getDetail(), "signPosition", "BEFORE"));
+            item.setComment(extractDetail(record.getDetail(), "comment", ""));
+            item.setSerialBlocked(serialBlocked);
             if (record.getTaskId() != null && !record.getTaskId().startsWith("SUPPLEMENT#")) {
                 bpmTaskFacade.getTask(record.getTaskId()).ifPresent(task -> {
-                    item.put("taskName", task.getName());
-                    item.put("processDefinitionKey", task.getProcessDefinitionKey());
+                    item.setTaskName(task.getName());
+                    item.setProcessDefinitionKey(task.getProcessDefinitionKey());
                 });
             }
             out.add(item);

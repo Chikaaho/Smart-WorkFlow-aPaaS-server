@@ -1,9 +1,13 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.BpmResourceOpsViews;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.entity.BpmResourceUsage;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
+import com.sw.ck.bpm.process.queue.BpmCommandHandler;
 import com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob;
 import com.sw.ck.bpm.process.service.ResourceAdmissionService;
 import com.sw.ck.bpm.process.service.ResourceFactView;
@@ -16,18 +20,22 @@ import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.form.api.port.TxnActionRuntimePort;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationContext;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import javax.sql.DataSource;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 资源保障运维查询服务（RG04/RG05/RG06）。
  * <p>
@@ -38,24 +46,33 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Log4j2
 public class BpmResourceOpsService {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmResourceOpsService.class);
 
     static final String VIEW_PERMISSION = "workflow:resource:view";
     static final String MANAGE_PERMISSION = "workflow:resource:manage";
     private static final long MAX_PAGE_SIZE = 200;
 
-    private final ResourcePolicyService policyService;
-    private final ResourceAdmissionService admissionService;
-    private final ResourceFactView factView;
-    private final ResourceAssuranceReconcileJob reconcileJob;
-    private final BpmResourceUsageMapper usageMapper;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectProvider<TxnActionRuntimePort> runtimePortProvider;
-    private final ObjectProvider<FormTxnActionPort> txnActionPortProvider;
-    private final org.springframework.context.ApplicationContext applicationContext;
-    private final org.springframework.core.env.Environment environment;
+    @Autowired
+    private ResourcePolicyService policyService;
+    @Autowired
+    private ResourceAdmissionService admissionService;
+    @Autowired
+    private ResourceFactView factView;
+    @Autowired
+    private ResourceAssuranceReconcileJob reconcileJob;
+    @Autowired
+    private BpmResourceUsageMapper usageMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectProvider<TxnActionRuntimePort> runtimePortProvider;
+    @Autowired
+    private ObjectProvider<FormTxnActionPort> txnActionPortProvider;
+    @Autowired
+    private ApplicationContext applicationContext;
+    @Autowired
+    private Environment environment;
 
     @Value("${flowable.async-executor-activate:false}")
     private boolean flowableAsyncActive;
@@ -80,28 +97,6 @@ public class BpmResourceOpsService {
 
     @Value("${sw.form.txn-action.realtime-tenant-concurrency:8}")
     private int realtimeTenantConcurrency;
-
-    public BpmResourceOpsService(ResourcePolicyService policyService,
-                                 ResourceAdmissionService admissionService,
-                                 ResourceFactView factView,
-                                 ResourceAssuranceReconcileJob reconcileJob,
-                                 BpmResourceUsageMapper usageMapper,
-                                 JdbcTemplate jdbcTemplate,
-                                 ObjectProvider<TxnActionRuntimePort> runtimePortProvider,
-                                 ObjectProvider<FormTxnActionPort> txnActionPortProvider,
-                                 org.springframework.context.ApplicationContext applicationContext,
-                                 org.springframework.core.env.Environment environment) {
-        this.policyService = policyService;
-        this.admissionService = admissionService;
-        this.factView = factView;
-        this.reconcileJob = reconcileJob;
-        this.usageMapper = usageMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.runtimePortProvider = runtimePortProvider;
-        this.txnActionPortProvider = txnActionPortProvider;
-        this.applicationContext = applicationContext;
-        this.environment = environment;
-    }
 
     // ==================== RG04 运行画像 ====================
 
@@ -130,14 +125,14 @@ public class BpmResourceOpsService {
     private Map<String, Object> poolProfile() {
         Map<String, Object> pool = new LinkedHashMap<>();
         try {
-            for (javax.sql.DataSource dataSource : applicationContext.getBeansOfType(javax.sql.DataSource.class)
+            for (DataSource dataSource : applicationContext.getBeansOfType(DataSource.class)
                     .values()) {
                 // Druid 不在本模块编译类路径；路由数据源经 getDataSources() 展开内层数据源，
                 // 再沿 realDataSource 解包反射回读实际池值（运行事实）
-                java.util.List<Object> candidates = new ArrayList<>();
+                List<Object> candidates = new ArrayList<>();
                 if (dataSource.getClass().getSimpleName().contains("DynamicRouting")) {
                     Object map = dataSource.getClass().getMethod("getDataSources").invoke(dataSource);
-                    if (map instanceof java.util.Map<?, ?> m) {
+                    if (map instanceof Map<?, ?> m) {
                         candidates.addAll(m.values());
                     }
                 } else {
@@ -202,14 +197,14 @@ public class BpmResourceOpsService {
         consumers.put("flowableAsyncActive", flowableAsyncActive);
         boolean batchConsumer = consumerBeans().stream()
                 .anyMatch(handler -> handler.types().contains(
-                        com.sw.ck.bpm.process.entity.CommandTypeEnum.BATCH_INVOKE));
+                        CommandTypeEnum.BATCH_INVOKE));
         consumers.put("batchInvokeHandlerRegistered", batchConsumer);
         return consumers;
     }
 
-    private List<com.sw.ck.bpm.process.queue.BpmCommandHandler> consumerBeans() {
+    private List<BpmCommandHandler> consumerBeans() {
         return new ArrayList<>(applicationContext
-                .getBeansOfType(com.sw.ck.bpm.process.queue.BpmCommandHandler.class).values());
+                .getBeansOfType(BpmCommandHandler.class).values());
     }
 
     private Map<String, Object> realtimeGuardProfile() {
@@ -368,7 +363,7 @@ public class BpmResourceOpsService {
                 if (port != null) {
                     targets.addAll(port.listInvocationsByBizRecord(
                             commandKey.substring("FLOW_START:".length()), 20)
-                            .orElse(java.util.List.of()));
+                            .orElse(List.of()));
                 }
             }
         }
@@ -455,6 +450,6 @@ public class BpmResourceOpsService {
     }
 
     private String now() {
-        return java.time.LocalDateTime.now().toString();
+        return LocalDateTime.now().toString();
     }
 }

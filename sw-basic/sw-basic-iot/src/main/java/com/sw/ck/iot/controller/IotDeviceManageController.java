@@ -1,5 +1,7 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.service.IotDeviceManageService;
@@ -14,11 +16,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 @RequestMapping("/iot/device-manage")
 public class IotDeviceManageController {
 
-    private final IotDeviceManageService deviceManageService;
-
-    public IotDeviceManageController(IotDeviceManageService deviceManageService) {
-        this.deviceManageService = deviceManageService;
-    }
+    @Autowired
+    private IotDeviceManageService deviceManageService;
 
     @PostMapping
     public R<IotDevice> create(@RequestBody IotDevice device) {

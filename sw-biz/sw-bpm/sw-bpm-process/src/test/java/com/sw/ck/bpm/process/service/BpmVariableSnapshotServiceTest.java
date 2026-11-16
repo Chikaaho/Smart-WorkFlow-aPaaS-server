@@ -1,13 +1,18 @@
 package com.sw.ck.bpm.process.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -41,9 +46,9 @@ class BpmVariableSnapshotServiceTest {
 
     private void stubParseData() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
-        when(nodeFormDataService.parseData(org.mockito.ArgumentMatchers.anyString()))
+        when(nodeFormDataService.parseData(ArgumentMatchers.anyString()))
                 .thenAnswer(invocation -> mapper.readValue((String) invocation.getArgument(0),
-                        new com.fasterxml.jackson.core.type.TypeReference<java.util.LinkedHashMap<String, Object>>() { }));
+                        new TypeReference<LinkedHashMap<String, Object>>() { }));
     }
 
     private BpmInstance instance() {

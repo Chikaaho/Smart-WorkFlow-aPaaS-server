@@ -4,6 +4,7 @@ import com.sw.ck.notify.dto.NotifyChannelStatusDTO;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /** 租户级渠道启停服务（I6）。 */
 public interface NotifyChannelConfigService {
@@ -28,5 +29,5 @@ public interface NotifyChannelConfigService {
      * 解密当前租户该渠道的凭据配置（仅服务端内部消费，如 SMTP 发信）。
      * 未配置密文/密文不可解时返回 empty（调用方回落 yml/env）。
      */
-    java.util.Optional<Map<String, String>> resolveChannelConfig(String channel);
+    Optional<Map<String, String>> resolveChannelConfig(String channel);
 }

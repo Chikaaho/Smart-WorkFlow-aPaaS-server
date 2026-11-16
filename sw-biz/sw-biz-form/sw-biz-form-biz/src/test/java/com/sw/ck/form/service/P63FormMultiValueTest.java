@@ -6,10 +6,17 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
+import com.sw.ck.form.api.port.FlowStartPort;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
@@ -19,15 +26,22 @@ import com.sw.ck.form.mapper.FormTraceMapper;
 import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.dict.DictFacade;
+import com.sw.ck.system.api.dict.DictItemDTO;
+import com.sw.ck.system.api.dict.DictTypeDetailDTO;
+
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -40,6 +54,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -70,8 +87,8 @@ class P63FormMultiValueTest {
     @Autowired
     private FormDefMapper formDefMapper;
 
-    private final java.util.ArrayList<String> createdTables = new java.util.ArrayList<>();
-    private final java.util.ArrayList<String> createdFormIds = new java.util.ArrayList<>();
+    private final ArrayList<String> createdTables = new ArrayList<>();
+    private final ArrayList<String> createdFormIds = new ArrayList<>();
 
     private static final Long TEST_TENANT_ID = 100L;
 
@@ -257,7 +274,7 @@ class P63FormMultiValueTest {
         // 子表：多选 JSON 串（子表名从 sub_table_mapping 元数据解析）
         String subTableMapping = (String) formDefMapper.selectById(draft.getId()).getSubTableMapping();
         assertThat(subTableMapping).contains("items");
-        String subTableName = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+        String subTableName = JsonMapper.builder().build()
                 .readTree(subTableMapping).get("items").asText();
         createdTables.add(subTableName);
         List<Map<String, Object>> subRows = jdbcTemplate.queryForList(
@@ -380,7 +397,7 @@ class P63FormMultiValueTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -402,8 +419,8 @@ class P63FormMultiValueTest {
             interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
             factory.setPlugins(interceptor);
 
-            com.sw.ck.common.security.LoginContextProvider loginContextProvider =
-                    new com.sw.ck.common.security.LoginContextProvider() {
+            LoginContextProvider loginContextProvider =
+                    new LoginContextProvider() {
                         @Override
                         public Long getUserId() {
                             LoginUser user = LoginUserHolder.get();
@@ -422,13 +439,13 @@ class P63FormMultiValueTest {
                         }
 
                         @Override
-                        public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        public DataScopeType getDataScopeType() {
+                            return DataScopeType.ALL;
                         }
 
                         @Override
-                        public java.util.Set<Long> getCustomDeptIds() {
-                            return java.util.Set.of();
+                        public Set<Long> getCustomDeptIds() {
+                            return Set.of();
                         }
 
                         @Override
@@ -436,12 +453,12 @@ class P63FormMultiValueTest {
                             return false;
                         }
                     };
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler metaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(loginContextProvider);
+            CommonMetaObjectHandler metaObjectHandler =
+                    new CommonMetaObjectHandler(loginContextProvider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
-                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
+                    f.setId(new FormIdGenerator().generate());
                 }
             });
             globalConfig.setMetaObjectHandler(metaObjectHandler);
@@ -482,52 +499,52 @@ class P63FormMultiValueTest {
                                                   ObjectMapper objectMapper,
                                                   JdbcTemplate jdbcTemplate,
                                                   FormFieldValidator formFieldValidator,
-                                                  com.sw.ck.common.event.DomainEventPublisher eventPublisher) {
+                                                  DomainEventPublisher eventPublisher) {
             return new FormSubmitService(formDefMapper, formTraceMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper, jdbcTemplate,
                     noDictFacade(), eventPublisher,
                     Optional.empty(), formFieldValidator,
-                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
-                        @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+                    new ObjectProvider<FlowStartPort>() {
+                        @Override public FlowStartPort getIfAvailable() { return null; }
                     });
         }
 
         @Bean
-        public com.sw.ck.common.event.DomainEventPublisher domainEventPublisher(
-                org.springframework.context.ApplicationEventPublisher delegate) {
-            return new com.sw.ck.common.event.DomainEventPublisher(delegate);
+        public DomainEventPublisher domainEventPublisher(
+                ApplicationEventPublisher delegate) {
+            return new DomainEventPublisher(delegate);
         }
 
-        private com.sw.ck.system.api.dict.DictFacade noDictFacade() {
-            return new com.sw.ck.system.api.dict.DictFacade() {
+        private DictFacade noDictFacade() {
+            return new DictFacade() {
                 @Override
-                public java.util.Optional<Boolean> isValidCode(String dictType, String code) {
-                    return java.util.Optional.of(false);
+                public Optional<Boolean> isValidCode(String dictType, String code) {
+                    return Optional.of(false);
                 }
 
                 @Override
-                public java.util.Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
-                    return java.util.Optional.of(List.of());
+                public Optional<List<DictItemDTO>> listByType(String dictType) {
+                    return Optional.of(List.of());
                 }
 
                 @Override
-                public java.util.Optional<java.util.Map<String, com.sw.ck.system.api.dict.DictTypeDetailDTO>> findDictTypeDetails(
-                        java.util.Collection<String> codes) {
+                public Optional<Map<String, DictTypeDetailDTO>> findDictTypeDetails(
+                        Collection<String> codes) {
                     return codes == null || codes.isEmpty()
-                            ? java.util.Optional.empty() : java.util.Optional.of(java.util.Map.of());
+                            ? Optional.empty() : Optional.of(Map.of());
                 }
 
                 @Override
-                public java.util.Optional<String> inspectDictTypeForImport(String code) {
+                public Optional<String> inspectDictTypeForImport(String code) {
                     return code == null || code.isBlank()
-                            ? java.util.Optional.empty() : java.util.Optional.of("MISSING");
+                            ? Optional.empty() : Optional.of("MISSING");
                 }
 
                 @Override
-                public java.util.Optional<Boolean> createDictTypeForImport(String code, String name,
+                public Optional<Boolean> createDictTypeForImport(String code, String name,
                                                                            Integer status, String description,
-                                                                           java.util.List<com.sw.ck.system.api.dict.DictItemDTO> items) {
-                    return java.util.Optional.of(false);
+                                                                           List<DictItemDTO> items) {
+                    return Optional.of(false);
                 }
             };
         }

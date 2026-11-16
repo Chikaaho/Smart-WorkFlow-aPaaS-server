@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.registry;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeDefinition;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
@@ -10,11 +11,13 @@ import com.sw.ck.bpm.engine.translator.NodeTypeTranslator;
 import com.sw.ck.bpm.engine.translator.ApprovalUserTaskTranslator;
 import com.sw.ck.bpm.engine.translator.EndEventTranslator;
 import com.sw.ck.bpm.engine.translator.StartEventTranslator;
+
 import org.flowable.bpmn.model.FlowElement;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -70,13 +73,13 @@ class BpmNodeRegistryImplTest {
     private static BpmNodeDefinition definition(String type) {
         return new NodeTypeTranslator() {
             @Override
-            public java.util.Optional<String> type() {
-                return java.util.Optional.of(type);
+            public Optional<String> type() {
+                return Optional.of(type);
             }
 
             @Override
-            public java.util.Optional<BpmNodeMetadata> metadata() {
-                return java.util.Optional.of(new BpmNodeMetadata(
+            public Optional<BpmNodeMetadata> metadata() {
+                return Optional.of(new BpmNodeMetadata(
                         type,
                         "测试节点",
                         "OTHER",

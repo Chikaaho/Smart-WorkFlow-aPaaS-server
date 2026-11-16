@@ -7,17 +7,23 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.port.FormTxnActionPort;
+import com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.service.FormFieldValidator;
+import com.sw.ck.form.txn.guard.TxnActionRealtimeGuard;
 import com.sw.ck.form.txn.mapper.C1PolicyMapper;
 import com.sw.ck.form.txn.mapper.TxnActionMapper;
 import com.sw.ck.form.txn.mapper.TxnActionVersionMapper;
@@ -27,9 +33,11 @@ import com.sw.ck.form.txn.mapper.TxnReservationMapper;
 import com.sw.ck.form.txn.model.C1PolicyModel;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
+import com.sw.ck.form.txn.model.TxnActionView;
 import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.model.TxnInvokeResult;
 import com.sw.ck.form.txn.model.TxnPublishError;
+import com.sw.ck.form.txn.port.FormTxnActionPortImpl;
 import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.form.txn.service.TxnActionExecutor;
 import com.sw.ck.form.txn.service.TxnActionService;
@@ -38,7 +46,10 @@ import com.sw.ck.form.txn.service.TxnFormBinding;
 import com.sw.ck.form.txn.service.TxnReservationExpiryJob;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -49,6 +60,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
@@ -57,6 +69,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -86,9 +99,9 @@ class TxnActionFlowH2Test {
     private TxnActionTxOperations txOps;
 
     @Autowired
-    private com.sw.ck.form.api.port.FormTxnActionPort port;
+    private FormTxnActionPort port;
     @Autowired
-    private com.sw.ck.form.txn.mapper.TxnReservationMapper reservationMapper;
+    private TxnReservationMapper reservationMapper;
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
@@ -283,7 +296,7 @@ class TxnActionFlowH2Test {
 
         // 非法声明（模型不支持的键）在保存入口被明确拒绝，错误含违规键名
         TxnActionConfig bad = cfg("qty_available", "qty_reserved", 600L);
-        bad.getUnsupportedKeys().put("remoteSideEffect", java.util.Map.of("url", "http://example.invalid"));
+        bad.getUnsupportedKeys().put("remoteSideEffect", Map.of("url", "http://example.invalid"));
         assertThatThrownBy(() -> create("stock_reserve_bad", "非法声明", "RESERVE", bad))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("remoteSideEffect");
@@ -414,7 +427,7 @@ class TxnActionFlowH2Test {
         return c;
     }
 
-    private com.sw.ck.form.txn.model.TxnActionView create(String key, String name, String type, TxnActionConfig cfg) {
+    private TxnActionView create(String key, String name, String type, TxnActionConfig cfg) {
         return actionService.create(formId, new TxnActionSaveRequest(key, name, type, null, cfg));
     }
 
@@ -426,15 +439,15 @@ class TxnActionFlowH2Test {
         String actionId = publishReserve("stock_port_reserve", 600L);
 
         // 无权（既非超管也无 form:action:invoke）：拒绝
-        assertThatThrownBy(() -> port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+        assertThatThrownBy(() -> port.invoke(new TxnActionCommand(
                 actionId, "stock-1", "2", "NODE:demo:1", null, null)))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("form:action:invoke");
 
         // 授权后：与 HTTP 入口同一事务内核（幂等键沿用调用方稳定键）
         LoginUser user = LoginUserHolder.get();
-        user.setPermissions(java.util.List.of("form:action:invoke"));
-        var result = port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+        user.setPermissions(List.of("form:action:invoke"));
+        var result = port.invoke(new TxnActionCommand(
                 actionId, "stock-1", "2", "NODE:demo:1", null, null)).orElseThrow();
         assertThat(result.status()).isEqualTo("SUCCEEDED");
         assertThat(result.reservationId()).isNotBlank();
@@ -442,7 +455,7 @@ class TxnActionFlowH2Test {
         assertThat(reservedOf("stock-1")).isEqualByComparingTo("2");
 
         // 同键重放：返回原结果、无第二次效果
-        var replay = port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+        var replay = port.invoke(new TxnActionCommand(
                 actionId, "stock-1", "2", "NODE:demo:1", null, null)).orElseThrow();
         assertThat(replay.replay()).isTrue();
         assertThat(replay.reservationId()).isEqualTo(result.reservationId());
@@ -670,10 +683,10 @@ class TxnActionFlowH2Test {
                     return u != null ? u.getTenantId() : null;
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
@@ -694,11 +707,11 @@ class TxnActionFlowH2Test {
 
         @Bean
         public PlatformTransactionManager transactionManager(DataSource dataSource) {
-            return new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource);
+            return new DataSourceTransactionManager(dataSource);
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -718,7 +731,7 @@ class TxnActionFlowH2Test {
             CommonMetaObjectHandler metaObjectHandler = new CommonMetaObjectHandler(provider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
                     f.setId(new FormIdGenerator().generate());
                 }
             });
@@ -744,26 +757,26 @@ class TxnActionFlowH2Test {
         }
 
         @Bean
-        public com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
-            return new com.fasterxml.jackson.databind.ObjectMapper();
+        public ObjectMapper objectMapper() {
+            return new ObjectMapper();
         }
 
         @Bean
         public TxnFormBinding txnFormBinding(FormDefMapper formDefMapper, FormConfigMapper formConfigMapper,
-                                             com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                                             ObjectMapper objectMapper) {
             return new TxnFormBinding(formDefMapper, new FormFieldValidator(formConfigMapper, objectMapper));
         }
 
         @Bean
         public TxnActionService txnActionService(TxnActionMapper actionMapper, TxnActionVersionMapper versionMapper,
-                                                 TxnFormBinding binding, com.fasterxml.jackson.databind.ObjectMapper om) {
+                                                 TxnFormBinding binding, ObjectMapper om) {
             return new TxnActionService(actionMapper, versionMapper, binding, new FormIdGenerator(), om);
         }
 
         @Bean
         public C1PolicyService c1PolicyService(C1PolicyMapper policyMapper, TxnFormBinding binding,
                                                JdbcTemplate jdbcTemplate,
-                                               com.fasterxml.jackson.databind.ObjectMapper om) {
+                                               ObjectMapper om) {
             return new C1PolicyService(policyMapper, binding, new FormIdGenerator(), jdbcTemplate, om);
         }
 
@@ -773,22 +786,22 @@ class TxnActionFlowH2Test {
                                                            TxnLedgerMapper ledgerMapper,
                                                            TxnActionVersionMapper versionMapper,
                                                            TxnFormBinding binding,
-                                                           com.fasterxml.jackson.databind.ObjectMapper om,
+                                                           ObjectMapper om,
                                                            JdbcTemplate jdbcTemplate) {
             return new TxnActionTxOperations(invocationMapper, reservationMapper, ledgerMapper, versionMapper,
                     binding, new FormIdGenerator(), om, jdbcTemplate);
         }
 
         @Bean
-        public com.sw.ck.form.api.port.FormTxnActionPort formTxnActionPort(TxnActionService actionService,
+        public FormTxnActionPort formTxnActionPort(TxnActionService actionService,
                                                                          TxnActionExecutor executor,
-                                                                         com.sw.ck.form.txn.mapper.TxnInvocationMapper invocationMapper) {
-            return new com.sw.ck.form.txn.port.FormTxnActionPortImpl(actionService, executor, invocationMapper);
+                                                                         TxnInvocationMapper invocationMapper) {
+            return new FormTxnActionPortImpl(actionService, executor, invocationMapper);
         }
 
         @Bean
-        public com.sw.ck.form.txn.guard.TxnActionRealtimeGuard txnActionRealtimeGuard() {
-            return new com.sw.ck.form.txn.guard.TxnActionRealtimeGuard();
+        public TxnActionRealtimeGuard txnActionRealtimeGuard() {
+            return new TxnActionRealtimeGuard();
         }
 
         @Bean
@@ -796,7 +809,7 @@ class TxnActionFlowH2Test {
                                                    TxnInvocationMapper invocationMapper,
                                                    TxnReservationMapper reservationMapper,
                                                    TxnLedgerMapper ledgerMapper,
-                                                   com.fasterxml.jackson.databind.ObjectMapper om) {
+                                                   ObjectMapper om) {
             return new TxnActionExecutor(actionService, txOps, invocationMapper, reservationMapper, ledgerMapper,
                     new FormIdGenerator(), om);
         }

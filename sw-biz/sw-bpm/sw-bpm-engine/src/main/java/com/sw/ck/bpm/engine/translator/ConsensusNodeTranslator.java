@@ -1,7 +1,10 @@
 package com.sw.ck.bpm.engine.translator;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -9,6 +12,7 @@ import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
+
 import org.flowable.bpmn.model.ExtensionAttribute;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.FlowableListener;
@@ -23,6 +27,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Collection;
 import java.util.Optional;
+import java.util.ArrayList;
+
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 
@@ -30,9 +36,8 @@ import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 @Component
 public class ConsensusNodeTranslator implements NodeTypeTranslator {
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
-    private final ObjectMapper objectMapper;
-
-    public ConsensusNodeTranslator(ObjectMapper objectMapper) { this.objectMapper = objectMapper; }
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override public Optional<String> type() { return Optional.of("CONSENSUS"); }
 
@@ -93,14 +98,14 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
                 return Optional.of(List.of(error(node, "会签 POST 必须配置非空岗位编码")));
             }
         } else if (ParticipantStrategy.DEPT_POST.equalsIgnoreCase(strategy)) {
-            if (!(participantValue instanceof java.util.Map<?, ?> mapping)
+            if (!(participantValue instanceof Map<?, ?> mapping)
                     || mapping.get("deptId") == null
                     || mapping.get("postCode") == null
                     || String.valueOf(mapping.get("postCode")).isBlank()) {
                 return Optional.of(List.of(error(node, "会签 DEPT_POST 必须配置 {deptId, postCode}")));
             }
         } else if (ParticipantStrategy.FORM_FIELD.equalsIgnoreCase(strategy)) {
-            java.util.Optional<String> formFieldError =
+            Optional<String> formFieldError =
                     ParticipantStrategy.formFieldConfigError(participantValue);
             if (formFieldError.isPresent()) {
                 return Optional.of(List.of(error(node, "会签 " + formFieldError.orElseThrow())));
@@ -163,7 +168,7 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
         task.setLoopCharacteristics(loop);
         FlowableListener create = listener("create");
         FlowableListener complete = listener("complete");
-        task.setTaskListeners(new java.util.ArrayList<>(List.of(create, complete)));
+        task.setTaskListeners(new ArrayList<>(List.of(create, complete)));
         try {
             ExtensionAttribute attr = new ExtensionAttribute("nodeConfig", objectMapper.writeValueAsString(config));
             attr.setNamespace(FLOWABLE_NS);

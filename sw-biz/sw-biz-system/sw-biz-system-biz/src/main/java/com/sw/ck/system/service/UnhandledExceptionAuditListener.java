@@ -1,7 +1,13 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.audit.UnhandledExceptionAudit;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.system.entity.SysAuditLog;
+import com.sw.ck.system.mapper.SysUserMapper;
+
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -15,14 +21,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class UnhandledExceptionAuditListener {
 
-    private final AuditLogService auditLogService;
-    private final com.sw.ck.system.mapper.SysUserMapper sysUserMapper;
-
-    public UnhandledExceptionAuditListener(AuditLogService auditLogService,
-                                           com.sw.ck.system.mapper.SysUserMapper sysUserMapper) {
-        this.auditLogService = auditLogService;
-        this.sysUserMapper = sysUserMapper;
-    }
+    @Autowired
+    private AuditLogService auditLogService;
+    @Autowired
+    private SysUserMapper sysUserMapper;
 
     @EventListener
     public void onUnhandledException(UnhandledExceptionAudit event) {
@@ -46,8 +48,8 @@ public class UnhandledExceptionAuditListener {
         if (userId == null) {
             return null;
         }
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             var user = sysUserMapper.selectById(userId);
             return user == null ? null : user.getUsername();
         } catch (Exception e) {

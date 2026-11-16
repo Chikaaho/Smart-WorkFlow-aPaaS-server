@@ -1,7 +1,10 @@
 package com.sw.ck.form.txn.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.entity.FormDefEntity;
@@ -18,8 +21,14 @@ import com.sw.ck.form.txn.mapper.TxnReservationMapper;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.model.TxnInvokeResult;
+import com.sw.ck.common.constant.CommonConstants;
+import com.sw.ck.form.txn.mapper.TxnActionVersionMapper;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -46,32 +55,22 @@ public class TxnActionTxOperations {
     /** DECIMAL(20,6) 可安全容纳的绝对值上限（保守取值，防溢出）。 */
     private static final BigDecimal MAX_QUANTITY = new BigDecimal("100000000000000");
 
-    private final TxnInvocationMapper invocationMapper;
-    private final TxnReservationMapper reservationMapper;
-    private final TxnLedgerMapper ledgerMapper;
-    private final com.sw.ck.form.txn.mapper.TxnActionVersionMapper versionMapper;
-    private final TxnFormBinding binding;
-    private final FormIdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
-    private final JdbcTemplate jdbcTemplate;
-
-    public TxnActionTxOperations(TxnInvocationMapper invocationMapper,
-                                 TxnReservationMapper reservationMapper,
-                                 TxnLedgerMapper ledgerMapper,
-                                 com.sw.ck.form.txn.mapper.TxnActionVersionMapper versionMapper,
-                                 TxnFormBinding binding,
-                                 FormIdGenerator idGenerator,
-                                 ObjectMapper objectMapper,
-                                 JdbcTemplate jdbcTemplate) {
-        this.invocationMapper = invocationMapper;
-        this.reservationMapper = reservationMapper;
-        this.ledgerMapper = ledgerMapper;
-        this.versionMapper = versionMapper;
-        this.binding = binding;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private TxnInvocationMapper invocationMapper;
+    @Autowired
+    private TxnReservationMapper reservationMapper;
+    @Autowired
+    private TxnLedgerMapper ledgerMapper;
+    @Autowired
+    private TxnActionVersionMapper versionMapper;
+    @Autowired
+    private TxnFormBinding binding;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     // ==================== 目标记录快照 ====================
 
@@ -453,7 +452,7 @@ public class TxnActionTxOperations {
 
     // ==================== 调用记录（拒绝路径，独立事务） ====================
 
-    @Transactional(rollbackFor = Exception.class, propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRES_NEW)
     public TxnInvokeResult recordRejected(TxnActionEntity action, TxnActionVersionEntity version,
                                           TxnInvokeRequest req, String invocationId, String invocationKey,
                                           String requestHash, FormErrorCode errorCode, String message,
@@ -633,17 +632,17 @@ public class TxnActionTxOperations {
     }
 
     private Long currentTenantId() {
-        com.sw.ck.security.holder.LoginUser user = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser user = LoginUserHolder.get();
         return user == null ? 0L : user.getTenantId();
     }
 
     private Long currentUserId() {
-        com.sw.ck.security.holder.LoginUser user = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser user = LoginUserHolder.get();
         return user == null ? null : user.getUserId();
     }
 
     private Long userIdOrSystem(Long userId) {
-        return userId == null ? com.sw.ck.common.constant.CommonConstants.SYSTEM_OPERATOR_ID : userId;
+        return userId == null ? CommonConstants.SYSTEM_OPERATOR_ID : userId;
     }
 
     private String writeJson(Object value) {

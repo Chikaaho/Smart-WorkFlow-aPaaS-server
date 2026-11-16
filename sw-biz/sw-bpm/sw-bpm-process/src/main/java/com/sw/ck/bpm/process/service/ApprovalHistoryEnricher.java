@@ -6,8 +6,6 @@ import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -16,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 审批历史富化：意见字段展示视图 + 处理人部门名。
  * <p>
@@ -24,9 +23,8 @@ import java.util.Set;
  * 部门按处理人主部门解析，查不到或部门已停用时保持空（调用方显示占位符）。
  * </p>
  */
+@Log4j2
 public final class ApprovalHistoryEnricher {
-
-    private static final Logger log = LoggerFactory.getLogger(ApprovalHistoryEnricher.class);
 
     private ApprovalHistoryEnricher() {
     }

@@ -1,11 +1,13 @@
 package com.sw.ck.form.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.GlobalExceptionHandler;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.service.FormDataDeleteService;
 import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormDataUpdateService;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -61,7 +65,7 @@ class FormDataUpdateControllerTest {
         doNothing().when(formDataUpdateService).updateRecord(eq("upd_form"), eq("rec-1"), any());
 
         FormDataUpdateRequest request = new FormDataUpdateRequest();
-        request.setData(java.util.Map.of("city", "杭州-已编辑"));
+        request.setData(Map.of("city", "杭州-已编辑"));
         request.setVersion(0L);
 
         mockMvc.perform(put("/form/data/{formKey}/{recordId}", "upd_form", "rec-1")

@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentGraphBreakpointsReq;
 import com.sw.ck.agent.dto.AgentGraphDebugCreateReq;
 import com.sw.ck.agent.dto.AgentGraphDebugNodeDTO;
@@ -31,11 +33,8 @@ import java.util.List;
 @RequestMapping("/agent/graph-debug-sessions")
 public class AgentGraphDebugController {
 
-    private final AgentGraphDebugService debugService;
-
-    public AgentGraphDebugController(AgentGraphDebugService debugService) {
-        this.debugService = debugService;
-    }
+    @Autowired
+    private AgentGraphDebugService debugService;
 
     /** 创建调试会话（沿用 graph-defs 执行权限，manage） */
     @PostMapping

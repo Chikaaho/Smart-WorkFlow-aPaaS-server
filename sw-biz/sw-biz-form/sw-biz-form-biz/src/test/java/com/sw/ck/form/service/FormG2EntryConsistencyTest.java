@@ -1,6 +1,7 @@
 package com.sw.ck.form.service;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
@@ -8,36 +9,49 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.ExtQueryResult;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.facade.FormDataSubmitFacade;
+import com.sw.ck.form.api.port.ExtDatasourceGrantPort;
 import com.sw.ck.form.api.port.ExtDatasourceQueryPort;
 import com.sw.ck.form.api.port.FormRecordAccessPort;
+import com.sw.ck.form.dto.ExtQueryContractView;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormExtQueryEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
+import com.sw.ck.form.mapper.FormAppMapper;
+import com.sw.ck.form.mapper.FormAppScopeMapper;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormExtQueryMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
+import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.DataScope;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -60,6 +74,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -95,11 +110,11 @@ class FormG2EntryConsistencyTest {
     static final AtomicBoolean PARTICIPANT_STUB = new AtomicBoolean(false);
     static final AtomicBoolean GRANT_ALL_STUB = new AtomicBoolean(false);
     /** 数据范围桩：导出路径经 LoginContextProvider 解析范围，测试按需切换 SELF/ALL。 */
-    static final AtomicReference<com.sw.ck.common.datascope.DataScopeType> PROVIDER_SCOPE =
-            new AtomicReference<>(com.sw.ck.common.datascope.DataScopeType.ALL);
+    static final AtomicReference<DataScopeType> PROVIDER_SCOPE =
+            new AtomicReference<>(DataScopeType.ALL);
 
     @Configuration
-    @org.mybatis.spring.annotation.MapperScan("com.sw.ck.form.mapper")
+    @MapperScan("com.sw.ck.form.mapper")
     static class TestConfig {
 
         @Bean
@@ -144,16 +159,16 @@ class FormG2EntryConsistencyTest {
                     return u == null ? null : u.getTenantId();
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
+                @Override public DataScopeType getDataScopeType() {
                     return PROVIDER_SCOPE.get();
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 LoginContextProvider loginContextProvider) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
@@ -173,7 +188,7 @@ class FormG2EntryConsistencyTest {
             CommonMetaObjectHandler metaObjectHandler = new CommonMetaObjectHandler(loginContextProvider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
                     f.setId(new FormIdGenerator().generate());
                 }
             });
@@ -221,7 +236,7 @@ class FormG2EntryConsistencyTest {
                                              FormSnapshotMapper formSnapshotMapper,
                                              DynamicTableManager dynamicTableManager,
                                              ObjectMapper objectMapper) {
-            return new com.sw.ck.form.service.impl.FormDefServiceImpl(formDefMapper, formConfigMapper,
+            return new FormDefServiceImpl(formDefMapper, formConfigMapper,
                     formSnapshotMapper, dynamicTableManager, new FormIdGenerator(), objectMapper);
         }
 
@@ -231,8 +246,8 @@ class FormG2EntryConsistencyTest {
         }
 
         @Bean
-        public FormAppAccessGuard formAppAccessGuard(com.sw.ck.form.mapper.FormAppMapper appMapper,
-                                                     com.sw.ck.form.mapper.FormAppScopeMapper appScopeMapper,
+        public FormAppAccessGuard formAppAccessGuard(FormAppMapper appMapper,
+                                                     FormAppScopeMapper appScopeMapper,
                                                      FormAppScopeMatcher scopeMatcher,
                                                      JdbcTemplate jdbcTemplate,
                                                      FormRecordAccessPort formRecordAccessPort) {
@@ -313,25 +328,25 @@ class FormG2EntryConsistencyTest {
         }
 
         @Bean
-        public com.sw.ck.form.api.facade.FormDataSubmitFacade formDataSubmitFacade(
+        public FormDataSubmitFacade formDataSubmitFacade(
                 FormSubmitService formSubmitService) {
             return new FormDataSubmitFacadeImpl(formSubmitService);
         }
 
         /** 授权桩：本测试数据源 9 已授权，主体判定不依赖真实登录上下文。 */
         @Bean
-        public com.sw.ck.form.api.port.ExtDatasourceGrantPort extDatasourceGrantPort() {
-            return new com.sw.ck.form.api.port.ExtDatasourceGrantPort() {
+        public ExtDatasourceGrantPort extDatasourceGrantPort() {
+            return new ExtDatasourceGrantPort() {
                 @Override
-                public java.util.Optional<Boolean> isReferenceAllowed(Long datasourceId) {
-                    return java.util.Optional.of(
+                public Optional<Boolean> isReferenceAllowed(Long datasourceId) {
+                    return Optional.of(
                             GRANT_ALL_STUB.get() || (datasourceId != null && datasourceId == 9L));
                 }
 
                 @Override
-                public java.util.Optional<java.util.Set<Long>> referenceAllowedDatasourceIds() {
-                    return java.util.Optional.of(
-                            GRANT_ALL_STUB.get() ? java.util.Set.of(8L, 9L) : java.util.Set.of(9L));
+                public Optional<Set<Long>> referenceAllowedDatasourceIds() {
+                    return Optional.of(
+                            GRANT_ALL_STUB.get() ? Set.of(8L, 9L) : Set.of(9L));
                 }
             };
         }
@@ -339,7 +354,7 @@ class FormG2EntryConsistencyTest {
         @Bean
         public FormExtDataService formExtDataService(FormExtQueryMapper extQueryMapper,
                                                      ObjectProvider<ExtDatasourceQueryPort> queryPort,
-                                                     ObjectProvider<com.sw.ck.form.api.port.ExtDatasourceGrantPort> grantPort,
+                                                     ObjectProvider<ExtDatasourceGrantPort> grantPort,
                                                      FormDefMapper formDefMapper,
                                                      FormConfigMapper formConfigMapper,
                                                      FieldPermissionService fieldPermissionService,
@@ -351,7 +366,7 @@ class FormG2EntryConsistencyTest {
         @SuppressWarnings("unchecked")
         private static <T> ObjectProvider<T> emptyProvider() {
             ObjectProvider<T> provider = mock(ObjectProvider.class);
-            org.mockito.Mockito.lenient().when(provider.getIfAvailable()).thenReturn(null);
+            Mockito.lenient().when(provider.getIfAvailable()).thenReturn(null);
             return provider;
         }
     }
@@ -365,7 +380,7 @@ class FormG2EntryConsistencyTest {
     @Autowired
     private FormSubmitService submitService;
     @Autowired
-    private com.sw.ck.form.api.facade.FormDataSubmitFacade submitFacade;
+    private FormDataSubmitFacade submitFacade;
     @Autowired
     private FormDefService formDefService;
     @Autowired
@@ -379,7 +394,7 @@ class FormG2EntryConsistencyTest {
     void setUp() {
         PARTICIPANT_STUB.set(false);
         GRANT_ALL_STUB.set(false);
-        PROVIDER_SCOPE.set(com.sw.ck.common.datascope.DataScopeType.ALL);
+        PROVIDER_SCOPE.set(DataScopeType.ALL);
         LoginUserHolder.clear();
         createMetadataTables();
         loginAs(TENANT_1, USER_IN_SCOPE, DataScope.ALL);
@@ -608,9 +623,9 @@ class FormG2EntryConsistencyTest {
 
         importRows("g2e_pos", "导入行一", "导入行二");
         assertThat(physicalRowCount(ultimateFormDefMapper()
-                .selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<
-                        com.sw.ck.form.entity.FormDefEntity>()
-                        .eq(com.sw.ck.form.entity.FormDefEntity::getFormKey, "g2e_pos"))
+                .selectOne(new LambdaQueryWrapper<
+                        FormDefEntity>()
+                        .eq(FormDefEntity::getFormKey, "g2e_pos"))
                 .getPhysicalTableName())).isEqualTo(2L);
         assertThat(exportDataRowCount("g2e_pos")).isEqualTo(2);
     }
@@ -710,7 +725,7 @@ class FormG2EntryConsistencyTest {
 
         // SELF 用户导出：只见本人 1 行（导出范围经 LoginContextProvider 解析）
         loginAs(TENANT_1, USER_SELF_SCOPE, DataScope.SELF);
-        PROVIDER_SCOPE.set(com.sw.ck.common.datascope.DataScopeType.SELF);
+        PROVIDER_SCOPE.set(DataScopeType.SELF);
         byte[] selfExport = importExportService.exportData("g2e_scope", null);
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(selfExport))) {
             var sheet = workbook.getSheet("数据");
@@ -718,7 +733,7 @@ class FormG2EntryConsistencyTest {
             assertThat(sheet.getRow(1).getCell(0).getStringCellValue()).isEqualTo("SELF自己的");
         }
         // ALL 用户导出：2 行全量
-        PROVIDER_SCOPE.set(com.sw.ck.common.datascope.DataScopeType.ALL);
+        PROVIDER_SCOPE.set(DataScopeType.ALL);
         loginAs(TENANT_1, USER_IN_SCOPE, DataScope.ALL);
         assertThat(exportDataRowCount("g2e_scope")).isEqualTo(2);
     }
@@ -785,10 +800,10 @@ class FormG2EntryConsistencyTest {
                     '[{"name":"value"}]', 1, ?, 0, 0)
                 """, TENANT_1);
 
-        List<com.sw.ck.form.dto.ExtQueryContractView> views = extDataService.listContracts(null, null);
-        assertThat(views).extracting(com.sw.ck.form.dto.ExtQueryContractView::queryKey)
+        List<ExtQueryContractView> views = extDataService.listContracts(null, null);
+        assertThat(views).extracting(ExtQueryContractView::queryKey)
                 .containsExactly("g2e_list_auth");
-        com.sw.ck.form.dto.ExtQueryContractView view = views.get(0);
+        ExtQueryContractView view = views.get(0);
         assertThat(view.queryVersion()).isEqualTo(1);
         assertThat(view.datasourceId()).isEqualTo(9L);
         assertThat(view.enabled()).isEqualTo(1);
@@ -796,7 +811,7 @@ class FormG2EntryConsistencyTest {
 
         GRANT_ALL_STUB.set(true);
         assertThat(extDataService.listContracts(null, null))
-                .extracting(com.sw.ck.form.dto.ExtQueryContractView::queryKey)
+                .extracting(ExtQueryContractView::queryKey)
                 .containsExactlyInAnyOrder("g2e_list_auth", "g2e_list_unauth");
     }
 

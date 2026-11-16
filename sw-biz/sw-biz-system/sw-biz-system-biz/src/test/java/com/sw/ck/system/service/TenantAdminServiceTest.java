@@ -7,6 +7,7 @@ import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysRole;
 import com.sw.ck.system.entity.SysRoleMenu;
 import com.sw.ck.system.entity.SysTenant;
+import com.sw.ck.system.entity.SysTenantStatusAudit;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.entity.SysUserRole;
 import com.sw.ck.system.mapper.SysDeptMapper;
@@ -16,6 +17,7 @@ import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysTenantStatusAuditMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -233,8 +235,8 @@ class TenantAdminServiceTest {
                 .hasMessageContaining("变更原因");
         service.updateStatus(93L, 1, "季度暂停");
 
-        ArgumentCaptor<com.sw.ck.system.entity.SysTenantStatusAudit> audit =
-                ArgumentCaptor.forClass(com.sw.ck.system.entity.SysTenantStatusAudit.class);
+        ArgumentCaptor<SysTenantStatusAudit> audit =
+                ArgumentCaptor.forClass(SysTenantStatusAudit.class);
         verify(statusAuditMapper).insert(audit.capture());
         assertThat(audit.getValue().getTenantId()).isEqualTo(93L);
         assertThat(audit.getValue().getAction()).isEqualTo("DISABLE");

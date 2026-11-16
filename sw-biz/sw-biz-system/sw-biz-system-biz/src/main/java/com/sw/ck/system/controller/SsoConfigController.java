@@ -1,10 +1,12 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.trace.EventRef;
+import com.sw.ck.system.dto.SsoConfigCheckDTO;
+import com.sw.ck.system.dto.SsoConfigListDTO;
 import com.sw.ck.system.sso.SsoAuthService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,8 +15,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
-
+import lombok.extern.log4j.Log4j2;
 /**
  * 租户级 SSO 配置管理控制器（sso-admin-config §二/§三）。
  * <p>
@@ -26,21 +27,19 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/system/sso/config")
+@Log4j2
 public class SsoConfigController {
 
-    private static final Logger log = LoggerFactory.getLogger(SsoConfigController.class);
-
-    private final SsoAuthService ssoAuthService;
-
-    public SsoConfigController(SsoAuthService ssoAuthService) {
-        this.ssoAuthService = ssoAuthService;
-    }
+    @Autowired
+    private SsoAuthService ssoAuthService;
 
     /** 租户配置列表（含未登记平台占位；secret 只回是否已配置）。 */
     @PreAuthorize("@ss.hasPermi('system:sso:config:list')")
     @GetMapping
-    public R<Map<String, Object>> list() {
-        return R.ok(Map.of("configs", ssoAuthService.listConfigs()));
+    public R<SsoConfigListDTO> list() {
+        SsoConfigListDTO result = new SsoConfigListDTO();
+        result.setConfigs(ssoAuthService.listConfigs());
+        return R.ok(result);
     }
 
     /** 更新基本信息（应用标识＋身份模式/允许企业标识；secret 不在本入口）。 */
@@ -94,7 +93,7 @@ public class SsoConfigController {
     /** 配置检查（只读；不修改配置/绑定，不宣称真实登录通过）。 */
     @PreAuthorize("@ss.hasPermi('system:sso:config:list')")
     @GetMapping("/{provider}/check")
-    public R<Map<String, Object>> check(@PathVariable("provider") String provider) {
+    public R<SsoConfigCheckDTO> check(@PathVariable("provider") String provider) {
         try {
             return R.ok(ssoAuthService.checkConfig(provider));
         } catch (RuntimeException e) {

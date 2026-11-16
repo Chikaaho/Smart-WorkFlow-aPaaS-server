@@ -1,5 +1,7 @@
 package com.sw.ck.system.datascope;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.mapper.SysDeptMapper;
@@ -37,11 +39,9 @@ import java.util.stream.Collectors;
 @Service
 public class DeptScopeProviderImpl implements DeptScopeProvider {
 
-    private final SysDeptMapper sysDeptMapper;
-
-    public DeptScopeProviderImpl(@Lazy SysDeptMapper sysDeptMapper) {
-        this.sysDeptMapper = sysDeptMapper;
-    }
+    @Autowired
+    @Lazy
+    private SysDeptMapper sysDeptMapper;
 
     @Override
     public List<Long> listChildDeptIds(Long deptId) {

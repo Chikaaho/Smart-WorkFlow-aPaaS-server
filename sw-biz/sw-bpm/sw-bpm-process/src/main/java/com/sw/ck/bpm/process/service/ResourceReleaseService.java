@@ -1,13 +1,19 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
+import lombok.extern.log4j.Log4j2;
 /**
  * 资源占用释放服务（P62 资源保障）。
  * <p>
@@ -25,24 +31,18 @@ import org.springframework.transaction.annotation.Transactional;
  * </p>
  */
 @Service
+@Log4j2
 public class ResourceReleaseService {
-
-    private static final Logger log = LoggerFactory.getLogger(ResourceReleaseService.class);
 
     /** 方向合同：轻流程完成点（受理冻结；目标动作完成才释放占用）。 */
     public static final String COMPLETION_POINT_TARGET_DONE = "TARGET_ACTION_DONE";
 
-    private final ResourceAdmissionService admissionService;
-    private final com.sw.ck.bpm.process.service.BpmCommandService commandService;
-    private final JdbcTemplate jdbcTemplate;
-
-    public ResourceReleaseService(ResourceAdmissionService admissionService,
-                                  com.sw.ck.bpm.process.service.BpmCommandService commandService,
-                                  JdbcTemplate jdbcTemplate) {
-        this.admissionService = admissionService;
-        this.commandService = commandService;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private ResourceAdmissionService admissionService;
+    @Autowired
+    private BpmCommandService commandService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * 命令终态释放判定（命令行已写入终态后调用，同一事务）。
@@ -93,12 +93,12 @@ public class ResourceReleaseService {
         // 调度/对账线程无登录态：与 reclaimStale 同口径挂起租户过滤——
         // 命令行 tenant_id 自承载租户语义，主键定位不涉及租户裁剪
         boolean updated;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             updated = commandService.lambdaUpdate()
                     .eq(BpmCommand::getId, command.getId())
                     .isNull(BpmCommand::getResourceReleasedAt)
-                    .set(BpmCommand::getResourceReleasedAt, java.time.LocalDateTime.now())
+                    .set(BpmCommand::getResourceReleasedAt, LocalDateTime.now())
                     .update();
         }
         if (!updated) {

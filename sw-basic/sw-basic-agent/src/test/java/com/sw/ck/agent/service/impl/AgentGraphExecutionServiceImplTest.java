@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
@@ -28,14 +29,17 @@ import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
+
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.ChatResponseMetadata;
 import dev.langchain4j.model.output.TokenUsage;
+
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
@@ -50,11 +54,18 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.agent.mapper.AgentGraphSnapshotMapper;
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
+import com.sw.ck.common.datascope.DeptScopeProvider;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -119,10 +130,10 @@ class AgentGraphExecutionServiceImplTest {
     private AgentGraphDefService graphDefService;
 
     @Autowired
-    private com.sw.ck.agent.mapper.AgentProviderMapper providerMapper;
+    private AgentProviderMapper providerMapper;
 
     @Autowired
-    private com.sw.ck.agent.mapper.AgentModelMapper modelMapper;
+    private AgentModelMapper modelMapper;
 
     @Autowired
     private AgentToolInternalConfigMapper internalToolMapper;
@@ -458,7 +469,7 @@ class AgentGraphExecutionServiceImplTest {
     @DisplayName("用例4: LLM 节点引用不存在的模型配置 → 执行前 PARAM_ERROR（不做部分执行）")
     void execute_llmRefMissingModelConfig_shouldThrowParamError() {
         // 该 id 无对应配置行：执行前校验 assertUsable 抛业务异常（模型不存在或已删除）
-        org.mockito.Mockito.doThrow(new BaseException(CommonErrorCode.NOT_FOUND, "模型不存在或已删除: 888888"))
+        Mockito.doThrow(new BaseException(CommonErrorCode.NOT_FOUND, "模型不存在或已删除: 888888"))
                 .when(modelRuntimeService).assertUsable(888888L);
         Long id = createPublishedGraph(llmGraph(888888L));
 
@@ -1765,20 +1776,20 @@ class AgentGraphExecutionServiceImplTest {
         provider.setName("stub-provider");
         provider.setApiFormat("OPENAI_CHAT");
         provider.setEnabled(true);
-        var instances = java.util.Arrays.stream(chatModels)
+        var instances = Arrays.stream(chatModels)
                 .map(cm -> new AgentModelRuntimeService.ModelInstance(model, provider, cm))
                 .toArray(AgentModelRuntimeService.ModelInstance[]::new);
         when(modelRuntimeService.acquire(any())).thenReturn(instances[0],
-                java.util.Arrays.copyOfRange(instances, 1, instances.length));
+                Arrays.copyOfRange(instances, 1, instances.length));
         // D022-05 轮换入口：委托回 acquire 打桩（按序消费 ModelInstance，计数语义不变）
         when(modelRuntimeService.chatWithRotation(any(), anyList(), any())).thenAnswer(inv -> {
-            java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
+            List<?> msgs = (List<?>) inv.getArgument(1);
             if (msgs == null || msgs.isEmpty()) {
                 return null; // 注册期占位调用防御
             }
             return modelRuntimeService.acquire(1L).chatModel().chat(
-                    dev.langchain4j.model.chat.request.ChatRequest.builder()
-                            .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1))
+                    ChatRequest.builder()
+                            .messages((List<ChatMessage>) inv.getArgument(1))
                             .build());
         });
     }
@@ -1814,7 +1825,7 @@ class AgentGraphExecutionServiceImplTest {
     static class ContextCheckingChatModel implements ChatModel {
         @Override
         public ChatResponse chat(ChatRequest request) {
-            if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
+            if (LoginUserHolder.get() == null) {
                 throw new IllegalStateException("tenant-context-missing");
             }
             return ChatResponse.builder().aiMessage(AiMessage.from("CTX-OK")).build();
@@ -1945,7 +1956,7 @@ class AgentGraphExecutionServiceImplTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -1977,7 +1988,7 @@ class AgentGraphExecutionServiceImplTest {
 
         @Bean
         public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
-                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
             return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
@@ -2014,7 +2025,7 @@ class AgentGraphExecutionServiceImplTest {
                 AgentModelRuntimeService modelRuntimeService,
                 AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+                DeptScopeProvider deptScopeProvider) {
             // AgentToolCallbackFactory 为 @Autowired(required=false) 字段注入，mock bean 由 Spring 自动填充
             return new AgentGraphExecutionServiceImpl(objectMapper, modelRuntimeService, snapshotService,
                     internalToolMapper, externalToolMapper, executionMapper,
@@ -2022,9 +2033,9 @@ class AgentGraphExecutionServiceImplTest {
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() {
+        public DeptScopeProvider testDeptScopeProvider() {
             // 测试用映射实现：无子部门（本测试不覆盖 DEPT_AND_CHILD 展开）
-            return deptId -> java.util.List.of();
+            return deptId -> List.of();
         }
     }
 }

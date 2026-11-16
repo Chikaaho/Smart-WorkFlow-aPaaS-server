@@ -4,10 +4,15 @@ import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
+import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
+import com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanDecision;
+import com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanTaskSpec;
+import com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Agent 图执行 Service（M07-F02 Step8 图解释执行引擎第一版 + Step12 执行历史持久化）。
@@ -46,7 +51,7 @@ public interface AgentGraphExecutionService {
      * @param inputs     结构化入参（null/空 = 旧契约路径）
      */
     default AgentGraphExecuteRespDTO execute(Long graphDefId, String input,
-                                             java.util.Map<String, String> inputs) {
+                                             Map<String, String> inputs) {
         return execute(graphDefId, input);
     }
 
@@ -58,16 +63,16 @@ public interface AgentGraphExecutionService {
      * @param nodeId     目标节点 id
      * @param inputs     调试变量表（变量名 → 值）
      */
-    default com.sw.ck.agent.dto.AgentNodeRunRespDTO runNode(Long graphDefId, String nodeId,
-                                                            java.util.Map<String, String> inputs) {
+    default AgentNodeRunRespDTO runNode(Long graphDefId, String nodeId,
+                                                            Map<String, String> inputs) {
         throw new UnsupportedOperationException("当前实现不支持单节点运行");
     }
 
     /** 生命周期执行结果（G3）：普通终态或人工暂停（pauseState/humanTask 非空）。 */
     class ExecutionOutcome {
         public AgentGraphExecuteRespDTO response;
-        public com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState pauseState;
-        public com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanTaskSpec humanTask;
+        public PauseState pauseState;
+        public HumanTaskSpec humanTask;
         public Long executionId;
     }
 
@@ -78,9 +83,9 @@ public interface AgentGraphExecutionService {
      * 执行记录 id，保证用户看到暂停前后是同一条执行；首次运行传 null。
      */
     default ExecutionOutcome runLifecycle(Long graphDefId, Integer graphDefVersion, String input,
-                                          java.util.Map<String, String> inputs,
-                                          com.sw.ck.agent.orchestration.AgentGraphInterpreter.PauseState resumeState,
-                                          java.util.List<com.sw.ck.agent.orchestration.AgentGraphInterpreter.HumanDecision> decisions,
+                                          Map<String, String> inputs,
+                                          PauseState resumeState,
+                                          List<HumanDecision> decisions,
                                           Long resumeExecutionId) {
         throw new UnsupportedOperationException("当前实现不支持生命周期执行入口");
     }

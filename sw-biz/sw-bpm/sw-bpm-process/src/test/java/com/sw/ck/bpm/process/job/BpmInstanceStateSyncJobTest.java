@@ -5,10 +5,13 @@ import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.ChildOrchestrationService;
+
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -70,7 +73,7 @@ class BpmInstanceStateSyncJobTest {
     @DisplayName("引擎已终态：先触发编排结算钩子（APPROVED 语义），再收敛实例行")
     void settlesOrchestrationBeforeStatusFlip() {
         BpmInstance instance = running("p-ended");
-        when(instanceService.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmInstance>>any())).thenReturn(List.of(instance));
+        when(instanceService.list(ArgumentMatchers.<Wrapper<BpmInstance>>any())).thenReturn(List.of(instance));
         when(taskFacade.isProcessActive("p-ended")).thenReturn(Optional.of(false));
 
         int synced = job.sweepOnce();
@@ -85,7 +88,7 @@ class BpmInstanceStateSyncJobTest {
     @DisplayName("结算钩子异常：保留 RUNNING 行待下轮重试，不落状态、计入零收敛")
     void keepsRunningWhenSettleHookFails() {
         BpmInstance instance = running("p-hook-fails");
-        when(instanceService.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmInstance>>any())).thenReturn(List.of(instance));
+        when(instanceService.list(ArgumentMatchers.<Wrapper<BpmInstance>>any())).thenReturn(List.of(instance));
         when(taskFacade.isProcessActive("p-hook-fails")).thenReturn(Optional.of(false));
         doThrow(new IllegalStateException("settle down"))
                 .when(orchestration).onChildProcessTerminal(any(BpmInstance.class), anyString());
@@ -101,7 +104,7 @@ class BpmInstanceStateSyncJobTest {
     @DisplayName("引擎仍活跃：不触发钩子、不改状态")
     void skipsActiveInstances() {
         BpmInstance instance = running("p-active");
-        when(instanceService.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<BpmInstance>>any())).thenReturn(List.of(instance));
+        when(instanceService.list(ArgumentMatchers.<Wrapper<BpmInstance>>any())).thenReturn(List.of(instance));
         when(taskFacade.isProcessActive("p-active")).thenReturn(Optional.of(true));
 
         int synced = job.sweepOnce();

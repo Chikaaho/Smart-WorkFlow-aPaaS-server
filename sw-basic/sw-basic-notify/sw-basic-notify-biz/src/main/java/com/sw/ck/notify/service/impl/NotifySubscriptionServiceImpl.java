@@ -1,6 +1,9 @@
 package com.sw.ck.notify.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.notify.api.NotifyChannel;
@@ -8,9 +11,11 @@ import com.sw.ck.notify.dto.NotifySubscriptionSaveReq;
 import com.sw.ck.notify.dto.NotifySubscriptionView;
 import com.sw.ck.notify.entity.NotifyRule;
 import com.sw.ck.notify.entity.NotifySubscription;
+import com.sw.ck.notify.mapper.NotifyChannelConfigMapper;
 import com.sw.ck.notify.mapper.NotifyRuleMapper;
 import com.sw.ck.notify.mapper.NotifySubscriptionMapper;
 import com.sw.ck.notify.service.NotifySubscriptionService;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -24,17 +29,12 @@ import java.util.stream.Collectors;
 @Service
 public class NotifySubscriptionServiceImpl implements NotifySubscriptionService {
 
-    private final NotifySubscriptionMapper subscriptionMapper;
-    private final NotifyRuleMapper ruleMapper;
-    private final com.sw.ck.notify.mapper.NotifyChannelConfigMapper channelConfigMapper;
-
-    public NotifySubscriptionServiceImpl(NotifySubscriptionMapper subscriptionMapper,
-                                         NotifyRuleMapper ruleMapper,
-                                         com.sw.ck.notify.mapper.NotifyChannelConfigMapper channelConfigMapper) {
-        this.subscriptionMapper = subscriptionMapper;
-        this.ruleMapper = ruleMapper;
-        this.channelConfigMapper = channelConfigMapper;
-    }
+    @Autowired
+    private NotifySubscriptionMapper subscriptionMapper;
+    @Autowired
+    private NotifyRuleMapper ruleMapper;
+    @Autowired
+    private NotifyChannelConfigMapper channelConfigMapper;
 
     @Override
     public List<NotifySubscriptionView> preferences(Long userId) {

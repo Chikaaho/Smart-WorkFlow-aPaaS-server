@@ -1,19 +1,20 @@
 package com.sw.ck.bpm.engine.resolver;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverContext;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 固定审批人解析器。
  * <p>
@@ -26,21 +27,12 @@ import java.util.Optional;
  * 注册为 {@link NodeApproverType#DESIGNATED}。
  */
 @Component("designatedApproverResolver")
+@Log4j2
 public class DesignatedApproverResolver implements NodeApproverResolver {
 
-    private static final Logger log = LoggerFactory.getLogger(DesignatedApproverResolver.class);
-
     /** 可选：经组织权威过滤停用/跨租户用户（I1 动态选人只消费服务端认可数据）。 */
-    private final UserQueryFacade userQueryFacade;
-
-    /** 兼容既有单测直接构造。 */
-    public DesignatedApproverResolver() {
-        this(null);
-    }
-
-    public DesignatedApproverResolver(UserQueryFacade userQueryFacade) {
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     @Override
     @SuppressWarnings("unchecked")

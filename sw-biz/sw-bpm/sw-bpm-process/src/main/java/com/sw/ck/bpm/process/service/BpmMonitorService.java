@@ -1,7 +1,10 @@
 package com.sw.ck.bpm.process.service;
 
+import com.sw.ck.bpm.process.dto.AnalyticsSummaryDTO;
+import com.sw.ck.bpm.process.dto.TaskDeadlineDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmInstanceIntervention;
+import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 
@@ -18,18 +21,18 @@ public interface BpmMonitorService {
 
     /** 实例级干预：SUSPEND / RESUME / TERMINATE / TRANSFER。逐项授权 + 审计落库。 */
     BpmInstanceIntervention intervene(String processInstanceId, String action,
-                                      String reason, Long toAssignee, java.util.List<String> taskIds);
+                                      String reason, Long toAssignee, List<String> taskIds);
 
     List<BpmInstanceIntervention> interventions(String processInstanceId);
 
     /** 动态并行分支冻结快照回读（I4 §3.1 运营勾稽）。 */
-    List<com.sw.ck.bpm.process.entity.DynamicBranchSnapshot> branches(String processInstanceId);
+    List<DynamicBranchSnapshot> branches(String processInstanceId);
 
-    Map<String, Object> analyticsSummary(String processDefKey,
+    AnalyticsSummaryDTO analyticsSummary(String processDefKey,
                                          LocalDateTime timeFrom, LocalDateTime timeTo);
 
     /** 实例办理时限原始行（超时可查）。 */
-    List<Map<String, Object>> deadlines(String processInstanceId);
+    List<TaskDeadlineDTO> deadlines(String processInstanceId);
 
     /** 分页监控行：实例 + 当前节点（id 与名称映射，名称缺省回退 id） + 挂起态。 */
     record InstanceMonitorView(BpmInstance instance, List<String> activeNodeIds,

@@ -8,9 +8,11 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
@@ -19,19 +21,27 @@ import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FormRecordAccessPort;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
+import com.sw.ck.form.mapper.FormAppMapper;
+import com.sw.ck.form.mapper.FormAppScopeMapper;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
+import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -51,6 +61,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -89,7 +100,7 @@ class FormAppAccessGuardTest {
     static final AtomicBoolean PARTICIPANT_STUB = new AtomicBoolean(false);
 
     @Configuration
-    @org.mybatis.spring.annotation.MapperScan("com.sw.ck.form.mapper")
+    @MapperScan("com.sw.ck.form.mapper")
     static class TestConfig {
 
         @Bean
@@ -129,16 +140,16 @@ class FormAppAccessGuardTest {
                     return u == null ? null : u.getTenantId();
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 LoginContextProvider loginContextProvider) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
@@ -158,7 +169,7 @@ class FormAppAccessGuardTest {
             CommonMetaObjectHandler metaObjectHandler = new CommonMetaObjectHandler(loginContextProvider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
                     f.setId(new FormIdGenerator().generate());
                 }
             });
@@ -206,7 +217,7 @@ class FormAppAccessGuardTest {
                                              FormSnapshotMapper formSnapshotMapper,
                                              DynamicTableManager dynamicTableManager,
                                              ObjectMapper objectMapper) {
-            return new com.sw.ck.form.service.impl.FormDefServiceImpl(formDefMapper, formConfigMapper,
+            return new FormDefServiceImpl(formDefMapper, formConfigMapper,
                     formSnapshotMapper, dynamicTableManager, new FormIdGenerator(), objectMapper);
         }
 
@@ -217,8 +228,8 @@ class FormAppAccessGuardTest {
         }
 
         @Bean
-        public FormAppAccessGuard formAppAccessGuard(com.sw.ck.form.mapper.FormAppMapper appMapper,
-                                                     com.sw.ck.form.mapper.FormAppScopeMapper appScopeMapper,
+        public FormAppAccessGuard formAppAccessGuard(FormAppMapper appMapper,
+                                                     FormAppScopeMapper appScopeMapper,
                                                      FormAppScopeMatcher scopeMatcher,
                                                      JdbcTemplate jdbcTemplate,
                                                      FormRecordAccessPort formRecordAccessPort) {
@@ -290,7 +301,7 @@ class FormAppAccessGuardTest {
         @SuppressWarnings("unchecked")
         private static <T> ObjectProvider<T> emptyProvider() {
             ObjectProvider<T> provider = mock(ObjectProvider.class);
-            org.mockito.Mockito.lenient().when(provider.getIfAvailable()).thenReturn(null);
+            Mockito.lenient().when(provider.getIfAvailable()).thenReturn(null);
             return provider;
         }
     }

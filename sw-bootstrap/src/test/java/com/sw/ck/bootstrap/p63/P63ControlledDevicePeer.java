@@ -16,8 +16,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * P63 受控设备对端（测试设施，与测试类同生命周期自启动自清理）。
@@ -143,7 +145,7 @@ final class P63ControlledDevicePeer implements Closeable {
                 return body.substring(open + 1, close);
             }
         }
-        return "peer-" + java.util.UUID.randomUUID().toString().substring(0, 12);
+        return "peer-" + UUID.randomUUID().toString().substring(0, 12);
     }
 
     private void record(HttpExchange exchange, String body, String requestId) {
@@ -168,7 +170,7 @@ final class P63ControlledDevicePeer implements Closeable {
         server.stop(0);
         executor.shutdownNow();
         try {
-            if (!executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
+            if (!executor.awaitTermination(3, TimeUnit.SECONDS)) {
                 System.out.println("[P63-EV] peer executor 未在限时内退出（守护线程，进程退出兜底）");
             }
         } catch (InterruptedException e) {

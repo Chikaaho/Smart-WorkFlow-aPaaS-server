@@ -1,6 +1,8 @@
 package com.sw.ck.notify.i6;
 
 import com.sw.ck.notify.entity.NotifyMessage;
+
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,7 +29,7 @@ class I6G1cRecoveryExhaustedBootTest {
     @BeforeAll
     static void renewRetryWindow(@Autowired JdbcTemplate jt) {
         NotifyMessage persisted = I6NotifyRestartSupport.findByIdentity(jt, 100L, 7L, "FEISHU");
-        org.junit.jupiter.api.Assertions.assertNotNull(persisted, "前两轮 JVM 应已持久化同一业务消息");
+        Assertions.assertNotNull(persisted, "前两轮 JVM 应已持久化同一业务消息");
         jt.update("UPDATE sw_notify_message SET next_retry_time = CURRENT_TIMESTAMP WHERE id = ? AND delivery_status IN ('FAILED','TIMEOUT','PENDING')",
                 persisted.getId());
     }
@@ -37,7 +40,7 @@ class I6G1cRecoveryExhaustedBootTest {
         NotifyMessage before = I6NotifyRestartSupport.findByIdentity(jdbc, 100L, 7L, "FEISHU");
         final Long rowId = before.getId();
 
-        await().atMost(java.time.Duration.ofSeconds(90)).untilAsserted(() -> {
+        await().atMost(Duration.ofSeconds(90)).untilAsserted(() -> {
             // 每轮把下一次退避到期时间压回当前时刻（等价于等待指数退避到期），
             // 实际投递与终态写回由调度器自主完成，直至 failure_class 进入明确终态。
             jdbc.update("UPDATE sw_notify_message SET next_retry_time = CURRENT_TIMESTAMP WHERE id = ? AND failure_class = 'RETRYABLE'",

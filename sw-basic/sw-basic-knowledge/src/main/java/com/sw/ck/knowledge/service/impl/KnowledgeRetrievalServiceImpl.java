@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
@@ -23,17 +25,12 @@ public class KnowledgeRetrievalServiceImpl implements KnowledgeRetrievalService 
     private static final int MAX_TOP_K = 20;
     private static final double DEFAULT_THRESHOLD = 0.0;
 
-    private final KnowledgeBaseMapper baseMapper;
-    private final KnowledgeEmbeddingClient embeddingClient;
-    private final KnowledgeVectorStore vectorStore;
-
-    public KnowledgeRetrievalServiceImpl(KnowledgeBaseMapper baseMapper,
-                                         KnowledgeEmbeddingClient embeddingClient,
-                                         KnowledgeVectorStore vectorStore) {
-        this.baseMapper = baseMapper;
-        this.embeddingClient = embeddingClient;
-        this.vectorStore = vectorStore;
-    }
+    @Autowired
+    private KnowledgeBaseMapper baseMapper;
+    @Autowired
+    private KnowledgeEmbeddingClient embeddingClient;
+    @Autowired
+    private KnowledgeVectorStore vectorStore;
 
     @Override
     public List<KnowledgeHitDTO> retrieve(Long kbId, String query, Integer topK,

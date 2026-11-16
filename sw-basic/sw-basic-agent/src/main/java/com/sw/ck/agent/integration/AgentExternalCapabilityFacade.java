@@ -1,12 +1,12 @@
 package com.sw.ck.agent.integration;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.common.integration.ExternalCapability;
 import com.sw.ck.common.integration.ExternalCapabilityFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 外部 HTTP 工具作为表单受控能力的实现。
  * <p>
@@ -29,20 +30,16 @@ import java.util.Set;
  * </p>
  */
 @Component
+@Log4j2
 public class AgentExternalCapabilityFacade implements ExternalCapabilityFacade {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentExternalCapabilityFacade.class);
 
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
     private static final int MAX_RESPONSE_CHARS = 256 * 1024;
     private static final Set<String> SUPPORTED_HTTP_METHODS = Set.of("GET", "POST", "PUT");
     private static final Set<String> SUPPORTED_EFFECT_SCOPES = Set.of("QUERY", "WRITE");
 
-    private final AgentToolExternalConfigMapper externalMapper;
-
-    public AgentExternalCapabilityFacade(AgentToolExternalConfigMapper externalMapper) {
-        this.externalMapper = externalMapper;
-    }
+    @Autowired
+    private AgentToolExternalConfigMapper externalMapper;
 
     @Override
     public List<ExternalCapability> listEnabled(Long tenantId) {

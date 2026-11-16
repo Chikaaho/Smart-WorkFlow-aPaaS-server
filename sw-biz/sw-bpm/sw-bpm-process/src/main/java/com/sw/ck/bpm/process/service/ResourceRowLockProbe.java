@@ -1,10 +1,10 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
 import com.sw.ck.common.jdbc.DatabaseVendor;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 资源段空闲探测的方言实现。
  * <p>
@@ -37,20 +38,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * </p>
  */
 @Component
+@Log4j2
 public class ResourceRowLockProbe {
 
-    private static final Logger log = LoggerFactory.getLogger(ResourceRowLockProbe.class);
     private static final int PROBE_TIMEOUT_SECONDS = 1;
     /** MySQL 5.x 不支持 SKIP LOCKED；按 JDBC URL 缓存主版本判定。 */
     private static final Map<String, Boolean> MYSQL_57_CACHE = new ConcurrentHashMap<>();
 
-    private final BpmResourceUsageMapper usageMapper;
-    private final JdbcTemplate jdbcTemplate;
-
-    public ResourceRowLockProbe(BpmResourceUsageMapper usageMapper, JdbcTemplate jdbcTemplate) {
-        this.usageMapper = usageMapper;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private BpmResourceUsageMapper usageMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     public Long probe(String scope, long scopeKey, String segment) {
         DatabaseVendor vendor = JdbcVendorSupport.vendor(jdbcTemplate);

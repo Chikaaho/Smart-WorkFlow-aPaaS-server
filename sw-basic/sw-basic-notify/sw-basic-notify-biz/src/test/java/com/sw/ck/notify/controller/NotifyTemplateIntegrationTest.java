@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -33,6 +34,7 @@ import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
 import com.sw.ck.notify.service.impl.NotifyTemplateServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,6 +47,7 @@ import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -370,7 +373,7 @@ class NotifyTemplateIntegrationTest {
                 "INSERT INTO sw_notify_template (id, create_time, update_time, deleted, tenant_id, version, "
                         + "template_code, name, title_template, content_template, enabled) VALUES (?, ?, ?, 0, ?, 0, 'DUP_CODE', 'C', 't', 'c', 1)",
                 nextId++, now, now, TENANT_100))
-                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+                .isInstanceOf(DataIntegrityViolationException.class);
 
         // 软删后重建成功
         jdbcTemplate.update("UPDATE sw_notify_template SET deleted=1 WHERE template_code='DUP_CODE'");
@@ -710,7 +713,7 @@ class NotifyTemplateIntegrationTest {
 
         @Bean
         public NotifyFacadeImpl notifyFacade(NotifyMessageService messageService) {
-            return new NotifyFacadeImpl(messageService, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
+            return new NotifyFacadeImpl(messageService, List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
     }
 }

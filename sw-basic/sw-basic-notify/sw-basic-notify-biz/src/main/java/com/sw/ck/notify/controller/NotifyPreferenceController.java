@@ -1,5 +1,7 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.notify.dto.NotifySubscriptionSaveReq;
 import com.sw.ck.notify.dto.NotifySubscriptionView;
@@ -18,19 +20,16 @@ import java.util.List;
 @RequestMapping("/notify/subscriptions")
 public class NotifyPreferenceController {
 
-    private final NotifySubscriptionService notifySubscriptionService;
-
-    public NotifyPreferenceController(NotifySubscriptionService notifySubscriptionService) {
-        this.notifySubscriptionService = notifySubscriptionService;
-    }
+    @Autowired
+    private NotifySubscriptionService notifySubscriptionService;
 
     @GetMapping
-    public R<List<com.sw.ck.notify.dto.NotifySubscriptionView>> mine() {
+    public R<List<NotifySubscriptionView>> mine() {
         return R.ok(notifySubscriptionService.preferences(LoginUserHolder.get().getUserId()));
     }
 
     @PostMapping
-    public R<Void> save(@RequestBody com.sw.ck.notify.dto.NotifySubscriptionSaveReq req) {
+    public R<Void> save(@RequestBody NotifySubscriptionSaveReq req) {
         notifySubscriptionService.save(LoginUserHolder.get().getUserId(), req);
         return R.ok();
     }

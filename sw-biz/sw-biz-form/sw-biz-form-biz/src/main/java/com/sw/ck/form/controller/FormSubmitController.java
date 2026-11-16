@@ -1,15 +1,16 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.service.FormSubmitService;
 import jakarta.servlet.http.HttpServletRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单数据提交入口。
  * <p>
@@ -19,15 +20,11 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/form/data")
+@Log4j2
 public class FormSubmitController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormSubmitController.class);
-
-    private final FormSubmitService formSubmitService;
-
-    public FormSubmitController(FormSubmitService formSubmitService) {
-        this.formSubmitService = formSubmitService;
-    }
+    @Autowired
+    private FormSubmitService formSubmitService;
 
     /**
      * 提交表单数据。

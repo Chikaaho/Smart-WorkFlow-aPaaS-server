@@ -1,16 +1,20 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormAppDTO;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.dto.FormDataRecordDTO;
+import com.sw.ck.form.dto.WorkspaceAggregateDTO;
+import com.sw.ck.form.dto.WorkspaceFieldsDTO;
+import com.sw.ck.form.dto.WorkspaceSourceDTO;
 import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
 import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
 import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormDefService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,6 +28,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 工作台数据组件受控查询入口。
  *
@@ -32,21 +37,15 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/form/workspace/analytics")
+@Log4j2
 public class FormWorkspaceAnalyticsController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormWorkspaceAnalyticsController.class);
-
-    private final FormDataQueryService formDataQueryService;
-    private final FormDefService formDefService;
-    private final FormAppService formAppService;
-
-    public FormWorkspaceAnalyticsController(FormDataQueryService formDataQueryService,
-                                            FormDefService formDefService,
-                                            FormAppService formAppService) {
-        this.formDataQueryService = formDataQueryService;
-        this.formDefService = formDefService;
-        this.formAppService = formAppService;
-    }
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormAppService formAppService;
 
     /**
      * 当前账号可关联的已发布表单。
@@ -56,24 +55,24 @@ public class FormWorkspaceAnalyticsController {
      * 口径的记录数，单个表单计数失败按 0 记录，不阻断候选列表。</p>
      */
     @GetMapping("/sources")
-    public R<List<Map<String, Object>>> sources() {
+    public R<List<WorkspaceSourceDTO>> sources() {
         Map<String, String> appNameById = formAppService.listVisibleAppsForCurrentUser().stream()
                 .collect(Collectors.toMap(FormAppDTO::getId, FormAppDTO::getName, (a, b) -> a,
                         LinkedHashMap::new));
         Function<String, String> appNameOf = appId -> appId == null ? null : appNameById.get(appId);
-        List<Map<String, Object>> list = formDefService.listPublishedForCurrentUser().stream()
+        List<WorkspaceSourceDTO> list = formDefService.listPublishedForCurrentUser().stream()
                 .map(def -> {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("formKey", def.getFormKey());
-                    item.put("name", def.getName());
-                    item.put("formVersion", def.getFormVersion());
+                    WorkspaceSourceDTO item = new WorkspaceSourceDTO();
+                    item.setFormKey(def.getFormKey());
+                    item.setName(def.getName());
+                    item.setFormVersion(def.getFormVersion());
                     String appId = def.getAppId();
                     String appName = appId != null ? appNameOf.apply(appId) : null;
                     if (appName != null) {
-                        item.put("appId", appId);
-                        item.put("appName", appName);
+                        item.setAppId(appId);
+                        item.setAppName(appName);
                     }
-                    item.put("recordCount", formDataQueryService.workspaceRecordCount(def.getFormKey()));
+                    item.setRecordCount(formDataQueryService.workspaceRecordCount(def.getFormKey()));
                     return item;
                 })
                 .toList();
@@ -83,13 +82,13 @@ public class FormWorkspaceAnalyticsController {
 
     /** 指定表单当前账号可见的标量字段目录。 */
     @GetMapping("/forms/{formKey}/fields")
-    public R<Map<String, Object>> fields(@PathVariable("formKey") String formKey) {
+    public R<WorkspaceFieldsDTO> fields(@PathVariable("formKey") String formKey) {
         return R.ok(formDataQueryService.workspaceFields(formKey));
     }
 
     /** 分组聚合。 */
     @PostMapping("/aggregate")
-    public R<Map<String, Object>> aggregate(@RequestBody WorkspaceAggregateReq req) {
+    public R<WorkspaceAggregateDTO> aggregate(@RequestBody WorkspaceAggregateReq req) {
         if (req == null || req.getFormKey() == null || req.getFormKey().isBlank()) {
             return R.fail(1500, "聚合查询缺少表单标识");
         }
@@ -101,7 +100,7 @@ public class FormWorkspaceAnalyticsController {
 
     /** 数据列表。 */
     @PostMapping("/rows")
-    public R<PageResult<Map<String, Object>>> rows(@RequestBody WorkspaceRowsReq req) {
+    public R<PageResult<FormDataRecordDTO>> rows(@RequestBody WorkspaceRowsReq req) {
         if (req == null || req.getFormKey() == null || req.getFormKey().isBlank()) {
             return R.fail(1500, "列表查询缺少表单标识");
         }

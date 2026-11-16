@@ -1,19 +1,24 @@
 package com.sw.ck.iot.service.impl;
 
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 命令队列服务实现。
  * <p>
@@ -21,18 +26,13 @@ import java.util.List;
  * </p>
  */
 @Service
+@Log4j2
 public class CommandQueueServiceImpl implements CommandQueueService {
 
-    private static final Logger log = LoggerFactory.getLogger(CommandQueueServiceImpl.class);
-
-    private final IotDeviceCommandMapper commandMapper;
-    private final com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
-
-    public CommandQueueServiceImpl(IotDeviceCommandMapper commandMapper,
-                                   com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission) {
-        this.commandMapper = commandMapper;
-        this.tenantWorkAdmission = java.util.Objects.requireNonNull(tenantWorkAdmission);
-    }
+    @Autowired
+    private IotDeviceCommandMapper commandMapper;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -63,7 +63,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
         }
 
         int claimed = tenantWorkAdmission.claim(command.getTenantId(), () -> commandMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                Wrappers.<IotDeviceCommand>lambdaUpdate()
                         .set(IotDeviceCommand::getStatus, "SENDING")
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                         .eq(IotDeviceCommand::getId, commandId)
@@ -154,7 +154,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
         int retries = (command.getRetryCount() == null ? 0 : command.getRetryCount()) + 1;
         if ("QUEUED".equals(previous) || "FAILED".equals(previous)) {
             int changed = tenantWorkAdmission.claim(command.getTenantId(), () -> commandMapper.update(null,
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                    Wrappers.<IotDeviceCommand>lambdaUpdate()
                             .set(IotDeviceCommand::getStatus, "FAILED")
                             .set(IotDeviceCommand::getLastError, error)
                             .set(IotDeviceCommand::getRetryCount, retries)
@@ -218,8 +218,8 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     @Override
     public List<IotDeviceCommand> getExpiredCommands() {
         // 补偿调度线程无登录态：挂起租户过滤（补偿作业跨租户扫描过期命令）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return commandMapper.selectExpired(LocalDateTime.now(), null);
         }
     }
@@ -227,8 +227,8 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     @Override
     public List<IotDeviceCommand> getReceiptTimeoutCommands() {
         // 补偿调度线程无登录态：挂起租户过滤（同 getExpiredCommands 口径）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return commandMapper.selectReceiptTimeout(LocalDateTime.now(), null);
         }
     }
@@ -236,12 +236,12 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     @Override
     public List<IotDeviceCommand> getStuckCommands(int stuckMinutes) {
         // 补偿调度线程无登录态：挂起租户过滤（同 getExpiredCommands 口径）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             LocalDateTime since = LocalDateTime.now().minusMinutes(stuckMinutes);
             // 查询所有 QUEUED 状态且创建时间早于阈值的命令
             return commandMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
+                    Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
                             .eq(IotDeviceCommand::getStatus, "QUEUED")
                             .le(IotDeviceCommand::getCreateTime, since));
@@ -249,11 +249,11 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     }
 
     @Override
-    public boolean claimQueuedForSend(Long commandId, java.time.LocalDateTime staleBefore) {
+    public boolean claimQueuedForSend(Long commandId, LocalDateTime staleBefore) {
         IotDeviceCommand owner = commandMapper.selectById(commandId);
         if (owner == null) return false;
         int affected = tenantWorkAdmission.claim(owner.getTenantId(), () -> commandMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                Wrappers.<IotDeviceCommand>lambdaUpdate()
                         .set(IotDeviceCommand::getStatus, "SENDING")
                         // 领取即刷新租约时间：发送者崩溃后据此回收（wrapper 更新不会自动填充）
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
@@ -271,7 +271,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
         IotDeviceCommand owner = commandMapper.selectById(commandId);
         if (owner == null) return false;
         int affected = tenantWorkAdmission.claim(owner.getTenantId(), () -> commandMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                Wrappers.<IotDeviceCommand>lambdaUpdate()
                         .set(IotDeviceCommand::getStatus, "SENDING")
                         .setSql("retry_count = retry_count + 1")
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
@@ -286,14 +286,14 @@ public class CommandQueueServiceImpl implements CommandQueueService {
 
     @Override
     public List<IotDeviceCommand> findRetryableFailed(int maxRetryCount, int limit) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return commandMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
+                    Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
                             .eq(IotDeviceCommand::getStatus, "FAILED")
                             .lt(IotDeviceCommand::getRetryCount, maxRetryCount)
-                            .gt(IotDeviceCommand::getExpiryTime, java.time.LocalDateTime.now())
+                            .gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now())
                             .orderByAsc(IotDeviceCommand::getCreateTime)
                             .last("LIMIT " + Math.max(1, limit)));
         }
@@ -301,14 +301,14 @@ public class CommandQueueServiceImpl implements CommandQueueService {
 
     @Override
     public List<IotDeviceCommand> findStuckQueued(int stuckMinutes, int limit) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return commandMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
+                    Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
                             .eq(IotDeviceCommand::getStatus, "QUEUED")
                             .le(IotDeviceCommand::getUpdateTime,
-                                    java.time.LocalDateTime.now().minusMinutes(stuckMinutes))
+                                    LocalDateTime.now().minusMinutes(stuckMinutes))
                             .orderByAsc(IotDeviceCommand::getCreateTime)
                             .last("LIMIT " + Math.max(1, limit)));
         }
@@ -317,10 +317,10 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     @Override
     public List<IotDeviceCommand> findStaleSending(int staleMinutes, int limit) {
         // 补偿调度线程无登录态：与其余补偿查询同口径挂起租户过滤
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return commandMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
+                    Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
                             .eq(IotDeviceCommand::getStatus, "SENDING")
                             .le(IotDeviceCommand::getUpdateTime,
@@ -333,7 +333,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     @Override
     public boolean reclaimStaleSending(Long commandId, LocalDateTime staleBefore) {
         int affected = commandMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                Wrappers.<IotDeviceCommand>lambdaUpdate()
                         .set(IotDeviceCommand::getStatus, "FAILED")
                         .set(IotDeviceCommand::getLastError, "发送租约过期（发送者可能已崩溃）")
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())

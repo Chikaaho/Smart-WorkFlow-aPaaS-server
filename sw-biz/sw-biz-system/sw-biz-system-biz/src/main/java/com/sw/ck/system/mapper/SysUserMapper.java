@@ -3,15 +3,19 @@ package com.sw.ck.system.mapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.datascope.DataScope;
 import com.sw.ck.common.mapper.BaseMapperX;
 import com.sw.ck.system.entity.SysUser;
+
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Param;
+
 import com.sw.ck.system.service.UserPageQuery;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 系统用户 Mapper。
@@ -26,22 +30,22 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
      */
     @Select("SELECT * FROM sys_user WHERE username = #{username} AND deleted = 0")
     @InterceptorIgnore(tenantLine = "true")
-    SysUser selectGlobalByUsername(@org.apache.ibatis.annotations.Param("username") String username);
+    SysUser selectGlobalByUsername(@Param("username") String username);
 
     /** 跨租户按用户名列出候选（用户名按租户唯一后用于歧义判定）。 */
     @Select("SELECT * FROM sys_user WHERE username = #{username} AND deleted = 0 ORDER BY id")
     @InterceptorIgnore(tenantLine = "true")
-    java.util.List<SysUser> selectGlobalByUsernameAll(
-            @org.apache.ibatis.annotations.Param("username") String username);
+    List<SysUser> selectGlobalByUsernameAll(
+            @Param("username") String username);
 
     /** 按企业（租户）名称 + 用户名精确定位候选（同名账号存在于多个租户时使用；名称歧义由调用方 fail closed）。 */
     @Select("SELECT u.* FROM sys_user u JOIN sys_tenant t ON t.id = u.tenant_id "
             + "WHERE t.name = #{tenantName} AND u.username = #{username} "
             + "AND u.deleted = 0 AND t.deleted = 0 ORDER BY u.id")
     @InterceptorIgnore(tenantLine = "true")
-    java.util.List<SysUser> selectByTenantNameAndUsernameAll(
-            @org.apache.ibatis.annotations.Param("tenantName") String tenantName,
-            @org.apache.ibatis.annotations.Param("username") String username);
+    List<SysUser> selectByTenantNameAndUsernameAll(
+            @Param("tenantName") String tenantName,
+            @Param("username") String username);
 
     @Select({"<script>",
             "SELECT DISTINCT u.id FROM sys_user u WHERE u.deleted = 0 AND u.status = 0 ",
@@ -87,7 +91,7 @@ public interface SysUserMapper extends BaseMapperX<SysUser> {
             "<foreach collection='deptIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
             "</script>"})
     @InterceptorIgnore(tenantLine = "true")
-    List<java.util.Map<String, Object>> selectDeptLeaderMap(@Param("deptIds") List<Long> deptIds,
+    List<Map<String, Object>> selectDeptLeaderMap(@Param("deptIds") List<Long> deptIds,
                                                              @Param("tenantId") Long tenantId);
 
     /** 岗位解析：启用岗位 × 有效任职行 × 启用用户，同租户。 */

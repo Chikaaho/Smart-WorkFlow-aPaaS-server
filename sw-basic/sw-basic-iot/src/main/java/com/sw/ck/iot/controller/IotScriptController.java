@@ -1,5 +1,7 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotScript;
 import com.sw.ck.iot.entity.IotScriptExec;
@@ -21,11 +23,8 @@ import java.util.Map;
 @RequestMapping("/iot/scripts")
 public class IotScriptController {
 
-    private final IotScriptService scriptService;
-
-    public IotScriptController(IotScriptService scriptService) {
-        this.scriptService = scriptService;
-    }
+    @Autowired
+    private IotScriptService scriptService;
 
     @GetMapping
     public R<List<IotScript>> list() {

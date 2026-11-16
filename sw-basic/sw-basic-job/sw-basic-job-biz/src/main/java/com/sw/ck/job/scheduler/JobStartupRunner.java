@@ -1,16 +1,17 @@
 package com.sw.ck.job.scheduler;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.job.entity.JobInfo;
 import com.sw.ck.job.service.JobInfoService;
 import com.sw.ck.job.service.QuartzSchedulerService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 应用启动时自动恢复 Quartz 定时任务调度。
  * <p>
@@ -24,18 +25,13 @@ import java.util.List;
  * 确保 {@link QuartzSchedulerService} 和 {@link JobInfoService} 均可用。
  */
 @Component
+@Log4j2
 public class JobStartupRunner implements ApplicationRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(JobStartupRunner.class);
-
-    private final JobInfoService jobInfoService;
-    private final QuartzSchedulerService quartzSchedulerService;
-
-    public JobStartupRunner(JobInfoService jobInfoService,
-                            QuartzSchedulerService quartzSchedulerService) {
-        this.jobInfoService = jobInfoService;
-        this.quartzSchedulerService = quartzSchedulerService;
-    }
+    @Autowired
+    private JobInfoService jobInfoService;
+    @Autowired
+    private QuartzSchedulerService quartzSchedulerService;
 
     @Override
     public void run(ApplicationArguments args) {

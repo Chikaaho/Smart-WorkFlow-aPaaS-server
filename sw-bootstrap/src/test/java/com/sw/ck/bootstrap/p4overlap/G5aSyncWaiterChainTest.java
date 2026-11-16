@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p4overlap;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -12,12 +13,17 @@ import com.sw.ck.bpm.process.service.CommandSyncWaiter;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.controller.BpmCommandController;
+import com.sw.ck.common.exception.BaseException;
+
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -42,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("G5a 同步发起结果链：父完成不冒充子启动，实际启动/延迟/失败三分支")
 class G5aSyncWaiterChainTest {
 
-    @org.springframework.context.annotation.Configuration
+    @Configuration
     @Import(OverlapH2TestConfig.class)
     static class Config {
         @Bean
@@ -195,8 +201,8 @@ class G5aSyncWaiterChainTest {
     @Test
     @DisplayName("对外结果回查（提示08 B1）：原标识→实际子启动结论，处理中/成功/失败可区分且不新建任何受理")
     void externalResultQuery_resolvesActualFlowStartOutcome() {
-        com.sw.ck.bpm.process.controller.BpmCommandController controller =
-                new com.sw.ck.bpm.process.controller.BpmCommandController(
+        BpmCommandController controller =
+                new BpmCommandController(
                         null, commandService, waiter, null);
 
         Claimed parent = enqueueAndClaim("DRAFT_SUBMIT:d-sync-4:1", CommandTypeEnum.DRAFT_SUBMIT);
@@ -214,17 +220,17 @@ class G5aSyncWaiterChainTest {
 
         // 1) 子启动处理中：父内部 COMPLETED 保留，但业务结论以 flowStart=PENDING 呈现（不掩盖）
         CommandStatusRespDTO processing = statusOf(controller, INITIATOR, parent.id());
-        org.assertj.core.api.Assertions.assertThat(processing.getStatus()).isEqualTo("COMPLETED");
-        org.assertj.core.api.Assertions.assertThat(processing.getFlowStart()).isNotNull();
-        org.assertj.core.api.Assertions.assertThat(processing.getFlowStart().getStatus())
+        Assertions.assertThat(processing.getStatus()).isEqualTo("COMPLETED");
+        Assertions.assertThat(processing.getFlowStart()).isNotNull();
+        Assertions.assertThat(processing.getFlowStart().getStatus())
                 .as("子未完成不得显示业务成功").isIn("PENDING", "PROCESSING");
-        org.assertj.core.api.Assertions.assertThat(processing.getFlowStart().getCommandId())
+        Assertions.assertThat(processing.getFlowStart().getCommandId())
                 .isEqualTo(child.id());
 
         // 2) 查询只读：不新建任何命令/受理/实例
         long commandsAfter = jdbcTemplate.queryForObject(
                 "select count(*) from sw_bpm_command", Long.class);
-        org.assertj.core.api.Assertions.assertThat(commandsAfter).isEqualTo(commandsBefore);
+        Assertions.assertThat(commandsAfter).isEqualTo(commandsBefore);
 
         // 3) 实际启动成功：flowStart COMPLETED/STARTED
         login();
@@ -234,8 +240,8 @@ class G5aSyncWaiterChainTest {
             LoginUserHolder.clear();
         }
         CommandStatusRespDTO started = statusOf(controller, INITIATOR, parent.id());
-        org.assertj.core.api.Assertions.assertThat(started.getFlowStart().getStatus()).isEqualTo("COMPLETED");
-        org.assertj.core.api.Assertions.assertThat(started.getFlowStart().getResult()).contains("STARTED");
+        Assertions.assertThat(started.getFlowStart().getStatus()).isEqualTo("COMPLETED");
+        Assertions.assertThat(started.getFlowStart().getResult()).contains("STARTED");
 
         // 4) 实际启动失败：flowStart FAILED + 原因，父 COMPLETED 不掩盖失败结论
         Claimed parent2 = enqueueAndClaim("DRAFT_SUBMIT:d-sync-5:1", CommandTypeEnum.DRAFT_SUBMIT);
@@ -249,21 +255,21 @@ class G5aSyncWaiterChainTest {
             LoginUserHolder.clear();
         }
         CommandStatusRespDTO failed = statusOf(controller, INITIATOR, parent2.id());
-        org.assertj.core.api.Assertions.assertThat(failed.getStatus()).isEqualTo("COMPLETED");
-        org.assertj.core.api.Assertions.assertThat(failed.getFlowStart().getStatus())
+        Assertions.assertThat(failed.getStatus()).isEqualTo("COMPLETED");
+        Assertions.assertThat(failed.getFlowStart().getStatus())
                 .as("子启动失败不得被父成功掩盖").isEqualTo("FAILED");
-        org.assertj.core.api.Assertions.assertThat(failed.getFlowStart().getFailureReason())
+        Assertions.assertThat(failed.getFlowStart().getFailureReason())
                 .contains("流程定义不可用");
 
         // 5) 身份不放宽：非发起人回查被拒（BaseException FORBIDDEN），发起人正常
-        org.assertj.core.api.Assertions.assertThatCode(
+        Assertions.assertThatCode(
                         () -> statusOf(controller, 42L, parent.id()))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
         CommandStatusRespDTO again = statusOf(controller, INITIATOR, parent2.id());
-        org.assertj.core.api.Assertions.assertThat(again.getFlowStart().getStatus()).isEqualTo("FAILED");
+        Assertions.assertThat(again.getFlowStart().getStatus()).isEqualTo("FAILED");
     }
 
-    private CommandStatusRespDTO statusOf(com.sw.ck.bpm.process.controller.BpmCommandController controller,
+    private CommandStatusRespDTO statusOf(BpmCommandController controller,
                                           long userId, Long commandId) {
         LoginUser viewer = new LoginUser();
         viewer.setUserId(userId);
@@ -296,7 +302,7 @@ class G5aSyncWaiterChainTest {
         } finally {
             LoginUserHolder.clear();
         }
-        org.assertj.core.api.Assertions.assertThat(result.outcome())
+        Assertions.assertThat(result.outcome())
                 .as("缺实际启动结论不得返回业务发起成功")
                 .isEqualTo(CommandSyncWaiter.Outcome.TIMEOUT);
     }

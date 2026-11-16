@@ -1,5 +1,7 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormAppContentDTO;
 import com.sw.ck.form.api.dto.FormAppDTO;
@@ -8,11 +10,11 @@ import com.sw.ck.form.api.dto.FormAppDirSaveReq;
 import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
 import com.sw.ck.form.dynamic.FixedTableSql;
+import com.sw.ck.form.dto.TenantOptionDTO;
 import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,9 +27,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 应用管理（后台）：应用 / 目录 / 表单归属维护。
  * <p>
@@ -38,17 +43,13 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/form/app/manage")
+@Log4j2
 public class FormAppManageController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormAppManageController.class);
-
-    private final FormAppService formAppService;
-    private final JdbcTemplate jdbcTemplate;
-
-    public FormAppManageController(FormAppService formAppService, JdbcTemplate jdbcTemplate) {
-        this.formAppService = formAppService;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private FormAppService formAppService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * 应用列表（含停用与承接应用），keyword 对名称模糊过滤。
@@ -74,7 +75,7 @@ public class FormAppManageController {
     /** 租户 id→名称映射（复用既有启用租户选项来源；读失败为空映射，名称留空）。 */
     private Map<Long, String> tenantNameMap() {
         try {
-            Map<Long, String> names = new java.util.HashMap<>();
+            Map<Long, String> names = new HashMap<>();
             for (Map<String, Object> row : FixedTableSql.listEnabledTenantOptions(jdbcTemplate)) {
                 Object id = row.get("id");
                 Object name = row.get("name");
@@ -145,9 +146,18 @@ public class FormAppManageController {
      * 只回 id 与名称，供选择器展示；读失败返回空列表（选择器呈现为空但可保存其它维度）。
      */
     @GetMapping("/tenants")
-    public R<List<Map<String, Object>>> listTenantOptions() {
+    public R<List<TenantOptionDTO>> listTenantOptions() {
         try {
-            return R.ok(FixedTableSql.listEnabledTenantOptions(jdbcTemplate));
+            List<TenantOptionDTO> options = new ArrayList<>();
+            for (Map<String, Object> row : FixedTableSql.listEnabledTenantOptions(jdbcTemplate)) {
+                Object id = row.get("id");
+                Object name = row.get("name");
+                TenantOptionDTO option = new TenantOptionDTO();
+                option.setId(id instanceof Number number ? number.longValue() : null);
+                option.setName(name == null ? null : String.valueOf(name));
+                options.add(option);
+            }
+            return R.ok(options);
         } catch (Exception e) {
             return R.ok(List.of());
         }

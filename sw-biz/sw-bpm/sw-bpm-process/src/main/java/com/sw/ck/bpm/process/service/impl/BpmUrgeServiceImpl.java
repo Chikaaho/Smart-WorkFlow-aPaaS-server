@@ -17,25 +17,30 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.SendNotifyCommand;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.notify.api.NotifyRoutingService;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
+import lombok.extern.log4j.Log4j2;
 /** 催办服务实现。 */
 @Service
+@Log4j2
 public class BpmUrgeServiceImpl implements BpmUrgeService {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmUrgeServiceImpl.class);
 
     static final String RESULT_ACCEPTED = "ACCEPTED";
     static final String RESULT_COOLDOWN = "COOLDOWN";
@@ -47,35 +52,18 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
     /** 单节点进程内同实例串行：避免并发失败方在 H2/PG 行锁等待上超时 500（跨实例兜底仍靠 DB 行锁）。 */
     private final ConcurrentHashMap<Long, ReentrantLock> instanceLocks = new ConcurrentHashMap<>();
 
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final UrgeRecordMapper urgeRecordMapper;
-    private final NotifyFacade notifyFacade;
-    private final com.sw.ck.notify.api.NotifyRoutingService notifyRoutingService;
-    private final JdbcTemplate jdbcTemplate;
-
-    public BpmUrgeServiceImpl(BpmInstanceService bpmInstanceService,
-                              BpmTaskFacade bpmTaskFacade,
-                              UrgeRecordMapper urgeRecordMapper,
-                              NotifyFacade notifyFacade,
-                              JdbcTemplate jdbcTemplate) {
-        this(bpmInstanceService, bpmTaskFacade, urgeRecordMapper, notifyFacade, null, jdbcTemplate);
-    }
-
-@org.springframework.beans.factory.annotation.Autowired
-    public BpmUrgeServiceImpl(BpmInstanceService bpmInstanceService,
-                              BpmTaskFacade bpmTaskFacade,
-                              UrgeRecordMapper urgeRecordMapper,
-                              NotifyFacade notifyFacade,
-                              com.sw.ck.notify.api.NotifyRoutingService notifyRoutingService,
-                              JdbcTemplate jdbcTemplate) {
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.urgeRecordMapper = urgeRecordMapper;
-        this.notifyFacade = notifyFacade;
-        this.notifyRoutingService = notifyRoutingService;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private UrgeRecordMapper urgeRecordMapper;
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private NotifyRoutingService notifyRoutingService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Override
     @Transactional
@@ -112,7 +100,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         ReentrantLock lock = instanceLocks.computeIfAbsent(instanceRecordId, k -> new ReentrantLock());
         boolean locked;
         try {
-            locked = lock.tryLock(10, java.util.concurrent.TimeUnit.SECONDS);
+            locked = lock.tryLock(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "催办繁忙，请稍后重试");
@@ -158,7 +146,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
 
         // 冷却判定：同实例最近一次 ACCEPTED 受理时间在 10 分钟内 → 冷却
         UrgeRecord lastAccepted = urgeRecordMapper.selectList(
-                        com.baomidou.mybatisplus.core.toolkit.Wrappers.<UrgeRecord>lambdaQuery()
+                        Wrappers.<UrgeRecord>lambdaQuery()
                                 .eq(UrgeRecord::getProcessInstanceId, instance.getProcessInstanceId())
                                 .eq(UrgeRecord::getResult, RESULT_ACCEPTED)
                                 .orderByDesc(UrgeRecord::getCreateTime)
@@ -203,7 +191,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
         }
 
         // 接收人限定：必须是服务端核定的当前实例合法待办人子集；空 = 旧语义（全部待办人）
-        List<Long> selectedTargets = new java.util.ArrayList<>(targets);
+        List<Long> selectedTargets = new ArrayList<>(targets);
         if (recipientIds != null && !recipientIds.isEmpty()) {
             Set<Long> requested = new LinkedHashSet<>();
             for (Long id : recipientIds) {
@@ -214,18 +202,18 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                         instanceRecordId, requested, targets);
                 return reject(instance, loginUser.getUserId(), "催办接收人不在当前实例合法待办范围");
             }
-            selectedTargets = new java.util.ArrayList<>(requested);
+            selectedTargets = new ArrayList<>(requested);
         }
 
         // I6 统一投递权威：催办 = TASK_URGE 事件，渠道/订阅由路由裁决（IN_APP 保底），
         // 每次催办具有新的稳定发生标识（冷却窗批次），站内信至少送达。
         Long firstTarget = selectedTargets.iterator().next();
         for (Long target : selectedTargets) {
-            java.util.List<NotifyChannel> urgeChannels = notifyRoutingService == null
-                    ? java.util.List.of(NotifyChannel.IN_APP)
+            List<NotifyChannel> urgeChannels = notifyRoutingService == null
+                    ? List.of(NotifyChannel.IN_APP)
                     // empty = 事件类型/上下文缺失无法裁决路由：与路由服务缺席同用 IN_APP 保底
                     : notifyRoutingService.channelsFor("TASK_URGE", target)
-                            .orElse(java.util.List.of(NotifyChannel.IN_APP));
+                            .orElse(List.of(NotifyChannel.IN_APP));
             for (NotifyChannel channel : urgeChannels) {
                 // send 当前契约恒 present（渠道失败以结果状态表达，不以上空表达失败）
                 notifyFacade.send(NotifySendRequest.builder()
@@ -305,7 +293,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                 jdbcTemplate.queryForList("SELECT id FROM sw_bpm_instance WHERE id = ? FOR UPDATE",
                         instanceRecordId);
                 return;
-            } catch (org.springframework.dao.DataAccessException e) {
+            } catch (DataAccessException e) {
                 if (attempt >= maxAttempts) {
                     log.warn("催办行锁获取失败(重试耗尽): instance={}, attempts={}", instanceRecordId, attempt);
                     throw e;

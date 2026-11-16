@@ -1,13 +1,16 @@
 package com.sw.ck.bpm.process.queue;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmResourceUsage;
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
+import com.sw.ck.bpm.process.service.BpmCommandService;
 import com.sw.ck.bpm.process.service.ResourceFactView;
 import com.sw.ck.bpm.process.service.ResourceReleaseService;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 资源保障对账任务（P62 资源保障）。
  * <p>
@@ -32,28 +36,20 @@ import java.util.Map;
  * </p>
  */
 @Component
+@Log4j2
 public class ResourceAssuranceReconcileJob {
-
-    private static final Logger log = LoggerFactory.getLogger(ResourceAssuranceReconcileJob.class);
 
     private static final int LIGHT_RELEASE_LIMIT = 500;
     private static final String FLOW_START_KEY_PREFIX = "FLOW_START:";
 
-    private final com.sw.ck.bpm.process.service.BpmCommandService commandService;
-    private final ResourceReleaseService releaseService;
-    private final BpmResourceUsageMapper usageMapper;
-    private final ResourceFactView factView;
-
-    public ResourceAssuranceReconcileJob(
-            com.sw.ck.bpm.process.service.BpmCommandService commandService,
-            ResourceReleaseService releaseService,
-            BpmResourceUsageMapper usageMapper,
-            ResourceFactView factView) {
-        this.commandService = commandService;
-        this.releaseService = releaseService;
-        this.usageMapper = usageMapper;
-        this.factView = factView;
-    }
+    @Autowired
+    private BpmCommandService commandService;
+    @Autowired
+    private ResourceReleaseService releaseService;
+    @Autowired
+    private BpmResourceUsageMapper usageMapper;
+    @Autowired
+    private ResourceFactView factView;
 
     /** 对账结果（运维画像/测试回读用）。 */
     public record ReconcileOutcome(int lightTargetsReleased, int countersRepaired) {
@@ -128,7 +124,7 @@ public class ResourceAssuranceReconcileJob {
 
     private int repairRows(String scope, long scopeKey, Map<String, Long> facts) {
         List<BpmResourceUsage> rows = usageMapper.selectList(
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmResourceUsage>lambdaQuery()
+                Wrappers.<BpmResourceUsage>lambdaQuery()
                         .eq(BpmResourceUsage::getScope, scope)
                         .eq(BpmResourceUsage::getScopeKey, scopeKey));
         int repaired = 0;

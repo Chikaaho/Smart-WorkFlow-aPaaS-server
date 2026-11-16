@@ -4,14 +4,12 @@ import com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler;
 import com.sw.ck.common.security.LoginContextProvider;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.LongValue;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.baomidou.dynamic.datasource.toolkit.DynamicDataSourceContextHolder;
 
+import lombok.extern.log4j.Log4j2;
+@Log4j2
 public class CommonTenantLineHandler implements TenantLineHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(CommonTenantLineHandler.class);
 
     private final TenantProperties tenantProperties;
     private final LoginContextProvider loginContextProvider;

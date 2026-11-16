@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
@@ -30,7 +31,21 @@ import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.jwt.JwtTokenProviderImpl;
 import com.sw.ck.security.spi.UserDetailsProvider;
 import com.sw.ck.security.support.PermissionService;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
+import com.sw.ck.agent.mapper.AgentGraphSnapshotMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import com.sw.ck.agent.service.AgentGraphDefService;
+import com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl;
+import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
+import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DeptScopeProvider;
+
 import jakarta.servlet.Filter;
+
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.junit.jupiter.api.AfterEach;
@@ -67,11 +82,15 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.context.WebApplicationContext;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
 
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.HashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -571,8 +590,8 @@ class AgentGraphDefSecurityIntegrationTest {
         @Bean
         public TenantLineInnerInterceptor tenantLineInnerInterceptor(
                 LoginContextProvider loginContextProvider) {
-            return new TenantLineInnerInterceptor(new com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler(
-                    new com.sw.ck.common.config.mybatis.tenant.TenantProperties(), loginContextProvider));
+            return new TenantLineInnerInterceptor(new CommonTenantLineHandler(
+                    new TenantProperties(), loginContextProvider));
         }
 
         @Bean
@@ -584,7 +603,7 @@ class AgentGraphDefSecurityIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -610,17 +629,17 @@ class AgentGraphDefSecurityIntegrationTest {
         // ==================== 业务 Bean ====================
 
         @Bean
-        public com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
-                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+        public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
-            return new com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
+            return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
 
         @Bean
-        public com.sw.ck.agent.service.AgentGraphDefService agentGraphDefService(
+        public AgentGraphDefService agentGraphDefService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl snapshotService) {
-            return new com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl(objectMapper, snapshotService);
+                AgentGraphSnapshotServiceImpl snapshotService) {
+            return new AgentGraphDefServiceImpl(objectMapper, snapshotService);
         }
 
         @Bean
@@ -644,15 +663,15 @@ class AgentGraphDefSecurityIntegrationTest {
         @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
+                AgentToolInternalConfigMapper internalToolMapper,
+                AgentToolExternalConfigMapper externalToolMapper,
+                AgentGraphExecutionMapper executionMapper,
+                AgentGraphExecutionNodeMapper executionNodeMapper,
                 AgentModelRuntimeService modelRuntimeService,
-                com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl snapshotService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
+                DeptScopeProvider deptScopeProvider) {
+            return new AgentGraphExecutionServiceImpl(
                     objectMapper, modelRuntimeService, snapshotService,
                     internalToolMapper, externalToolMapper,
                     executionMapper, executionNodeMapper,
@@ -660,13 +679,13 @@ class AgentGraphDefSecurityIntegrationTest {
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() {
+        public DeptScopeProvider testDeptScopeProvider() {
             return deptId -> List.of();
         }
 
         @Bean
         public AgentGraphDefController agentGraphDefController(
-                com.sw.ck.agent.service.AgentGraphDefService agentGraphDefService,
+                AgentGraphDefService agentGraphDefService,
                 AgentGraphExecutionService agentGraphExecutionService) {
             return new AgentGraphDefController(agentGraphDefService, agentGraphExecutionService);
         }
@@ -720,8 +739,8 @@ class AgentGraphDefSecurityIntegrationTest {
         public LoginUserLoader loginUserLoader(
                 UserDetailsProvider userDetailsProvider,
                 LoginUserCacheService loginUserCacheService) {
-            org.springframework.beans.factory.ObjectProvider<UserDetailsProvider> provider =
-                    mock(org.springframework.beans.factory.ObjectProvider.class);
+            ObjectProvider<UserDetailsProvider> provider =
+                    mock(ObjectProvider.class);
             when(provider.getIfAvailable()).thenReturn(userDetailsProvider);
             return new LoginUserLoader(provider, loginUserCacheService);
         }
@@ -735,7 +754,7 @@ class AgentGraphDefSecurityIntegrationTest {
          */
         @Bean
         public UserDetailsProvider userDetailsProvider() {
-            Map<Long, LoginUser> users = new java.util.HashMap<>();
+            Map<Long, LoginUser> users = new HashMap<>();
 
             // 用户1: 无权限
             LoginUser u1 = new LoginUser();
@@ -799,7 +818,7 @@ class AgentGraphDefSecurityIntegrationTest {
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties) {
             return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
-            org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
+            Mockito.mock(LoginUserCacheService.class));
         }
 
         @Bean

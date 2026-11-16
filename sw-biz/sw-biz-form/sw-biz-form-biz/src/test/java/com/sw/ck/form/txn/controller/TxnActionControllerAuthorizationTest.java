@@ -1,16 +1,19 @@
 package com.sw.ck.form.txn.controller;
 
+import com.sw.ck.form.txn.guard.TxnActionRealtimeGuard;
 import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.form.txn.service.TxnActionExecutor;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
+
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -200,7 +203,7 @@ class TxnActionControllerAuthorizationTest {
         @Bean
         TxnActionController controller() {
             return new TxnActionController(mock(TxnActionService.class), mock(TxnActionExecutor.class),
-                    mock(C1PolicyService.class), mock(com.sw.ck.form.txn.guard.TxnActionRealtimeGuard.class));
+                    mock(C1PolicyService.class), mock(TxnActionRealtimeGuard.class));
         }
 
         @Bean("ss")

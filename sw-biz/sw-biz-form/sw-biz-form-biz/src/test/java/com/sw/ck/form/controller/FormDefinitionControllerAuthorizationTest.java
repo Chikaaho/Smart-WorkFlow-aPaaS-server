@@ -7,11 +7,13 @@ import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
+
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.assertj.core.api.Assertions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.io.IOException;
 import java.util.List;
@@ -76,13 +81,13 @@ class FormDefinitionControllerAuthorizationTest {
 
     /** 权限网关放行后的请求会进入业务层；mock 数据源下统一抛 BaseException(表单不存在)，
      *  经 servlet 包装为 ServletException。断言"异常来自业务层"即证明未被 401/403 拦截。 */
-    private void performAndAssertGatewayPassed(org.springframework.test.web.servlet.MockMvc mvc,
-                                               org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder req)
+    private void performAndAssertGatewayPassed(MockMvc mvc,
+                                               MockHttpServletRequestBuilder req)
             throws Exception {
         try {
             mvc.perform(req).andReturn();
-        } catch (jakarta.servlet.ServletException e) {
-            org.assertj.core.api.Assertions.assertThat(String.valueOf(e.getCause()))
+        } catch (ServletException e) {
+            Assertions.assertThat(String.valueOf(e.getCause()))
                     .contains("表单不存在");
             return;
         }
@@ -134,7 +139,7 @@ class FormDefinitionControllerAuthorizationTest {
         // /page 在 mock 数据源下业务层 NPE（无分页插件），到达业务层即证明未被 403 拦截
         try {
             mockMvc.perform(get("/form/def/page").header("X-Test-User", "viewer")).andReturn();
-        } catch (jakarta.servlet.ServletException expected) {
+        } catch (ServletException expected) {
             // 业务层异常 = 权限网关已放行
         }
 
@@ -183,7 +188,7 @@ class FormDefinitionControllerAuthorizationTest {
         FormDefinitionController controller() {
             return new FormDefinitionController(new FormDefServiceImpl(
                     mock(FormDefMapper.class), mock(FormConfigMapper.class), mock(FormSnapshotMapper.class),
-                    null, null, mock(com.fasterxml.jackson.databind.ObjectMapper.class)));
+                    null, null, mock(ObjectMapper.class)));
         }
 
         @Bean("ss")

@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.participant;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -32,17 +34,12 @@ import java.util.Set;
 @Component
 public class FormFieldParticipantResolver implements NodeParticipantResolver {
 
-    private final FormRecordReadFacade formRecordReadFacade;
-    private final UserQueryFacade userQueryFacade;
-    private final ObjectMapper objectMapper;
-
-    public FormFieldParticipantResolver(FormRecordReadFacade formRecordReadFacade,
-                                        UserQueryFacade userQueryFacade,
-                                        ObjectMapper objectMapper) {
-        this.formRecordReadFacade = formRecordReadFacade;
-        this.userQueryFacade = userQueryFacade;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormRecordReadFacade formRecordReadFacade;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public Optional<String> strategy() {

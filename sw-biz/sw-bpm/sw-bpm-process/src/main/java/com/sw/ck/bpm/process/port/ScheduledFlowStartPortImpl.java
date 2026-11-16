@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.port;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
@@ -9,8 +11,6 @@ import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +23,7 @@ import java.util.Optional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 定时任务流程启动受理端口实现（Phase 4：可靠业务事件 —— Scheduled FLOW）。
  *
@@ -39,9 +40,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * （合法 no-op，由调度器记为明确失败，不得伪装成功）；多于一条绑定属配置冲突，抛明确异常。</p>
  */
 @Component
+@Log4j2
 public class ScheduledFlowStartPortImpl implements ScheduledFlowStartPort {
-
-    private static final Logger log = LoggerFactory.getLogger(ScheduledFlowStartPortImpl.class);
 
     /** 幂等命令键前缀：同一 jobId + fireTime 只允许一条命令。 */
     static final String COMMAND_KEY_PREFIX = "SCHEDULED_FLOW:";
@@ -49,17 +49,12 @@ public class ScheduledFlowStartPortImpl implements ScheduledFlowStartPort {
     /** 定时发起实例的业务键前缀（业务键列上限 36 字符）。 */
     private static final String BUSINESS_KEY_PREFIX = "sched-";
 
-    private final BpmFormBindingService bindingService;
-    private final BpmCommandQueue commandQueue;
-    private final ObjectMapper objectMapper;
-
-    public ScheduledFlowStartPortImpl(BpmFormBindingService bindingService,
-                                      BpmCommandQueue commandQueue,
-                                      ObjectMapper objectMapper) {
-        this.bindingService = bindingService;
-        this.commandQueue = commandQueue;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private BpmFormBindingService bindingService;
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public Optional<Long> acceptScheduledFlowStart(ScheduledFlowTriggerEvent event) {

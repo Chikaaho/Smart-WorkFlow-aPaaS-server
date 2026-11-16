@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentGraphCreateReqDTO;
 import com.sw.ck.agent.dto.AgentGraphDefDTO;
 import com.sw.ck.agent.dto.AgentGraphExecuteReqDTO;
@@ -12,6 +14,7 @@ import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +24,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * Agent 图定义管理 Controller（M07-F02 Step7 图定义 CRUD + 版本 + 发布骨架；
@@ -37,14 +42,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/agent/graph-defs")
 public class AgentGraphDefController {
 
-    private final AgentGraphDefService agentGraphDefService;
-    private final AgentGraphExecutionService agentGraphExecutionService;
-
-    public AgentGraphDefController(AgentGraphDefService agentGraphDefService,
-                                   AgentGraphExecutionService agentGraphExecutionService) {
-        this.agentGraphDefService = agentGraphDefService;
-        this.agentGraphExecutionService = agentGraphExecutionService;
-    }
+    @Autowired
+    private AgentGraphDefService agentGraphDefService;
+    @Autowired
+    private AgentGraphExecutionService agentGraphExecutionService;
 
     /** 创建图定义（服务端生成 graphKey + 初始图 START→END，DRAFT） */
     @PostMapping
@@ -93,7 +94,7 @@ public class AgentGraphDefController {
     /** 历史发布版本列表（D022-06，新版本在前，不含 graph_json） */
     @GetMapping("/{id}/versions")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<java.util.List<AgentGraphSnapshotDTO>> versions(@PathVariable Long id) {
+    public R<List<AgentGraphSnapshotDTO>> versions(@PathVariable Long id) {
         return R.ok(agentGraphDefService.listVersions(id));
     }
 

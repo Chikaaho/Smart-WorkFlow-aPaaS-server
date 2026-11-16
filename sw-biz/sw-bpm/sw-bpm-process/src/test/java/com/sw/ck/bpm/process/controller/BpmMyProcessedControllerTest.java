@@ -10,9 +10,12 @@ import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.common.page.PageParam;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,8 +23,11 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -84,7 +90,7 @@ class BpmMyProcessedControllerTest {
         def.setName("请假流程");
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(def);
 
-        R<com.sw.ck.common.page.PageResult<MyProcessedItemDTO>> resp =
+        R<PageResult<MyProcessedItemDTO>> resp =
                 controller.myProcessed(new PageParam(), MyProcessedItemDTO.SOURCE_ACTION);
 
         var page = resp.getData();
@@ -105,8 +111,8 @@ class BpmMyProcessedControllerTest {
     @Test
     @DisplayName("V012-BUG-021：ACTION 条目富化实例主题/发起时间/发起人展示名（解析失败降级 null）")
     void myProcessed_actionSource_shouldEnrichThemeLaunchTimeAndInitiatorName() {
-        com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
-                mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+        UserQueryFacade userQueryFacade =
+                mock(UserQueryFacade.class);
         BpmMyProcessedController enriched = new BpmMyProcessedController(
                 approvalActionService, bpmInstanceService, bpmProcessDefService, bpmTaskFacade,
                 userQueryFacade);
@@ -125,10 +131,10 @@ class BpmMyProcessedControllerTest {
         BpmProcessDef def = new BpmProcessDef();
         def.setName("请假流程");
         when(bpmProcessDefService.findByProcessKey("leave_flow")).thenReturn(def);
-        when(userQueryFacade.getUserDisplayNames(java.util.List.of(9L)))
-                .thenReturn(Optional.of(java.util.Map.of(9L, "系统管理员")));
+        when(userQueryFacade.getUserDisplayNames(List.of(9L)))
+                .thenReturn(Optional.of(Map.of(9L, "系统管理员")));
 
-        R<com.sw.ck.common.page.PageResult<MyProcessedItemDTO>> resp =
+        R<PageResult<MyProcessedItemDTO>> resp =
                 enriched.myProcessed(new PageParam(), MyProcessedItemDTO.SOURCE_ACTION);
 
         MyProcessedItemDTO item = resp.getData().getRecords().get(0);
@@ -145,11 +151,11 @@ class BpmMyProcessedControllerTest {
         task.setName("审批");
         task.setProcessInstanceId("pi-001");
         task.setEndTime(new Date());
-        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 10)).thenReturn(java.util.Optional.of(List.of(task)));
-        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(java.util.Optional.of(1L));
+        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 10)).thenReturn(Optional.of(List.of(task)));
+        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(Optional.of(1L));
         when(bpmInstanceService.findByProcessInstanceId("pi-001")).thenReturn(Optional.of(instance()));
 
-        R<com.sw.ck.common.page.PageResult<MyProcessedItemDTO>> resp =
+        R<PageResult<MyProcessedItemDTO>> resp =
                 controller.myProcessed(new PageParam(), MyProcessedItemDTO.SOURCE_HISTORY_COMPAT);
 
         var page = resp.getData();
@@ -190,11 +196,11 @@ class BpmMyProcessedControllerTest {
         duplicated.setProcessInstanceId("pi-001");
         duplicated.setEndTime(new Date());
         when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 10))
-                .thenReturn(java.util.Optional.of(List.of(legacy, duplicated)));
-        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(java.util.Optional.of(2L));
+                .thenReturn(Optional.of(List.of(legacy, duplicated)));
+        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(Optional.of(2L));
         when(bpmInstanceService.findByProcessInstanceId("pi-001")).thenReturn(Optional.of(instance()));
 
-        R<com.sw.ck.common.page.PageResult<MyProcessedItemDTO>> resp =
+        R<PageResult<MyProcessedItemDTO>> resp =
                 controller.myProcessed(new PageParam(), null);
 
         var page = resp.getData();
@@ -229,11 +235,11 @@ class BpmMyProcessedControllerTest {
         duplicated.setTaskId("t-both");
         duplicated.setProcessInstanceId("pi-001");
         duplicated.setEndTime(new Date());
-        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 1)).thenReturn(java.util.Optional.of(List.of(legacy, duplicated)));
-        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(java.util.Optional.of(2L));
+        when(bpmTaskFacade.queryProcessedPage("1", "2", 0, 1)).thenReturn(Optional.of(List.of(legacy, duplicated)));
+        when(bpmTaskFacade.countProcessed("1", "2")).thenReturn(Optional.of(2L));
         when(bpmInstanceService.findByProcessInstanceId("pi-001")).thenReturn(Optional.of(instance()));
 
-        java.util.Set<String> seen = new java.util.HashSet<>();
+        Set<String> seen = new HashSet<>();
         long collected = 0;
         for (int pageNum = 1; pageNum <= 2; pageNum++) {
             PageParam param = new PageParam();

@@ -1,19 +1,22 @@
 package com.sw.ck.system.security;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SysAuditLog;
 import com.sw.ck.system.service.AuditLogService;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.stereotype.Component;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingRequestWrapper;
 import org.springframework.web.util.ContentCachingResponseWrapper;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +28,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 管理操作审计过滤器（1.0.0 F3-2，规划返修 R3）：只记录<b>改动类</b>管理操作
  * （新增、修改、删除、启停、授权、导入、导出、发布），查询、分页、详情不记。
@@ -40,9 +44,8 @@ import java.util.regex.Pattern;
  * </p>
  */
 @Component
+@Log4j2
 public class AuditOperationFilter extends OncePerRequestFilter {
-
-    private static final Logger log = LoggerFactory.getLogger(AuditOperationFilter.class);
 
     /** 管理操作审计的路径前缀（不含 context-path）。 */
     private static final List<String> AUDITED_PREFIXES = List.of(
@@ -130,11 +133,8 @@ public class AuditOperationFilter extends OncePerRequestFilter {
      * 早于常规单例（sqlSessionFactory）；构造期直接依赖会把 mapper 初始化拖进
      * Tomcat 资源未就绪的时段（启动测试实证），故经 ObjectProvider 延迟到首个请求。
      */
-    private final org.springframework.beans.factory.ObjectProvider<AuditLogService> auditLogService;
-
-    public AuditOperationFilter(org.springframework.beans.factory.ObjectProvider<AuditLogService> auditLogService) {
-        this.auditLogService = auditLogService;
-    }
+    @Autowired
+    private ObjectProvider<AuditLogService> auditLogService;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {

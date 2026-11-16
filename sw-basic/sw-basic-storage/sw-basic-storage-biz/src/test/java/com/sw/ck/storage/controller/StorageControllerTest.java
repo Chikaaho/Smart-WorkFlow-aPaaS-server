@@ -1,6 +1,7 @@
 package com.sw.ck.storage.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
@@ -9,6 +10,7 @@ import com.sw.ck.storage.api.StorageMutationOutcome;
 import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.entity.StorageFile;
 import com.sw.ck.storage.service.StorageFileService;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.InputStreamResource;
@@ -17,6 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -49,7 +52,7 @@ class StorageControllerTest {
     @Test
     @DisplayName("storage 方法边界 → 上传/删除/下载都有显式 permission")
     void endpoints_shouldDeclareExplicitPermissions() throws NoSuchMethodException {
-        assertThat(StorageController.class.getMethod("upload", org.springframework.web.multipart.MultipartFile.class)
+        assertThat(StorageController.class.getMethod("upload", MultipartFile.class)
                 .getAnnotation(PreAuthorize.class).value()).isEqualTo("@ss.hasPermi('storage:upload')");
         assertThat(StorageController.class.getMethod("delete", String.class)
                 .getAnnotation(PreAuthorize.class).value()).isEqualTo("@ss.hasPermi('storage:delete')");

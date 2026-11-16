@@ -1,5 +1,7 @@
 package com.sw.ck.job.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -7,11 +9,10 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.job.entity.JobLog;
 import com.sw.ck.job.service.JobLogService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 定时任务执行日志控制器。
  * <p>
@@ -20,15 +21,11 @@ import org.springframework.security.access.prepost.PreAuthorize;
  */
 @RestController
 @RequestMapping("/job/log")
+@Log4j2
 public class JobLogController {
 
-    private static final Logger log = LoggerFactory.getLogger(JobLogController.class);
-
-    private final JobLogService jobLogService;
-
-    public JobLogController(JobLogService jobLogService) {
-        this.jobLogService = jobLogService;
-    }
+    @Autowired
+    private JobLogService jobLogService;
 
     /**
      * 分页查询执行日志（按任务 ID 筛选）。

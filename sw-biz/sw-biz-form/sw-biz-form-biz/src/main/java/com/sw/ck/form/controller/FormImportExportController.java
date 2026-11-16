@@ -1,10 +1,10 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.service.FormImportExportService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +12,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单数据导入导出入口。
  *
@@ -24,15 +25,11 @@ import org.springframework.web.multipart.MultipartFile;
  */
 @RestController
 @RequestMapping("/form/data")
+@Log4j2
 public class FormImportExportController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormImportExportController.class);
-
-    private final FormImportExportService formImportExportService;
-
-    public FormImportExportController(FormImportExportService formImportExportService) {
-        this.formImportExportService = formImportExportService;
-    }
+    @Autowired
+    private FormImportExportService formImportExportService;
 
     /**
      * 下载表单模板。

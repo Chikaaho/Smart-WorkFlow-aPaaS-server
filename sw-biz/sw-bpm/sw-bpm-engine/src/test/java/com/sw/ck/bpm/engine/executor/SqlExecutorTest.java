@@ -6,11 +6,13 @@ import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.bpm.engine.service.SqlExecutionAuditService;
 import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
+
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -72,10 +74,10 @@ class SqlExecutorTest {
                 .isInstanceOf(ExternalDatasourceResultLimitExceededException.class)
                 .hasMessageContaining("maxRows=2");
 
-        verify(auditService).auditFailure(org.mockito.ArgumentMatchers.eq(9L),
-                org.mockito.ArgumentMatchers.eq("controlled-h2"),
-                org.mockito.ArgumentMatchers.eq("SELECT id FROM ext_rows ORDER BY id"), anyLong(), anyString(),
-                org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("tester"));
+        verify(auditService).auditFailure(ArgumentMatchers.eq(9L),
+                ArgumentMatchers.eq("controlled-h2"),
+                ArgumentMatchers.eq("SELECT id FROM ext_rows ORDER BY id"), anyLong(), anyString(),
+                ArgumentMatchers.eq(7L), ArgumentMatchers.eq("tester"));
         verify(auditService, never()).auditSuccess(any(), any(), any(), anyInt(),
                 anyLong(), any(), any());
     }

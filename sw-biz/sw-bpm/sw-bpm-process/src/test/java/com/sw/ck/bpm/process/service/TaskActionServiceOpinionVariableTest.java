@@ -5,10 +5,14 @@ import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -41,12 +45,12 @@ class TaskActionServiceOpinionVariableTest {
         LoginUser loginUser = new LoginUser();
         loginUser.setUserId(9L);
         loginUser.setTenantId(1L);
-        com.sw.ck.security.holder.LoginUserHolder.set(loginUser);
+        LoginUserHolder.set(loginUser);
     }
 
     @AfterEach
     void tearDown() {
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
     }
 
     private BpmTaskDTO task() {
@@ -76,8 +80,8 @@ class TaskActionServiceOpinionVariableTest {
 
         service.writeOpinionVariables(task(), currentUser(), request(data));
 
-        org.mockito.ArgumentCaptor<Map<String, Object>> opinionCaptor =
-                org.mockito.ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, Object>> opinionCaptor =
+                ArgumentCaptor.forClass(Map.class);
         verify(bpmTaskFacade).setVariable(eq("pi-1"), eq("opinion"), opinionCaptor.capture());
         Map<String, Object> opinion = opinionCaptor.getValue();
         assertThat(opinion).containsEntry("nodeKey", "node_head")
@@ -108,8 +112,8 @@ class TaskActionServiceOpinionVariableTest {
 
         service.writeOpinionVariables(task(), currentUser(), request(data));
 
-        org.mockito.ArgumentCaptor<Map<String, Object>> mergedCaptor =
-                org.mockito.ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, Object>> mergedCaptor =
+                ArgumentCaptor.forClass(Map.class);
         verify(bpmTaskFacade).setVariable(eq("pi-1"), eq("formData"), mergedCaptor.capture());
         assertThat(mergedCaptor.getValue())
                 .containsEntry("drillName", "2026 年 Q4 华东分公司同城灾备切换演练")
@@ -128,7 +132,7 @@ class TaskActionServiceOpinionVariableTest {
 
         service.writeOpinionVariables(task(), currentUser(), request(data));
 
-        verify(bpmTaskFacade, org.mockito.Mockito.never())
+        verify(bpmTaskFacade, Mockito.never())
                 .setVariable(eq("pi-1"), eq("formData"), any());
         verify(bpmTaskFacade).setVariable(eq("pi-1"), eq("opinion"), any());
     }
@@ -139,12 +143,12 @@ class TaskActionServiceOpinionVariableTest {
         service.writeOpinionVariables(task(), currentUser(), request(null));
         service.writeOpinionVariables(task(), currentUser(), request(Map.of()));
 
-        verify(bpmTaskFacade, org.mockito.Mockito.never())
+        verify(bpmTaskFacade, Mockito.never())
                 .setVariable(eq("pi-1"), eq("opinion"), any());
-        verify(bpmTaskFacade, org.mockito.Mockito.never()).getVariables("pi-1");
+        verify(bpmTaskFacade, Mockito.never()).getVariables("pi-1");
     }
 
     private LoginUser currentUser() {
-        return com.sw.ck.security.holder.LoginUserHolder.get();
+        return LoginUserHolder.get();
     }
 }

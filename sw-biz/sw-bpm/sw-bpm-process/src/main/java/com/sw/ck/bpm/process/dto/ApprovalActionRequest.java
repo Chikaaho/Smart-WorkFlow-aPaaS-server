@@ -2,7 +2,9 @@ package com.sw.ck.bpm.process.dto;
 
 import lombok.Data;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** 审批动作请求；旧的无 body complete/reject 调用保持可用。 */
@@ -36,7 +38,7 @@ public class ApprovalActionRequest {
     private Long targetUserId;
 
     /** 加签/补签参与人列表。 */
-    private java.util.List<Long> participants = new java.util.ArrayList<>();
+    private List<Long> participants = new ArrayList<>();
 
     /** 加签顺序：SERIAL / PARALLEL。 */
     private String mode;
@@ -78,7 +80,7 @@ public class ApprovalActionRequest {
     private String reason;
 
     /** 沟通接收人列表。 */
-    private java.util.List<Long> receivers = new java.util.ArrayList<>();
+    private List<Long> receivers = new ArrayList<>();
 
     /** 沟通回复消息。 */
     private String message;
@@ -87,5 +89,5 @@ public class ApprovalActionRequest {
     private Long communicationId;
 
     /** 时限自动动作配置（管理入口）。 */
-    private java.util.Map<String, Object> deadline = new LinkedHashMap<>();
+    private Map<String, Object> deadline = new LinkedHashMap<>();
 }

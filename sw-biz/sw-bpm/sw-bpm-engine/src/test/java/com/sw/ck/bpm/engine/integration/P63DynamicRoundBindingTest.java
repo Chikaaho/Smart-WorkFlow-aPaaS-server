@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.participant.ConsensusSettlementPort;
@@ -18,8 +19,10 @@ import com.sw.ck.bpm.engine.translator.DynamicParallelNodeTranslator;
 import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.flowable.bpmn.converter.BpmnXMLConverter;
 import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.common.engine.impl.el.DefaultExpressionManager;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
 import org.flowable.engine.ProcessEngines;
@@ -34,6 +37,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -226,8 +230,8 @@ class P63DynamicRoundBindingTest {
         beans.put("approvalTaskListener", approvalListener);
         beans.put("consensusCompletionEvaluator",
                 new ConsensusCompletionEvaluator(providerOf(votePort), providerOf(settlementPort)));
-        org.flowable.common.engine.impl.el.DefaultExpressionManager dem =
-                (org.flowable.common.engine.impl.el.DefaultExpressionManager)
+        DefaultExpressionManager dem =
+                (DefaultExpressionManager)
                         ((ProcessEngineConfigurationImpl) processEngine.getProcessEngineConfiguration())
                                 .getExpressionManager();
         dem.setBeans(beans);
@@ -414,8 +418,8 @@ class P63DynamicRoundBindingTest {
         return new ArrayList<>((Collection<Long>) argument);
     }
 
-    private static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {
-        return new org.springframework.beans.factory.ObjectProvider<>() {
+    private static <T> ObjectProvider<T> providerOf(T value) {
+        return new ObjectProvider<>() {
             @Override public T getObject() { return value; }
             @Override public T getIfAvailable() { return value; }
         };

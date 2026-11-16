@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.CategoryDTO;
 import com.sw.ck.bpm.process.dto.CategorySaveReq;
 import com.sw.ck.bpm.process.entity.BpmCategory;
@@ -28,11 +30,8 @@ import java.util.List;
 @RequestMapping("/workflow/categories")
 public class BpmCategoryController {
 
-    private final BpmCategoryService categoryService;
-
-    public BpmCategoryController(BpmCategoryService categoryService) {
-        this.categoryService = categoryService;
-    }
+    @Autowired
+    private BpmCategoryService categoryService;
 
     /** 分类列表（管理视角，附事项归属计数）。 */
     @GetMapping

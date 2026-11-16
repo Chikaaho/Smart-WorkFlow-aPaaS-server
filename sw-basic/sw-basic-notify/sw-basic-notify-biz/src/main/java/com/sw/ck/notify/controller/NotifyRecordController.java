@@ -1,10 +1,15 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.notify.dto.NotifyRecordDetailDTO;
 import com.sw.ck.notify.dto.NotifyRecordSummaryDTO;
 import com.sw.ck.notify.service.NotifyRecordService;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,8 +19,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 通知发送记录控制器（v0.0.2 OA，有权管理者可见）。
  * <p>
@@ -26,21 +31,16 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/notify/records")
+@Log4j2
 public class NotifyRecordController {
 
-    private static final org.slf4j.Logger log =
-            org.slf4j.LoggerFactory.getLogger(NotifyRecordController.class);
-
-    private final NotifyRecordService notifyRecordService;
-
-    public NotifyRecordController(NotifyRecordService notifyRecordService) {
-        this.notifyRecordService = notifyRecordService;
-    }
+    @Autowired
+    private NotifyRecordService notifyRecordService;
 
     /** 发送记录分页（状态/接收人/关键字/时间窗筛选）。 */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:record:view')")
-    public R<PageResult<com.sw.ck.notify.dto.NotifyRecordSummaryDTO>> records(PageParam pageParam,
+    public R<PageResult<NotifyRecordSummaryDTO>> records(PageParam pageParam,
                                                 @RequestParam(required = false) String deliveryStatus,
                                                 @RequestParam(required = false) Long recipientId,
                                                 @RequestParam(required = false) String keyword,
@@ -52,17 +52,17 @@ public class NotifyRecordController {
     /** 单条记录详情（最小暴露：不含完整正文/联系方式/Provider 原始响应）。 */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:record:view')")
-    public R<Map<String, Object>> detail(@PathVariable Long id) {
+    public R<NotifyRecordDetailDTO> detail(@PathVariable Long id) {
         return R.ok(notifyRecordService.recordDetail(id));
     }
 
     /** 必要详情（含正文与尝试流水）：独立权限 + 审计；构造请求仍须授权。 */
     @GetMapping("/{id}/detail")
     @PreAuthorize("@ss.hasPermi('notify:record:detail')")
-    public R<Map<String, Object>> fullDetail(@PathVariable Long id) {
+    public R<NotifyRecordDetailDTO> fullDetail(@PathVariable Long id) {
         log.info("通知记录详情审计: recordId={}, operator={}", id,
-                com.sw.ck.security.holder.LoginUserHolder.get() == null ? null
-                        : com.sw.ck.security.holder.LoginUserHolder.get().getUserId());
+                LoginUserHolder.get() == null ? null
+                        : LoginUserHolder.get().getUserId());
         return R.ok(notifyRecordService.recordFullDetail(id));
     }
 

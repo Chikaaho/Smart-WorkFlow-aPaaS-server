@@ -1,5 +1,7 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.dict.DictItemDTO;
@@ -36,17 +38,12 @@ import java.util.stream.Collectors;
 @Service
 public class DictFacadeImpl implements DictFacade {
 
-    private final SysDictDataService sysDictDataService;
-    private final SysDictTypeMapper sysDictTypeMapper;
-    private final SysDictDataMapper sysDictDataMapper;
-
-    public DictFacadeImpl(SysDictDataService sysDictDataService,
-                          SysDictTypeMapper sysDictTypeMapper,
-                          SysDictDataMapper sysDictDataMapper) {
-        this.sysDictDataService = sysDictDataService;
-        this.sysDictTypeMapper = sysDictTypeMapper;
-        this.sysDictDataMapper = sysDictDataMapper;
-    }
+    @Autowired
+    private SysDictDataService sysDictDataService;
+    @Autowired
+    private SysDictTypeMapper sysDictTypeMapper;
+    @Autowired
+    private SysDictDataMapper sysDictDataMapper;
 
     @Override
     public Optional<List<DictItemDTO>> listByType(String dictType) {

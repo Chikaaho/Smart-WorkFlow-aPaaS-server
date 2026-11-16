@@ -1,9 +1,15 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Component;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -25,11 +31,8 @@ public class ResourceFactView {
 
     static final String TARGET_DONE = "TARGET_ACTION_DONE";
 
-    private final JdbcTemplate jdbcTemplate;
-
-    public ResourceFactView(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /** 按容量段聚合的占用事实（segment → units；不含 TOTAL，TOTAL 为三段之和）。 */
     public Map<String, Long> factBySegment() {
@@ -61,14 +64,14 @@ public class ResourceFactView {
                         + "AND status IN ('PENDING','PROCESSING') "
                         + "AND (command_type IS NULL OR command_type <> 'BATCH_INVOKE') "
                         + "GROUP BY resource_segment, tenant_id",
-                (org.springframework.jdbc.core.RowCallbackHandler) rs -> merge(rs, bySegment, byTenant));
+                (RowCallbackHandler) rs -> merge(rs, bySegment, byTenant));
         jdbcTemplate.query(
                 "SELECT resource_segment, tenant_id, COUNT(*) AS units FROM sw_bpm_command "
                         + "WHERE resource_units IS NOT NULL AND resource_released_at IS NULL "
                         + "AND status = 'COMPLETED' AND resource_class = 'PROD' "
                         + "AND completion_point = '" + TARGET_DONE + "' "
                         + "GROUP BY resource_segment, tenant_id",
-                (org.springframework.jdbc.core.RowCallbackHandler) rs -> merge(rs, bySegment, byTenant));
+                (RowCallbackHandler) rs -> merge(rs, bySegment, byTenant));
         jdbcTemplate.query(
                 "SELECT c.resource_segment AS segment, c.tenant_id AS tenant_id, "
                         + "SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) AS units "
@@ -78,7 +81,7 @@ public class ResourceFactView {
                         + "WHERE c.resource_units IS NOT NULL AND c.resource_released_at IS NULL "
                         + "AND c.status IN ('PENDING','PROCESSING') "
                         + "GROUP BY c.resource_segment, c.tenant_id",
-                (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+                (RowCallbackHandler) rs -> {
                     if (rs.getLong("units") <= 0) {
                         return;
                     }
@@ -114,8 +117,8 @@ public class ResourceFactView {
         return count == null ? 0 : count;
     }
 
-    private void merge(java.sql.ResultSet rs, Map<String, Long> bySegment, Map<String, Long> byTenant)
-            throws java.sql.SQLException {
+    private void merge(ResultSet rs, Map<String, Long> bySegment, Map<String, Long> byTenant)
+            throws SQLException {
         String segment = rs.getString(1) == null ? "SHARED" : rs.getString(1);
         long tenantId = rs.getLong(2);
         long units = rs.getLong(3);

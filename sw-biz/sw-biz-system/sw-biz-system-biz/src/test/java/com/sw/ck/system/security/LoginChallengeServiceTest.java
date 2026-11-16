@@ -1,11 +1,15 @@
 package com.sw.ck.system.security;
 
 import com.sw.ck.system.controller.LoginChallengeTestSupport;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.env.MockEnvironment;
 
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -53,8 +57,8 @@ class LoginChallengeServiceTest {
         DevProperties devProperties = new DevProperties();
         devProperties.setTestMock(true);
         CapturingStore store = new CapturingStore();
-        org.springframework.mock.env.MockEnvironment environment =
-                new org.springframework.mock.env.MockEnvironment();
+        MockEnvironment environment =
+                new MockEnvironment();
         environment.setActiveProfiles("dev");
         LoginChallengeService service = new LoginChallengeService(
                 store,
@@ -79,8 +83,8 @@ class LoginChallengeServiceTest {
         DevProperties devProperties = new DevProperties();
         devProperties.setTestMock(true);
         CapturingStore store = new CapturingStore();
-        org.springframework.mock.env.MockEnvironment environment =
-                new org.springframework.mock.env.MockEnvironment();
+        MockEnvironment environment =
+                new MockEnvironment();
         environment.setActiveProfiles("local");
         LoginChallengeService service = new LoginChallengeService(
                 store,
@@ -102,8 +106,8 @@ class LoginChallengeServiceTest {
         DevProperties devProperties = new DevProperties();
         devProperties.setTestMock(true);
         CapturingStore store = new CapturingStore();
-        org.springframework.mock.env.MockEnvironment environment =
-                new org.springframework.mock.env.MockEnvironment();
+        MockEnvironment environment =
+                new MockEnvironment();
         environment.setActiveProfiles("prod");
         LoginChallengeService service = new LoginChallengeService(
                 store,
@@ -130,8 +134,8 @@ class LoginChallengeServiceTest {
 
     private static String sha256(String value) {
         try {
-            return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new AssertionError(e);
         }

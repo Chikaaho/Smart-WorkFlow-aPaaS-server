@@ -1,11 +1,11 @@
 package com.sw.ck.bpm.process.listener;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -14,6 +14,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 审批通过后下发设备命令（审批结果驱动设备）。
  * <p>
@@ -34,15 +35,11 @@ import java.util.Optional;
  * 这是审批已提交之后的补偿路径，其失败不影响已完成审批，也不得回滚审批。</p>
  */
 @Component
+@Log4j2
 public class BpmDeviceCommandListener {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmDeviceCommandListener.class);
-
-    private final ObjectProvider<IotDeviceFacade> iotDeviceFacadeProvider;
-
-    public BpmDeviceCommandListener(ObjectProvider<IotDeviceFacade> iotDeviceFacadeProvider) {
-        this.iotDeviceFacadeProvider = iotDeviceFacadeProvider;
-    }
+    @Autowired
+    private ObjectProvider<IotDeviceFacade> iotDeviceFacadeProvider;
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

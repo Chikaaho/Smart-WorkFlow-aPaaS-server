@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentConversationDTO;
 import com.sw.ck.agent.dto.AgentConversationMessageDTO;
 import com.sw.ck.agent.service.AgentConversationService;
@@ -24,11 +26,8 @@ import java.util.List;
 @RequestMapping("/agent/conversations")
 public class AgentConversationController {
 
-    private final AgentConversationService agentConversationService;
-
-    public AgentConversationController(AgentConversationService agentConversationService) {
-        this.agentConversationService = agentConversationService;
-    }
+    @Autowired
+    private AgentConversationService agentConversationService;
 
     /** 会话列表（当前租户 + 当前用户，按 create_time 倒序；可按配置 id 过滤） */
     @GetMapping

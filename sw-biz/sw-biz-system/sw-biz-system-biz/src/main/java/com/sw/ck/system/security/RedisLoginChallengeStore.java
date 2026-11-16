@@ -2,7 +2,7 @@ package com.sw.ck.system.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -17,7 +17,7 @@ import java.time.Instant;
  *   进入密码认证；
  * - 验证码失败计数使用独立 key（{@value #FAIL_KEY_PREFIX}{uuid}，INCR 原子累加，TTL 同挑战）。
  */
-@Slf4j
+@Log4j2
 @Component
 @RequiredArgsConstructor
 public class RedisLoginChallengeStore implements LoginChallengeStore {

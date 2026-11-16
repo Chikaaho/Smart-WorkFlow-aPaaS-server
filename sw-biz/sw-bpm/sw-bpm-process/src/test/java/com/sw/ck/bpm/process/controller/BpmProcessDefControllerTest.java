@@ -1,17 +1,27 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.mapper.BpmCategoryMapper;
+import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 import java.util.Map;
@@ -32,12 +42,12 @@ class BpmProcessDefControllerTest {
 
     private final BpmProcessDefService bpmProcessDefService = mock(BpmProcessDefService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
-            mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+    private final UserQueryFacade userQueryFacade =
+            mock(UserQueryFacade.class);
 
     private final BpmProcessDefController controller = new BpmProcessDefController(
             bpmProcessDefService, objectMapper, userQueryFacade, null,
-            mock(com.sw.ck.bpm.process.service.ProcessThemeService.class));
+            mock(ProcessThemeService.class));
 
     // ==================== GET /workflow/defs ====================
 
@@ -100,15 +110,15 @@ class BpmProcessDefControllerTest {
 
         @AfterEach
         void clearHolder() {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
 
         @Test
         @DisplayName("非超管传 tenantId → 参数被忽略（服务收到 null），隔离由既有拦截器保证")
         void listDefs_nonSuperAdmin_tenantIdIgnored() {
-            com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+            LoginUser user = new LoginUser();
             user.setSuperAdmin(false);
-            com.sw.ck.security.holder.LoginUserHolder.set(user);
+            LoginUserHolder.set(user);
             when(bpmProcessDefService.listDefs(any(PageParam.class), isNull(), isNull()))
                     .thenReturn(def(100L));
 
@@ -121,18 +131,18 @@ class BpmProcessDefControllerTest {
         @Test
         @DisplayName("超管传 tenantId → 原样下传服务；租户名按映射回填")
         void listDefs_superAdmin_tenantIdPassedAndTenantNameFilled() {
-            com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+            LoginUser user = new LoginUser();
             user.setSuperAdmin(true);
-            com.sw.ck.security.holder.LoginUserHolder.set(user);
+            LoginUserHolder.set(user);
             when(bpmProcessDefService.listDefs(any(PageParam.class), isNull(), eq(100L)))
                     .thenReturn(def(100L));
-            org.springframework.jdbc.core.JdbcTemplate jdbc =
-                    mock(org.springframework.jdbc.core.JdbcTemplate.class);
+            JdbcTemplate jdbc =
+                    mock(JdbcTemplate.class);
             when(jdbc.queryForList(anyString()))
                     .thenReturn(List.of(Map.of("id", 100L, "name", "租户100")));
             BpmProcessDefController superController = new BpmProcessDefController(
                     bpmProcessDefService, objectMapper, userQueryFacade, null,
-                    mock(com.sw.ck.bpm.process.service.ProcessThemeService.class),
+                    mock(ProcessThemeService.class),
                     null, null, jdbc);
 
             R<PageResult<BpmProcessDef>> result = superController.listDefs(new PageParam(), null, 100L);
@@ -148,14 +158,14 @@ class BpmProcessDefControllerTest {
     @DisplayName("GET /workflow/defs 展示字段回填（分类/更新人/实例数）")
     class ListDisplayFieldsTests {
 
-        private final com.sw.ck.bpm.process.mapper.BpmCategoryMapper categoryMapper =
-                mock(com.sw.ck.bpm.process.mapper.BpmCategoryMapper.class);
-        private final com.sw.ck.bpm.process.mapper.BpmInstanceMapper instanceMapper =
-                mock(com.sw.ck.bpm.process.mapper.BpmInstanceMapper.class);
+        private final BpmCategoryMapper categoryMapper =
+                mock(BpmCategoryMapper.class);
+        private final BpmInstanceMapper instanceMapper =
+                mock(BpmInstanceMapper.class);
 
         private final BpmProcessDefController enrichedController = new BpmProcessDefController(
                 bpmProcessDefService, objectMapper, userQueryFacade, null,
-                mock(com.sw.ck.bpm.process.service.ProcessThemeService.class),
+                mock(ProcessThemeService.class),
                 categoryMapper, instanceMapper, null);
 
         @Test
@@ -173,8 +183,8 @@ class BpmProcessDefControllerTest {
             when(bpmProcessDefService.listDefs(any(PageParam.class), isNull(), isNull())).thenReturn(page);
             when(userQueryFacade.getUserDisplayNames(anyCollection()))
                     .thenReturn(Optional.of(Map.of(9L, "流程管理员")));
-            com.sw.ck.bpm.process.entity.BpmCategory category =
-                    new com.sw.ck.bpm.process.entity.BpmCategory();
+            BpmCategory category =
+                    new BpmCategory();
             category.setId(11L);
             category.setName("运维");
             when(categoryMapper.selectBatchIds(anyCollection())).thenReturn(List.of(category));

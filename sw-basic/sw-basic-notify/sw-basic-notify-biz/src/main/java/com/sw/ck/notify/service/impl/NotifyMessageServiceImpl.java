@@ -3,6 +3,8 @@ package com.sw.ck.notify.service.impl;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.i18n.LocalizedMessages;
+import com.sw.ck.common.page.PageParam;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.common.service.BaseServiceImpl;
 import com.sw.ck.notify.dto.NotifyBatchFailureCategory;
@@ -15,6 +17,11 @@ import com.sw.ck.notify.mapper.NotifyMessageMapper;
 import com.sw.ck.notify.render.TemplateRenderService;
 import com.sw.ck.notify.service.NotifyMessageService;
 import com.sw.ck.notify.service.NotifyTemplateService;
+import com.sw.ck.notify.service.NotifyTemplateVersionService;
+
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -40,28 +47,15 @@ public class NotifyMessageServiceImpl
         return "SYSTEM";
     }
 
-    private final NotifyTemplateService templateService;
-    private final TemplateRenderService templateRenderService;
-    private final LoginContextProvider loginContextProvider;
-    private final com.sw.ck.notify.service.NotifyTemplateVersionService templateVersionService;
-
-    public NotifyMessageServiceImpl(NotifyTemplateService templateService,
-                                    TemplateRenderService templateRenderService,
-                                    LoginContextProvider loginContextProvider) {
-        // 兼容既有测试与直接构造；生产容器走四参构造（模板版本必装）
-        this(templateService, templateRenderService, loginContextProvider, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public NotifyMessageServiceImpl(NotifyTemplateService templateService,
-                                    TemplateRenderService templateRenderService,
-                                    LoginContextProvider loginContextProvider,
-                                    com.sw.ck.notify.service.NotifyTemplateVersionService templateVersionService) {
-        this.templateService = templateService;
-        this.templateRenderService = templateRenderService;
-        this.loginContextProvider = loginContextProvider;
-        this.templateVersionService = templateVersionService;
-    }
+    @Autowired
+    private NotifyTemplateService templateService;
+    @Autowired
+    private TemplateRenderService templateRenderService;
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    /** 生产容器装配；窄测试上下文可缺省。 */
+    @Autowired(required = false)
+    private NotifyTemplateVersionService templateVersionService;
 
     @Override
     public List<NotifyMessage> findByRecipient(Long recipientId) {
@@ -225,9 +219,9 @@ public class NotifyMessageServiceImpl
     }
 
     @Override
-    public java.util.List<Long> resolveRecipientUserIds(NotifyBatchSendReq req) {
+    public List<Long> resolveRecipientUserIds(NotifyBatchSendReq req) {
         validateRecipientObjects(req);
-        return new java.util.ArrayList<>(resolveRecipientIds(req));
+        return new ArrayList<>(resolveRecipientIds(req));
     }
 
     @Override
@@ -353,7 +347,7 @@ public class NotifyMessageServiceImpl
                 || bizId == null || bizId.isBlank() || recipientId == null || channel == null) {
             return null;
         }
-        return getBaseMapper().selectOne(com.baomidou.mybatisplus.core.toolkit.Wrappers.<NotifyMessage>lambdaQuery()
+        return getBaseMapper().selectOne(Wrappers.<NotifyMessage>lambdaQuery()
                 .eq(NotifyMessage::getTenantId, tenantId)
                 .eq(NotifyMessage::getEventType, eventType)
                 .eq(NotifyMessage::getBizId, bizId)
@@ -364,8 +358,8 @@ public class NotifyMessageServiceImpl
     }
 
     @Override
-    public com.sw.ck.common.page.PageResult<NotifyMessage> pageInbox(
-            com.sw.ck.common.page.PageParam pageParam, Long recipientId, Boolean read, String eventType,
+    public PageResult<NotifyMessage> pageInbox(
+            PageParam pageParam, Long recipientId, Boolean read, String eventType,
             String keyword) {
         var wrapper = lambdaQuery()
                 .eq(NotifyMessage::getRecipientId, recipientId)
@@ -392,7 +386,7 @@ public class NotifyMessageServiceImpl
     @Override
     public int markAllRead(Long recipientId) {
         return getBaseMapper().update(null,
-                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<NotifyMessage>()
+                new LambdaUpdateWrapper<NotifyMessage>()
                         .set(NotifyMessage::getIsRead, true)
                         .eq(NotifyMessage::getRecipientId, recipientId)
                         .eq(NotifyMessage::getIsRead, false));

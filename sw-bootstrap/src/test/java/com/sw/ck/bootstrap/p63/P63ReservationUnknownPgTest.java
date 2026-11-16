@@ -21,20 +21,38 @@ import com.sw.ck.iot.model.DeviceReceiptDecision;
 import com.sw.ck.iot.service.impl.DeviceReceiptServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.iot.provider.DeviceControlProvider;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.flowable.engine.TaskService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.support.GenericApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -76,7 +94,7 @@ class P63ReservationUnknownPgTest {
         peer = P63ControlledDevicePeer.start("127.0.0.1", 9778, PEER_LOG, "noreceipt");
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "18779");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -86,10 +104,10 @@ class P63ReservationUnknownPgTest {
         props.put("sw.security.jwt.secret", "p63-unknown-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p63-unknown-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.tencent.provider-mode", "loopback");
         props.put("sw.iot.loopback.peer-url", "http://127.0.0.1:9778/device");
@@ -97,19 +115,19 @@ class P63ReservationUnknownPgTest {
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p63-unknown", props));
+                            new MapPropertySource("p63-unknown", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63UnknownLoginContextProvider", provider);
                     // 受控对端传输（default/CI 构建无 dev 装配）：bean 定义注册使 dev 装配条件互斥
-                    ((org.springframework.context.support.GenericApplicationContext) context)
+                    ((GenericApplicationContext) context)
                             .registerBean("p63LoopbackPeerTransport",
-                                    com.sw.ck.iot.provider.DeviceControlProvider.class,
+                                    DeviceControlProvider.class,
                                     () -> new P63LoopbackPeerTransport("http://127.0.0.1:9778/device"));
                 })
                 .run();
@@ -213,7 +231,7 @@ class P63ReservationUnknownPgTest {
         // 1. 预约 PENDING（已过点但在迟到窗口内）
         // 冻结时未来 15 秒（合法未来预约，余量覆盖审批消费耗时），有界等待到点后触发真实调度入口
         String recordId = asUser(INITIATOR, () -> submitService.submitForm(FORM_KEY,
-                data("topic", "UNKNOWN链", "plan_time", dueText(java.time.Duration.ofSeconds(15))),
+                data("topic", "UNKNOWN链", "plan_time", dueText(Duration.ofSeconds(15))),
                 null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
@@ -236,7 +254,7 @@ class P63ReservationUnknownPgTest {
 
         // 3. 受控时钟：expiry_time 置过期（真实补偿入口以 expiry<=now 判定）
         jdbc.update("UPDATE sw_iot_device_command SET expiry_time = ? WHERE id = ?",
-                LocalDateTime.now(java.time.ZoneOffset.UTC).minusSeconds(1), commandId);
+                LocalDateTime.now(ZoneOffset.UTC).minusSeconds(1), commandId);
         compensationJob.execute();
         assertThat(statusOf(commandId)).as("回执超时收敛 UNKNOWN").isEqualTo("UNKNOWN");
 
@@ -312,9 +330,9 @@ class P63ReservationUnknownPgTest {
                 String.class, commandId);
     }
 
-    private String dueText(java.time.Duration offset) {
-        return java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Shanghai"))
-                .plus(offset).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    private String dueText(Duration offset) {
+        return LocalDateTime.now(ZoneId.of("Asia/Shanghai"))
+                .plus(offset).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
     private void awaitCommandStatus(String pi, String expected, long timeoutMs) throws InterruptedException {
@@ -373,7 +391,7 @@ class P63ReservationUnknownPgTest {
     }
 
     private String awaitTask(String pi) throws InterruptedException {
-        org.flowable.engine.TaskService taskService = app.getBean(org.flowable.engine.TaskService.class);
+        TaskService taskService = app.getBean(TaskService.class);
         long deadline = System.currentTimeMillis() + 60_000L;
         while (System.currentTimeMillis() < deadline) {
             var task = taskService.createTaskQuery().processInstanceId(pi).singleResult();
@@ -392,7 +410,7 @@ class P63ReservationUnknownPgTest {
     }
 
     private Map<String, Object> data(String... kv) {
-        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) {
             m.put(kv[i], kv[i + 1]);
         }
@@ -401,7 +419,7 @@ class P63ReservationUnknownPgTest {
 
     private String toJson(Object obj) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj);
+            return new ObjectMapper().writeValueAsString(obj);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -457,10 +475,10 @@ class P63ReservationUnknownPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
             gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
+            KeyPair pair = gen.generateKeyPair();
+            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

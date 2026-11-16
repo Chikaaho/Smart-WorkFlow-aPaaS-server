@@ -13,19 +13,27 @@ import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.security.KeyPairGenerator;
 import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,23 +79,23 @@ class TieredCommandSemanticsPgTest {
         props.put("sw.security.jwt.secret", "p62-tiered-pg-jwt-secret-0123456789abcdef0123456789");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-tiered-pg-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.command.poll-interval-millis", "3600000");
         props.put("sw.bpm.command.p0-poll-interval-millis", "3600000");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-tiered-pg", props));
+                            new MapPropertySource("p62-tiered-pg", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62TieredPgLoginContextProvider", provider);
                 })
                 .run();
@@ -95,7 +103,7 @@ class TieredCommandSemanticsPgTest {
         queue = app.getBean(PersistentBpmCommandQueue.class);
         effectRecorder = app.getBean(CommandEffectRecorder.class);
         reconcileJob = app.getBean(TieredCommandReconcileJob.class);
-        txTemplate = new TransactionTemplate(app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        txTemplate = new TransactionTemplate(app.getBean(PlatformTransactionManager.class));
         seedIdentity();
         System.out.println("[P62-EV] tiered.boot pg=" + pg.getPort() + " migration=V0.1.2-applied");
     }
@@ -243,9 +251,9 @@ class TieredCommandSemanticsPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);

@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.notify;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifySendRequest;
 
 import java.util.Optional;
@@ -78,7 +79,7 @@ public final class BpmNotifyMessages {
      * @param channel 目标渠道
      */
     public static NotifySendRequest requestFor(BpmNotifyEvent event, Spec spec,
-                                               com.sw.ck.notify.api.NotifyChannel channel) {
+                                               NotifyChannel channel) {
         return NotifySendRequest.builder()
                 .channel(channel)
                 .recipientId(event.getRecipientId())

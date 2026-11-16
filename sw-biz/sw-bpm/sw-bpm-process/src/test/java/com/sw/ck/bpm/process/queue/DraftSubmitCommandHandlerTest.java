@@ -1,17 +1,20 @@
 package com.sw.ck.bpm.process.queue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.entity.DraftStatusEnum;
 import com.sw.ck.bpm.process.service.BpmDraftService;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -65,7 +68,7 @@ class DraftSubmitCommandHandlerTest {
     void handle_shouldSubmitAndMarkDraftSubmitted() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.EDITING.getCode());
         when(draftService.getById(5L)).thenReturn(d);
-        when(facade.submit(anyString(), anyMap(), anyString(), nullable(String.class))).thenReturn(java.util.Optional.of("rec-009"));
+        when(facade.submit(anyString(), anyMap(), anyString(), nullable(String.class))).thenReturn(Optional.of("rec-009"));
         CommandEnvelope envelope = envelope("5", 1);
         envelope.setPayload(objectMapper.writeValueAsString(Map.of(
                 "formKey", "leave_form",
@@ -128,7 +131,7 @@ class DraftSubmitCommandHandlerTest {
     void handle_shouldPropagateP0ChannelToFormFacade() throws Exception {
         BpmDraft d = draft("5", DraftStatusEnum.EDITING.getCode());
         when(draftService.getById(5L)).thenReturn(d);
-        when(facade.submit(anyString(), anyMap(), anyString(), anyString())).thenReturn(java.util.Optional.of("rec-p0"));
+        when(facade.submit(anyString(), anyMap(), anyString(), anyString())).thenReturn(Optional.of("rec-p0"));
         CommandEnvelope envelope = envelope("5", 1);
         envelope.setChannel(CommandChannelEnum.P0);
         envelope.setPayload(objectMapper.writeValueAsString(Map.of(

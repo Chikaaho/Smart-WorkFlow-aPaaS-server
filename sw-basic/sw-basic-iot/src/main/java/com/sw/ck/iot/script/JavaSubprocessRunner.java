@@ -18,6 +18,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.net.URL;
 
 /**
  * Java 受控脚本子进程入口（仅在被隔离的子 JVM 中运行）。
@@ -51,7 +54,7 @@ public final class JavaSubprocessRunner {
         try {
             Path classesDir = Paths.get(args[0]);
             URLClassLoader scriptLoader = new URLClassLoader(
-                    new java.net.URL[]{classesDir.toUri().toURL()},
+                    new URL[]{classesDir.toUri().toURL()},
                     ClassLoader.getPlatformClassLoader());
             Class<?> entryClass = Class.forName(args[1], true, scriptLoader);
             // 接口一致性必须经同一 scriptLoader 解析，避免双份类对象误判
@@ -74,7 +77,7 @@ public final class JavaSubprocessRunner {
             System.out.flush();
             System.exit(0);
         } catch (Throwable e) {
-            Throwable cause = e instanceof java.lang.reflect.InvocationTargetException ite
+            Throwable cause = e instanceof InvocationTargetException ite
                     && ite.getCause() != null ? ite.getCause() : e;
             String message = cause.getMessage() == null ? cause.getClass().getName() : cause.getMessage();
             System.out.println(PREFIX_ERROR + MiniJson.write(Map.of("error", message)));
@@ -160,7 +163,7 @@ public final class JavaSubprocessRunner {
                     return Map.of();
                 }
                 return MiniJson.parseObject(payload);
-            } catch (java.io.IOException e) {
+            } catch (IOException e) {
                 throw new IllegalStateException("RPC 读取失败: " + e.getMessage(), e);
             }
         }

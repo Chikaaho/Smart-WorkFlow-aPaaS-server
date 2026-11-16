@@ -1,5 +1,7 @@
 package com.sw.ck.notify.tool;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.notify.api.NotifyBizType;
@@ -8,8 +10,6 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Agent 内部工具：按渠道发送通知（0.2.4，通用能力，经工具白名单注册）。
  * <p>
@@ -32,18 +33,14 @@ import java.util.Optional;
  * </p>
  */
 @Component("agentNotifySendTool")
+@Log4j2
 public class AgentNotifySendTool {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentNotifySendTool.class);
 
     /** 与既有适配器同款的静态无状态 ObjectMapper。 */
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private final ObjectProvider<NotifyFacade> notifyFacadeProvider;
-
-    public AgentNotifySendTool(ObjectProvider<NotifyFacade> notifyFacadeProvider) {
-        this.notifyFacadeProvider = notifyFacadeProvider;
-    }
+    @Autowired
+    private ObjectProvider<NotifyFacade> notifyFacadeProvider;
 
     /** 内部工具统一签名：单字符串入参、字符串出参。 */
     public String execute(String inputJson) {

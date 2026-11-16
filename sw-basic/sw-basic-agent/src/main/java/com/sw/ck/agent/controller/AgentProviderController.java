@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentProviderDTO;
 import com.sw.ck.agent.dto.AgentProviderSaveReqDTO;
 import com.sw.ck.agent.service.AgentProviderService;
@@ -30,11 +32,8 @@ import java.util.List;
 @RequestMapping("/agent/providers")
 public class AgentProviderController {
 
-    private final AgentProviderService agentProviderService;
-
-    public AgentProviderController(AgentProviderService agentProviderService) {
-        this.agentProviderService = agentProviderService;
-    }
+    @Autowired
+    private AgentProviderService agentProviderService;
 
     /** 分页查询（密钥脱敏） */
     @GetMapping

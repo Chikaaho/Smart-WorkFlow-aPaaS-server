@@ -18,22 +18,37 @@ import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler;
+import com.sw.ck.bpm.process.queue.FlowStartCommandHandler;
+import com.sw.ck.form.txn.model.TxnActionConfig;
+import com.sw.ck.form.txn.model.TxnActionSaveRequest;
+import com.sw.ck.form.txn.service.TxnActionService;
+import com.sw.ck.security.spi.UserDetailsProvider;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.security.KeyPairGenerator;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -82,22 +97,22 @@ class P62UpgradeGatePgTest {
         props.put("sw.security.jwt.secret", "p62-gate-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-gate-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.txn-batch.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-gate", props));
+                            new MapPropertySource("p62-gate", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62GateLoginContextProvider", provider);
                 })
                 .run();
@@ -110,7 +125,7 @@ class P62UpgradeGatePgTest {
         // 测试隔离（P62 领取竞态，todo/p62-upgrade-gate-test-claim-race.md）：本类显式领取
         // 并直调消费指定命令（dispatchOneForTest），上下文的后台调度器会并发 claimDue 夺走
         // 受测命令；停掉它即可消除装置间竞争，业务规则与断言强度不变（仅测试生命周期控制）。
-        app.getBean(com.sw.ck.bpm.process.queue.CommandDispatcher.class).stop();
+        app.getBean(CommandDispatcher.class).stop();
 
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'gate-operator', 'seed-not-a-login-secret', '门禁演练员', ?, 0) "
@@ -127,14 +142,14 @@ class P62UpgradeGatePgTest {
         // 真实已发布动作（门禁开用例的受理目标；受理按动作 UUID 绑定）
         GATE_ACTION_ID = asOperator(() -> {
             String formId = formDefService.getFormDefByKey(FORM_KEY).getId();
-            com.sw.ck.form.txn.model.TxnActionConfig cfg = new com.sw.ck.form.txn.model.TxnActionConfig();
+            TxnActionConfig cfg = new TxnActionConfig();
             cfg.setBalanceField("qty_available");
             cfg.setReservedField("qty_reserved");
             cfg.setExpiresInSeconds(600L);
-            String id = app.getBean(com.sw.ck.form.txn.service.TxnActionService.class)
-                    .create(formId, new com.sw.ck.form.txn.model.TxnActionSaveRequest(
+            String id = app.getBean(TxnActionService.class)
+                    .create(formId, new TxnActionSaveRequest(
                             "gate_reserve", "门禁演练预占", "RESERVE", null, cfg)).id();
-            app.getBean(com.sw.ck.form.txn.service.TxnActionService.class).publish(id);
+            app.getBean(TxnActionService.class).publish(id);
             return id;
         });
         System.out.println("[P62-EV] g5 boot ok pgPort=" + pg.getPort() + " table=" + stockTable);
@@ -203,9 +218,9 @@ class P62UpgradeGatePgTest {
 
         // 升级后（新版本消费者=全量处理器+正式身份回查）消费旧类型
         new CommandDispatcher(queue,
-                List.of(app.getBean(com.sw.ck.bpm.process.queue.FlowStartCommandHandler.class),
-                        app.getBean(com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler.class)),
-                app.getBean(com.sw.ck.security.spi.UserDetailsProvider.class))
+                List.of(app.getBean(FlowStartCommandHandler.class),
+                        app.getBean(BatchInvokeCommandHandler.class)),
+                app.getBean(UserDetailsProvider.class))
                 .dispatchOneForTest(claimBy(legacyPending.getCommandId()));
         assertThat(asOperator(() -> commandMapper.selectById(legacyPending.getCommandId())).getStatus())
                 .as("旧类型由新版本消费者按原语义消费").isEqualTo("COMPLETED");
@@ -223,8 +238,8 @@ class P62UpgradeGatePgTest {
 
     static class LegacyOnlyFlowStartHandler implements BpmCommandHandler {
         @Override
-        public java.util.Set<CommandTypeEnum> types() {
-            return java.util.Set.of(CommandTypeEnum.FLOW_START);
+        public Set<CommandTypeEnum> types() {
+            return Set.of(CommandTypeEnum.FLOW_START);
         }
 
         @Override
@@ -241,7 +256,7 @@ class P62UpgradeGatePgTest {
             envelope.setCommandKey("FLOW_START:" + record);
             envelope.setTenantId(TENANT);
             envelope.setInitiatorId(USER);
-            envelope.setPayload(app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            envelope.setPayload(app.getBean(ObjectMapper.class)
                     .writeValueAsString(payload));
             TransactionTemplate tx = app.getBean(TransactionTemplate.class);
             return asOperator(() -> {
@@ -341,9 +356,9 @@ class P62UpgradeGatePgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);

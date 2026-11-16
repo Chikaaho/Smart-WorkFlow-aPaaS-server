@@ -3,12 +3,14 @@ package com.sw.ck.bootstrap.phase4;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -102,10 +104,10 @@ class ReliableEventGateTest {
      */
     private static Path resolveByFqcn(String fqcn) throws IOException {
         String relative = fqcn.replace('.', '/') + ".java";
-        try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(repoRoot())) {
-            java.util.List<Path> matches = files
-                    .filter(path -> path.toString().replace(java.io.File.separatorChar, '/').endsWith("/src/main/java/" + relative))
-                    .filter(path -> !path.toString().replace(java.io.File.separatorChar, '/').contains("/target/"))
+        try (Stream<Path> files = Files.walk(repoRoot())) {
+            List<Path> matches = files
+                    .filter(path -> path.toString().replace(File.separatorChar, '/').endsWith("/src/main/java/" + relative))
+                    .filter(path -> !path.toString().replace(File.separatorChar, '/').contains("/target/"))
                     .toList();
             assertTrue(matches.size() == 1,
                     "FQCN 唯一定位失败: " + fqcn + " 命中 " + matches.size() + " 个文件 " + matches);
@@ -270,12 +272,12 @@ class ReliableEventGateTest {
 
     /** 递归扫描源码目录，判定是否存在监听/记录目标事件的类。 */
     private boolean hasEventListenerFor(String eventType) throws IOException {
-        try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(repoRoot())) {
+        try (Stream<Path> files = Files.walk(repoRoot())) {
             return files.filter(path -> path.toString().endsWith(".java"))
-                    .filter(path -> !path.toString().replace(java.io.File.separatorChar, '/').contains("/target/"))
+                    .filter(path -> !path.toString().replace(File.separatorChar, '/').contains("/target/"))
                     .filter(path -> {
                         try {
-                            String source = java.nio.file.Files.readString(path);
+                            String source = Files.readString(path);
                             boolean isListener = source.contains("@EventListener")
                                     || source.contains("@TransactionalEventListener");
                             return isListener && source.contains(eventType);

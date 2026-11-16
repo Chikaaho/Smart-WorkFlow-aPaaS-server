@@ -1,21 +1,28 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.re2j.Pattern;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.system.api.dict.DictFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.time.temporal.Temporal;
 import java.util.*;
+import java.util.Date;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单字段校验共享工具。
  * <p>
@@ -32,18 +39,13 @@ import java.util.*;
  * </ul>
  */
 @Component
+@Log4j2
 public class FormFieldValidator {
 
-    private static final Logger log = LoggerFactory.getLogger(FormFieldValidator.class);
-
-    private final FormConfigMapper formConfigMapper;
-    private final ObjectMapper objectMapper;
-
-    public FormFieldValidator(FormConfigMapper formConfigMapper,
-                              ObjectMapper objectMapper) {
-        this.formConfigMapper = formConfigMapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 字段定义加载 ====================
 
@@ -57,7 +59,7 @@ public class FormFieldValidator {
     public Map<String, FieldDef> loadAndParseFieldDefs(String formId, Map<String, Object> submittedData) {
         // 从 sw_form_config 加载主表 definition JSON（parent_table IS NULL）
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );
@@ -287,7 +289,7 @@ public class FormFieldValidator {
                     if (!(value instanceof Number)) {
                         if (value instanceof String s) {
                             try {
-                                new java.math.BigDecimal(s);
+                                new BigDecimal(s);
                             } catch (NumberFormatException e) {
                                 throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                                         "字段「" + def.displayName() + "」需要数字，当前填写的内容不是数字");
@@ -300,8 +302,8 @@ public class FormFieldValidator {
                 }
                 case "DATE" -> {
                     if (!(value instanceof String) && !(value instanceof Number)
-                            && !(value instanceof java.time.temporal.Temporal)
-                            && !(value instanceof java.util.Date)) {
+                            && !(value instanceof Temporal)
+                            && !(value instanceof Date)) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                                 "字段「" + def.displayName() + "」需要日期");
                     }
@@ -466,7 +468,7 @@ public class FormFieldValidator {
      */
     public String loadDefinitionJson(String formId) {
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );

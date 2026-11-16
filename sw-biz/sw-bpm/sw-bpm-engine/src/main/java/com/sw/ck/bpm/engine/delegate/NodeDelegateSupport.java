@@ -12,22 +12,19 @@ import org.flowable.bpmn.model.FieldExtension;
 import org.flowable.bpmn.model.ServiceTask;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 abstract class NodeDelegateSupport {
     protected static final String FLOWABLE_NS = "http://flowable.org/bpmn";
-    protected final RepositoryService repositoryService;
-    protected final ObjectMapper objectMapper;
-    protected final ParticipantResolverRegistry participantResolverRegistry;
-
-    NodeDelegateSupport(RepositoryService repositoryService, ObjectMapper objectMapper,
-                        ParticipantResolverRegistry participantResolverRegistry) {
-        this.repositoryService = repositoryService;
-        this.objectMapper = objectMapper;
-        this.participantResolverRegistry = participantResolverRegistry;
-    }
+    @Autowired
+    protected RepositoryService repositoryService;
+    @Autowired
+    protected ObjectMapper objectMapper;
+    @Autowired
+    protected ParticipantResolverRegistry participantResolverRegistry;
 
     protected Map<String, Object> nodeConfig(DelegateExecution execution) {
         BpmnModel model = repositoryService.getBpmnModel(execution.getProcessDefinitionId());

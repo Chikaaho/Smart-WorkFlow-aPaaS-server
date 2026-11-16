@@ -9,7 +9,7 @@ import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.entity.StorageFile;
 import com.sw.ck.storage.service.StorageFileService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -36,7 +36,7 @@ import java.util.Optional;
  * 提供文件上传/下载/删除/列表/详情接口。
  * </p>
  */
-@Slf4j
+@Log4j2
 @RestController
 @RequestMapping("/storage/files")
 @RequiredArgsConstructor

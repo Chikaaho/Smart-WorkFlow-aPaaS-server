@@ -9,6 +9,7 @@ import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -36,7 +38,7 @@ import static org.mockito.Mockito.when;
 class ProcessStartInitiatorValidationTest {
 
     @Mock
-    private com.sw.ck.bpm.process.service.BpmFormBindingService bindingService;
+    private BpmFormBindingService bindingService;
     @Mock
     private ApproverResolver approverResolver;
     @Mock
@@ -64,7 +66,7 @@ class ProcessStartInitiatorValidationTest {
     void start_withInvalidInitiator_shouldReject() {
         ProcessStartService service = serviceWithFacade();
         when(bindingService.findActiveByFormKey("form-1")).thenReturn(List.of(binding()));
-        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(java.util.Optional.of(List.of()));
+        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(Optional.of(List.of()));
 
         StartCommand cmd = command();
         assertThatThrownBy(() -> service.start(cmd))
@@ -78,11 +80,11 @@ class ProcessStartInitiatorValidationTest {
     void start_withActiveInitiator_shouldProceed() {
         ProcessStartService service = serviceWithFacade();
         when(bindingService.findActiveByFormKey("form-1")).thenReturn(List.of(binding()));
-        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(java.util.Optional.of(List.of(810L)));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(userQueryFacade.findActiveUserIds(List.of(810L), 1L)).thenReturn(Optional.of(List.of(810L)));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("process-1"), eq("record-1"), any(), eq("1")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(false));
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(false));
 
         service.start(command());
 

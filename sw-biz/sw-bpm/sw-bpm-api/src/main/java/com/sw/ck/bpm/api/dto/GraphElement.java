@@ -53,5 +53,5 @@ public class GraphElement implements Serializable {
     private Double y;
 
     /** 边折点列表 [{x,y},...]（第一方设计器显式契约；为空时前端按直线渲染）。 */
-    private List<java.util.Map<String, Object>> waypoints;
+    private List<Map<String, Object>> waypoints;
 }

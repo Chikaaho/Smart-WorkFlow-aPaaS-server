@@ -1,25 +1,31 @@
 package com.sw.ck.bootstrap.i4;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.bpm.process.entity.BpmHandover;
 import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.mapper.BpmHandoverMapper;
 import com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper;
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.openapi.biz.entity.OpenApiIdempotency;
 import com.sw.ck.openapi.biz.mapper.OpenApiIdempotencyMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.zaxxer.hikari.HikariDataSource;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.apache.ibatis.session.SqlSessionFactory;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -35,6 +41,7 @@ import javax.sql.DataSource;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -107,13 +114,13 @@ class I4TenantIsolationPostgresTest {
                 }
 
                 @Override
-                public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.SELF;
+                public DataScopeType getDataScopeType() {
+                    return DataScopeType.SELF;
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
-                    return java.util.Set.of();
+                public Set<Long> getCustomDeptIds() {
+                    return Set.of();
                 }
 
                 @Override
@@ -149,7 +156,7 @@ class I4TenantIsolationPostgresTest {
 
             // 生产同构：BaseEntity 审计列/租户列 insert 填充经 GlobalConfig（tenant_id 物理落列）
             globalConfig.setMetaObjectHandler(
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(loginContextProvider));
+                    new CommonMetaObjectHandler(loginContextProvider));
             MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();
             factoryBean.setDataSource(dataSource);
             factoryBean.setConfiguration(configuration);
@@ -179,7 +186,7 @@ class I4TenantIsolationPostgresTest {
                 "classpath:db/migration/agent/postgresql",
                 "classpath:db/migration/iot/postgresql",
                 "classpath:db/migration/openapi/postgresql");
-        org.flywaydb.core.Flyway.configure()
+        Flyway.configure()
                 .dataSource(url, "postgres", "postgres")
                 .locations(locations.toArray(new String[0]))
                 .load()
@@ -209,12 +216,12 @@ class I4TenantIsolationPostgresTest {
         DynamicBranchSnapshot row0 = branch("piT0", piT0, 1L);
         assertEquals(1, branchMapper.insert(row0));
         assertEquals(1, branchMapper.selectCount(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DynamicBranchSnapshot>()
+                new LambdaQueryWrapper<DynamicBranchSnapshot>()
                         .eq(DynamicBranchSnapshot::getProcessInstanceId, piT0)));
         // t88 视角零读
         loginAs(T88, 2L);
         assertEquals(0, branchMapper.selectCount(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DynamicBranchSnapshot>()
+                new LambdaQueryWrapper<DynamicBranchSnapshot>()
                         .eq(DynamicBranchSnapshot::getProcessInstanceId, piT0)));
         // t88 写入自己的，互不可见
         String piT88 = "pi-i4-t88-" + UUID.randomUUID().toString().substring(0, 8);
@@ -222,11 +229,11 @@ class I4TenantIsolationPostgresTest {
         row88.setTenantId(T88);
         assertEquals(1, branchMapper.insert(row88));
         assertEquals(1, branchMapper.selectCount(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DynamicBranchSnapshot>()
+                new LambdaQueryWrapper<DynamicBranchSnapshot>()
                         .eq(DynamicBranchSnapshot::getProcessInstanceId, piT88)));
         loginAs(T0, 1L);
         assertEquals(0, branchMapper.selectCount(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DynamicBranchSnapshot>()
+                new LambdaQueryWrapper<DynamicBranchSnapshot>()
                         .eq(DynamicBranchSnapshot::getProcessInstanceId, piT88)));
         // 租户列落库正确（跨拦截器直查；t0 行由拦截器填充，t88 行显式 set 被 MetaObjectHandler 覆盖为上下文租户）
         assertTenantColumn("sw_bpm_dynamic_branch", piT0, T0);

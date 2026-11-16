@@ -9,17 +9,30 @@ import com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.port.FormTxnActionPort;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.process.entity.BpmCommand;
+import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
+import com.sw.ck.common.exception.CommonErrorCode;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 后台批量受控动作调用处理器（P62 分级执行 S3，U02/U03/U07）。
  * <p>
@@ -39,44 +52,39 @@ import java.util.Map;
  * </p>
  */
 @Component
-@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+@ConditionalOnProperty(
         name = "sw.bpm.txn-batch.enabled", havingValue = "true", matchIfMissing = false)
+@Log4j2
 public class BatchInvokeCommandHandler implements BpmCommandHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(BatchInvokeCommandHandler.class);
+    @Autowired
+    private BpmCommandBatchMapper batchMapper;
+    @Autowired
+    private BpmCommandBatchItemMapper itemMapper;
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private FormTxnActionPort txnActionPort;
+    @Autowired
+    private CommandEffectRecorder effectRecorder;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    private TransactionTemplate txTemplate;
+    @Autowired
+    private ResourceReleaseService releaseService;
+    @Autowired
+    private ResourceAdmissionService admissionService;
 
-    private final BpmCommandBatchMapper batchMapper;
-    private final BpmCommandBatchItemMapper itemMapper;
-    private final BpmCommandQueue commandQueue;
-    private final FormTxnActionPort txnActionPort;
-    private final CommandEffectRecorder effectRecorder;
-    private final TransactionTemplate txTemplate;
-    private final com.sw.ck.bpm.process.service.ResourceReleaseService releaseService;
-    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
-
-    public BatchInvokeCommandHandler(BpmCommandBatchMapper batchMapper,
-                                     BpmCommandBatchItemMapper itemMapper,
-                                     BpmCommandQueue commandQueue,
-                                     FormTxnActionPort txnActionPort,
-                                     CommandEffectRecorder effectRecorder,
-                                     org.springframework.transaction.PlatformTransactionManager transactionManager,
-                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        this.batchMapper = batchMapper;
-        this.itemMapper = itemMapper;
-        this.commandQueue = commandQueue;
-        this.txnActionPort = txnActionPort;
-        this.effectRecorder = effectRecorder;
-        this.releaseService = releaseService;
-        this.admissionService = admissionService;
+    @PostConstruct
+    void initTxTemplate() {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
-        template.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.txTemplate = template;
     }
 
     @Override
-    public java.util.Set<CommandTypeEnum> types() {
-        return java.util.Set.of(CommandTypeEnum.BATCH_INVOKE);
+    public Set<CommandTypeEnum> types() {
+        return Set.of(CommandTypeEnum.BATCH_INVOKE);
     }
 
     @Override
@@ -85,7 +93,7 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
         BpmCommandBatch batch = requireBatch(envelope);
         markProcessing(batch.getId());
         // 释放会计按命令行冻结字段执行（段/租户/策略版本）；受理人身份随信封还原
-        com.sw.ck.bpm.process.entity.BpmCommand batchCommand = batchAccountingCommand(envelope);
+        BpmCommand batchCommand = batchAccountingCommand(envelope);
 
         List<BpmCommandBatchItem> pending = itemMapper.selectList(
                 Wrappers.<BpmCommandBatchItem>lambdaQuery()
@@ -136,7 +144,7 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
 
     /** 批量切片预算（生效策略；未启用策略时不切片=旧行为，默认关闭零变化）。 */
     private int resolveBatchSlice() {
-        com.sw.ck.bpm.process.entity.BpmResourcePolicy policy =
+        BpmResourcePolicy policy =
                 admissionService.findActivePolicy();
         if (policy == null || policy.getBatchSliceItems() == null) {
             return Integer.MAX_VALUE;
@@ -190,8 +198,8 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
     }
 
     /** 释放会计载体：冻结资源字段随领取信封携带（toEnvelope 映射命令行），无额外查询。 */
-    private com.sw.ck.bpm.process.entity.BpmCommand batchAccountingCommand(CommandEnvelope envelope) {
-        com.sw.ck.bpm.process.entity.BpmCommand command = new com.sw.ck.bpm.process.entity.BpmCommand();
+    private BpmCommand batchAccountingCommand(CommandEnvelope envelope) {
+        BpmCommand command = new BpmCommand();
         command.setId(envelope.getCommandId());
         command.setTenantId(envelope.getTenantId());
         command.setCommandType(envelope.getCommandType() == null
@@ -255,12 +263,12 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
         Map<?, ?> payload = readPayload(envelope.getPayload());
         Object batchId = payload.get("batchId");
         if (batchId == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR,
+            throw new BaseException(CommonErrorCode.PARAM_ERROR,
                     "BATCH_INVOKE 命令缺少 batchId: commandId=" + envelope.getCommandId());
         }
         BpmCommandBatch batch = batchMapper.selectById(Long.valueOf(String.valueOf(batchId)));
         if (batch == null || !envelope.getTenantId().equals(batch.getTenantId())) {
-            throw new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.BATCH_NOT_FOUND);
+            throw new BaseException(BpmErrorCode.BATCH_NOT_FOUND);
         }
         return batch;
     }
@@ -268,7 +276,7 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
     @SuppressWarnings("unchecked")
     private Map<?, ?> readPayload(String payload) {
         try {
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            ObjectMapper mapper = new ObjectMapper();
             return mapper.readValue(payload == null ? "{}" : payload, Map.class);
         } catch (Exception e) {
             throw new IllegalStateException("BATCH_INVOKE payload 解析失败", e);

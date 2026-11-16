@@ -1,8 +1,7 @@
 package com.sw.ck.agent.config;
 
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -31,9 +30,8 @@ public class AgentHumanTaskSchedulingConfig {
     }
 
     /** 超时扫描器（独立 Bean，便于测试替换与关闭）。 */
+    @Log4j2
     public static class HumanTaskTimeoutScanner {
-        private static final Logger log = LoggerFactory.getLogger(HumanTaskTimeoutScanner.class);
-
         private final AgentGraphExecutionLifecycleService lifecycleService;
 
         public HumanTaskTimeoutScanner(AgentGraphExecutionLifecycleService lifecycleService) {

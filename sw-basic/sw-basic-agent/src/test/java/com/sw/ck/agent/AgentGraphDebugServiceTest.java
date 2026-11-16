@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.AgentGraphDebugNodeDTO;
 import com.sw.ck.agent.dto.AgentGraphDebugSessionDTO;
 import com.sw.ck.agent.dto.graph.GraphElement;
@@ -19,16 +20,22 @@ import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDebugNodeMapper;
 import com.sw.ck.agent.mapper.AgentGraphDebugSessionMapper;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
+import com.sw.ck.agent.mapper.AgentGraphSnapshotMapper;
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
+
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+
 import com.sw.ck.agent.service.AgentGraphDebugService;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.impl.AgentGraphDebugServiceImpl;
@@ -39,11 +46,14 @@ import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -110,10 +120,10 @@ class AgentGraphDebugServiceTest {
     private AgentGraphDefService graphDefService;
 
     @Autowired
-    private com.sw.ck.agent.mapper.AgentProviderMapper providerMapper;
+    private AgentProviderMapper providerMapper;
 
     @Autowired
-    private com.sw.ck.agent.mapper.AgentModelMapper modelMapper;
+    private AgentModelMapper modelMapper;
 
     @Autowired
     private AgentToolInternalConfigMapper internalToolMapper;
@@ -609,9 +619,9 @@ class AgentGraphDebugServiceTest {
                 ToolSpecification.builder().name("echo_tool").description("回声工具").build(),
                 (ToolExecutionRequest request, Object memoryId) -> {
                     try {
-                        String arg = new com.fasterxml.jackson.databind.ObjectMapper()
+                        String arg = new ObjectMapper()
                                 .readValue(request.arguments(), String.class);
-                        return new com.fasterxml.jackson.databind.ObjectMapper()
+                        return new ObjectMapper()
                                 .writeValueAsString("echo:" + arg);
                     } catch (Exception e) {
                         throw new RuntimeException(e);
@@ -719,11 +729,11 @@ class AgentGraphDebugServiceTest {
                 .thenReturn(new AgentModelRuntimeService.ModelInstance(model, provider, chatModel));
         // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）
         when(modelRuntimeService.chatWithRotation(any(), anyList(), any())).thenAnswer(inv -> {
-        java.util.List<?> msgs = (java.util.List<?>) inv.getArgument(1);
+        List<?> msgs = (List<?>) inv.getArgument(1);
         if (msgs == null || msgs.isEmpty()) { return null; }
         return modelRuntimeService.acquire(1L).chatModel().chat(
-                                dev.langchain4j.model.chat.request.ChatRequest.builder()
-                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1)).build());
+                                ChatRequest.builder()
+                                .messages((List<ChatMessage>) inv.getArgument(1)).build());
         });
     }
 
@@ -828,7 +838,7 @@ class AgentGraphDebugServiceTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -856,7 +866,7 @@ class AgentGraphDebugServiceTest {
 
         @Bean
         public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
-                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+                AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
             return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
@@ -888,7 +898,7 @@ class AgentGraphDebugServiceTest {
                 AgentModelRuntimeService modelRuntimeService,
                 AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+                DeptScopeProvider deptScopeProvider) {
             // AgentToolCallbackFactory 为 @Autowired(required=false) 字段注入，mock bean 由 Spring 自动填充
             return new AgentGraphDebugServiceImpl(objectMapper, graphDefMapper,
                     sessionMapper, debugNodeMapper, internalToolMapper, externalToolMapper,
@@ -896,7 +906,7 @@ class AgentGraphDebugServiceTest {
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() {
+        public DeptScopeProvider testDeptScopeProvider() {
             return deptId -> List.of();
         }
     }

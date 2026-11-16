@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.service;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.form.api.facade.FormDataWritebackFacade;
@@ -13,6 +14,15 @@ import com.sw.ck.bpm.process.mapper.BpmChildBatchMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildItemMapper;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.bpm.api.dto.ActionConfig;
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
+import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
@@ -30,6 +40,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.List;
@@ -38,6 +53,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.sql.SQLException;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -73,7 +90,7 @@ class ChildOrchestrationRootChainRaceTest {
     private JdbcTemplate jdbcTemplate;
 
     @MockBean
-    private com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService;
+    private NodeFormDataService nodeFormDataService;
 
     @MockBean
     private BpmRuntimeFacade bpmRuntimeFacade;
@@ -82,7 +99,7 @@ class ChildOrchestrationRootChainRaceTest {
     private FormDataWritebackFacade writebackFacade;
 
     @MockBean
-    private com.sw.ck.bpm.process.service.BpmInstanceService bpmInstanceService;
+    private BpmInstanceService bpmInstanceService;
 
     @Configuration
     @MapperScan(basePackageClasses = BpmChildBatchMapper.class)
@@ -107,7 +124,7 @@ class ChildOrchestrationRootChainRaceTest {
                             menu_type int not null default 2, path varchar(200), component varchar(200),
                             permission varchar(128), icon varchar(64), sort int not null default 0)
                         """);
-            } catch (java.sql.SQLException e) {
+            } catch (SQLException e) {
                 throw new IllegalStateException("预置 sys_menu 失败", e);
             }
             Flyway.configure()
@@ -121,7 +138,7 @@ class ChildOrchestrationRootChainRaceTest {
 
         @Bean
         public PlatformTransactionManager transactionManager(DataSource dataSource) {
-            return new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource);
+            return new DataSourceTransactionManager(dataSource);
         }
 
         @Bean
@@ -135,17 +152,17 @@ class ChildOrchestrationRootChainRaceTest {
         }
 
         @Bean
-        public com.sw.ck.common.security.LoginContextProvider loginContextProvider() {
-            return new com.sw.ck.common.security.LoginContextProvider() {
+        public LoginContextProvider loginContextProvider() {
+            return new LoginContextProvider() {
                 @Override
                 public Long getUserId() {
-                    var user = com.sw.ck.security.holder.LoginUserHolder.get();
+                    var user = LoginUserHolder.get();
                     return user == null ? null : user.getUserId();
                 }
 
                 @Override
                 public Long getTenantId() {
-                    var user = com.sw.ck.security.holder.LoginUserHolder.get();
+                    var user = LoginUserHolder.get();
                     return user == null ? null : user.getTenantId();
                 }
 
@@ -155,13 +172,13 @@ class ChildOrchestrationRootChainRaceTest {
                 }
 
                 @Override
-                public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.SELF;
+                public DataScopeType getDataScopeType() {
+                    return DataScopeType.SELF;
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
-                    return java.util.Set.of();
+                public Set<Long> getCustomDeptIds() {
+                    return Set.of();
                 }
 
                 @Override
@@ -172,15 +189,15 @@ class ChildOrchestrationRootChainRaceTest {
         }
 
         @Bean
-        public com.sw.ck.common.config.mybatis.CommonMetaObjectHandler commonMetaObjectHandler(
-                com.sw.ck.common.security.LoginContextProvider provider) {
-            return new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(provider);
+        public CommonMetaObjectHandler commonMetaObjectHandler(
+                LoginContextProvider provider) {
+            return new CommonMetaObjectHandler(provider);
         }
 
         @Bean
         public SqlSessionFactory sqlSessionFactory(DataSource dataSource,
-                                                   com.sw.ck.common.config.mybatis.CommonMetaObjectHandler metaObjectHandler,
-                                                   com.sw.ck.common.security.LoginContextProvider loginContextProvider) {
+                                                   CommonMetaObjectHandler metaObjectHandler,
+                                                   LoginContextProvider loginContextProvider) {
             MybatisConfiguration configuration = new MybatisConfiguration();
             configuration.setMapUnderscoreToCamelCase(true);
             GlobalConfig globalConfig = new GlobalConfig();
@@ -188,22 +205,22 @@ class ChildOrchestrationRootChainRaceTest {
             dbConfig.setLogicDeleteField("deleted");
             dbConfig.setLogicDeleteValue("1");
             dbConfig.setLogicNotDeleteValue("0");
-            dbConfig.setIdType(com.baomidou.mybatisplus.annotation.IdType.ASSIGN_ID);
+            dbConfig.setIdType(IdType.ASSIGN_ID);
             globalConfig.setDbConfig(dbConfig);
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setConfiguration(configuration);
             globalConfig.setMetaObjectHandler(metaObjectHandler);
             // 生产同口径：租户行拦截器负责 INSERT 审计列 tenant_id（freezeBatch 实体不手动设租户）
-            com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor interceptor =
-                    new com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor();
-            com.sw.ck.common.config.mybatis.tenant.TenantProperties tenantProperties =
-                    new com.sw.ck.common.config.mybatis.tenant.TenantProperties();
-            interceptor.addInnerInterceptor(new com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor(
-                    new com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler(
+            MybatisPlusInterceptor interceptor =
+                    new MybatisPlusInterceptor();
+            TenantProperties tenantProperties =
+                    new TenantProperties();
+            interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(
+                    new CommonTenantLineHandler(
                             tenantProperties, loginContextProvider)));
             interceptor.addInnerInterceptor(
-                    new com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor());
+                    new OptimisticLockerInnerInterceptor());
             factory.setPlugins(interceptor);
             factory.setGlobalConfig(globalConfig);
             try {
@@ -215,11 +232,11 @@ class ChildOrchestrationRootChainRaceTest {
 
         @Bean
         public ChildOrchestrationService childOrchestrationService(
-                com.sw.ck.bpm.process.mapper.BpmActionRefMapper actionRefMapper,
+                BpmActionRefMapper actionRefMapper,
                 BpmChildBatchMapper batchMapper,
-                com.sw.ck.bpm.process.mapper.BpmChildItemMapper itemMapper,
-                com.sw.ck.bpm.process.service.NodeFormDataService nodeFormDataService,
-                com.sw.ck.bpm.process.service.BpmInstanceService bpmInstanceService,
+                BpmChildItemMapper itemMapper,
+                NodeFormDataService nodeFormDataService,
+                BpmInstanceService bpmInstanceService,
                 BpmRuntimeFacade bpmRuntimeFacade,
                 FormDataWritebackFacade writebackFacade,
                 BpmInstanceMapper bpmInstanceMapper) {
@@ -233,15 +250,15 @@ class ChildOrchestrationRootChainRaceTest {
     void cleanRootBatches() {
         jdbcTemplate.update("DELETE FROM sw_bpm_child_batch WHERE root_instance_id = ?", ROOT);
         jdbcTemplate.update("DELETE FROM sw_bpm_instance WHERE process_instance_id = ?", ROOT);
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
     }
 
     @BeforeEach
     void seedRootChain() {
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        LoginUser user = new LoginUser();
         user.setUserId(7L);
         user.setTenantId(TENANT);
-        com.sw.ck.security.holder.LoginUserHolder.set(user);
+        LoginUserHolder.set(user);
         // 根实例行（根链锁目标；生产不变量：root_instance_id 必为真实实例 ID）
         Long existing = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM sw_bpm_instance WHERE process_instance_id = ?", Long.class, ROOT);
@@ -289,8 +306,8 @@ class ChildOrchestrationRootChainRaceTest {
         return parent;
     }
 
-    private com.sw.ck.bpm.api.dto.ActionConfig actionAll(String actionId) {
-        com.sw.ck.bpm.api.dto.ActionConfig action = new com.sw.ck.bpm.api.dto.ActionConfig();
+    private ActionConfig actionAll(String actionId) {
+        ActionConfig action = new ActionConfig();
         action.setActionId(actionId);
         action.setType("START_EACH");
         action.setWaitPolicy("ALL");
@@ -351,16 +368,16 @@ class ChildOrchestrationRootChainRaceTest {
                                   String execKey, String actionId) {
         try {
             start.await(30, TimeUnit.SECONDS);
-            com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+            LoginUser user = new LoginUser();
             user.setUserId(7L);
             user.setTenantId(TENANT);
-            com.sw.ck.security.holder.LoginUserHolder.set(user);
+            LoginUserHolder.set(user);
             return transactionTemplate.execute(status ->
                     target.freezeBatch(parent(), "trg", actionAll(actionId), execKey, 1, 1L, null, TENANT));
         } catch (Exception e) {
             return e;
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 

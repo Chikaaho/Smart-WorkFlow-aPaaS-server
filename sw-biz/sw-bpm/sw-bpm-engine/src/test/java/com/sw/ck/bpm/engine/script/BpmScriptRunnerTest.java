@@ -1,12 +1,18 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.graalvm.polyglot.Engine;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,7 +39,7 @@ class BpmScriptRunnerTest {
     @Test
     @DisplayName("BF20261019-02：共享 Engine 预热（warmUp OK）后同一 runner 连续判断正常且上下文隔离")
     void shouldWarmUpOnSharedEngineAndKeepContextsIsolated() {
-        org.graalvm.polyglot.Engine engine = org.graalvm.polyglot.Engine.newBuilder().build();
+        Engine engine = Engine.newBuilder().build();
         try {
             BpmScriptRunner warmed = new BpmScriptRunner(new ObjectMapper(), engine);
             assertThat(warmed.warmUp().kind()).isEqualTo(BpmScriptRunner.Result.Kind.OK);
@@ -184,8 +190,8 @@ class BpmScriptRunnerTest {
     void shouldEvaluateConcurrentlyWithoutInterference() throws Exception {
         int threads = 4;
         int roundsPerThread = 10;
-        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
-        java.util.List<java.util.concurrent.Callable<Boolean>> tasks = new java.util.ArrayList<>();
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        List<Callable<Boolean>> tasks = new ArrayList<>();
         for (int t = 0; t < threads; t++) {
             final String expected = "T" + t;
             final String script = "return 流程变量取值('who');";
@@ -200,7 +206,7 @@ class BpmScriptRunnerTest {
                 return true;
             });
         }
-        java.util.List<java.util.concurrent.Future<Boolean>> futures =
+        List<Future<Boolean>> futures =
                 pool.invokeAll(tasks);
         pool.shutdown();
         assertThat(futures).allSatisfy(future -> assertThat(future.get()).isTrue());
@@ -225,7 +231,7 @@ class BpmScriptRunnerTest {
     @DisplayName("集合变量以纯 JS 值进入上下文（数组/对象可读）")
     void shouldExposeCollectionsAsPlainJs() {
         BpmScriptRunner.Result list = runner.run(
-                "const ids = 流程变量取值('handlers'); return ids.length;", vars("handlers", java.util.List.of("1", "2", "3")));
+                "const ids = 流程变量取值('handlers'); return ids.length;", vars("handlers", List.of("1", "2", "3")));
         assertThat(list.value()).isEqualTo(3L);
     }
 }

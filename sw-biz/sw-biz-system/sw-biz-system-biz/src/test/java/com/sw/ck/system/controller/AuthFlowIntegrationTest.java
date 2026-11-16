@@ -7,8 +7,11 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
+
 import jakarta.servlet.http.Cookie;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -37,12 +40,21 @@ import com.sw.ck.system.security.UserDetailsProviderImpl;
 import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysMenuService;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.mapper.SysAuditLogMapper;
+import com.sw.ck.system.mapper.SysTenantMapper;
+import com.sw.ck.system.security.PngCaptchaRenderer;
+import com.sw.ck.system.security.RsaLoginKeyManager;
+import com.sw.ck.system.service.AuditLogService;
+import com.sw.ck.system.service.TenantValidityService;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -63,7 +75,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import javax.sql.DataSource;
-
 import java.util.List;
 import java.util.Set;
 
@@ -936,7 +947,7 @@ class AuthFlowIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -1017,8 +1028,8 @@ class AuthFlowIntegrationTest {
         public LoginUserLoader loginUserLoader(
                 UserDetailsProvider userDetailsProvider,
                 LoginUserCacheService loginUserCacheService) {
-            org.springframework.beans.factory.ObjectProvider<UserDetailsProvider> provider =
-                    mock(org.springframework.beans.factory.ObjectProvider.class);
+            ObjectProvider<UserDetailsProvider> provider =
+                    mock(ObjectProvider.class);
             when(provider.getIfAvailable()).thenReturn(userDetailsProvider);
             return new LoginUserLoader(provider, loginUserCacheService);
         }
@@ -1033,10 +1044,10 @@ class AuthFlowIntegrationTest {
                 SysRoleMenuMapper sysRoleMenuMapper,
                 SysMenuMapper sysMenuMapper,
                 SysRoleDeptMapper sysRoleDeptMapper,
-                com.sw.ck.system.mapper.SysTenantMapper sysTenantMapper) {
+                SysTenantMapper sysTenantMapper) {
             return new UserDetailsProviderImpl(sysUserService, sysUserRoleMapper, sysRoleMapper,
                     sysRoleMenuMapper, sysMenuMapper, sysRoleDeptMapper,
-                    new com.sw.ck.system.service.TenantValidityService(sysTenantMapper));
+                    new TenantValidityService(sysTenantMapper));
         }
 
         // ==================== RefreshTokenService ====================
@@ -1055,7 +1066,7 @@ class AuthFlowIntegrationTest {
                 JwtTokenProvider jwtTokenProvider,
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties,
-                com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService) {
+                LoginUserCacheService loginUserCacheService) {
             return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties, loginUserCacheService);
         }
 
@@ -1078,9 +1089,9 @@ class AuthFlowIntegrationTest {
         }
 
         @Bean
-        public com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager(
+        public RsaLoginKeyManager rsaLoginKeyManager(
                 LoginSecurityProperties loginSecurityProperties) {
-            return new com.sw.ck.system.security.RsaLoginKeyManager(loginSecurityProperties);
+            return new RsaLoginKeyManager(loginSecurityProperties);
         }
 
         @Bean
@@ -1089,16 +1100,16 @@ class AuthFlowIntegrationTest {
         }
 
         @Bean
-        public com.sw.ck.system.security.PngCaptchaRenderer pngCaptchaRenderer() {
-            return new com.sw.ck.system.security.PngCaptchaRenderer();
+        public PngCaptchaRenderer pngCaptchaRenderer() {
+            return new PngCaptchaRenderer();
         }
 
         @Bean
         public LoginChallengeTestSupport.TestableLoginChallengeService loginChallengeService(
                 LoginChallengeStore loginChallengeStore,
-                com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager,
+                RsaLoginKeyManager rsaLoginKeyManager,
                 LoginSecurityProperties loginSecurityProperties,
-                com.sw.ck.system.security.PngCaptchaRenderer pngCaptchaRenderer) {
+                PngCaptchaRenderer pngCaptchaRenderer) {
             return new LoginChallengeTestSupport.TestableLoginChallengeService(
                     loginChallengeStore, rsaLoginKeyManager, loginSecurityProperties, pngCaptchaRenderer);
         }
@@ -1106,15 +1117,15 @@ class AuthFlowIntegrationTest {
         // ==================== 控制器 ====================
 
         @Bean
-        public com.sw.ck.system.service.TenantValidityService tenantValidityService(
-                com.sw.ck.system.mapper.SysTenantMapper sysTenantMapper) {
-            return new com.sw.ck.system.service.TenantValidityService(sysTenantMapper);
+        public TenantValidityService tenantValidityService(
+                SysTenantMapper sysTenantMapper) {
+            return new TenantValidityService(sysTenantMapper);
         }
 
         @Bean
-        public com.sw.ck.system.service.AuditLogService auditLogService(
-                com.sw.ck.system.mapper.SysAuditLogMapper auditLogMapper) {
-            return new com.sw.ck.system.service.AuditLogService(auditLogMapper);
+        public AuditLogService auditLogService(
+                SysAuditLogMapper auditLogMapper) {
+            return new AuditLogService(auditLogMapper);
         }
 
         @Bean
@@ -1127,9 +1138,9 @@ class AuthFlowIntegrationTest {
                 RefreshTokenService refreshTokenService,
                 LoginUserLoader loginUserLoader,
                 LoginChallengeService loginChallengeService,
-                com.sw.ck.system.security.RsaLoginKeyManager rsaLoginKeyManager,
-                com.sw.ck.system.service.TenantValidityService tenantValidityService,
-                com.sw.ck.system.service.AuditLogService auditLogService) {
+                RsaLoginKeyManager rsaLoginKeyManager,
+                TenantValidityService tenantValidityService,
+                AuditLogService auditLogService) {
             return new AuthController(userDetailsProvider, passwordEncoder,
                     jwtTokenProvider, sysUserService, jwtProperties,
                     refreshTokenService, loginUserLoader, loginChallengeService, rsaLoginKeyManager,

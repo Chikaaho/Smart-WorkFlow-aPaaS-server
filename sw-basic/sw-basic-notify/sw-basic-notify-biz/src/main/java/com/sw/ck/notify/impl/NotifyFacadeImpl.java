@@ -1,6 +1,7 @@
 package com.sw.ck.notify.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.SendNotifyCommand;
@@ -12,8 +13,11 @@ import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.entity.NotifySendAttempt;
 import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
 import com.sw.ck.notify.service.NotifyMessageService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.trace.DiagnosticText;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -22,11 +26,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 通知门面实现（I6 收敛版）。
  * <p>
@@ -40,46 +44,26 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @Service
+@Log4j2
 public class NotifyFacadeImpl implements NotifyFacade {
-
-    private static final Logger log = LoggerFactory.getLogger(NotifyFacadeImpl.class);
 
     private static final String NON_RETRYABLE = "NON_RETRYABLE";
     private static final String RETRYABLE = "RETRYABLE";
 
-    private final NotifyMessageService notifyMessageService;
-    private final Map<NotifyChannel, NotifyChannelAdapter> adapters;
-    private final NotifySendAttemptMapper attemptMapper;
-    private final TenantWorkAdmission tenantWorkAdmission;
-
-    /** 兼容既有单元/集成测试及直接调用方；未显式注册第三方渠道，尝试流水不记录。 */
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService) {
-        this(notifyMessageService, List.of(), null);
-    }
-
-    /** 兼容两参构造（既有测试）；尝试流水不记录。 */
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
-                            List<NotifyChannelAdapter> adapters) {
-        this(notifyMessageService, adapters, null);
-    }
-
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
-                            List<NotifyChannelAdapter> adapters,
-                            NotifySendAttemptMapper attemptMapper) {
-        this(notifyMessageService, adapters, attemptMapper, (tenantId, claim) -> {
-            throw new IllegalStateException("外部通知缺少租户认领契约");
-        });
-    }
-
     @Autowired
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
-                            List<NotifyChannelAdapter> adapters,
-                            NotifySendAttemptMapper attemptMapper,
-                            TenantWorkAdmission tenantWorkAdmission) {
-        this.notifyMessageService = notifyMessageService;
-        this.attemptMapper = attemptMapper;
-        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
-        this.adapters = adapters == null ? Map.of() : adapters.stream()
+    private NotifyMessageService notifyMessageService;
+    @Autowired
+    private List<NotifyChannelAdapter> adapterList;
+    private Map<NotifyChannel, NotifyChannelAdapter> adapters;
+    /** 窄测试上下文可缺省；生产装配尝试流水 Mapper。 */
+    @Autowired(required = false)
+    private NotifySendAttemptMapper attemptMapper;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
+
+    @PostConstruct
+    void initAdapters() {
+        this.adapters = adapterList == null ? Map.of() : adapterList.stream()
                 .collect(Collectors.toUnmodifiableMap(NotifyFacadeImpl::channelOf,
                         Function.identity(), (left, right) -> {
                             throw new IllegalStateException("通知渠道适配器重复: " + channelOf(left));
@@ -182,7 +166,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
         } catch (Exception e) {
             return Optional.of(NotifySendResult.builder().channel(request.getChannel()).status("FAILED")
                     .failureReason("投递失败："
-                            + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 300)).build());
+                            + DiagnosticText.sanitize(e.getMessage(), 300)).build());
         }
     }
 
@@ -190,7 +174,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     /** 方向 §3.6 反向护栏：登录上下文存在时请求租户不得与之冲突；返回非空即拒绝。 */
     private NotifySendResult forgedTenantGuard(NotifySendRequest request) {
-        com.sw.ck.security.holder.LoginUser principal = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser principal = LoginUserHolder.get();
         if (principal != null && principal.getTenantId() != null
                 && request.getTenantId() != null
                 && !principal.getTenantId().equals(request.getTenantId())) {

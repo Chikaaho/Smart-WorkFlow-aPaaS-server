@@ -1,5 +1,7 @@
 package com.sw.ck.iot.mqtt;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.iot.entity.IotConnection;
 import com.sw.ck.iot.entity.IotDevice;
@@ -7,14 +9,13 @@ import com.sw.ck.iot.entity.IotTopic;
 import com.sw.ck.iot.mapper.IotConnectionMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.service.IotConnectionService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 自建 MQTT 连接的下行通道：目标解析与真实发布（原生 MQTT 设备控制通道）。
  *
@@ -29,27 +30,20 @@ import java.util.Optional;
  * 失败，不返回模拟成功。</p>
  */
 @Component
+@Log4j2
 public class MqttDownlinkPublisher {
 
     /** 连接类型：自建 MQTT（与 {@code IotConnectionService.TYPE_MQTT} 同值，避免跨类耦合）。 */
     private static final String TYPE_MQTT = "MQTT";
 
-    private static final Logger log = LoggerFactory.getLogger(MqttDownlinkPublisher.class);
-
-    private final IotConnectionMapper connectionMapper;
-    private final IotTopicMapper topicMapper;
-    private final MqttBrokerManager mqttBrokerManager;
-    private final ObjectProvider<IotConnectionService> connectionServiceProvider;
-
-    public MqttDownlinkPublisher(IotConnectionMapper connectionMapper,
-                                 IotTopicMapper topicMapper,
-                                 MqttBrokerManager mqttBrokerManager,
-                                 ObjectProvider<IotConnectionService> connectionServiceProvider) {
-        this.connectionMapper = connectionMapper;
-        this.topicMapper = topicMapper;
-        this.mqttBrokerManager = mqttBrokerManager;
-        this.connectionServiceProvider = connectionServiceProvider;
-    }
+    @Autowired
+    private IotConnectionMapper connectionMapper;
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired
+    private MqttBrokerManager mqttBrokerManager;
+    @Autowired
+    private ObjectProvider<IotConnectionService> connectionServiceProvider;
 
     /**
      * 设备是否由启用中的自建 MQTT 连接承载（原生命令通道可用性判据）。

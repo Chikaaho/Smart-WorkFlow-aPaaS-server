@@ -1,12 +1,13 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.service.FormDataDeleteService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单数据删除入口。
  *
@@ -15,15 +16,11 @@ import org.springframework.web.bind.annotation.*;
  */
 @RestController
 @RequestMapping("/form/data")
+@Log4j2
 public class FormDataDeleteController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormDataDeleteController.class);
-
-    private final FormDataDeleteService formDataDeleteService;
-
-    public FormDataDeleteController(FormDataDeleteService formDataDeleteService) {
-        this.formDataDeleteService = formDataDeleteService;
-    }
+    @Autowired
+    private FormDataDeleteService formDataDeleteService;
 
     /**
      * 软删除一条表单记录（含 RESTRICT 反查 + CASCADE 子表连带）。

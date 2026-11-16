@@ -5,6 +5,8 @@ import com.sw.ck.bpm.api.participant.NodeParticipantAdapter;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.api.participant.NodeParticipantResolver;
 import com.sw.ck.common.exception.BaseException;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -17,13 +19,17 @@ import java.util.Optional;
 @Component
 public class ParticipantResolverRegistry {
 
-    private final Map<String, NodeParticipantResolver> resolvers;
-    private final Map<String, NodeParticipantAdapter> adapters;
+    @Autowired
+    private List<NodeParticipantResolver> resolverList;
+    @Autowired
+    private List<NodeParticipantAdapter> adapterList;
+    private Map<String, NodeParticipantResolver> resolvers;
+    private Map<String, NodeParticipantAdapter> adapters;
 
-    public ParticipantResolverRegistry(List<NodeParticipantResolver> resolvers,
-                                       List<NodeParticipantAdapter> adapters) {
-        this.resolvers = uniqueResolvers(resolvers);
-        this.adapters = uniqueAdapters(adapters);
+    @PostConstruct
+    void initRegistry() {
+        this.resolvers = uniqueResolvers(resolverList);
+        this.adapters = uniqueAdapters(adapterList);
     }
 
     public List<String> resolve(NodeParticipantContext context) {

@@ -1,8 +1,14 @@
 package com.sw.ck.bpm.process.config;
 
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -22,12 +28,12 @@ import static org.mockito.Mockito.when;
  */
 class DynamicBranchPortTest {
 
-    @org.junit.jupiter.api.BeforeAll
+    @BeforeAll
     static void initTableInfo() {
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
-                com.sw.ck.bpm.process.entity.DynamicBranchSnapshot.class);
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
+                DynamicBranchSnapshot.class);
     }
 
     @Test
@@ -87,7 +93,7 @@ class DynamicBranchPortTest {
         DynamicBranchPort port = new DynamicBranchPortConfiguration().dynamicBranchPort(mapper);
         // mock update 影响行数 0 → 已无未完成分支：合法幂等，以 present ALREADY_APPLIED 表达
         assertThat(port.closeRemaining("1", "pi-1", null, "INSTANCE_TERMINATED"))
-                .contains(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
+                .contains(MutationOutcome.ALREADY_APPLIED);
         // 实现按条件 UPDATE（只命中 START 行）；APPROVE/DISAPPROVE/CANCELED 天然不被改写
         verify(mapper).update(any(), any());
     }

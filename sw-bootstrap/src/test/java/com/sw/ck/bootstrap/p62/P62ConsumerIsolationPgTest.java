@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -17,8 +18,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -65,7 +68,7 @@ class P62ConsumerIsolationPgTest {
     private static String runId;
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .connectTimeout(Duration.ofSeconds(5))
             .build();
 
     @BeforeAll
@@ -81,7 +84,7 @@ class P62ConsumerIsolationPgTest {
         pg = EmbeddedPostgres.builder().start();
         pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort()
                 + "/postgres?stringtype=unspecified&user=postgres&password=postgres";
-        jdbc = new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(pgUrl));
+        jdbc = new JdbcTemplate(new DriverManagerDataSource(pgUrl));
         jdbc.execute("SELECT 1");
         System.out.println("[P62-EV] g5a orchestrator pid=" + ProcessHandle.current().pid()
                 + " pgPort=" + pg.getPort() + " runId=" + runId);
@@ -137,7 +140,7 @@ class P62ConsumerIsolationPgTest {
 
         // ============ 阶段二：协调升级 ============
         old.destroyForcibly();
-        boolean oldExited = old.waitFor(60, java.util.concurrent.TimeUnit.SECONDS);
+        boolean oldExited = old.waitFor(60, TimeUnit.SECONDS);
         assertThat(oldExited).as("旧消费者已真实退出").isTrue();
         long inFlight = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sw_bpm_command WHERE status='PROCESSING'", Long.class);
@@ -187,7 +190,7 @@ class P62ConsumerIsolationPgTest {
 
         // ============ 阶段三：停新入口，保留新数据向前修复 ============
         upgraded.destroyForcibly();
-        assertThat(upgraded.waitFor(60, java.util.concurrent.TimeUnit.SECONDS))
+        assertThat(upgraded.waitFor(60, TimeUnit.SECONDS))
                 .as("新版本消费者退出").isTrue();
         Process rolledBack = fork(javaBin, testClasspath, "plain", false, "iso-off-ready.txt");
         Path offReady = EVIDENCE.resolve("iso-off-ready.txt");
@@ -213,7 +216,7 @@ class P62ConsumerIsolationPgTest {
                 + " (停新入口保留新数据，历史连续，向前修复)\n");
 
         rolledBack.destroy();
-        assertThat(rolledBack.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(rolledBack.waitFor(30, TimeUnit.SECONDS)).isTrue();
         System.out.println("[P62-EV] g5a.isolation phase1 deny=2425 batches=0; phase2 takeover+accepted"
                 + " effects=1; phase3 deny=2425 kept=1/1/1");
     }
@@ -306,7 +309,7 @@ class P62ConsumerIsolationPgTest {
     private HttpResponse<String> postBatch(int port, String body) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + "/api/workflow/txn-batch"))
-                .timeout(java.time.Duration.ofSeconds(20))
+                .timeout(Duration.ofSeconds(20))
                 .header("Authorization", BEARER)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))

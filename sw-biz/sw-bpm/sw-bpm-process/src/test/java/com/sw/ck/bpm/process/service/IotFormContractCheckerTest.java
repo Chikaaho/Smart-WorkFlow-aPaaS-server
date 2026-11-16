@@ -3,8 +3,12 @@ package com.sw.ck.bpm.process.service;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+
+import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -25,17 +29,17 @@ class IotFormContractCheckerTest {
                 .formKey("iot_alert_form")
                 .status("PUBLISHED")
                 .build();
-        when(formService.getFormDef("iot_alert_form")).thenReturn(java.util.Optional.of(form));
-        when(formService.getFormDefinition("iot_alert_form")).thenReturn(java.util.Optional.of("""
+        when(formService.getFormDef("iot_alert_form")).thenReturn(Optional.of(form));
+        when(formService.getFormDefinition("iot_alert_form")).thenReturn(Optional.of("""
                 {"fields":[
                   {"name":"ref_record","type":"REFERENCE","targetFormId":"target_form"},
                   {"name":"escalate","type":"BOOL"}
                 ]}
                 """));
         when(formService.canCurrentUserAccessRecord("target_form", "tenant-safe"))
-                .thenReturn(java.util.Optional.of(true));
+                .thenReturn(Optional.of(true));
         when(formService.canCurrentUserAccessRecord("target_form", "tenant-other"))
-                .thenReturn(java.util.Optional.of(false));
+                .thenReturn(Optional.of(false));
 
         ObjectProvider<FormDefinitionService> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(formService);
@@ -45,7 +49,7 @@ class IotFormContractCheckerTest {
         IotFormContractCheckerImpl checker = new IotFormContractCheckerImpl(processDefService, provider);
 
         // 两层语义：present + 空列表 = 校验通过（有值的结果，不得用 empty 代替）
-        java.util.Optional<java.util.List<String>> passing = checker.checkMapping("p21-template", """
+        Optional<List<String>> passing = checker.checkMapping("p21-template", """
                 [{"field":"ref_record","required":true,"fixed":"tenant-safe"},
                  {"field":"escalate","required":true,"fixed":true}]
                 """);
@@ -53,11 +57,11 @@ class IotFormContractCheckerTest {
         assertTrue(passing.orElseThrow().isEmpty(), "通过时错误列表必须为空列表");
 
         // present + 非空列表 = 校验发现错误
-        java.util.Optional<java.util.List<String>> failing = checker.checkMapping("p21-template", """
+        Optional<List<String>> failing = checker.checkMapping("p21-template", """
                 [{"field":"ref_record","required":true,"fixed":"tenant-other"}]
                 """);
         assertTrue(failing.isPresent(), "校验合法执行必须 present，而不是 empty");
-        java.util.List<String> errors = failing.orElseThrow();
+        List<String> errors = failing.orElseThrow();
         assertEquals(1, errors.size());
         assertTrue(errors.get(0).contains("引用对象不存在或当前用户无权访问"));
 

@@ -6,7 +6,7 @@ import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmVariableSnapshotService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -22,7 +22,7 @@ import java.util.Optional;
  * 解析失败（变量未定义/取值异常/超限）返回 empty，由节点 emptyStrategy 给出确定结果。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Configuration
 public class BpmVariableReadPortConfiguration {
 

@@ -4,14 +4,13 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 钉钉 SSO Provider 实现（I5）。
  * <p>
@@ -20,9 +19,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 再经 {@code /v1.0/contact/users/me} 解析 unionId（开放平台稳定主体标识）。
  * </p>
  */
+@Log4j2
 public class DingtalkSsoProviderClient implements SsoProviderClient {
-
-    private static final Logger log = LoggerFactory.getLogger(DingtalkSsoProviderClient.class);
 
     private static final String AUTHORIZE_URL = "https://login.dingtalk.com/oauth2/auth";
     private static final String USER_TOKEN_URL = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken";

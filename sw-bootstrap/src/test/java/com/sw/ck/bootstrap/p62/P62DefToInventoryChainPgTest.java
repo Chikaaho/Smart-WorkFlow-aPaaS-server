@@ -13,6 +13,11 @@ import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -20,8 +25,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -31,7 +41,10 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -94,10 +107,10 @@ class P62DefToInventoryChainPgTest {
         props.put("sw.security.jwt.secret", "p62-g6a-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", P62BudgetMeasurementPgTest.generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-g6a-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("spring.datasource.dynamic.druid.initial-size", "5");
         props.put("spring.datasource.dynamic.druid.min-idle", "5");
         props.put("spring.datasource.dynamic.druid.max-active", "16");
@@ -114,30 +127,30 @@ class P62DefToInventoryChainPgTest {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-g6a", props));
+                            new MapPropertySource("p62-g6a", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62G6aLoginContextProvider", provider);
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
-                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                            ((DefaultListableBeanFactory) bf)
                                     .setAllowBeanDefinitionOverriding(true);
-                            ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
+                            ((BeanDefinitionRegistry) bf)
                                     .registerBeanDefinition("loginUserCacheService",
-                                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                                            new RootBeanDefinition(
                                                     P62BudgetMeasurementPgTest.NoopLoginUserCacheService.class));
                         }
                     });
                 })
                 .run();
-        ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
-                org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
-        root.setLevel(ch.qos.logback.classic.Level.WARN);
+        Logger root = (Logger)
+                LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        root.setLevel(Level.WARN);
         jdbc = app.getBean(JdbcTemplate.class);
         out.append("pgPort=").append(pg.getPort()).append(" pgVersion=")
                 .append(jdbc.queryForObject("SELECT version()", String.class)).append('\n')
@@ -222,7 +235,7 @@ class P62DefToInventoryChainPgTest {
             ProcessGraph graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name("链导出轻流程")
                     .formKey(FORM_KEY).version(1).elements(elements).build();
-            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            String json = app.getBean(ObjectMapper.class)
                     .writeValueAsString(graph);
             processDefService.saveDraftGraph(def.getId(), json);
             BpmProcessDef v1 = processDefService.publish(def.getId());
@@ -249,7 +262,7 @@ class P62DefToInventoryChainPgTest {
         String processInstanceId = null;
         long deadline = System.currentTimeMillis() + 60_000;
         while (System.currentTimeMillis() < deadline) {
-            java.util.List<String> ids = jdbc.queryForList(
+            List<String> ids = jdbc.queryForList(
                     "SELECT process_instance_id FROM sw_bpm_instance WHERE business_key = ?",
                     String.class, recordId);
             if (!ids.isEmpty()) {
@@ -335,7 +348,7 @@ class P62DefToInventoryChainPgTest {
     /** 实际只读查询（参数化 SQL）：原始列名 + 原始行值逐行落盘，不做整理改写。 */
     private void exportQuery(String sql, Object... params) {
         out.append("SQL> ").append(sql).append('\n');
-        out.append("PARAMS> ").append(java.util.Arrays.toString(params)).append('\n');
+        out.append("PARAMS> ").append(Arrays.toString(params)).append('\n');
         List<Map<String, Object>> rows = jdbc.queryForList(sql, params);
         out.append("ROWS=").append(rows.size()).append('\n');
         for (Map<String, Object> row : rows) {
@@ -383,7 +396,7 @@ class P62DefToInventoryChainPgTest {
     }
 
     private static Map<String, Object> data(Object... kv) {
-        Map<String, Object> map = new java.util.LinkedHashMap<>();
+        Map<String, Object> map = new LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {
             map.put(String.valueOf(kv[i]), kv[i + 1]);
         }

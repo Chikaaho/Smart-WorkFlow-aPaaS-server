@@ -2,10 +2,15 @@ package com.sw.ck.bpm.process.service;
 
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
 import com.sw.ck.form.api.print.FormPrintFacade;
+
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.text.PDFTextStripper;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -75,7 +80,7 @@ class FormPrintPdfServiceTest {
         assertEquals("%PDF-", header, "产物应为 PDF");
         assertTrue(pdf.length > 10_000, "嵌入中文字体后产物不应过小: " + pdf.length);
 
-        try (var doc = org.apache.pdfbox.Loader.loadPDF(pdf)) {
+        try (var doc = Loader.loadPDF(pdf)) {
             assertTrue(doc.getNumberOfPages() >= 1, "至少一页");
         }
     }
@@ -87,7 +92,7 @@ class FormPrintPdfServiceTest {
         when(facade.recordDetail(eq("gate"), eq("rec-x"), any()))
                 .thenReturn(Optional.empty());
         FormPrintPdfService service = new FormPrintPdfService(facade);
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+        Assertions.assertThrows(IllegalStateException.class,
                 () -> service.render("gate", "rec-x", null, null));
     }
 
@@ -105,8 +110,8 @@ class FormPrintPdfServiceTest {
                 }
                 """;
         Map<String, Object> record = Map.of(
-                "dueDate", java.sql.Timestamp.valueOf("2026-11-12 09:30:00"),
-                "reviewAt", java.sql.Timestamp.valueOf("2026-11-12 14:00:00"));
+                "dueDate", Timestamp.valueOf("2026-11-12 09:30:00"),
+                "reviewAt", Timestamp.valueOf("2026-11-12 14:00:00"));
         FormPrintFacade facade = mock(FormPrintFacade.class);
         when(facade.recordDetail(eq("gate"), eq("rec-date"), any()))
                 .thenReturn(Optional.of(new FormPrintFacade.FormPrintData(
@@ -116,12 +121,12 @@ class FormPrintPdfServiceTest {
         byte[] pdf = service.render("gate", "rec-date",
                 LocalDateTime.of(2026, 11, 10, 9, 0), List.of());
 
-        try (var doc = org.apache.pdfbox.Loader.loadPDF(pdf)) {
-            var stripper = new org.apache.pdfbox.text.PDFTextStripper();
+        try (var doc = Loader.loadPDF(pdf)) {
+            var stripper = new PDFTextStripper();
             String text = stripper.getText(doc);
             assertTrue(text.contains("2026-11-12 14:00"), "datetime 字段应输出到分: " + text);
             assertTrue(text.contains("2026-11-12"), "日期字段应输出到日: " + text);
-            org.junit.jupiter.api.Assertions.assertFalse(text.contains("2026-11-12 09:30"),
+            Assertions.assertFalse(text.contains("2026-11-12 09:30"),
                     "缺省日期字段不应带时分: " + text);
         }
     }

@@ -1,7 +1,11 @@
 package com.sw.ck.form.txn.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.response.R;
+import com.sw.ck.form.txn.guard.TxnActionRealtimeGuard;
 import com.sw.ck.form.txn.model.C1PolicySaveRequest;
 import com.sw.ck.form.txn.model.C1PolicyView;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
@@ -15,6 +19,9 @@ import com.sw.ck.form.txn.model.TxnReservationView;
 import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.form.txn.service.TxnActionExecutor;
 import com.sw.ck.form.txn.service.TxnActionService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,20 +41,14 @@ import java.util.List;
 @RequestMapping("/form/action")
 public class TxnActionController {
 
-    private final TxnActionService actionService;
-    private final TxnActionExecutor executor;
-    private final C1PolicyService c1PolicyService;
-    private final com.sw.ck.form.txn.guard.TxnActionRealtimeGuard realtimeGuard;
-
-    public TxnActionController(TxnActionService actionService,
-                               TxnActionExecutor executor,
-                               C1PolicyService c1PolicyService,
-                               com.sw.ck.form.txn.guard.TxnActionRealtimeGuard realtimeGuard) {
-        this.actionService = actionService;
-        this.executor = executor;
-        this.c1PolicyService = c1PolicyService;
-        this.realtimeGuard = realtimeGuard;
-    }
+    @Autowired
+    private TxnActionService actionService;
+    @Autowired
+    private TxnActionExecutor executor;
+    @Autowired
+    private C1PolicyService c1PolicyService;
+    @Autowired
+    private TxnActionRealtimeGuard realtimeGuard;
 
     // ==================== 管理 ====================
 
@@ -120,7 +121,7 @@ public class TxnActionController {
     public R<TxnInvokeResult> invoke(@PathVariable String id, @RequestBody TxnInvokeRequest req) {
         // 实时入口并发预算（P62 资源保障）：仅约束本 HTTP 实时入口，超限明确拒绝不排队；
         // 内部异步调用方（轻流程节点/批量项）不占实时预算
-        com.sw.ck.security.holder.LoginUser operator = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser operator = LoginUserHolder.get();
         Long tenantId = operator == null ? null : operator.getTenantId();
         return R.ok(realtimeGuard.callWithBudget(tenantId, () -> executor.invoke(id, req)));
     }

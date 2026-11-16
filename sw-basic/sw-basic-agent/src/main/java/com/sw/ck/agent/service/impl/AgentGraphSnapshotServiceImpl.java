@@ -1,5 +1,7 @@
 package com.sw.ck.agent.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,14 +24,10 @@ import java.util.List;
 @Service
 public class AgentGraphSnapshotServiceImpl {
 
-    private final AgentGraphSnapshotMapper snapshotMapper;
-    private final ObjectMapper objectMapper;
-
-    public AgentGraphSnapshotServiceImpl(AgentGraphSnapshotMapper snapshotMapper,
-                                         ObjectMapper objectMapper) {
-        this.snapshotMapper = snapshotMapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private AgentGraphSnapshotMapper snapshotMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** 发布时固化当前 graph_json（调用方已完成 defVersion 递增与状态回写）。 */
     public AgentGraphSnapshot createSnapshot(AgentGraphDef def) {

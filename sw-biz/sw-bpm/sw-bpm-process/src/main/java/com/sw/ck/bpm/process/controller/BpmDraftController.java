@@ -1,6 +1,9 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
 import com.sw.ck.bpm.process.entity.BpmDraft;
@@ -15,9 +18,9 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 我的草稿控制器（业务发起草稿，与表单设计/流程定义草稿无关）。
  * <p>
@@ -45,32 +49,24 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/workflow/drafts")
+@Log4j2
 public class BpmDraftController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmDraftController.class);
-
-    private final BpmDraftService draftService;
-    private final DraftSubmitService draftSubmitService;
-    private final ObjectMapper objectMapper;
-    private final CommandSyncWaiter syncWaiter;
-    private final PermissionService permissionService;
-
-    public BpmDraftController(BpmDraftService draftService,
-                              DraftSubmitService draftSubmitService,
-                              ObjectMapper objectMapper,
-                              CommandSyncWaiter syncWaiter,
-                              PermissionService permissionService) {
-        this.draftService = draftService;
-        this.draftSubmitService = draftSubmitService;
-        this.objectMapper = objectMapper;
-        this.syncWaiter = syncWaiter;
-        this.permissionService = permissionService;
-    }
+    @Autowired
+    private BpmDraftService draftService;
+    @Autowired
+    private DraftSubmitService draftSubmitService;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private CommandSyncWaiter syncWaiter;
+    @Autowired
+    private PermissionService permissionService;
 
     /** 我的草稿分页列表。 */
     @GetMapping
     public R<PageResult<BpmDraft>> list(PageParam pageParam) {
-        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        var loginUser = LoginUserHolder.get();
         List<BpmDraft> readable = draftService.lambdaQuery()
                 .eq(BpmDraft::getCreateBy, loginUser.getUserId())
                 .orderByDesc(BpmDraft::getUpdateTime)
@@ -94,7 +90,7 @@ public class BpmDraftController {
     @PostMapping
     @Transactional
     public R<BpmDraft> create(@RequestBody Map<String, Object> body) {
-        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        var loginUser = LoginUserHolder.get();
         String formKey = str(body.get("formKey"));
         FormDefDTO formDef = draftSubmitService.requirePublishedForm(formKey);
 

@@ -1,5 +1,7 @@
 package com.sw.ck.iot.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -21,17 +23,12 @@ import java.util.List;
 @Service
 public class IotProductService {
 
-    private final IotProductMapper productMapper;
-    private final IotThingModelMapper thingModelMapper;
-    private final IotDeviceMapper deviceMapper;
-
-    public IotProductService(IotProductMapper productMapper,
-                             IotThingModelMapper thingModelMapper,
-                             IotDeviceMapper deviceMapper) {
-        this.productMapper = productMapper;
-        this.thingModelMapper = thingModelMapper;
-        this.deviceMapper = deviceMapper;
-    }
+    @Autowired
+    private IotProductMapper productMapper;
+    @Autowired
+    private IotThingModelMapper thingModelMapper;
+    @Autowired
+    private IotDeviceMapper deviceMapper;
 
     public List<IotProduct> list() {
         return productMapper.selectList(new LambdaQueryWrapper<>());

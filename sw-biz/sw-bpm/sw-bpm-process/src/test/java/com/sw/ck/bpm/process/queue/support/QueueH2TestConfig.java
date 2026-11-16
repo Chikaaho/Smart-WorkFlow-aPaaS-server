@@ -6,27 +6,49 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
+import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
+import com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper;
+import com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper;
+import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
 import com.sw.ck.bpm.process.queue.CommandEffectRecorder;
 import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob;
 import com.sw.ck.bpm.process.queue.TieredCommandReconcileJob;
+import com.sw.ck.bpm.process.service.LightProcessClassifier;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceFactView;
+import com.sw.ck.bpm.process.service.ResourcePolicyService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
+import com.sw.ck.bpm.process.service.TenantRateBuckets;
 import com.sw.ck.bpm.process.service.impl.BpmCommandServiceImpl;
+import com.sw.ck.bpm.process.service.impl.ResourcePolicyServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.logging.stdout.StdOutImpl;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Set;
 import javax.sql.DataSource;
 
 /**
@@ -57,7 +79,7 @@ public class QueueH2TestConfig {
                         menu_type int not null default 2, path varchar(200), component varchar(200),
                         permission varchar(128), icon varchar(64), sort int not null default 0)
                     """);
-        } catch (java.sql.SQLException e) {
+        } catch (SQLException e) {
             throw new IllegalStateException("预置 sys_menu 失败", e);
         }
         // 资源保障目标链事实桩表（模块库无 Flowable；行存在即占用成立，空表=链已终结）
@@ -68,7 +90,7 @@ public class QueueH2TestConfig {
                     + "process_instance_id_ varchar(64))");
             stmt.execute("CREATE TABLE IF NOT EXISTS act_ru_execution (id_ varchar(64) primary key, "
                     + "proc_inst_id_ varchar(64), business_key_ varchar(64))");
-        } catch (java.sql.SQLException e) {
+        } catch (SQLException e) {
             throw new IllegalStateException("预置 act_ru 桩表失败", e);
         }
         Flyway.configure()
@@ -86,8 +108,8 @@ public class QueueH2TestConfig {
     }
 
     @Bean
-    public org.springframework.jdbc.core.JdbcTemplate jdbcTemplate(DataSource dataSource) {
-        return new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
     }
 
     @Bean
@@ -116,13 +138,13 @@ public class QueueH2TestConfig {
             }
 
             @Override
-            public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                return com.sw.ck.common.datascope.DataScopeType.SELF;
+            public DataScopeType getDataScopeType() {
+                return DataScopeType.SELF;
             }
 
             @Override
-            public java.util.Set<Long> getCustomDeptIds() {
-                return java.util.Set.of();
+            public Set<Long> getCustomDeptIds() {
+                return Set.of();
             }
 
             @Override
@@ -142,7 +164,7 @@ public class QueueH2TestConfig {
                                                LoginContextProvider loginContextProvider) {
         TenantProperties tenantProperties = new TenantProperties();
         // 资源治理表（策略/占用计数/拒绝审计）的租户语义由代码显式承载，排除拦截器注入
-        tenantProperties.setIgnoreTables(java.util.List.of("sys_menu",
+        tenantProperties.setIgnoreTables(List.of("sys_menu",
                 "sw_bpm_resource_policy", "sw_bpm_resource_usage", "sw_bpm_resource_reject_log"));
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
         interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(
@@ -151,7 +173,7 @@ public class QueueH2TestConfig {
 
         MybatisConfiguration configuration = new MybatisConfiguration();
         configuration.setMapUnderscoreToCamelCase(true);
-        configuration.setLogImpl(org.apache.ibatis.logging.stdout.StdOutImpl.class);
+        configuration.setLogImpl(StdOutImpl.class);
 
         GlobalConfig globalConfig = new GlobalConfig();
         GlobalConfig.DbConfig dbConfig = new GlobalConfig.DbConfig();
@@ -179,68 +201,68 @@ public class QueueH2TestConfig {
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.TenantRateBuckets tenantRateBuckets() {
-        return new com.sw.ck.bpm.process.service.TenantRateBuckets();
+    public TenantRateBuckets tenantRateBuckets() {
+        return new TenantRateBuckets();
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.ResourceAdmissionService resourceAdmissionService(
-            com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper policyMapper,
-            com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper usageMapper,
-            com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper rejectLogMapper,
-            com.sw.ck.bpm.process.service.TenantRateBuckets rateBuckets,
-            org.springframework.transaction.PlatformTransactionManager txManager) {
-        return new com.sw.ck.bpm.process.service.ResourceAdmissionService(
+    public ResourceAdmissionService resourceAdmissionService(
+            BpmResourcePolicyMapper policyMapper,
+            BpmResourceUsageMapper usageMapper,
+            BpmResourceRejectLogMapper rejectLogMapper,
+            TenantRateBuckets rateBuckets,
+            PlatformTransactionManager txManager) {
+        return new ResourceAdmissionService(
                 policyMapper, usageMapper, rejectLogMapper, rateBuckets, txManager);
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.ResourceFactView resourceFactView(
-            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
-        return new com.sw.ck.bpm.process.service.ResourceFactView(jdbcTemplate);
+    public ResourceFactView resourceFactView(
+            JdbcTemplate jdbcTemplate) {
+        return new ResourceFactView(jdbcTemplate);
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.ResourceReleaseService resourceReleaseService(
-            com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+    public ResourceReleaseService resourceReleaseService(
+            ResourceAdmissionService admissionService,
             BpmCommandServiceImpl commandService,
-            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
-        return new com.sw.ck.bpm.process.service.ResourceReleaseService(
+            JdbcTemplate jdbcTemplate) {
+        return new ResourceReleaseService(
                 admissionService, commandService, jdbcTemplate);
     }
 
     @Bean
-    public com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob resourceAssuranceReconcileJob(
+    public ResourceAssuranceReconcileJob resourceAssuranceReconcileJob(
             BpmCommandServiceImpl commandService,
-            com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-            com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper usageMapper,
-            com.sw.ck.bpm.process.service.ResourceFactView factView) {
-        return new com.sw.ck.bpm.process.queue.ResourceAssuranceReconcileJob(
+            ResourceReleaseService releaseService,
+            BpmResourceUsageMapper usageMapper,
+            ResourceFactView factView) {
+        return new ResourceAssuranceReconcileJob(
                 commandService, releaseService, usageMapper, factView);
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.LightProcessClassifier lightProcessClassifier(
-            com.sw.ck.bpm.process.mapper.BpmProcessDefMapper processDefMapper) {
-        return new com.sw.ck.bpm.process.service.LightProcessClassifier(processDefMapper);
+    public LightProcessClassifier lightProcessClassifier(
+            BpmProcessDefMapper processDefMapper) {
+        return new LightProcessClassifier(processDefMapper);
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.ResourcePolicyService resourcePolicyService(
-            com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper policyMapper,
-            com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper rejectLogMapper,
-            org.springframework.context.ApplicationContext applicationContext,
-            org.springframework.core.env.Environment environment,
-            org.springframework.transaction.PlatformTransactionManager transactionManager) {
-        return new com.sw.ck.bpm.process.service.impl.ResourcePolicyServiceImpl(
+    public ResourcePolicyService resourcePolicyService(
+            BpmResourcePolicyMapper policyMapper,
+            BpmResourceRejectLogMapper rejectLogMapper,
+            ApplicationContext applicationContext,
+            Environment environment,
+            PlatformTransactionManager transactionManager) {
+        return new ResourcePolicyServiceImpl(
                 policyMapper, rejectLogMapper, applicationContext, environment, transactionManager);
     }
 
     @Bean
     public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService,
                                                      BpmCommandEffectMapper effectMapper,
-                                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+                                                     ResourceReleaseService releaseService,
+                                                     ResourceAdmissionService admissionService) {
         // 隔离队列状态机夹具；租户权威与行锁在 bootstrap H2/PG 入口专项验证。
         return new PersistentBpmCommandQueue(commandService, effectMapper, releaseService, admissionService,
                 (tenantId, claim) -> claim.getAsInt());

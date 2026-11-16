@@ -2,14 +2,21 @@ package com.sw.ck.bootstrap;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
+
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.GlobalExceptionHandler;
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.trace.EventRef;
+import com.sw.ck.form.api.exception.FormErrorCode;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.mock.http.MockHttpInputMessage;
@@ -23,9 +30,10 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import jakarta.servlet.http.HttpServletRequest;
-
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -80,13 +88,13 @@ class P61DiagnosticBoundaryTest {
         // 客户端可携带任意头（含注入内容），事件引用一律由服务端生成，不取该头的值
         when(request.getHeader(EventRef.HEADER)).thenReturn(clientHeaderValue);
         // 让 mock 具备真实请求属性行为：EventRef 依赖属性在请求内缓存引用
-        java.util.Map<String, Object> attributes = new java.util.HashMap<>();
-        when(request.getAttribute(org.mockito.ArgumentMatchers.anyString()))
+        Map<String, Object> attributes = new HashMap<>();
+        when(request.getAttribute(ArgumentMatchers.anyString()))
                 .thenAnswer(inv -> attributes.get((String) inv.getArgument(0)));
-        org.mockito.Mockito.doAnswer(inv -> {
+        Mockito.doAnswer(inv -> {
             attributes.put((String) inv.getArgument(0), inv.getArgument(1));
             return null;
-        }).when(request).setAttribute(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+        }).when(request).setAttribute(ArgumentMatchers.anyString(), ArgumentMatchers.any());
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
     }
 
@@ -103,7 +111,7 @@ class P61DiagnosticBoundaryTest {
 
     private String render(ILoggingEvent event) {
         StringBuilder sb = new StringBuilder(event.getFormattedMessage());
-        ch.qos.logback.classic.spi.IThrowableProxy proxy = event.getThrowableProxy();
+        IThrowableProxy proxy = event.getThrowableProxy();
         while (proxy != null) {
             sb.append('\n').append(proxy.getClassName()).append(": ").append(proxy.getMessage());
             proxy = proxy.getCause();
@@ -222,8 +230,8 @@ class P61DiagnosticBoundaryTest {
     @Test
     @DisplayName("业务异常：errorKey 与 eventRef 同时外显，文案原样保留")
     void baseException_shouldExposeErrorKeyAndEventRef() {
-        com.sw.ck.common.exception.BaseException ex = new com.sw.ck.common.exception.BaseException(
-                com.sw.ck.form.api.exception.FormErrorCode.VERSION_CONFLICT);
+        BaseException ex = new BaseException(
+                FormErrorCode.VERSION_CONFLICT);
 
         R<Void> result = handler.handleBaseException(ex);
 
@@ -232,7 +240,7 @@ class P61DiagnosticBoundaryTest {
         assertThat(result.getEventRef())
                 .as("事件引用必须是服务端权威值，不采用客户端头")
                 .startsWith("req-");
-        assertThat(result.getMsg()).isEqualTo(com.sw.ck.form.api.exception.FormErrorCode
+        assertThat(result.getMsg()).isEqualTo(FormErrorCode
                 .VERSION_CONFLICT.getMessage());
     }
 

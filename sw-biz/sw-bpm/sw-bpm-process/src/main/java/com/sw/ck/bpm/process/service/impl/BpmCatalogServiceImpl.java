@@ -1,7 +1,12 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.process.dto.CatalogItemDTO;
+import com.sw.ck.bpm.process.dto.CategoryCountsDTO;
+import com.sw.ck.bpm.process.dto.CategoryDTO;
 import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -15,40 +20,34 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /** 流程中心事项目录服务实现。 */
 @Service
+@Log4j2
 public class BpmCatalogServiceImpl implements BpmCatalogService {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmCatalogServiceImpl.class);
 
     /** 扫描上限：租户内目录规模小，超出视为异常规模，拒绝而非全量加载。 */
     private static final long SCAN_LIMIT = 500L;
 
     private static final long UNCATEGORIZED = 0L;
 
-    private final BpmProcessDefMapper processDefMapper;
-    private final BpmCategoryMapper categoryMapper;
-    private final BpmFormBindingService bindingService;
-    private final FormDefinitionService formDefinitionService;
-
-    public BpmCatalogServiceImpl(BpmProcessDefMapper processDefMapper,
-                                 BpmCategoryMapper categoryMapper,
-                                 BpmFormBindingService bindingService,
-                                 FormDefinitionService formDefinitionService) {
-        this.processDefMapper = processDefMapper;
-        this.categoryMapper = categoryMapper;
-        this.bindingService = bindingService;
-        this.formDefinitionService = formDefinitionService;
-    }
+    @Autowired
+    private BpmProcessDefMapper processDefMapper;
+    @Autowired
+    private BpmCategoryMapper categoryMapper;
+    @Autowired
+    private BpmFormBindingService bindingService;
+    @Autowired
+    private FormDefinitionService formDefinitionService;
 
     @Override
     public PageResult<CatalogItemDTO> listPortalItems(String keyword, Long categoryId, PageParam pageParam) {
@@ -62,23 +61,23 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
     }
 
     @Override
-    public Map<Long, Long> portalCategoryCounts() {
+    public CategoryCountsDTO portalCategoryCounts() {
         // 未分类（categoryId=null）归入 key 0 统计，保证「未分类」页签计数与卡片一致
-        return loadDefs(null).stream()
+        return new CategoryCountsDTO(loadDefs(null).stream()
                 .map(this::toPortalItem)
                 .filter(Objects::nonNull)
                 .collect(Collectors.groupingBy(
                         item -> item.getCategoryId() == null ? UNCATEGORIZED : item.getCategoryId(),
-                        Collectors.counting()));
+                        Collectors.counting())));
     }
 
     @Override
-    public java.util.List<com.sw.ck.bpm.process.dto.CategoryDTO> portalCategories() {
+    public List<CategoryDTO> portalCategories() {
         return categoryMapper.selectList(
-                        Wrappers.<com.sw.ck.bpm.process.entity.BpmCategory>lambdaQuery()
-                                .orderByAsc(com.sw.ck.bpm.process.entity.BpmCategory::getSortNo))
+                        Wrappers.<BpmCategory>lambdaQuery()
+                                .orderByAsc(BpmCategory::getSortNo))
                 .stream()
-                .map(category -> com.sw.ck.bpm.process.dto.CategoryDTO.builder()
+                .map(category -> CategoryDTO.builder()
                         .id(category.getId())
                         .name(category.getName())
                         .sortNo(category.getSortNo())
@@ -144,12 +143,12 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
             return null;
         }
         // empty = 该 formKey 无表单定义（原 null 返回路径）：不可见，返回 null 不泄漏存在性
-        java.util.Optional<FormDefDTO> formLookup = formDefinitionService.getFormDef(def.getFormKey());
+        Optional<FormDefDTO> formLookup = formDefinitionService.getFormDef(def.getFormKey());
         if (formLookup.isEmpty() || !"PUBLISHED".equals(formLookup.get().getStatus())) {
             return null;
         }
         // empty = formKey 空白缺少判定目标：与不可发起同判不可见（fail closed）
-        java.util.Optional<Boolean> initiateDecision =
+        Optional<Boolean> initiateDecision =
                 formDefinitionService.canCurrentUserInitiate(def.getFormKey());
         if (!(initiateDecision.isPresent() && initiateDecision.get())) {
             return null;
@@ -169,7 +168,7 @@ public class BpmCatalogServiceImpl implements BpmCatalogService {
     private CatalogItemDTO toAdminItem(BpmProcessDef def) {
         BpmFormBinding binding = findActiveBinding(def.getProcessKey());
         // empty = 该 formKey 无表单定义（原 null 返回路径）：视为未发布
-        java.util.Optional<FormDefDTO> formLookup = formDefinitionService.getFormDef(def.getFormKey());
+        Optional<FormDefDTO> formLookup = formDefinitionService.getFormDef(def.getFormKey());
         boolean formPublished = formLookup.isPresent()
                 && "PUBLISHED".equals(formLookup.get().getStatus());
         return CatalogItemDTO.builder()

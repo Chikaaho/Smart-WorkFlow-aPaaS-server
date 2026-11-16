@@ -1,6 +1,8 @@
 package com.sw.ck.system.controller;
 
 import com.sw.ck.common.response.R;
+import com.sw.ck.security.jwt.JwtProperties;
+import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.model.TokenResponse;
 import com.sw.ck.system.security.SystemErrorKeys;
@@ -8,12 +10,16 @@ import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.TenantValidityService;
 import com.sw.ck.system.sso.SsoAuthService;
+import com.sw.ck.system.sso.SsoCallbackPolicy;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,7 +38,7 @@ class SsoTicketExchangeConfigChangeTest {
 
     private SsoTicketStore ticketStore;
     private SsoAuthService ssoAuthService;
-    private com.sw.ck.security.jwt.JwtTokenProvider jwtTokenProvider;
+    private JwtTokenProvider jwtTokenProvider;
     private RefreshTokenService refreshTokenService;
     private SsoAuthController controller;
 
@@ -40,10 +46,10 @@ class SsoTicketExchangeConfigChangeTest {
     void setUp() {
         ticketStore = new SsoTicketStore();
         ssoAuthService = Mockito.mock(SsoAuthService.class);
-        var callbackPolicy = new com.sw.ck.system.sso.SsoCallbackPolicy("", java.util.List.of(), "");
+        var callbackPolicy = new SsoCallbackPolicy("", List.of(), "");
         var sysUserService = Mockito.mock(SysUserService.class);
-        jwtTokenProvider = Mockito.mock(com.sw.ck.security.jwt.JwtTokenProvider.class);
-        var jwtProperties = Mockito.mock(com.sw.ck.security.jwt.JwtProperties.class);
+        jwtTokenProvider = Mockito.mock(JwtTokenProvider.class);
+        var jwtProperties = Mockito.mock(JwtProperties.class);
         refreshTokenService = Mockito.mock(RefreshTokenService.class);
         var tenantValidityService = Mockito.mock(TenantValidityService.class);
         Mockito.doNothing().when(tenantValidityService).requireValid(Mockito.any());
@@ -71,7 +77,7 @@ class SsoTicketExchangeConfigChangeTest {
         Mockito.when(ssoAuthService.currentConfigDigestFor("WECOM", 1L)).thenReturn(currentDigest);
         String ticket = ticketStore.issue(7L, 1L, "WECOM", OLD_DIGEST);
         return controller.exchangeTicket(Map.of("ticket", ticket),
-                Mockito.mock(jakarta.servlet.http.HttpServletResponse.class));
+                Mockito.mock(HttpServletResponse.class));
     }
 
     @Test

@@ -10,13 +10,21 @@ import com.sw.ck.system.model.TokenResponse;
 import com.sw.ck.system.security.LoginChallengeService;
 import com.sw.ck.system.security.LoginChallengeStore;
 import com.sw.ck.system.security.LoginSecurityProperties;
+import com.sw.ck.system.security.PngCaptchaRenderer;
 import com.sw.ck.system.security.RsaLoginKeyManager;
+import com.sw.ck.system.service.AuditLogService;
 import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.TenantValidityService;
+
 import jakarta.servlet.http.Cookie;
+import java.lang.reflect.Field;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -60,19 +68,19 @@ class AuthControllerTest {
     private final LoginChallengeTestSupport.TestableLoginChallengeService challengeService =
             new LoginChallengeTestSupport.TestableLoginChallengeService(
                     challengeStore, keyManager, testProps(),
-                    new com.sw.ck.system.security.PngCaptchaRenderer());
+                    new PngCaptchaRenderer());
     private final AuthController controller = new AuthController(
             userDetailsProvider, passwordEncoder, jwtTokenProvider, sysUserService,
             jwtProperties, refreshTokenService, loginUserLoader,
             challengeService, keyManager,
             alwaysValidTenantService(),
-            mock(com.sw.ck.system.service.AuditLogService.class));
+            mock(AuditLogService.class));
 
     /** 默认租户校验替身：非空租户一律有效（租户拒绝分支由 I5 集成测试覆盖）。 */
-    private com.sw.ck.system.service.TenantValidityService alwaysValidTenantService() {
-        com.sw.ck.system.service.TenantValidityService service =
-                mock(com.sw.ck.system.service.TenantValidityService.class);
-        when(service.isValid(org.mockito.ArgumentMatchers.any())).thenReturn(true);
+    private TenantValidityService alwaysValidTenantService() {
+        TenantValidityService service =
+                mock(TenantValidityService.class);
+        when(service.isValid(ArgumentMatchers.any())).thenReturn(true);
         return service;
     }
 
@@ -283,7 +291,7 @@ class AuthControllerTest {
 
         assertThat(first.getCode()).as("首次提交应成功").isZero();
         assertThat(second.getCode()).as("重复提交应被拒绝").isEqualTo(CAPTCHA_ERROR);
-        verify(jwtTokenProvider, org.mockito.Mockito.times(1)).generateToken(1L);
+        verify(jwtTokenProvider, Mockito.times(1)).generateToken(1L);
     }
 
     // ==================== 账号状态 ====================
@@ -320,10 +328,10 @@ class AuthControllerTest {
     @Test
     @DisplayName("生产前缀路径下 cookie Path 覆盖 /sw-server/api/auth/")
     void login_prodPath_shouldSetCookiePathToPublicPrefix() throws Exception {
-        java.lang.reflect.Field pathField = AuthController.class.getDeclaredField("cookiePath");
+        Field pathField = AuthController.class.getDeclaredField("cookiePath");
         pathField.setAccessible(true);
         pathField.set(controller, "/sw-server/api/auth/");
-        java.lang.reflect.Field secureField = AuthController.class.getDeclaredField("cookieSecure");
+        Field secureField = AuthController.class.getDeclaredField("cookieSecure");
         secureField.setAccessible(true);
         secureField.set(controller, true);
 

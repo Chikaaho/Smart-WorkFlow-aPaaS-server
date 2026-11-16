@@ -22,22 +22,36 @@ import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler;
+import com.sw.ck.bpm.process.queue.FlowStartCommandHandler;
+import com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand;
+import com.sw.ck.form.service.FormSubmitService;
+import com.sw.ck.security.spi.UserDetailsProvider;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.security.KeyPairGenerator;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -86,22 +100,22 @@ class P62CompatRollbackPgTest {
         props.put("sw.security.jwt.secret", "p62-compat-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-compat-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.txn-batch.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-compat", props));
+                            new MapPropertySource("p62-compat", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62CompatLoginContextProvider", provider);
                 })
                 .run();
@@ -162,7 +176,7 @@ class P62CompatRollbackPgTest {
 
         // —— 旧消费者（仅注册 FLOW_START 处理器，等效旧版本调度器）：新类型显式失败保留 ——
         CommandEnvelope legacyClaimed = claimBy(commandId);
-        com.sw.ck.bpm.process.queue.CommandDispatcher legacyDispatcher =
+        CommandDispatcher legacyDispatcher =
                 new CommandDispatcher(queue, List.of(new LegacyOnlyFlowStartHandler()));
         legacyDispatcher.dispatchOneForTest(legacyClaimed);
         BpmCommand legacyFailed = asOperator(() -> commandMapper.selectById(commandId));
@@ -184,14 +198,14 @@ class P62CompatRollbackPgTest {
         requeue.setCommandId(commandId);
         requeue.setTenantId(TENANT);
         requeue.setCommandKey("BATCH:compat-batch-01");
-        asOperator(() -> app.getBean(org.springframework.transaction.support.TransactionTemplate.class)
+        asOperator(() -> app.getBean(TransactionTemplate.class)
                 .execute(status -> queue.requeueFailed(requeue)));
         assertThat(asOperator(() -> commandMapper.selectById(commandId)).getStatus()).isEqualTo("PENDING");
         CommandEnvelope upgradedClaim = claimBy(commandId);
         // 协调升级后的新消费者按生产语义装配：正式身份 SPI 回查（回查最新权限，不沿用受理快照）
-        com.sw.ck.bpm.process.queue.CommandDispatcher upgradedDispatcher =
-                new com.sw.ck.bpm.process.queue.CommandDispatcher(queue, upgradedHandlers(),
-                        app.getBean(com.sw.ck.security.spi.UserDetailsProvider.class));
+        CommandDispatcher upgradedDispatcher =
+                new CommandDispatcher(queue, upgradedHandlers(),
+                        app.getBean(UserDetailsProvider.class));
         upgradedDispatcher.dispatchOneForTest(upgradedClaim);
         assertThat(asOperator(() -> commandMapper.selectById(commandId)).getStatus())
                 .as("升级后消费完成").isEqualTo("COMPLETED");
@@ -229,14 +243,14 @@ class P62CompatRollbackPgTest {
 
         // 模拟升级窗口中断前 item-d 已产生真实业务效果（稳定项幂等键已占用），
         // 但项结果行尚未写终态（中断点）
-        asOperator(() -> txnActionPort.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+        asOperator(() -> txnActionPort.invoke(new TxnActionCommand(
                 actionId, recordD, "2", "BATCH:compat-batch-02:item-d", null, null, 1)));
         assertThat(reservedOf(recordD)).isEqualByComparingTo("2");
 
         // 恢复升级：重入消费只处理 PENDING 项（item-c）；item-d 经动作内核幂等重放原结果，不叠加
         CommandEnvelope claim = claimBy(commandId);
-        com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler handler =
-                app.getBean(com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler.class);
+        BatchInvokeCommandHandler handler =
+                app.getBean(BatchInvokeCommandHandler.class);
         asOperator(() -> {
             handler.handle(claim);
             return null;
@@ -272,15 +286,15 @@ class P62CompatRollbackPgTest {
     /** 新版全量处理器集合（含 BATCH_INVOKE）。 */
     private List<BpmCommandHandler> upgradedHandlers() {
         return List.of(
-                app.getBean(com.sw.ck.bpm.process.queue.FlowStartCommandHandler.class),
-                app.getBean(com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler.class));
+                app.getBean(FlowStartCommandHandler.class),
+                app.getBean(BatchInvokeCommandHandler.class));
     }
 
     /** 旧版本消费者等效：只识别 FLOW_START，不认识 BATCH_INVOKE。 */
     static class LegacyOnlyFlowStartHandler implements BpmCommandHandler {
         @Override
-        public java.util.Set<CommandTypeEnum> types() {
-            return java.util.Set.of(CommandTypeEnum.FLOW_START);
+        public Set<CommandTypeEnum> types() {
+            return Set.of(CommandTypeEnum.FLOW_START);
         }
 
         @Override
@@ -332,8 +346,8 @@ class P62CompatRollbackPgTest {
 
     private String submit(String material, String available) {
         return asOperator(() -> {
-            com.sw.ck.form.service.FormSubmitService submitService =
-                    app.getBean(com.sw.ck.form.service.FormSubmitService.class);
+            FormSubmitService submitService =
+                    app.getBean(FormSubmitService.class);
             return submitService.submitForm(FORM_KEY,
                     data("material", material, "qty_available", available, "qty_reserved", "0"),
                     null, null, null);
@@ -381,9 +395,9 @@ class P62CompatRollbackPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);

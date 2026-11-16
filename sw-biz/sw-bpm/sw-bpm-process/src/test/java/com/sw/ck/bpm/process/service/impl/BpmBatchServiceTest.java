@@ -2,6 +2,7 @@ package com.sw.ck.bpm.process.service.impl;
 
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
+import com.sw.ck.bpm.process.dto.BatchActionResultDTO;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.bpm.process.service.BpmBatchService;
 import com.sw.ck.common.exception.BaseException;
@@ -37,7 +38,7 @@ class BpmBatchServiceTest {
         when(lifecycle.execute(eq("t3"), any(ApprovalActionRequest.class)))
                 .thenThrow(new BaseException(403, "无权限"));
 
-        List<Map<String, Object>> results = service.batchAction(List.of(
+        List<BatchActionResultDTO> results = service.batchAction(List.of(
                 new BpmBatchService.BatchItem("t1", ApprovalAction.APPROVE, "ok",
                         null, null, Map.of(), null),
                 new BpmBatchService.BatchItem("t2", ApprovalAction.APPROVE, null,
@@ -46,11 +47,14 @@ class BpmBatchServiceTest {
                         null, null, Map.of(), null)));
 
         assertThat(results).hasSize(3);
-        assertThat(results.get(0)).containsEntry("taskId", "t1").containsEntry("success", true);
-        assertThat(results.get(1)).containsEntry("taskId", "t2").containsEntry("success", false)
-                .containsEntry("errorCode", 2308);
-        assertThat(results.get(2)).containsEntry("taskId", "t3").containsEntry("success", false)
-                .containsEntry("errorCode", 403);
+        assertThat(results.get(0).getTaskId()).isEqualTo("t1");
+        assertThat(results.get(0).isSuccess()).isTrue();
+        assertThat(results.get(1).getTaskId()).isEqualTo("t2");
+        assertThat(results.get(1).isSuccess()).isFalse();
+        assertThat(results.get(1).getErrorCode()).isEqualTo(2308);
+        assertThat(results.get(2).getTaskId()).isEqualTo("t3");
+        assertThat(results.get(2).isSuccess()).isFalse();
+        assertThat(results.get(2).getErrorCode()).isEqualTo(403);
         verify(lifecycle, times(3)).execute(any(), any());
     }
 

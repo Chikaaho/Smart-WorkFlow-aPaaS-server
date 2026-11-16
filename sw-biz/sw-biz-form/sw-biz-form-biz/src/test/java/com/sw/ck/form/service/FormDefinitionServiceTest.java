@@ -9,17 +9,28 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableManager;
 import com.sw.ck.form.entity.*;
+import com.sw.ck.form.entity.FormBaseEntity;
+import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.service.impl.FormDefServiceImpl;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.user.UserOptionDTO;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,11 +46,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.apache.ibatis.session.SqlSessionFactory;
 
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -80,24 +97,24 @@ class FormDefinitionServiceTest {
     private FormSnapshotMapper formSnapshotMapper;
 
     @Autowired
-    private com.sw.ck.form.dynamic.DynamicTableManager dynamicTableManager;
+    private DynamicTableManager dynamicTableManager;
 
     /** 测试中创建的动态宽表名，在 @AfterEach 中清理 */
-    private final java.util.ArrayList<String> createdTables = new java.util.ArrayList<>();
+    private final ArrayList<String> createdTables = new ArrayList<>();
 
     /** 测试中创建的 form ID，在 @AfterEach 中清理 */
-    private final java.util.ArrayList<String> createdFormIds = new java.util.ArrayList<>();
+    private final ArrayList<String> createdFormIds = new ArrayList<>();
 
     // ==================== 设置/清理 ====================
 
     @BeforeEach
     void setUp() {
         // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
-        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
-            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+        if (LoginUserHolder.get() == null) {
+            LoginUser i5TenantZeroSetup = new LoginUser();
             i5TenantZeroSetup.setUserId(0L);
             i5TenantZeroSetup.setTenantId(0L);
-            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+            LoginUserHolder.set(i5TenantZeroSetup);
         }
         createMetadataTables();
     }
@@ -457,7 +474,7 @@ class FormDefinitionServiceTest {
         FormDefEntity entity = formDefMapper.selectById(draft.getId());
         createdTables.add(entity.getPhysicalTableName());
         assertThat(entity.getSubTableMapping()).contains("items");
-        Map<String, Object> mapping = new com.fasterxml.jackson.databind.ObjectMapper()
+        Map<String, Object> mapping = new ObjectMapper()
                 .readValue(entity.getSubTableMapping(), Map.class);
         createdTables.add(String.valueOf(mapping.get("items")));
 
@@ -673,70 +690,70 @@ class FormDefinitionServiceTest {
         jdbcTemplate.update("UPDATE sw_form_def SET create_by = NULL WHERE id = ?", d3.getId());
 
         // stub 门面：101 → 张三；999 未命中应保持 null
-        com.sw.ck.system.api.user.UserQueryFacade stubFacade =
-                new com.sw.ck.system.api.user.UserQueryFacade() {
+        UserQueryFacade stubFacade =
+                new UserQueryFacade() {
                     @Override
-                    public java.util.Optional<List<com.sw.ck.system.api.user.UserOptionDTO>> searchActiveUsers(
+                    public Optional<List<UserOptionDTO>> searchActiveUsers(
                             String keyword, int limit) {
-                        return java.util.Optional.empty();
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<Map<Long, String>> getUserDisplayNames(
-                            java.util.Collection<Long> ids) {
-                        Map<Long, String> names = new java.util.HashMap<>();
+                    public Optional<Map<Long, String>> getUserDisplayNames(
+                            Collection<Long> ids) {
+                        Map<Long, String> names = new HashMap<>();
                         if (ids != null && ids.contains(101L)) {
                             names.put(101L, "张三");
                         }
-                        return java.util.Optional.of(names);
+                        return Optional.of(names);
                     }
 
                     @Override
-                    public java.util.Optional<List<Long>> findActiveUserIds(
-                            java.util.Collection<Long> ids) {
-                        return java.util.Optional.empty();
+                    public Optional<List<Long>> findActiveUserIds(
+                            Collection<Long> ids) {
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<List<Long>> findActiveUserIds(
-                            java.util.Collection<Long> ids, Long tenantId) {
-                        return java.util.Optional.empty();
+                    public Optional<List<Long>> findActiveUserIds(
+                            Collection<Long> ids, Long tenantId) {
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<List<Long>> findActiveUserIdsByRoleCodes(
-                            java.util.Collection<String> roleCodes) {
-                        return java.util.Optional.empty();
+                    public Optional<List<Long>> findActiveUserIdsByRoleCodes(
+                            Collection<String> roleCodes) {
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<List<Long>> findActiveUserIdsByRoleCodes(
-                            java.util.Collection<String> roleCodes, Long tenantId) {
-                        return java.util.Optional.empty();
+                    public Optional<List<Long>> findActiveUserIdsByRoleCodes(
+                            Collection<String> roleCodes, Long tenantId) {
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<List<Long>> findActiveUserIdsByDeptLeaders(
-                            java.util.Collection<Long> deptIds, Long tenantId) {
-                        return java.util.Optional.empty();
+                    public Optional<List<Long>> findActiveUserIdsByDeptLeaders(
+                            Collection<Long> deptIds, Long tenantId) {
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<List<Long>> findActiveUserIdsByPostCodes(
-                            java.util.Collection<String> postCodes, Long tenantId) {
-                        return java.util.Optional.empty();
+                    public Optional<List<Long>> findActiveUserIdsByPostCodes(
+                            Collection<String> postCodes, Long tenantId) {
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<List<Long>> findActiveUserIdsByDeptAndPost(
+                    public Optional<List<Long>> findActiveUserIdsByDeptAndPost(
                             Long deptId, String postCode, Long tenantId) {
-                        return java.util.Optional.empty();
+                        return Optional.empty();
                     }
 
                     @Override
-                    public java.util.Optional<java.util.Map<Long, Long>> findDeptLeaderMap(
-                            java.util.Collection<Long> deptIds, Long tenantId) {
-                        return java.util.Optional.empty();
+                    public Optional<Map<Long, Long>> findDeptLeaderMap(
+                            Collection<Long> deptIds, Long tenantId) {
+                        return Optional.empty();
                     }
                 };
         FormDefServiceImpl resolvingService = new FormDefServiceImpl(
@@ -752,7 +769,7 @@ class FormDefinitionServiceTest {
         PageResult<FormDefDTO> page = resolvingService.pageFormDefs(pageParam, null);
 
         // —— Assert：按 id 断言解析结果 ——
-        Map<String, FormDefDTO> byId = new java.util.HashMap<>();
+        Map<String, FormDefDTO> byId = new HashMap<>();
         page.getRecords().forEach(dto -> byId.put(dto.getId(), dto));
         assertThat(byId.get(d1.getId()).getCreateByName())
                 .as("已命中创建人应解析为展示名").isEqualTo("张三");
@@ -945,7 +962,7 @@ class FormDefinitionServiceTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -965,27 +982,27 @@ class FormDefinitionServiceTest {
             factory.setGlobalConfig(globalConfig);
 
             // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+            CommonMetaObjectHandler i5MetaObjectHandler =
+                    new CommonMetaObjectHandler(new LoginContextProvider() {
                         @Override public Long getUserId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getUserId() : null;
                         }
                         @Override public Long getTenantId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getTenantId() : null;
                         }
                         @Override public Long getDeptId() { return null; }
-                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        @Override public DataScopeType getDataScopeType() {
+                            return DataScopeType.ALL;
                         }
-                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                         @Override public boolean isSuperAdmin() { return false; }
                     });
             i5MetaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
-                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
+                    f.setId(new FormIdGenerator().generate());
                 }
             });
             globalConfig.setMetaObjectHandler(i5MetaObjectHandler);

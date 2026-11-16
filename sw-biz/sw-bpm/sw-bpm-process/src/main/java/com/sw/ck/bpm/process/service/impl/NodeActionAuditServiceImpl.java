@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.participant.NodeActionAuditPort;
@@ -16,16 +18,12 @@ import java.util.Optional;
 
 @Service
 public class NodeActionAuditServiceImpl implements NodeActionAuditPort {
-    private final CopyRecordMapper copyMapper;
-    private final BranchTraceMapper branchMapper;
-    private final ObjectMapper objectMapper;
-
-    public NodeActionAuditServiceImpl(CopyRecordMapper copyMapper, BranchTraceMapper branchMapper,
-                                      ObjectMapper objectMapper) {
-        this.copyMapper = copyMapper;
-        this.branchMapper = branchMapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private CopyRecordMapper copyMapper;
+    @Autowired
+    private BranchTraceMapper branchMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     @Transactional

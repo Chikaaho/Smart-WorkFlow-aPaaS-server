@@ -1,8 +1,21 @@
 package com.sw.ck.bpm.process.queue.support;
 
+import com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper;
+import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
+import com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler;
+import com.sw.ck.bpm.process.queue.BpmCommandQueue;
+import com.sw.ck.bpm.process.queue.CommandEffectRecorder;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
+import com.sw.ck.bpm.process.service.impl.TxnBatchServiceImpl;
 import com.sw.ck.form.api.port.FormTxnActionPort;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+
+import java.util.List;
+import java.util.Optional;
 
 /**
  * 资源保障测试装配：在队列隔离配置之上追加受控 Port 桩与批量命令处理器——
@@ -16,52 +29,52 @@ public class ResourceAssuranceTestConfig {
     public FormTxnActionPort stubFormTxnActionPort() {
         return new FormTxnActionPort() {
             @Override
-            public java.util.Optional<TxnActionResult> invoke(TxnActionCommand command) {
-                return java.util.Optional.of(new TxnActionResult("inv-" + command.invocationKey(),
+            public Optional<TxnActionResult> invoke(TxnActionCommand command) {
+                return Optional.of(new TxnActionResult("inv-" + command.invocationKey(),
                         "SUCCEEDED", 1, null, null, null, null, null, null, 1L, false));
             }
 
             @Override
-            public java.util.Optional<TxnActionDescriptor> describe(String actionId) {
-                return java.util.Optional.of(new TxnActionDescriptor(actionId, "form", "key",
+            public Optional<TxnActionDescriptor> describe(String actionId) {
+                return Optional.of(new TxnActionDescriptor(actionId, "form", "key",
                         "RESERVE", "PUBLISHED", 1));
             }
 
             @Override
-            public java.util.Optional<FormTxnActionPort.TxnInvocationSummary> findInvocationByKey(String invocationKey) {
-                return java.util.Optional.empty();
+            public Optional<FormTxnActionPort.TxnInvocationSummary> findInvocationByKey(String invocationKey) {
+                return Optional.empty();
             }
 
             @Override
-            public java.util.Optional<java.util.List<FormTxnActionPort.TxnInvocationSummary>> listInvocationsByBizRecord(
+            public Optional<List<FormTxnActionPort.TxnInvocationSummary>> listInvocationsByBizRecord(
                     String bizRecordId, int limit) {
-                return java.util.Optional.of(java.util.List.of());
+                return Optional.of(List.of());
             }
         };
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.impl.TxnBatchServiceImpl resourceTestTxnBatchService(
-            com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper batchMapper,
-            com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper itemMapper,
-            com.sw.ck.bpm.process.queue.BpmCommandQueue commandQueue,
+    public TxnBatchServiceImpl resourceTestTxnBatchService(
+            BpmCommandBatchMapper batchMapper,
+            BpmCommandBatchItemMapper itemMapper,
+            BpmCommandQueue commandQueue,
             FormTxnActionPort stubFormTxnActionPort,
-            com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        return new com.sw.ck.bpm.process.service.impl.TxnBatchServiceImpl(batchMapper, itemMapper,
+            ResourceAdmissionService admissionService) {
+        return new TxnBatchServiceImpl(batchMapper, itemMapper,
                 commandQueue, stubFormTxnActionPort, admissionService);
     }
 
     @Bean
-    public com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler resourceTestBatchInvokeCommandHandler(
-            com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper batchMapper,
-            com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper itemMapper,
-            com.sw.ck.bpm.process.queue.BpmCommandQueue commandQueue,
+    public BatchInvokeCommandHandler resourceTestBatchInvokeCommandHandler(
+            BpmCommandBatchMapper batchMapper,
+            BpmCommandBatchItemMapper itemMapper,
+            BpmCommandQueue commandQueue,
             FormTxnActionPort stubFormTxnActionPort,
-            com.sw.ck.bpm.process.queue.CommandEffectRecorder effectRecorder,
-            org.springframework.transaction.PlatformTransactionManager txManager,
-            com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-            com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        return new com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler(batchMapper, itemMapper,
+            CommandEffectRecorder effectRecorder,
+            PlatformTransactionManager txManager,
+            ResourceReleaseService releaseService,
+            ResourceAdmissionService admissionService) {
+        return new BatchInvokeCommandHandler(batchMapper, itemMapper,
                 commandQueue, stubFormTxnActionPort, effectRecorder, txManager, releaseService,
                 admissionService);
     }

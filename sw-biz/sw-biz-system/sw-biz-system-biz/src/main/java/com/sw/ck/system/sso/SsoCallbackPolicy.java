@@ -1,5 +1,6 @@
 package com.sw.ck.system.sso;
 
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -19,18 +20,19 @@ import java.util.List;
 public class SsoCallbackPolicy {
 
     /** 服务端对外基址（https://host[/prefix]）；空 = 相对路径模式 */
-    private final String callbackBaseUrl;
+    @Value("${sw.security.sso.callback-base-url:}")
+    private String callbackBaseUrl = "";
 
     /** 允许的回调 URL 前缀白名单（配置为空时仅允许相对路径模式） */
-    private final List<String> callbackAllowlist;
+    @Value("${sw.security.sso.callback-allowlist:}")
+    private List<String> callbackAllowlist = List.of();
 
     /** 前端 SPA 基路径（如 /sw）；空 = 前端与回调同根部署 */
-    private final String frontendBasePath;
+    @Value("${sw.security.sso.frontend-base-path:}")
+    private String frontendBasePath = "";
 
-    public SsoCallbackPolicy(
-            @Value("${sw.security.sso.callback-base-url:}") String callbackBaseUrl,
-            @Value("${sw.security.sso.callback-allowlist:}") List<String> callbackAllowlist,
-            @Value("${sw.security.sso.frontend-base-path:}") String frontendBasePath) {
+    @PostConstruct
+    void initPolicy() {
         this.callbackBaseUrl = callbackBaseUrl == null ? "" : callbackBaseUrl.trim();
         this.callbackAllowlist = callbackAllowlist == null ? List.of()
                 : callbackAllowlist.stream().filter(v -> v != null && !v.isBlank()).map(String::trim).toList();

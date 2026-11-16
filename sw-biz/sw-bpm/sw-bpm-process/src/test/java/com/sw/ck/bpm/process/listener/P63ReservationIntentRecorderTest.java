@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.listener;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
@@ -13,6 +14,9 @@ import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.api.IotDeviceFacade;
+
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,10 +24,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,18 +50,18 @@ class P63ReservationIntentRecorderTest {
     private BpmIotReservationIntentRecorder recorder;
 
     /** createIntent 16 参捕获（拍平契约的参数断言载体）。 */
-    private final java.util.concurrent.atomic.AtomicReference<Object[]> capturedArgs =
-            new java.util.concurrent.atomic.AtomicReference<>();
+    private final AtomicReference<Object[]> capturedArgs =
+            new AtomicReference<>();
 
     @BeforeAll
     static void initTableInfo() {
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 BpmInstance.class);
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 BpmProcessDef.class);
     }
 
@@ -62,17 +69,17 @@ class P63ReservationIntentRecorderTest {
     @AfterEach
     void txState() {
         // 事件在审批事务内发布：测试显式声明事务可见性
-        org.springframework.transaction.support.TransactionSynchronizationManager
+        TransactionSynchronizationManager
                 .setActualTransactionActive(false);
     }
 
     private void inTx(Runnable action) {
-        org.springframework.transaction.support.TransactionSynchronizationManager
+        TransactionSynchronizationManager
                 .setActualTransactionActive(true);
         try {
             action.run();
         } finally {
-            org.springframework.transaction.support.TransactionSynchronizationManager
+            TransactionSynchronizationManager
                     .setActualTransactionActive(false);
         }
     }
@@ -157,7 +164,7 @@ class P63ReservationIntentRecorderTest {
         assertThat((String) a[13]).isEqualTo("Asia/Shanghai");
         assertThat((Integer) a[15]).isEqualTo(120);
         // UTC 时刻 = 本地 14:30（UTC+8）− 8h = 06:30
-        assertThat(((java.time.LocalDateTime) a[12]).toLocalTime().toString()).startsWith("06:30");
+        assertThat(((LocalDateTime) a[12]).toLocalTime().toString()).startsWith("06:30");
 
         // 非成功终态零预约（同一装配，无新增意图）
         inTx(() -> recorder.onProcessApproved(new BpmNotifyEvent(

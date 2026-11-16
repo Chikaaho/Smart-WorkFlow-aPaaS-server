@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -19,11 +21,8 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/system/post-delegate")
 public class PostDelegateController {
 
-    private final PositionDelegateService positionDelegateService;
-
-    public PostDelegateController(PositionDelegateService positionDelegateService) {
-        this.positionDelegateService = positionDelegateService;
-    }
+    @Autowired
+    private PositionDelegateService positionDelegateService;
 
     /**
      * 分页查询委托关系。

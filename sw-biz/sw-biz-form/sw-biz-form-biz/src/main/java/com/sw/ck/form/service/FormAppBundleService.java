@@ -1,8 +1,11 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.bundle.FormAppBundleDatasourcePort;
 import com.sw.ck.form.api.bundle.FormAppBundleProcessPort;
@@ -35,13 +38,14 @@ import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.dict.DictItemDTO;
 import com.sw.ck.system.api.dict.DictTypeDetailDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StreamUtils;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -53,8 +57,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 应用整包导入导出服务（0.2.2 F2，D022-10～15）。
  *
@@ -76,9 +82,8 @@ import java.util.stream.Collectors;
  * 不允许残留在任何包内文档中；key 类引用按改写位置复核。任一残留即抛错回滚。
  */
 @Service
+@Log4j2
 public class FormAppBundleService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormAppBundleService.class);
 
     /** 导入包大小上限（容器 multipart 上限 6MB，业务层结构化拒绝） */
     public static final int MAX_BUNDLE_FILE_BYTES = 5 * 1024 * 1024;
@@ -87,55 +92,38 @@ public class FormAppBundleService {
     private static final String FORM_TYPE_OPINION = "APPROVAL_COMMENT";
     private static final String STATUS_DRAFT = "DRAFT";
 
-    private final FormAppMapper formAppMapper;
-    private final FormAppDirMapper formAppDirMapper;
-    private final FormAppScopeMapper formAppScopeMapper;
-    private final FormDefMapper formDefMapper;
-    private final FormConfigMapper formConfigMapper;
-    private final FormListConfigMapper formListConfigMapper;
-    private final FormExtQueryMapper formExtQueryMapper;
-    private final TxnActionMapper txnActionMapper;
-    private final FormAppImportRecordMapper importRecordMapper;
-    private final FormIdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
-    private final ObjectProvider<FormAppBundleProcessPort> processPort;
-    private final ObjectProvider<FormAppBundleDatasourcePort> datasourcePort;
+    @Autowired
+    private FormAppMapper formAppMapper;
+    @Autowired
+    private FormAppDirMapper formAppDirMapper;
+    @Autowired
+    private FormAppScopeMapper formAppScopeMapper;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private FormListConfigMapper formListConfigMapper;
+    @Autowired
+    private FormExtQueryMapper formExtQueryMapper;
+    @Autowired
+    private TxnActionMapper txnActionMapper;
+    @Autowired
+    private FormAppImportRecordMapper importRecordMapper;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private ObjectProvider<FormAppBundleProcessPort> processPort;
+    @Autowired
+    private ObjectProvider<FormAppBundleDatasourcePort> datasourcePort;
     // 字典读写与占用探测走 DictFacade（模块边界铁律：form 禁止直查 sys_dict_*）；
     // 角色/岗位存在性走 UserQueryFacade。经 ObjectProvider 防御模块未装配。
-    private final ObjectProvider<DictFacade> dictFacade;
-    private final ObjectProvider<UserQueryFacade> userQueryFacade;
-
-    public FormAppBundleService(FormAppMapper formAppMapper,
-                                FormAppDirMapper formAppDirMapper,
-                                FormAppScopeMapper formAppScopeMapper,
-                                FormDefMapper formDefMapper,
-                                FormConfigMapper formConfigMapper,
-                                FormListConfigMapper formListConfigMapper,
-                                FormExtQueryMapper formExtQueryMapper,
-                                TxnActionMapper txnActionMapper,
-                                FormAppImportRecordMapper importRecordMapper,
-                                FormIdGenerator idGenerator,
-                                ObjectMapper objectMapper,
-                                ObjectProvider<FormAppBundleProcessPort> processPort,
-                                ObjectProvider<FormAppBundleDatasourcePort> datasourcePort,
-                                ObjectProvider<DictFacade> dictFacade,
-                                ObjectProvider<UserQueryFacade> userQueryFacade) {
-        this.formAppMapper = formAppMapper;
-        this.formAppDirMapper = formAppDirMapper;
-        this.formAppScopeMapper = formAppScopeMapper;
-        this.formDefMapper = formDefMapper;
-        this.formConfigMapper = formConfigMapper;
-        this.formListConfigMapper = formListConfigMapper;
-        this.formExtQueryMapper = formExtQueryMapper;
-        this.txnActionMapper = txnActionMapper;
-        this.importRecordMapper = importRecordMapper;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-        this.processPort = processPort;
-        this.datasourcePort = datasourcePort;
-        this.dictFacade = dictFacade;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private ObjectProvider<DictFacade> dictFacade;
+    @Autowired
+    private ObjectProvider<UserQueryFacade> userQueryFacade;
 
     // ==================================================================================
     // 导出
@@ -430,9 +418,9 @@ public class FormAppBundleService {
     /** 系统版本号：生产构建取 build.version 标记；无法判定时如实记 DEV，不伪造版本。 */
     private String resolveSystemVersion() {
         try {
-            byte[] raw = org.springframework.util.StreamUtils.copyToByteArray(
+            byte[] raw = StreamUtils.copyToByteArray(
                     getClass().getResourceAsStream("/META-INF/production-build.properties"));
-            for (String line : new String(raw, java.nio.charset.StandardCharsets.UTF_8).split("\\r?\\n")) {
+            for (String line : new String(raw, StandardCharsets.UTF_8).split("\\r?\\n")) {
                 if (line.startsWith("build.version=")) {
                     String value = line.substring("build.version=".length()).trim();
                     if (!value.isEmpty()) {
@@ -2276,7 +2264,7 @@ public class FormAppBundleService {
     }
 
     private String uniqueKey(String baseKey, Set<String> existing, Set<String> reserved,
-                             java.util.function.Predicate<String> extraProbe) {
+                             Predicate<String> extraProbe) {
         String candidate = baseKey + "_" + randomHex(6);
         while (existing.contains(candidate) || reserved.contains(candidate)
                 || (extraProbe != null && extraProbe.test(candidate))) {
@@ -2476,7 +2464,7 @@ public class FormAppBundleService {
     }
 
     private String joinValues(Collection<?> values) {
-        return values.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", "));
+        return values.stream().map(String::valueOf).collect(Collectors.joining(", "));
     }
 
     private String text(Object value) {

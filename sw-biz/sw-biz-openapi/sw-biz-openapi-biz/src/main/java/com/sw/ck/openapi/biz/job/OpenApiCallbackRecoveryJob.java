@@ -2,21 +2,28 @@ package com.sw.ck.openapi.biz.job;
 
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.entity.OpenApiCallbackTask;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.mapper.OpenApiCallbackTaskMapper;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 出站回调恢复调度（Phase 4 可靠业务事件 —— OpenAPI 回调 MUST_DELIVER）。
  *
@@ -30,9 +37,8 @@ import java.util.Objects;
  * </ul>
  */
 @Component
+@Log4j2
 public class OpenApiCallbackRecoveryJob {
-
-    private static final Logger log = LoggerFactory.getLogger(OpenApiCallbackRecoveryJob.class);
 
     /** 恢复调度的重试预算（自提交后加速失败起算；不含进程内 3 次尝试）。 */
     static final int MAX_ATTEMPTS = 5;
@@ -43,20 +49,14 @@ public class OpenApiCallbackRecoveryJob {
     /** 投递租约判据（分钟）：SENDING 超过该时长视为投递者已崩溃，回收后可继续重试。 */
     static final int STALE_LEASE_MINUTES = 5;
 
-    private final OpenApiCallbackTaskMapper taskMapper;
-    private final OpenApiAppMapper appMapper;
-    private final OpenApiCallbackDeliveryService deliveryService;
-    private final TenantWorkAdmission tenantWorkAdmission;
-
-    public OpenApiCallbackRecoveryJob(OpenApiCallbackTaskMapper taskMapper,
-                                      OpenApiAppMapper appMapper,
-                                      OpenApiCallbackDeliveryService deliveryService,
-                                      TenantWorkAdmission tenantWorkAdmission) {
-        this.taskMapper = taskMapper;
-        this.appMapper = appMapper;
-        this.deliveryService = deliveryService;
-        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
-    }
+    @Autowired
+    private OpenApiCallbackTaskMapper taskMapper;
+    @Autowired
+    private OpenApiAppMapper appMapper;
+    @Autowired
+    private OpenApiCallbackDeliveryService deliveryService;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Scheduled(fixedDelayString = "${sw.openapi.callback.recovery.fixed-delay-ms:60000}")
     public void recoverDue() {
@@ -86,11 +86,11 @@ public class OpenApiCallbackRecoveryJob {
      */
     private void reclaimStaleLeases() {
         List<OpenApiCallbackTask> stale;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             LocalDateTime staleBefore = LocalDateTime.now().minusMinutes(STALE_LEASE_MINUTES);
             stale = taskMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaQuery()
+                    Wrappers.<OpenApiCallbackTask>lambdaQuery()
                             .eq(OpenApiCallbackTask::getStatus, "SENDING")
                             .le(OpenApiCallbackTask::getUpdateTime, staleBefore)
                             .last("LIMIT " + MAX_BATCH));
@@ -101,7 +101,7 @@ public class OpenApiCallbackRecoveryJob {
             int attempts = task.getAttempts() == null ? 0 : task.getAttempts();
             boolean budgetExhausted = attempts >= MAX_ATTEMPTS;
             int changed = tenantWorkAdmission.claim(task.getTenantId(), () -> taskMapper.update(null,
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
+                    Wrappers.<OpenApiCallbackTask>lambdaUpdate()
                             .set(OpenApiCallbackTask::getStatus,
                                     budgetExhausted ? "RETRY_EXHAUSTED" : "FAILED")
                             .set(OpenApiCallbackTask::getLastError, budgetExhausted
@@ -124,10 +124,10 @@ public class OpenApiCallbackRecoveryJob {
     }
 
     private List<OpenApiCallbackTask> findDue() {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return taskMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaQuery()
+                    Wrappers.<OpenApiCallbackTask>lambdaQuery()
                             .eq(OpenApiCallbackTask::getDeleted, 0)
                             .in(OpenApiCallbackTask::getStatus, "PENDING", "FAILED")
                             .le(OpenApiCallbackTask::getNextRetryTime, LocalDateTime.now())
@@ -180,7 +180,7 @@ public class OpenApiCallbackRecoveryJob {
      */
     private boolean claim(OpenApiCallbackTask task) {
         int affected = tenantWorkAdmission.claim(task.getTenantId(), () -> taskMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
+                Wrappers.<OpenApiCallbackTask>lambdaUpdate()
                         .set(OpenApiCallbackTask::getStatus, "SENDING")
                         .set(OpenApiCallbackTask::getAttempts,
                                 (task.getAttempts() == null ? 0 : task.getAttempts()) + 1)
@@ -192,9 +192,9 @@ public class OpenApiCallbackRecoveryJob {
     }
 
     private OpenApiApp findApp(OpenApiCallbackTask task) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
-            return appMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<OpenApiApp>()
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
+            return appMapper.selectOne(new LambdaQueryWrapper<OpenApiApp>()
                     .eq(OpenApiApp::getAppId, task.getAppId())
                     .eq(OpenApiApp::getTenantId, task.getTenantId())
                     .eq(OpenApiApp::getDeleted, 0)
@@ -205,7 +205,7 @@ public class OpenApiCallbackRecoveryJob {
     /** 未领取态下的关闭：只允许从未领取状态（PENDING/FAILED）改判成功。 */
     private void closeUnclaimedDelivered(OpenApiCallbackTask task) {
         taskMapper.update(null,
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
+                    Wrappers.<OpenApiCallbackTask>lambdaUpdate()
                             .set(OpenApiCallbackTask::getStatus, "SUCCESS")
                             .set(OpenApiCallbackTask::getNextRetryTime, null)
                             .set(OpenApiCallbackTask::getDeliveredAt, LocalDateTime.now())
@@ -220,7 +220,7 @@ public class OpenApiCallbackRecoveryJob {
     private void writeTerminal(OpenApiCallbackTask task, int claimedAttempts, String status, String error,
                                boolean delivered) {
         int updated = taskMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
+                Wrappers.<OpenApiCallbackTask>lambdaUpdate()
                         .set(OpenApiCallbackTask::getStatus, status)
                         .set(OpenApiCallbackTask::getLastError, error)
                         .set(OpenApiCallbackTask::getNextRetryTime, null)
@@ -237,7 +237,7 @@ public class OpenApiCallbackRecoveryJob {
 
     private void writeFailed(OpenApiCallbackTask task, int claimedAttempts, String error) {
         int updated = taskMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<OpenApiCallbackTask>lambdaUpdate()
+                Wrappers.<OpenApiCallbackTask>lambdaUpdate()
                         .set(OpenApiCallbackTask::getStatus, "FAILED")
                         .set(OpenApiCallbackTask::getLastError, error)
                         .set(OpenApiCallbackTask::getNextRetryTime,
@@ -252,19 +252,19 @@ public class OpenApiCallbackRecoveryJob {
 
     /** 调度线程按任务自身的权威租户建立执行边界（对齐命令调度器还原身份的做法）。 */
     private void withTenantScope(Long tenantId, Runnable action) {
-        com.sw.ck.security.holder.LoginUser previous = com.sw.ck.security.holder.LoginUserHolder.get();
-        com.sw.ck.security.holder.LoginUser identity = new com.sw.ck.security.holder.LoginUser();
+        LoginUser previous = LoginUserHolder.get();
+        LoginUser identity = new LoginUser();
         identity.setTenantId(tenantId == null ? 0L : tenantId);
-        identity.setUserId(com.sw.ck.common.constant.CommonConstants.SYSTEM_OPERATOR_ID);
+        identity.setUserId(CommonConstants.SYSTEM_OPERATOR_ID);
         identity.setUsername("openapi-callback-recovery");
         try {
-            com.sw.ck.security.holder.LoginUserHolder.set(identity);
+            LoginUserHolder.set(identity);
             action.run();
         } finally {
             if (previous == null) {
-                com.sw.ck.security.holder.LoginUserHolder.clear();
+                LoginUserHolder.clear();
             } else {
-                com.sw.ck.security.holder.LoginUserHolder.set(previous);
+                LoginUserHolder.set(previous);
             }
         }
     }

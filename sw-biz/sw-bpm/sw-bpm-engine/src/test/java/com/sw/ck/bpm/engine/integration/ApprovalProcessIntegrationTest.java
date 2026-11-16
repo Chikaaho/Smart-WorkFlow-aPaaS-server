@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
@@ -9,6 +10,7 @@ import com.sw.ck.bpm.engine.facade.BpmDeployFacadeImpl;
 import com.sw.ck.bpm.engine.listener.ApprovalTaskListener;
 import com.sw.ck.bpm.engine.resolver.DesignatedApproverResolver;
 import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
+
 import org.flowable.bpmn.converter.BpmnXMLConverter;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.common.engine.impl.el.DefaultExpressionManager;
@@ -22,10 +24,13 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import javax.xml.parsers.DocumentBuilderFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -208,10 +213,10 @@ class ApprovalProcessIntegrationTest {
         assertThat(resultXml).contains("EndEvent_1");
         // 验证可被解析为合法 XML
         assertThatCode(() -> {
-            javax.xml.parsers.DocumentBuilderFactory factory =
-                    javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            DocumentBuilderFactory factory =
+                    DocumentBuilderFactory.newInstance();
             factory.newDocumentBuilder().parse(
-                    new java.io.ByteArrayInputStream(resultXml.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    new ByteArrayInputStream(resultXml.getBytes(StandardCharsets.UTF_8)));
         }).doesNotThrowAnyException();
     }
 

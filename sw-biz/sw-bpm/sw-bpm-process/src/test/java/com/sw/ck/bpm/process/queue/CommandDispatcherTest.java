@@ -5,12 +5,18 @@ import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.spi.UserDetailsProvider;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,11 +54,11 @@ class CommandDispatcherTest {
 
     /** 设置调度参数默认值（绕过 @Value 注入）。 */
     private CommandDispatcher configure(CommandDispatcher d) {
-        org.springframework.test.util.ReflectionTestUtils.setField(d, "batchSize", 20);
-        org.springframework.test.util.ReflectionTestUtils.setField(d, "p0BatchSize", 5);
-        org.springframework.test.util.ReflectionTestUtils.setField(d, "maxRetries", 5);
-        org.springframework.test.util.ReflectionTestUtils.setField(d, "backoffMillis", 1000L);
-        org.springframework.test.util.ReflectionTestUtils.setField(d, "staleSeconds", 60L);
+        ReflectionTestUtils.setField(d, "batchSize", 20);
+        ReflectionTestUtils.setField(d, "p0BatchSize", 5);
+        ReflectionTestUtils.setField(d, "maxRetries", 5);
+        ReflectionTestUtils.setField(d, "backoffMillis", 1000L);
+        ReflectionTestUtils.setField(d, "staleSeconds", 60L);
         return d;
     }
 
@@ -89,7 +95,7 @@ class CommandDispatcherTest {
 
         d.pollNormal();
 
-        verify(commandQueue).complete(eq(11L), org.mockito.ArgumentMatchers.any(), eq("{\"status\":\"STARTED\"}"));
+        verify(commandQueue).complete(eq(11L), ArgumentMatchers.any(), eq("{\"status\":\"STARTED\"}"));
         verify(commandQueue, never()).failAndScheduleRetry(anyLong(), anyString(), anyString(), anyInt(), anyLong());
         assertThat(LoginUserHolder.get()).isNull();
     }
@@ -137,7 +143,7 @@ class CommandDispatcherTest {
 
         verify(commandQueue).failAndScheduleRetry(eq(11L), anyString(), anyString(), anyInt(), anyLong());
         verify(handler).onFinalFailure(any(CommandEnvelope.class),
-                org.mockito.ArgumentMatchers.contains("boom"));
+                ArgumentMatchers.contains("boom"));
         verify(commandQueue, never()).complete(anyLong(), anyString(), anyString());
         assertThat(LoginUserHolder.get()).isNull();
     }
@@ -195,7 +201,7 @@ class CommandDispatcherTest {
 
         rolledBackDispatcher.pollNormal();
 
-        org.mockito.ArgumentCaptor<String> reason = org.mockito.ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
         verify(commandQueue).failAndScheduleRetry(eq(11L), eq("claim-token-11"),
                 reason.capture(), eq(5), eq(1000L));
         assertThat(reason.getValue()).contains("无命令处理器").contains("ORCH_ACTION_START");
@@ -228,10 +234,10 @@ class CommandDispatcherTest {
         CommandEnvelope current = envelope(CommandTypeEnum.TASK_APPROVE);
         current.setStatus("PROCESSING");
         current.setClaimToken("new-owner-token");
-        when(commandQueue.findById(11L)).thenReturn(java.util.Optional.of(current));
+        when(commandQueue.findById(11L)).thenReturn(Optional.of(current));
         when(commandQueue.claimDue(List.of(CommandChannelEnum.NORMAL), 20)).thenReturn(List.of(stale));
         d.pollNormal();
-        org.mockito.Mockito.verifyNoInteractions(provider);
+        Mockito.verifyNoInteractions(provider);
         verify(handler, never()).handle(any());
         verify(handler, never()).onFinalFailure(any(), any());
         verify(commandQueue, never()).reject(anyLong(), any(), any());
@@ -252,12 +258,12 @@ class CommandDispatcherTest {
         CommandEnvelope env = envelope(CommandTypeEnum.TASK_APPROVE);
         env.setChannel(CommandChannelEnum.P0);
         env.setStatus("PROCESSING");
-        when(commandQueue.findById(11L)).thenReturn(java.util.Optional.of(env));
+        when(commandQueue.findById(11L)).thenReturn(Optional.of(env));
         when(commandQueue.claimDue(List.of(CommandChannelEnum.P0), 5)).thenReturn(List.of(env));
 
         d.pollP0();
 
-        verify(commandQueue).reject(eq(11L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.contains("workflow:p0:dispatch"));
+        verify(commandQueue).reject(eq(11L), ArgumentMatchers.any(), ArgumentMatchers.contains("workflow:p0:dispatch"));
         verify(handler, never()).handle(any());
         assertThat(LoginUserHolder.get()).isNull();
     }

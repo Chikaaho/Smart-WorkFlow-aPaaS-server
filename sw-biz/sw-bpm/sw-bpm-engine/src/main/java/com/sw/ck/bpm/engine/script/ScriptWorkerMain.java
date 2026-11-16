@@ -1,6 +1,8 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.graalvm.polyglot.Engine;
+
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 
 import java.io.BufferedReader;
@@ -41,8 +43,8 @@ public final class ScriptWorkerMain {
         ObjectMapper mapper = new ObjectMapper();
         // BF20261019-02：进程内共享 Engine + 预热后再握手——首个真实判断不再支付
         // GraalJS 语言初始化冷启动（慢宿主上曾超固定 5s 预算被宿主销毁后每次冷启动）
-        org.graalvm.polyglot.Engine engine = org.graalvm.polyglot.Engine.newBuilder().build();
-        BpmScriptRunner runner = new BpmScriptRunner(mapper, engine);
+        Engine engine = Engine.newBuilder().build();
+        BpmScriptRunner runner = BpmScriptRunner.forStandalone(mapper, engine);
         // 启动握手：宿主据此确认 worker 就绪并核对本 JVM 实际堆上限（-Xmx 生效值）
         Map<String, Object> hello = new LinkedHashMap<>();
         hello.put("id", "__ready__");

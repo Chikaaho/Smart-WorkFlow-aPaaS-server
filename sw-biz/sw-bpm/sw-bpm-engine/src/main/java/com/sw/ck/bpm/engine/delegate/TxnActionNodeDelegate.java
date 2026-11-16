@@ -1,21 +1,35 @@
 package com.sw.ck.bpm.engine.delegate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.form.api.port.FormTxnActionPort;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.spi.UserDetailsProvider;
+
+import jakarta.annotation.PostConstruct;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.JavaDelegate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.UnexpectedRollbackException;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 事务动作节点委托（P62 分级执行）：经 {@link FormTxnActionPort} 调用受控事务动作，
  * 复用首阶段幂等（节点稳定幂等键 = {@code NODE:{processInstanceId}:{activityId}}，
@@ -27,31 +41,25 @@ import java.util.Map;
  * </p>
  */
 @Component("txnActionNodeDelegate")
+@Log4j2
 public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDelegate {
 
-    private static final Logger log = LoggerFactory.getLogger(TxnActionNodeDelegate.class);
+    @Autowired(required = false)
+    private ObjectProvider<FormTxnActionPort> txnActionPortProvider;
+    private TransactionTemplate nodeTxTemplate;
+    @Autowired
+    private ApplicationContext applicationContext;
+    @Autowired(required = false)
+    private UserDetailsProvider userDetailsProvider;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
-    private final org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider;
-    private final org.springframework.transaction.support.TransactionTemplate nodeTxTemplate;
-    private final org.springframework.context.ApplicationContext applicationContext;
-    private final com.sw.ck.security.spi.UserDetailsProvider userDetailsProvider;
-
-    public TxnActionNodeDelegate(RepositoryService repositoryService, ObjectMapper objectMapper,
-                                 ParticipantResolverRegistry participantResolverRegistry,
-                                 org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider,
-                                 org.springframework.transaction.PlatformTransactionManager transactionManager,
-                                 org.springframework.context.ApplicationContext applicationContext,
-                                 org.springframework.beans.factory.ObjectProvider<com.sw.ck.security.spi.UserDetailsProvider> userDetailsProvider) {
-        super(repositoryService, objectMapper, participantResolverRegistry);
-        this.txnActionPortProvider = txnActionPortProvider;
-        this.applicationContext = applicationContext;
-        this.userDetailsProvider = userDetailsProvider == null ? null : userDetailsProvider.getIfAvailable();
+    @PostConstruct
+    void initNodeTxTemplate() {
         // 生产轻流程各节点独立短事务（方向 U01 合同）：节点效果独立提交，
         // 先前已提交节点不因后续节点失败自动撤销
-        org.springframework.transaction.support.TransactionTemplate template =
-                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
-        template.setPropagationBehavior(
-                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.nodeTxTemplate = template;
     }
 
@@ -59,7 +67,7 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
     public void execute(DelegateExecution execution) {
         // async 执行线程无登录态：按流程发起人还原上下文（方向 U01：恢复不得以超级用户兜底；
         // 动作租户与权限仍由受控 Port 按还原身份校验，发起人无调用权限则节点拒绝）
-        com.sw.ck.security.holder.LoginUser previous = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser previous = LoginUserHolder.get();
         boolean restoreNeeded = previous == null;
         if (restoreNeeded) {
             Object submitter = execution.getVariable("submitter");
@@ -70,7 +78,7 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
             }
             long initiatorId = Long.parseLong(String.valueOf(submitter));
             long initiatorTenant = Long.parseLong(String.valueOf(tenantId));
-            com.sw.ck.security.holder.LoginUser owner;
+            LoginUser owner;
             if (userDetailsProvider != null) {
                 // 正式身份回查（含最新 RBAC 权限），不构造无权限的裸身份、不以超级用户兜底
                 owner = userDetailsProvider.loadByUserId(initiatorId);
@@ -78,17 +86,17 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
                     throw new BaseException(BpmErrorCode.INSTANCE_INITIATOR_INVALID);
                 }
             } else {
-                owner = new com.sw.ck.security.holder.LoginUser();
+                owner = new LoginUser();
                 owner.setUserId(initiatorId);
                 owner.setTenantId(initiatorTenant);
             }
-            com.sw.ck.security.holder.LoginUserHolder.set(owner);
+            LoginUserHolder.set(owner);
         }
         try {
             doExecute(execution);
         } finally {
             if (restoreNeeded) {
-                com.sw.ck.security.holder.LoginUserHolder.clear();
+                LoginUserHolder.clear();
             }
         }
     }
@@ -120,7 +128,7 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
                             actionId, recordId, quantity, invocationKey, null, null)))
                     .orElseThrow(() -> new IllegalStateException("动作调用无结果"));
         
-        } catch (org.springframework.transaction.UnexpectedRollbackException rollback) {
+        } catch (UnexpectedRollbackException rollback) {
             // 业务拒绝（REJECTED）在动作内核"另事务"记录后回滚拒绝事务：独立短事务随之回滚
             // 属预期语义（拒绝不产生效果），回查已独立提交的拒绝记录恢复结果供 CONTINUE/BLOCK 分支
             result = loadRejectedResult(invocationKey, rollback);
@@ -158,9 +166,9 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
     /** 回查拒绝记录（recordRejected 独立事务提交）；无记录则为真实故障原样上抛。 */
     private FormTxnActionPort.TxnActionResult loadRejectedResult(
             String invocationKey, RuntimeException rollback) {
-        org.springframework.jdbc.core.JdbcTemplate jdbcTemplate =
-                applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
-        java.util.List<java.util.Map<String, Object>> rows = JdbcMaps.caseInsensitiveKeys(jdbcTemplate.queryForList(
+        JdbcTemplate jdbcTemplate =
+                applicationContext.getBean(JdbcTemplate.class);
+        List<Map<String, Object>> rows = JdbcMaps.caseInsensitiveKeys(jdbcTemplate.queryForList(
                 JdbcVendorSupport.applyLimit(jdbcTemplate,
                         "SELECT id, error_code, error_msg FROM sw_form_txn_invocation"
                                 + " WHERE invocation_key = ? AND status = 'REJECTED'"

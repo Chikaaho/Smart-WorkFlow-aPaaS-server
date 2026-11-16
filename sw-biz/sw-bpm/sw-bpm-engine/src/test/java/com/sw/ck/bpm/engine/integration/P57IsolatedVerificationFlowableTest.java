@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -13,13 +14,19 @@ import com.sw.ck.bpm.engine.integration.fixture.P57IsolatedVerificationNode;
 import com.sw.ck.bpm.engine.registry.BpmNodeRegistryImpl;
 import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
 import com.sw.ck.bpm.engine.translator.NodeTypeTranslator;
+import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.bpmn.converter.BpmnXMLConverter;
 import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.ServiceTask;
+import org.flowable.common.engine.impl.el.DefaultExpressionManager;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
 import org.flowable.engine.ProcessEngines;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.delegate.JavaDelegate;
 import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.ProcessDefinition;
@@ -29,9 +36,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,12 +69,12 @@ class P57IsolatedVerificationFlowableTest {
         config.setJdbcPassword("");
 
         Map<Object, Object> beans = new HashMap<>();
-        beans.put("p57VerificationNodeDelegate", (org.flowable.engine.delegate.JavaDelegate) execution -> {
+        beans.put("p57VerificationNodeDelegate", (JavaDelegate) execution -> {
             VERIFICATION_DELEGATE_RAN.set(true);
             execution.setVariable("p57VerificationResult", "OBSERVED");
         });
         config.addExpressionManagerConfigurer(expressionManager -> {
-            if (expressionManager instanceof org.flowable.common.engine.impl.el.DefaultExpressionManager dem) {
+            if (expressionManager instanceof DefaultExpressionManager dem) {
                 dem.setBeans(beans);
             }
         });
@@ -102,7 +111,7 @@ class P57IsolatedVerificationFlowableTest {
                 new ObjectMapper(), restartedRegistry);
         BpmnModel model = translator.translate(isolatedGraph());
         assertThat(model.getProcesses().get(0).getFlowElement("verify"))
-                .isInstanceOf(org.flowable.bpmn.model.ServiceTask.class);
+                .isInstanceOf(ServiceTask.class);
 
         long deploymentsBefore = repositoryService.createDeploymentQuery().count();
         long definitionsBefore = repositoryService.createProcessDefinitionQuery().count();
@@ -129,7 +138,7 @@ class P57IsolatedVerificationFlowableTest {
 
         long deploymentsBeforeRejectedPublish = repositoryService.createDeploymentQuery().count();
         long definitionsBeforeRejectedPublish = repositoryService.createProcessDefinitionQuery().count();
-        assertThat(assertThrows(com.sw.ck.common.exception.BaseException.class,
+        assertThat(assertThrows(BaseException.class,
                 () -> translator.translate(graphWithUnknownType())).getCode())
                 .isEqualTo(BpmErrorCode.NODE_CAPABILITY_MISSING.getCode());
         assertThat(repositoryService.createDeploymentQuery().count())
@@ -142,29 +151,29 @@ class P57IsolatedVerificationFlowableTest {
     void shouldRejectNullTranslationResultInsteadOfWritingPartialModel() {
         NodeTypeTranslator nullTranslator = new NodeTypeTranslator() {
             @Override
-            public java.util.Optional<String> type() {
-                return java.util.Optional.of("NULL_TRANSLATION");
+            public Optional<String> type() {
+                return Optional.of("NULL_TRANSLATION");
             }
 
             @Override
-            public java.util.Optional<BpmNodeMetadata> metadata() {
-                return java.util.Optional.of(new BpmNodeMetadata(
+            public Optional<BpmNodeMetadata> metadata() {
+                return Optional.of(new BpmNodeMetadata(
                         "空翻译", "测试空翻译", "OTHER",
                         new BpmNodeTopology(0, 1, 0, 1),
                         List.of(), "test-v1",
-                        java.util.EnumSet.allOf(BpmNodeCapability.class),
+                        EnumSet.allOf(BpmNodeCapability.class),
                         false, false, false, true));
             }
 
             @Override
-            public org.flowable.bpmn.model.FlowElement translate(GraphElement node) {
+            public FlowElement translate(GraphElement node) {
                 return null;
             }
         };
 
         GraphToBpmnTranslator translator = new GraphToBpmnTranslator(
                 new ObjectMapper(), List.of(nullTranslator));
-        assertThat(assertThrows(com.sw.ck.common.exception.BaseException.class,
+        assertThat(assertThrows(BaseException.class,
                 () -> translator.translate(graphWithNullTranslation()))
                 .getCode()).isEqualTo(BpmErrorCode.NODE_CAPABILITY_MISSING.getCode());
     }

@@ -1,12 +1,14 @@
 package com.sw.ck.iot.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.entity.IotCommandReservation;
 import com.sw.ck.iot.mapper.IotCommandReservationMapper;
 import com.sw.ck.iot.service.IotDeviceService;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,21 +28,16 @@ import java.util.Optional;
  * 取消为条件更新（仅 PENDING），与到点认领竞争只一个结果生效并留审计。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class IotCommandReservationFacadeImpl implements IotCommandReservationFacade {
 
-    private final IotCommandReservationMapper mapper;
-    private final IotDeviceService deviceService;
-    private final Clock clock;
-
-    public IotCommandReservationFacadeImpl(IotCommandReservationMapper mapper,
-                                           IotDeviceService deviceService,
-                                           Clock clock) {
-        this.mapper = mapper;
-        this.deviceService = deviceService;
-        this.clock = clock;
-    }
+    @Autowired
+    private IotCommandReservationMapper mapper;
+    @Autowired
+    private IotDeviceService deviceService;
+    @Autowired
+    private Clock clock;
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)

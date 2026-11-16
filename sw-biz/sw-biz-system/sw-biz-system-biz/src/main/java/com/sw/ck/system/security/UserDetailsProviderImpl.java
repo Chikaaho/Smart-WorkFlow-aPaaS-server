@@ -1,6 +1,10 @@
 package com.sw.ck.system.security;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.security.holder.DataScope;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.spi.UserDetailsProvider;
@@ -16,6 +20,7 @@ import com.sw.ck.system.mapper.SysRoleMapper;
 import com.sw.ck.system.mapper.SysRoleMenuMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.TenantValidityService;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -47,7 +52,7 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
 
     /** 超管旁路仅限超级租户身份（CommonConstants.SUPER_TENANT_ID="0"）。 */
     private static final long SUPER_TENANT_ID =
-            Long.parseLong(com.sw.ck.common.constant.CommonConstants.SUPER_TENANT_ID);
+            Long.parseLong(CommonConstants.SUPER_TENANT_ID);
 
     /**
      * 数据范围宽窄排序（按枚举名比较，不按 ordinal 猜测）：
@@ -66,7 +71,7 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     private final SysRoleMenuMapper sysRoleMenuMapper;
     private final SysMenuMapper sysMenuMapper;
     private final SysRoleDeptMapper sysRoleDeptMapper;
-    private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
+    private final TenantValidityService tenantValidityService;
 
     public UserDetailsProviderImpl(SysUserService sysUserService,
                                    SysUserRoleMapper sysUserRoleMapper,
@@ -84,7 +89,7 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
                                    SysRoleMenuMapper sysRoleMenuMapper,
                                    SysMenuMapper sysMenuMapper,
                                    SysRoleDeptMapper sysRoleDeptMapper,
-                                   com.sw.ck.system.service.TenantValidityService tenantValidityService) {
+                                   TenantValidityService tenantValidityService) {
         this.sysUserService = sysUserService;
         this.sysUserRoleMapper = sysUserRoleMapper;
         this.sysRoleMapper = sysRoleMapper;
@@ -97,7 +102,7 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     @Override
     public LoginUser loadClaimedWorkIdentity(Long userId, Long tenantId) {
         if (userId == null || tenantId == null) return null;
-        try (var ignored = com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (var ignored = TenantLineSuspension.suspended()) {
             SysUser user = sysUserService.getById(userId);
             if (!isActive(user) || !tenantId.equals(user.getTenantId())) return null;
             return toLoginUser(user, false);
@@ -118,8 +123,8 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     public LoginUser loadByUsername(String username) {
         // 登录前无租户上下文：身份装载必须跨租户全局进行（用户名全局唯一），租户隔离由
         // 装载完成的 LoginUser.tenantId 在后续业务请求中生效
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             SysUser user = sysUserService.getByUsername(username);
             if (!isActive(user)) {
                 return null;
@@ -131,8 +136,8 @@ public class UserDetailsProviderImpl implements UserDetailsProvider {
     @Override
     public LoginUser loadByUserId(Long userId) {
         // 同 loadByUsername：按主键全局装载认证身份（I1 G2b）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             SysUser user = sysUserService.getById(userId);
             if (!isActive(user)) {
                 return null;

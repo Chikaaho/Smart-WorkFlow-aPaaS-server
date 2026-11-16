@@ -1,8 +1,11 @@
 package com.sw.ck.form.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
@@ -15,6 +18,12 @@ import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.FieldType;
+import com.sw.ck.form.dto.FormDataRecordDTO;
+import com.sw.ck.form.dto.WorkspaceAggregateDTO;
+import com.sw.ck.form.dto.WorkspaceFieldDTO;
+import com.sw.ck.form.dto.WorkspaceFieldsDTO;
+import com.sw.ck.form.dto.WorkspaceGroupDTO;
+import com.sw.ck.form.dto.WorkspaceOptionDTO;
 import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
 import com.sw.ck.form.dto.workspace.WorkspaceMetric;
 import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
@@ -25,14 +34,25 @@ import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.datascope.DeptScopeProvider;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.form.api.port.FormRecordAccessPort;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.sql.Date;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
+import java.util.LinkedHashSet;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单数据查询服务。
  *
@@ -50,9 +70,8 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @Service
+@Log4j2
 public class FormDataQueryService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormDataQueryService.class);
 
     /** 分页硬上限 */
     private static final int MAX_PAGE_SIZE = 200;
@@ -79,68 +98,37 @@ public class FormDataQueryService {
 
     // ==================== 依赖 ====================
 
-    private final FormDefService formDefService;
-    private final FormDefMapper formDefMapper;
-    private final FormConfigMapper formConfigMapper;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
-
-    public FormDataQueryService(FormDefService formDefService,
-                                FormDefMapper formDefMapper,
-                                FormConfigMapper formConfigMapper,
-                                JdbcTemplate jdbcTemplate,
-                                ObjectMapper objectMapper) {
-        this.formDefService = formDefService;
-        this.formDefMapper = formDefMapper;
-        this.formConfigMapper = formConfigMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==== I2 依赖（可选注入；既有测试构造不受影响；缺省时按登录态降级解析） ====
 
+    @Autowired(required = false)
     private FieldPermissionService fieldPermissionService;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setFieldPermissionService(FieldPermissionService fieldPermissionService) {
-        this.fieldPermissionService = fieldPermissionService;
-    }
+    @Autowired(required = false)
+    private LoginContextProvider loginContextProvider;
 
-    private com.sw.ck.common.security.LoginContextProvider loginContextProvider;
+    @Autowired(required = false)
+    private DeptScopeProvider deptScopeProvider;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setLoginContextProvider(com.sw.ck.common.security.LoginContextProvider loginContextProvider) {
-        this.loginContextProvider = loginContextProvider;
-    }
-
-    private com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setDeptScopeProvider(com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-        this.deptScopeProvider = deptScopeProvider;
-    }
-
-    private com.sw.ck.form.api.port.FormRecordAccessPort formRecordAccessPort;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setFormRecordAccessPort(com.sw.ck.form.api.port.FormRecordAccessPort formRecordAccessPort) {
-        this.formRecordAccessPort = formRecordAccessPort;
-    }
+    @Autowired(required = false)
+    private FormRecordAccessPort formRecordAccessPort;
 
     /** 应用范围访问闸门（可选注入；既有测试构造不注入时不受本闸门约束）。 */
+    @Autowired(required = false)
     private FormAppAccessGuard appAccessGuard;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setAppAccessGuard(FormAppAccessGuard appAccessGuard) {
-        this.appAccessGuard = appAccessGuard;
-    }
-
+    @Autowired(required = false)
     private FormFieldEnrichmentService enrichment;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setEnrichment(FormFieldEnrichmentService enrichment) {
-        this.enrichment = enrichment;
-    }
 
     // ==================== 主入口 ====================
 
@@ -183,7 +171,7 @@ public class FormDataQueryService {
         // —— Step 1: 获取当前用户 ——
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         Long tenantId = loginUser.getTenantId();
 
@@ -311,12 +299,12 @@ public class FormDataQueryService {
      * 工作台字段目录：仅返回当前账号可见、可用于标量展示/聚合的字段。
      * 不返回子表、富文本、附件等字段，避免配置界面扩大读取范围。
      */
-    public Map<String, Object> workspaceFields(String formKey) {
+    public WorkspaceFieldsDTO workspaceFields(String formKey) {
         WorkspaceFormContext ctx = prepareWorkspaceForm(formKey);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("formKey", ctx.formDef().getFormKey());
-        result.put("formVersion", ctx.formDef().getFormVersion());
-        List<Map<String, Object>> fields = new ArrayList<>();
+        WorkspaceFieldsDTO result = new WorkspaceFieldsDTO();
+        result.setFormKey(ctx.formDef().getFormKey());
+        result.setFormVersion(ctx.formDef().getFormVersion());
+        List<WorkspaceFieldDTO> fields = new ArrayList<>();
         try {
             String definitionJson = loadDefinitionJsonForPermissions(ctx.formDef().getId());
             if (definitionJson != null && !definitionJson.isBlank()) {
@@ -331,13 +319,13 @@ public class FormDataQueryService {
                             continue;
                         }
                         if (ctx.viewDenied().contains(name)) continue;
-                        Map<String, Object> item = new LinkedHashMap<>();
-                        item.put("name", name);
-                        item.put("label", field.path("label").asText(
+                        WorkspaceFieldDTO item = new WorkspaceFieldDTO();
+                        item.setName(name);
+                        item.setLabel(field.path("label").asText(
                                 ctx.fieldLabels().getOrDefault(name, name)));
-                        item.put("type", type.name());
-                        List<Map<String, Object>> options = parseWorkspaceOptions(field, type);
-                        if (!options.isEmpty()) item.put("options", options);
+                        item.setType(type.name());
+                        List<WorkspaceOptionDTO> options = parseWorkspaceOptions(field, type);
+                        if (!options.isEmpty()) item.setOptions(options);
                         fields.add(item);
                     }
                 }
@@ -346,7 +334,7 @@ public class FormDataQueryService {
             log.warn("Workspace fields parse failed: formKey={}, {}", formKey, e.getMessage());
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单定义解析失败，请稍后重试");
         }
-        result.put("fields", fields);
+        result.setFields(fields);
         return result;
     }
 
@@ -355,7 +343,7 @@ public class FormDataQueryService {
      * <p>沿用列表查询的可见性、租户、记录数据范围和字段查看权限；越权字段整请求拒绝，
      * 不静默剔除。所有列名经 {@link DynamicTableSql#requireColumn}，值全部参数绑定。</p>
      */
-    public Map<String, Object> aggregateWorkspaceData(String formKey, WorkspaceAggregateReq req) {
+    public WorkspaceAggregateDTO aggregateWorkspaceData(String formKey, WorkspaceAggregateReq req) {
         if (req == null) {
             throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN, "聚合查询缺少请求体");
         }
@@ -462,17 +450,17 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "统计查询未能完成，请稍后重试");
         }
 
-        List<Map<String, Object>> groups = new ArrayList<>();
+        List<WorkspaceGroupDTO> groups = new ArrayList<>();
         if (rows != null) {
             for (Map<String, Object> row : rows) {
-                Map<String, Object> item = new LinkedHashMap<>();
-                if (groupBy != null) item.put("key", normalizeWorkspaceValue(row.get("g0")));
-                if (groupBy2 != null) item.put("key2", normalizeWorkspaceValue(row.get("g1")));
+                WorkspaceGroupDTO item = new WorkspaceGroupDTO();
+                if (groupBy != null) item.setKey(normalizeWorkspaceValue(row.get("g0")));
+                if (groupBy2 != null) item.setKey2(normalizeWorkspaceValue(row.get("g1")));
                 List<Object> values = new ArrayList<>();
                 for (int i = 0; i < metrics.size(); i++) {
                     values.add(normalizeWorkspaceValue(row.get("m" + i)));
                 }
-                item.put("values", values);
+                item.setValues(values);
                 groups.add(item);
             }
         }
@@ -488,11 +476,11 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "统计查询未能完成，请稍后重试");
         }
 
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("formKey", ctx.formDef().getFormKey());
-        result.put("formVersion", ctx.formDef().getFormVersion());
-        result.put("groups", groups);
-        result.put("totalRecords", totalRecords == null ? 0L : totalRecords);
+        WorkspaceAggregateDTO result = new WorkspaceAggregateDTO();
+        result.setFormKey(ctx.formDef().getFormKey());
+        result.setFormVersion(ctx.formDef().getFormVersion());
+        result.setGroups(groups);
+        result.setTotalRecords(totalRecords == null ? 0L : totalRecords);
         return result;
     }
 
@@ -500,7 +488,7 @@ public class FormDataQueryService {
      * 工作台数据列表查询：显式列 + 过滤 + 排序 + 有界分页。
      * <p>列、过滤、排序字段均须当前账号可见；记录范围与普通表单列表同口径强制。</p>
      */
-    public PageResult<Map<String, Object>> queryWorkspaceRows(String formKey, WorkspaceRowsReq req) {
+    public PageResult<FormDataRecordDTO> queryWorkspaceRows(String formKey, WorkspaceRowsReq req) {
         if (req == null) {
             throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN, "列表查询缺少请求体");
         }
@@ -585,8 +573,9 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "列表查询未能完成，请稍后重试");
         }
 
-        PageResult<Map<String, Object>> result = new PageResult<>();
-        result.setRecords(records != null ? records : List.of());
+        PageResult<FormDataRecordDTO> result = new PageResult<>();
+        result.setRecords(records == null ? List.of()
+                : records.stream().map(FormDataRecordDTO::new).toList());
         result.setTotal(total == null ? 0L : total);
         result.setPageNum(page);
         result.setPageSize(size);
@@ -620,7 +609,7 @@ public class FormDataQueryService {
     private WorkspaceFormContext prepareWorkspaceForm(String formKey) {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null || !formDefService.isCurrentUserVisible(formKey)) {
@@ -687,36 +676,43 @@ public class FormDataQueryService {
     }
 
     /** 选项解析：兼容字符串与 {label,value}/{text,key} 两种定义形状。 */
-    private List<Map<String, Object>> parseWorkspaceOptions(JsonNode field, FieldType type) {
-        List<Map<String, Object>> options = new ArrayList<>();
+    private List<WorkspaceOptionDTO> parseWorkspaceOptions(JsonNode field, FieldType type) {
+        List<WorkspaceOptionDTO> options = new ArrayList<>();
         if (type == FieldType.BOOL) {
-            options.add(Map.of("label", "是", "value", "1"));
-            options.add(Map.of("label", "否", "value", "0"));
+            options.add(option("是", "1"));
+            options.add(option("否", "0"));
             return options;
         }
         JsonNode array = field.get("options");
         if (array == null || !array.isArray()) return options;
         for (JsonNode option : array) {
             if (option.isTextual()) {
-                options.add(Map.of("label", option.asText(), "value", option.asText()));
+                options.add(option(option.asText(), option.asText()));
                 continue;
             }
             String value = option.path("value").asText(option.path("key").asText(""));
             String label = option.path("label").asText(option.path("text").asText(value));
             if (!value.isBlank()) {
-                options.add(Map.of("label", label, "value", value));
+                options.add(option(label, value));
             }
         }
         return options;
     }
 
+    private WorkspaceOptionDTO option(String label, String value) {
+        WorkspaceOptionDTO option = new WorkspaceOptionDTO();
+        option.setLabel(label);
+        option.setValue(value);
+        return option;
+    }
+
     /** JDBC 标量收敛：时间转 ISO 文本，避免不同驱动序列化差异。 */
     private Object normalizeWorkspaceValue(Object value) {
-        if (value instanceof java.sql.Timestamp timestamp) return timestamp.toLocalDateTime().toString();
-        if (value instanceof java.sql.Date date) return date.toLocalDate().toString();
-        if (value instanceof java.sql.Time time) return time.toLocalTime().toString();
-        if (value instanceof java.time.LocalDateTime dateTime) return dateTime.toString();
-        if (value instanceof java.time.LocalDate date) return date.toString();
+        if (value instanceof Timestamp timestamp) return timestamp.toLocalDateTime().toString();
+        if (value instanceof Date date) return date.toLocalDate().toString();
+        if (value instanceof Time time) return time.toLocalTime().toString();
+        if (value instanceof LocalDateTime dateTime) return dateTime.toString();
+        if (value instanceof LocalDate date) return date.toString();
         return value;
     }
 
@@ -748,7 +744,7 @@ public class FormDataQueryService {
         // —— Step 1: 获取当前用户 ——
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         Long tenantId = loginUser.getTenantId();
 
@@ -1112,7 +1108,7 @@ public class FormDataQueryService {
     private Map<String, FieldType> loadFieldTypeMap(String formId) {
         // 查主表 definition（parent_table IS NULL）
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );
@@ -1251,7 +1247,7 @@ public class FormDataQueryService {
             }
 
             // —— 物理列名（唯一出口）；LABEL 非输入字段无可查询列 ——
-            if (fieldType == com.sw.ck.form.dynamic.FieldType.LABEL) {
+            if (fieldType == FieldType.LABEL) {
                 throw new BaseException(FormErrorCode.QUERY_FILTER_FIELD_NOT_FILTERABLE,
                         new Object[]{fieldDisplay.getOrDefault(field, field), fieldType},
                         "说明文字字段「" + fieldDisplay.getOrDefault(field, field) + "」不支持筛选");
@@ -1441,7 +1437,7 @@ public class FormDataQueryService {
         if (definitionJson == null) {
             return Set.of();
         }
-        Set<String> denied = new java.util.LinkedHashSet<>(fieldPermissionService.viewDeniedFields(loginUser,
+        Set<String> denied = new LinkedHashSet<>(fieldPermissionService.viewDeniedFields(loginUser,
                 fieldPermissionService.parse(definitionJson)));
         // 子字段键展开：子字段权限键 = TABLE字段名.子字段名
         try {
@@ -1468,7 +1464,7 @@ public class FormDataQueryService {
 
     private String loadDefinitionJsonForPermissions(String formId) {
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );
@@ -1481,7 +1477,7 @@ public class FormDataQueryService {
      */
     private Map<String, List<SubFieldMeta>> loadTableSubFields(String formId) {
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );
@@ -1565,7 +1561,7 @@ public class FormDataQueryService {
         }
         try {
             return objectMapper.readValue(subTableMappingJson,
-                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {});
+                    new TypeReference<Map<String, String>>() {});
         } catch (JsonProcessingException e) {
             log.warn("Failed to parse sub-table mapping JSON: {}", e.getMessage());
             return Map.of();

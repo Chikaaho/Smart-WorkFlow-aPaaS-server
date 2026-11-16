@@ -4,16 +4,20 @@ import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.service.ChildOrchestrationService;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 轻流程实例状态对账（P62 分级执行 S6/G7）。
  *
@@ -23,9 +27,8 @@ import java.util.List;
  * 的业务行收敛为 APPROVED（与审批完成路径同一语义）；引擎仍活跃的行不动。</p>
  */
 @Component
+@Log4j2
 public class BpmInstanceStateSyncJob {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmInstanceStateSyncJob.class);
 
     /** 单轮最多核对条数（有界）。 */
     private static final int MAX_BATCH = 200;
@@ -33,18 +36,14 @@ public class BpmInstanceStateSyncJob {
     /** 竞态保护：仅核对落库超过该分钟数仍 RUNNING 的行（刚启动的行留给启动时刻判定）。 */
     private static final int QUIET_MINUTES = 1;
 
-    private final BpmInstanceService instanceService;
-    private final ObjectProvider<BpmTaskFacade> taskFacadeProvider;
+    @Autowired
+    private BpmInstanceService instanceService;
+    @Autowired
+    private ObjectProvider<BpmTaskFacade> taskFacadeProvider;
 
     /** P64 阶段Ⅲ（数量差异关闭收尾）：延迟终态的子流程编排结算钩子（可选装配）。 */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    ObjectProvider<com.sw.ck.bpm.process.service.ChildOrchestrationService> childOrchestrationProvider;
-
-    public BpmInstanceStateSyncJob(BpmInstanceService instanceService,
-                                   ObjectProvider<BpmTaskFacade> taskFacadeProvider) {
-        this.instanceService = instanceService;
-        this.taskFacadeProvider = taskFacadeProvider;
-    }
+    @Autowired(required = false)
+    ObjectProvider<ChildOrchestrationService> childOrchestrationProvider;
 
     @Scheduled(fixedDelayString = "${sw.bpm.instance.state-sync-interval-millis:60000}",
             initialDelayString = "${sw.bpm.instance.state-sync-initial-delay-millis:20000}")
@@ -67,8 +66,8 @@ public class BpmInstanceStateSyncJob {
         }
         // 对账线程无登录态：与命令对账同口径挂起租户过滤（行内 tenant_id 自承载）
         List<BpmInstance> candidates;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             candidates = instanceService.list(
                     Wrappers.<BpmInstance>lambdaQuery()
                             .eq(BpmInstance::getStatus, InstanceStatusEnum.RUNNING.getCode())
@@ -76,8 +75,8 @@ public class BpmInstanceStateSyncJob {
                             .last("LIMIT " + MAX_BATCH));
         }
         int synced = 0;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             for (BpmInstance instance : candidates) {
                 Boolean active = facade.isProcessActive(instance.getProcessInstanceId()).orElse(true);
                 if (!active) {

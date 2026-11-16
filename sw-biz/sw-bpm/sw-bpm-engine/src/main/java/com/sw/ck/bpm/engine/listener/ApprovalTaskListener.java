@@ -2,6 +2,7 @@ package com.sw.ck.bpm.engine.listener;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -12,22 +13,29 @@ import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.UserTask;
 import org.flowable.engine.RepositoryService;
 import org.flowable.task.service.delegate.DelegateTask;
 import org.flowable.task.service.delegate.TaskListener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort;
+import com.sw.ck.bpm.api.participant.NodeTriggerEventPort;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 审批任务创建监听器（Flowable TaskListener）。
  * <p>
@@ -52,57 +60,37 @@ import java.util.Map;
  * </ul>
  */
 @Component
+@Log4j2
 public class ApprovalTaskListener implements TaskListener {
-
-    private static final Logger log = LoggerFactory.getLogger(ApprovalTaskListener.class);
 
     private static final String APPROVER_CONFIG_ELEMENT = "approverConfig";
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
     private static final String CONFIG_KEY_TYPE = "type";
     private static final String CONFIG_KEY_VALUE = "value";
 
-    private final RepositoryService repositoryService;
-    private final Map<String, NodeApproverResolver> resolverMap;
-    private final ObjectMapper objectMapper;
-    private final ParticipantResolverRegistry participantResolverRegistry;
-    private final ParticipantSnapshotRecorder participantSnapshotRecorder;
-    private final UserQueryFacade userQueryFacade;
+    @Autowired
+    private RepositoryService repositoryService;
+    @Autowired
+    @Qualifier("approverResolverMap")
+    private Map<String, NodeApproverResolver> resolverMap;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private ParticipantResolverRegistry participantResolverRegistry;
+    @Autowired(required = false)
+    private ParticipantSnapshotRecorder participantSnapshotRecorder;
+    @Autowired(required = false)
+    private UserQueryFacade userQueryFacade;
     /** 任务创建通知统一经领域事件发布，监听器在事务提交后异步落通知。 */
-    private final DomainEventPublisher domainEventPublisher;
+    @Autowired
+    private DomainEventPublisher domainEventPublisher;
     /** 可选生命周期端口（I3：代理改派 + 时限登记；未装配时跳过）。 */
     @Autowired(required = false)
-    private transient org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort> lifecycleEntryPort;
+    private transient ObjectProvider<LifecycleTaskEntryPort> lifecycleEntryPort;
 
     /** BF20261013-022①：节点开始触发器端口（可选注入；引擎单测无实现时跳过）。 */
     @Autowired(required = false)
-    private transient org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.participant.NodeTriggerEventPort> nodeTriggerEventPort;
-
-    /** 兼容既有引擎单测与旧 DESIGNATED 配置。 */
-    public ApprovalTaskListener(RepositoryService repositoryService,
-                                @org.springframework.beans.factory.annotation.Qualifier("approverResolverMap")
-                                Map<String, NodeApproverResolver> resolverMap,
-                                ObjectMapper objectMapper) {
-        this(repositoryService, resolverMap, objectMapper, null, null, null, null);
-    }
-
-    @Autowired
-    public ApprovalTaskListener(RepositoryService repositoryService,
-                                @org.springframework.beans.factory.annotation.Qualifier("approverResolverMap")
-                                Map<String, NodeApproverResolver> resolverMap,
-                                ObjectMapper objectMapper,
-                                ParticipantResolverRegistry participantResolverRegistry,
-                                ObjectProvider<ParticipantSnapshotRecorder> participantSnapshotRecorder,
-                                ObjectProvider<UserQueryFacade> userQueryFacade,
-                                DomainEventPublisher domainEventPublisher) {
-        this.repositoryService = repositoryService;
-        this.resolverMap = resolverMap;
-        this.objectMapper = objectMapper;
-        this.participantResolverRegistry = participantResolverRegistry;
-        this.participantSnapshotRecorder = participantSnapshotRecorder == null
-                ? null : participantSnapshotRecorder.getIfAvailable();
-        this.userQueryFacade = userQueryFacade == null ? null : userQueryFacade.getIfAvailable();
-        this.domainEventPublisher = domainEventPublisher;
-    }
+    private transient ObjectProvider<NodeTriggerEventPort> nodeTriggerEventPort;
 
     @Override
     @SuppressWarnings("unchecked")
@@ -170,7 +158,7 @@ public class ApprovalTaskListener implements TaskListener {
         }
         List<String> userIds;
         if (unifiedConfig && participantResolverRegistry != null) {
-            Map<String, Object> variables = new java.util.LinkedHashMap<>(delegateTask.getVariables());
+            Map<String, Object> variables = new LinkedHashMap<>(delegateTask.getVariables());
             variables.putIfAbsent("initiator", parseLong(delegateTask.getVariable("submitter")));
             variables.putIfAbsent("initiatorId", parseLong(delegateTask.getVariable("submitter")));
             NodeParticipantContext ctx = NodeParticipantContext.builder()
@@ -221,15 +209,15 @@ public class ApprovalTaskListener implements TaskListener {
             } catch (Exception e) {
                 nodeConfigJson = null;
             }
-            com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort entryPort =
+            LifecycleTaskEntryPort entryPort =
                     lifecycleEntryPort == null ? null : lifecycleEntryPort.getIfAvailable();
             List<String> effectiveUsers = userIds;
             if (entryPort != null) {
                 try {
                     // empty = 未配置函数或函数服务不可用：走默认策略解析结果
-                    java.util.Optional<List<String>> functionResolved = entryPort.resolveParticipantsByFunction(
+                    Optional<List<String>> functionResolved = entryPort.resolveParticipantsByFunction(
                             tenantId, processInstanceId, nodeKey, delegateTask.getId(),
-                            new java.util.LinkedHashMap<>(delegateTask.getVariables()),
+                            new LinkedHashMap<>(delegateTask.getVariables()),
                             nodeConfigJson);
                     if (functionResolved.isPresent() && !functionResolved.orElseThrow().isEmpty()) {
                         effectiveUsers = functionResolved.orElseThrow();
@@ -240,7 +228,7 @@ public class ApprovalTaskListener implements TaskListener {
                 }
                 try {
                     // empty = 本次不改写 assignee（走默认派发）
-                    java.util.Optional<String> proxied = entryPort.onTaskCreate(tenantId, processInstanceId,
+                    Optional<String> proxied = entryPort.onTaskCreate(tenantId, processInstanceId,
                             nodeKey, delegateTask.getId(), effectiveUsers, nodeConfigJson)
                             .filter(assignee -> !assignee.isBlank());
                     if (proxied.isPresent()) {
@@ -262,7 +250,7 @@ public class ApprovalTaskListener implements TaskListener {
 
         if (participantSnapshotRecorder != null) {
             // 冻结参与人展示名：历史流程身份不随后续改名/停用被重写（I1）
-            java.util.Map<String, String> frozen = new java.util.LinkedHashMap<>();
+            Map<String, String> frozen = new LinkedHashMap<>();
             if (userQueryFacade != null) {
                 try {
                     List<Long> ids = userIds.stream()
@@ -275,7 +263,7 @@ public class ApprovalTaskListener implements TaskListener {
                     log.warn("参与人展示名冻结失败，快照仅记录 ID: {}", e.getMessage());
                 }
             }
-            java.util.Map<String, String> displayNames = java.util.Collections.unmodifiableMap(frozen);
+            Map<String, String> displayNames = Collections.unmodifiableMap(frozen);
             participantSnapshotRecorder.record(processInstanceId, nodeKey, delegateTask.getId(),
                     userIds, displayNames, tenantId)
             .orElseThrow(() -> new IllegalStateException(
@@ -289,7 +277,7 @@ public class ApprovalTaskListener implements TaskListener {
 
         // BF20261013-022①：节点开始（NODE_ENTERING）触发器——任务创建成功、办理人办理前评估；
         // 触发器评估异常不阻断任务创建（评估内部已落可诊断执行行）
-        com.sw.ck.bpm.api.participant.NodeTriggerEventPort triggerPort =
+        NodeTriggerEventPort triggerPort =
                 nodeTriggerEventPort == null ? null : nodeTriggerEventPort.getIfAvailable();
         if (triggerPort != null) {
             try {

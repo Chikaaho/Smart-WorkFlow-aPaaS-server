@@ -9,6 +9,7 @@ import com.sw.ck.form.entity.FormDefEntity;
 
 import java.util.List;
 import java.util.Collection;
+import java.util.Set;
 
 /**
  * 表单定义管理服务。
@@ -58,7 +59,7 @@ public interface FormDefService {
      * @param formKeys 待判定的 formKey 集合
      * @return 其中对当前用户可见的 formKey 子集
      */
-    java.util.Set<String> filterVisibleFormKeys(java.util.Collection<String> formKeys);
+    Set<String> filterVisibleFormKeys(Collection<String> formKeys);
 
     /**
      * 更新表单草稿元数据。

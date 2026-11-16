@@ -8,6 +8,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.flywaydb.core.api.MigrationInfo;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -109,11 +110,11 @@ class FlywayFullChainPostgresTest {
     @Test
     @DisplayName("种子迁移后：info().applied() 共 32 条（0.2.0 基线 + V0.2.2—V0.2.9/V0.4.0/V1.0.0/V1.1.0 + 20 个可重复对账），终点 1.1.0")
     void appliedMigrations_shouldBeBaselineAndRepeatable() {
-        org.flywaydb.core.api.MigrationInfo[] applied = flyway().info().applied();
+        MigrationInfo[] applied = flyway().info().applied();
         assertEquals(32, applied.length, "已应用迁移数应为 32（V0.2.0 基线种子 + V0.2.2—V0.2.9/V0.4.0/V1.0.0/V1.1.0 + 20 个 R__）");
         boolean seedSeen = false;
         int repeatableCount = 0;
-        for (org.flywaydb.core.api.MigrationInfo info : applied) {
+        for (MigrationInfo info : applied) {
             if (info.getVersion() == null) {
                 repeatableCount++;
             } else if ("0.2.0".equals(info.getVersion().getVersion())) {

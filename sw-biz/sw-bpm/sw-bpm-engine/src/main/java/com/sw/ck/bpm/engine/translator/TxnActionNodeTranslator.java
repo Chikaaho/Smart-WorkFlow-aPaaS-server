@@ -1,6 +1,5 @@
 package com.sw.ck.bpm.engine.translator;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -9,7 +8,11 @@ import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.form.api.port.FormTxnActionPort;
+
 import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.ServiceTask;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.EnumSet;
@@ -29,13 +32,8 @@ import java.util.Optional;
 @Component
 public class TxnActionNodeTranslator extends ServiceTaskNodeTranslator {
 
-    private final org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider;
-
-    public TxnActionNodeTranslator(ObjectMapper objectMapper,
-                                   org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider) {
-        super(objectMapper);
-        this.txnActionPortProvider = txnActionPortProvider;
-    }
+    @Autowired(required = false)
+    private ObjectProvider<FormTxnActionPort> txnActionPortProvider;
 
     @Override
     public Optional<String> type() {
@@ -77,7 +75,7 @@ public class TxnActionNodeTranslator extends ServiceTaskNodeTranslator {
     @Override
     public FlowElement translate(GraphElement node) {
         FlowElement element = super.translate(node);
-        if (element instanceof org.flowable.bpmn.model.ServiceTask task) {
+        if (element instanceof ServiceTask task) {
             task.setAsynchronous(true);
         }
         return element;

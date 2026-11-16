@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -10,16 +11,26 @@ import com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper;
 import com.sw.ck.bpm.process.queue.BpmCommandHandler;
 import com.sw.ck.bpm.process.service.ResourcePolicyService;
 import com.sw.ck.common.exception.BaseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.security.holder.LoginUserHolder;
+
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import javax.sql.DataSource;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 资源策略服务实现。
  * <p>
@@ -38,19 +49,24 @@ import java.util.List;
  * </p>
  */
 @Service
+@Log4j2
 public class ResourcePolicyServiceImpl implements ResourcePolicyService {
-
-    private static final Logger log = LoggerFactory.getLogger(ResourcePolicyServiceImpl.class);
 
     /** 启用相容性检查的安全余量（受理 HTTP、对账、恢复等共享消耗）。 */
     static final int POOL_MARGIN = 8;
 
-    private final BpmResourcePolicyMapper policyMapper;
-    private final BpmResourceRejectLogMapper rejectLogMapper;
-    private final ApplicationContext applicationContext;
-    private final org.springframework.core.env.Environment environment;
+    @Autowired
+    private BpmResourcePolicyMapper policyMapper;
+    @Autowired
+    private BpmResourceRejectLogMapper rejectLogMapper;
+    @Autowired
+    private ApplicationContext applicationContext;
+    @Autowired
+    private Environment environment;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
     /** 拒绝审计独立短事务：enable() 抛拒绝异常时主事务回滚，审计必须已提交留存。 */
-    private final org.springframework.transaction.support.TransactionTemplate rejectAuditTemplate;
+    private TransactionTemplate rejectAuditTemplate;
 
     @Value("${flowable.async-executor-activate:false}")
     private boolean flowableAsyncActive;
@@ -68,18 +84,10 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
         this.flowableAsyncThreads = threads;
     }
 
-    public ResourcePolicyServiceImpl(BpmResourcePolicyMapper policyMapper,
-                                     BpmResourceRejectLogMapper rejectLogMapper,
-                                     ApplicationContext applicationContext,
-                                     org.springframework.core.env.Environment environment,
-                                     org.springframework.transaction.PlatformTransactionManager transactionManager) {
-        this.policyMapper = policyMapper;
-        this.rejectLogMapper = rejectLogMapper;
-        this.applicationContext = applicationContext;
-        this.environment = environment;
-        org.springframework.transaction.support.TransactionTemplate template =
-                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
-        template.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    @PostConstruct
+    void initRejectAuditTemplate() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.rejectAuditTemplate = template;
     }
 
@@ -87,8 +95,8 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
     @Transactional(rollbackFor = Exception.class)
     public BpmResourcePolicy create(BpmResourcePolicy policy) {
         validateShape(policy);
-        Long tenantId = com.sw.ck.security.holder.LoginUserHolder.get() == null
-                ? 0L : com.sw.ck.security.holder.LoginUserHolder.get().getTenantId();
+        Long tenantId = LoginUserHolder.get() == null
+                ? 0L : LoginUserHolder.get().getTenantId();
         policy.setTenantId(0L);
         policy.setStatus("DRAFT");
         policy.setEnabled(false);
@@ -240,12 +248,12 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
      */
     private long resolvePoolMaxActive() {
         try {
-            for (javax.sql.DataSource dataSource : applicationContext.getBeansOfType(javax.sql.DataSource.class)
+            for (DataSource dataSource : applicationContext.getBeansOfType(DataSource.class)
                     .values()) {
                 // dynamic-datasource 包裹（DynamicRoutingDataSource→ItemDataSource→Druid）：
                 // 路由数据源经 getDataSources() 展开内层数据源，再沿 realDataSource 解包读取实际池值
                 if (dataSource.getClass().getSimpleName().contains("DynamicRouting")) {
-                    for (Object inner : ((java.util.Collection<?>) dataSource.getClass()
+                    for (Object inner : ((Collection<?>) dataSource.getClass()
                             .getMethod("getDataSources").invoke(dataSource).getClass()
                             .cast(dataSource.getClass().getMethod("getDataSources").invoke(dataSource)))
                             ) {
@@ -301,7 +309,7 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
     private BpmResourcePolicy requirePolicy(Long id) {
         BpmResourcePolicy policy = policyMapper.selectById(id);
         if (policy == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.NOT_FOUND.getCode(),
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(),
                     "资源策略不存在: " + id);
         }
         return policy;

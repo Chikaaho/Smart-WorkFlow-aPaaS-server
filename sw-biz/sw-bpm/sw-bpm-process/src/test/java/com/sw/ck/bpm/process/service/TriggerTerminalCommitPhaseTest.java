@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
@@ -24,16 +25,23 @@ import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.security.holder.LoginUser;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -41,6 +49,8 @@ import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -86,7 +96,7 @@ class TriggerTerminalCommitPhaseTest {
 
         @Bean
         public DataSource dataSource() {
-            return org.springframework.boot.jdbc.DataSourceBuilder.create()
+            return DataSourceBuilder.create()
                     .url("jdbc:h2:mem:triggertx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
                     .driverClassName("org.h2.Driver")
                     .username("sa")
@@ -101,7 +111,7 @@ class TriggerTerminalCommitPhaseTest {
 
         @Bean
         public PlatformTransactionManager transactionManager(DataSource dataSource) {
-            return new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource);
+            return new DataSourceTransactionManager(dataSource);
         }
 
         @Bean
@@ -116,16 +126,16 @@ class TriggerTerminalCommitPhaseTest {
                     return u == null ? null : u.getTenantId();
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource, LoginContextProvider loginContextProvider) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
@@ -200,7 +210,7 @@ class TriggerTerminalCommitPhaseTest {
         commandQueue = mock(BpmCommandQueue.class);
         outerTx = new TransactionTemplate(transactionManager);
         // 租户拦截器要求已认证身份（fail closed）：与生产同线程传递一致
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        LoginUser user = new LoginUser();
         user.setUserId(7L);
         user.setTenantId(TENANT);
         LoginUserHolder.set(user);
@@ -217,7 +227,7 @@ class TriggerTerminalCommitPhaseTest {
     private TriggerExecutionService serviceWith(BpmScriptEvaluatePort scriptPort) {
         return new TriggerExecutionService(nodeFormDataService, variableSnapshotService, scriptPort,
                 commandQueue, triggerExecMapper,
-                mock(com.sw.ck.bpm.process.mapper.BpmActionRefMapper.class),
+                mock(BpmActionRefMapper.class),
                 mock(BpmTaskFacade.class), new ObjectMapper(), null, null, transactionManager, null);
     }
 
@@ -270,14 +280,14 @@ class TriggerTerminalCommitPhaseTest {
     private BpmScriptEvaluatePort okScriptPort() {
         BpmScriptEvaluatePort port = mock(BpmScriptEvaluatePort.class);
         when(port.run(anyString(), any(), anyLong(), any())).thenAnswer(inv ->
-                java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome("OK", 1L, "NUMBER", null, 1L)));
+                Optional.of(new BpmScriptEvaluatePort.ScriptOutcome("OK", 1L, "NUMBER", null, 1L)));
         return port;
     }
 
     private BpmScriptEvaluatePort failingScriptPort() {
         BpmScriptEvaluatePort port = mock(BpmScriptEvaluatePort.class);
         when(port.run(anyString(), any(), anyLong(), any())).thenAnswer(inv ->
-                java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
+                Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
                         "SCRIPT_ERROR", null, null, "引用错误: boom is not defined", 1L)));
         return port;
     }

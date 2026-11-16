@@ -5,13 +5,12 @@ import com.sw.ck.bpm.api.spi.assignee.NodeApproverContext;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
 import com.sw.ck.common.exception.BaseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 未支持的审批人类型桩 —— SCRIPT 档位占位者。
  * <p>
@@ -23,9 +22,8 @@ import java.util.Optional;
  * 注册为 {@link NodeApproverType#SCRIPT}。
  */
 @Component("unsupportedApproverResolver")
+@Log4j2
 public class UnsupportedApproverResolver implements NodeApproverResolver {
-
-    private static final Logger log = LoggerFactory.getLogger(UnsupportedApproverResolver.class);
 
     @Override
     public Optional<List<String>> resolve(NodeApproverContext context) {

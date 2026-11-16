@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.listener;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.process.notify.BpmNotifyChannels;
 import com.sw.ck.bpm.process.notify.BpmNotifyMessages;
@@ -8,8 +10,6 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifyRoutingService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -18,6 +18,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.util.List;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 监听 {@link BpmNotifyEvent}（I6 收敛版）。
  * <p>
@@ -39,17 +40,13 @@ import java.util.Optional;
  * 入口还原、finally clear。
  */
 @Component
+@Log4j2
 public class BpmNotifyListener {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmNotifyListener.class);
-
-    private final NotifyFacade notifyFacade;
-    private final NotifyRoutingService notifyRoutingService;
-
-    public BpmNotifyListener(NotifyFacade notifyFacade, NotifyRoutingService notifyRoutingService) {
-        this.notifyFacade = notifyFacade;
-        this.notifyRoutingService = notifyRoutingService;
-    }
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private NotifyRoutingService notifyRoutingService;
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

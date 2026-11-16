@@ -6,22 +6,31 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
+import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
+
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -30,13 +39,18 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -48,6 +62,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -76,7 +91,7 @@ class FormDynamicTableSafetyTest {
     private static final Long T2_USER = 21L;
 
     @Configuration
-    @org.mybatis.spring.annotation.MapperScan("com.sw.ck.form.mapper")
+    @MapperScan("com.sw.ck.form.mapper")
     static class TestConfig {
 
         @Bean
@@ -105,8 +120,8 @@ class FormDynamicTableSafetyTest {
         }
 
         @Bean
-        public com.sw.ck.common.security.LoginContextProvider loginContextProvider() {
-            return new com.sw.ck.common.security.LoginContextProvider() {
+        public LoginContextProvider loginContextProvider() {
+            return new LoginContextProvider() {
                 @Override public Long getUserId() {
                     LoginUser u = LoginUserHolder.get();
                     return u == null ? null : u.getUserId();
@@ -116,18 +131,18 @@ class FormDynamicTableSafetyTest {
                     return u == null ? null : u.getTenantId();
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
-                com.sw.ck.common.security.LoginContextProvider loginContextProvider) throws Exception {
+                LoginContextProvider loginContextProvider) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -142,11 +157,11 @@ class FormDynamicTableSafetyTest {
             dbConfig.setLogicDeleteValue("1");
             dbConfig.setLogicNotDeleteValue("0");
             globalConfig.setDbConfig(dbConfig);
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler metaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(loginContextProvider);
+            CommonMetaObjectHandler metaObjectHandler =
+                    new CommonMetaObjectHandler(loginContextProvider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
                     f.setId(new FormIdGenerator().generate());
                 }
             });
@@ -191,7 +206,7 @@ class FormDynamicTableSafetyTest {
                                              FormSnapshotMapper formSnapshotMapper,
                                              DynamicTableManager dynamicTableManager,
                                              ObjectMapper objectMapper) {
-            return new com.sw.ck.form.service.impl.FormDefServiceImpl(formDefMapper, formConfigMapper,
+            return new FormDefServiceImpl(formDefMapper, formConfigMapper,
                     formSnapshotMapper, dynamicTableManager, new FormIdGenerator(), objectMapper);
         }
 
@@ -263,7 +278,7 @@ class FormDynamicTableSafetyTest {
                                                                FormDataQueryService formDataQueryService,
                                                                TransactionTemplate transactionTemplate,
                                                                JdbcTemplate jdbcTemplate,
-                                                               com.sw.ck.common.security.LoginContextProvider loginContextProvider) {
+                                                               LoginContextProvider loginContextProvider) {
             return new FormImportExportService(formDefService, formConfigMapper, formDefMapper,
                     objectMapper, formSubmitService, formFieldValidator, formDataQueryService,
                     transactionTemplate, jdbcTemplate, loginContextProvider, null);
@@ -272,26 +287,26 @@ class FormDynamicTableSafetyTest {
         @SuppressWarnings("unchecked")
         private static <T> ObjectProvider<T> emptyProvider() {
             ObjectProvider<T> provider = mock(ObjectProvider.class);
-            org.mockito.Mockito.lenient().when(provider.getIfAvailable()).thenReturn(null);
+            Mockito.lenient().when(provider.getIfAvailable()).thenReturn(null);
             return provider;
         }
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormDefService formDefService;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormDataQueryService queryService;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormDataUpdateService updateService;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormDataDeleteService deleteService;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormSubmitService submitService;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private FormImportExportService importExportService;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private JdbcTemplate jdbcTemplate;
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private ObjectMapper objectMapper;
 
     private final List<String> createdTables = new ArrayList<>();
@@ -394,16 +409,16 @@ class FormDynamicTableSafetyTest {
     }
 
     private FormDefMapper formDefMapper() {
-        return org.springframework.test.util.AopTestUtils.getUltimateTargetObject(
+        return AopTestUtils.getUltimateTargetObject(
                 applicationContext().getBean(FormDefMapper.class));
     }
 
-    private org.springframework.context.ApplicationContext applicationContext() {
+    private ApplicationContext applicationContext() {
         return this.ctx;
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.context.ApplicationContext ctx;
+    @Autowired
+    private ApplicationContext ctx;
 
     private Map<String, Object> data(Object... kv) {
         Map<String, Object> map = new LinkedHashMap<>();
@@ -751,7 +766,7 @@ class FormDynamicTableSafetyTest {
                     row = sheet.createRow(r + 2);
                 }
                 for (int c = 0; c < rows[r].length; c++) {
-                    org.apache.poi.ss.usermodel.Cell cell = row.getCell(c);
+                    Cell cell = row.getCell(c);
                     if (cell == null) {
                         cell = row.createCell(c);
                     }

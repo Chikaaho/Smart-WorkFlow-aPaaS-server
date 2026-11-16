@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -26,6 +27,8 @@ import com.sw.ck.notify.render.TemplateRenderService;
 import com.sw.ck.notify.service.NotifyMessageService;
 import com.sw.ck.notify.service.NotifyTemplateService;
 import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -43,6 +46,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -366,7 +370,7 @@ class NotifyMessageIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -412,9 +416,9 @@ class NotifyMessageIntegrationTest {
                 @Override
                 public TemplatePreviewResult renderPreview(TemplatePreviewRequest request) { return null; }
                 @Override
-                public TemplatePreviewResult previewByCode(String templateCode, java.util.Map<String, String> variables) { return null; }
+                public TemplatePreviewResult previewByCode(String templateCode, Map<String, String> variables) { return null; }
                 @Override
-                public java.util.Set<String> extractVariables(String titleTemplate, String contentTemplate) { return java.util.Set.of(); }
+                public Set<String> extractVariables(String titleTemplate, String contentTemplate) { return Set.of(); }
                 @Override
                 public NotifyTemplate getEnabledByCode(String code) { return null; }
             };
@@ -429,7 +433,7 @@ class NotifyMessageIntegrationTest {
 
         @Bean
         public NotifyFacade notifyFacade(NotifyMessageService notifyMessageService) {
-            return new NotifyFacadeImpl(notifyMessageService, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
+            return new NotifyFacadeImpl(notifyMessageService, List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
     }
 }

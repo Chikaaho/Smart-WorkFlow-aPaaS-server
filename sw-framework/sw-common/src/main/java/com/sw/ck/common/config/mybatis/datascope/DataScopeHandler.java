@@ -6,7 +6,7 @@ import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.security.LoginContextProvider;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.LongValue;
 import net.sf.jsqlparser.expression.operators.relational.EqualsTo;
@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  * {@link Table}），因此用 {@link DataScope#deptAlias()}/{@link DataScope#userAlias()} 与当前
  * 表的别名比对，只对匹配到的那一个表拼接条件，避免同一条件被错误地重复拼接到 join 中的其它表上。
  */
-@Slf4j
+@Log4j2
 @RequiredArgsConstructor
 public class DataScopeHandler implements MultiDataPermissionHandler {
 

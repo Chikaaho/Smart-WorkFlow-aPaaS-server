@@ -1,20 +1,26 @@
 package com.sw.ck.notify.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
+import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.dto.NotifyRuleDTO;
 import com.sw.ck.notify.dto.NotifyRuleQuery;
 import com.sw.ck.notify.entity.NotifyRule;
 import com.sw.ck.notify.mapper.NotifyRuleMapper;
 import com.sw.ck.notify.service.NotifyRuleService;
+
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Locale;
 
 /** 通知规则服务实现（I6）。 */
 @Service
@@ -25,11 +31,8 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     private static final String RECIPIENT_RULE_TOKEN =
             "(INITIATOR|ASSIGNEE|ALL|ROLE:[A-Za-z0-9_-]+|DEPT:[0-9]+|USER:[0-9]+)";
 
-    private final NotifyRuleMapper ruleMapper;
-
-    public NotifyRuleServiceImpl(NotifyRuleMapper ruleMapper) {
-        this.ruleMapper = ruleMapper;
-    }
+    @Autowired
+    private NotifyRuleMapper ruleMapper;
 
     @Override
     public PageResult<NotifyRuleDTO> pageRules(NotifyRuleQuery query) {
@@ -133,9 +136,9 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "渠道顺序不能为空且不得超过 200 字符");
         }
         for (String token : dto.getChannelPriority().split(",")) {
-            String trimmed = token.trim().toUpperCase(java.util.Locale.ROOT);
+            String trimmed = token.trim().toUpperCase(Locale.ROOT);
             try {
-                com.sw.ck.notify.api.NotifyChannel.valueOf(trimmed);
+                NotifyChannel.valueOf(trimmed);
             } catch (IllegalArgumentException e) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "渠道顺序含未知渠道: " + token);
             }

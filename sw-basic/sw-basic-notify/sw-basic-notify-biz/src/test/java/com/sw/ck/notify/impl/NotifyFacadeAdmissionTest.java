@@ -4,6 +4,10 @@ import com.sw.ck.notify.api.*;
 import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.mapper.NotifyMessageMapper;
 import com.sw.ck.notify.service.NotifyMessageService;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -18,8 +22,8 @@ import static org.mockito.Mockito.*;
 class NotifyFacadeAdmissionTest {
     @BeforeAll
     static void tableInfo() {
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""), NotifyMessage.class);
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), NotifyMessage.class);
     }
 
     @Test

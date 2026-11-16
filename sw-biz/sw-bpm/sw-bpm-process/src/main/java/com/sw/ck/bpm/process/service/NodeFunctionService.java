@@ -1,7 +1,9 @@
 package com.sw.ck.bpm.process.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
@@ -11,17 +13,33 @@ import com.sw.ck.bpm.api.nodefunc.NodeFunctionResult;
 import com.sw.ck.bpm.api.nodefunc.ParticipantFunction;
 import com.sw.ck.bpm.api.nodefunc.ResultFunction;
 import com.sw.ck.bpm.process.entity.BpmNodeFunction;
+import com.sw.ck.bpm.process.entity.BpmNodeFunctionAudit;
+import com.sw.ck.bpm.process.mapper.BpmNodeFunctionAuditMapper;
 import com.sw.ck.bpm.process.mapper.BpmNodeFunctionMapper;
 import com.sw.ck.common.exception.BaseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PreDestroy;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 受控节点函数注册表与运行器（I3 §4.9）。
  * <p>
@@ -31,50 +49,43 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Log4j2
 public class NodeFunctionService {
-
-    private static final Logger log = LoggerFactory.getLogger(NodeFunctionService.class);
 
     public static final String TYPE_RESOLVE = "RESOLVE_PARTICIPANTS";
     public static final String TYPE_HANDLE = "HANDLE_RESULT";
 
-    private final BpmNodeFunctionMapper mapper;
-    private final com.sw.ck.bpm.process.mapper.BpmNodeFunctionAuditMapper fnAuditMapper;
-    private final ApplicationContext applicationContext;
-    private final org.springframework.beans.factory.ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade> userQueryFacade;
+    @Autowired
+    private BpmNodeFunctionMapper mapper;
+    @Autowired
+    private BpmNodeFunctionAuditMapper fnAuditMapper;
+    @Autowired
+    private ApplicationContext applicationContext;
+    @Autowired(required = false)
+    private ObjectProvider<UserQueryFacade> userQueryFacade;
     /** 函数执行超时约束（§4.9）：独立 daemon 池，超时中断并计入失败审计。 */
-    private final java.util.concurrent.ExecutorService fnExecutor =
-            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+    private final ExecutorService fnExecutor =
+            Executors.newCachedThreadPool(r -> {
                 Thread t = new Thread(r, "node-function-runner");
                 t.setDaemon(true);
                 return t;
             });
 
-    public NodeFunctionService(BpmNodeFunctionMapper mapper,
-                               ApplicationContext applicationContext,
-                               org.springframework.beans.factory.ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade> userQueryFacade) {
-        this.mapper = mapper;
-        this.applicationContext = applicationContext;
-        this.userQueryFacade = userQueryFacade;
-        this.fnAuditMapper = applicationContext.getBean(
-                com.sw.ck.bpm.process.mapper.BpmNodeFunctionAuditMapper.class);
-    }
-
-    @jakarta.annotation.PreDestroy
+    @PreDestroy
     void shutdownExecutor() {
         fnExecutor.shutdownNow();
     }
 
-    private <T> T runWithTimeout(BpmNodeFunction row, java.util.concurrent.Callable<T> call) {
+    private <T> T runWithTimeout(BpmNodeFunction row, Callable<T> call) {
         long timeout = row.getTimeoutMs() == null || row.getTimeoutMs() <= 0
                 ? 5000L : row.getTimeoutMs();
-        java.util.concurrent.Future<T> future = fnExecutor.submit(call);
+        Future<T> future = fnExecutor.submit(call);
         try {
-            return future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
-        } catch (java.util.concurrent.TimeoutException e) {
+            return future.get(timeout, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
             future.cancel(true);
             throw new BaseException(BpmErrorCode.NODE_FUNCTION_TIMEOUT);
-        } catch (java.util.concurrent.ExecutionException e) {
+        } catch (ExecutionException e) {
             Throwable cause = e.getCause() == null ? e : e.getCause();
             if (cause instanceof BaseException be) {
                 throw be;
@@ -129,13 +140,13 @@ public class NodeFunctionService {
     }
 
     /** 解析参与人函数输出；未配置函数返回 empty（走默认参与人策略）。 */
-    public java.util.Optional<List<String>> resolveParticipants(Long tenantId, String processInstanceId,
+    public Optional<List<String>> resolveParticipants(Long tenantId, String processInstanceId,
                                                                 String nodeKey, String taskId,
                                                                 Map<String, Object> functionsConfig,
                                                                 Map<String, Object> variables) {
         BpmNodeFunction row = locate(functionsConfig, TYPE_RESOLVE, tenantId);
         if (row == null) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         ParticipantFunction impl = bean(row.getImplBean(), ParticipantFunction.class);
         if (impl == null) {
@@ -167,13 +178,13 @@ public class NodeFunctionService {
                     throw new BaseException(BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT);
                 }
             }
-            com.sw.ck.system.api.user.UserQueryFacade users = userQueryFacade.getIfAvailable();
+            UserQueryFacade users = userQueryFacade.getIfAvailable();
             if (users != null) {
                 List<Long> requested = participants.stream().map(Long::valueOf).toList();
-                java.util.Optional<List<Long>> valid = users.findActiveUserIds(requested, tenantId);
+                Optional<List<Long>> valid = users.findActiveUserIds(requested, tenantId);
                 // empty = 查询上下文缺失（无登录租户等）：无命中用户，按原有“无效参与人”裁决
-                java.util.Set<Long> validSet = valid.isEmpty()
-                        ? java.util.Set.of() : new java.util.HashSet<>(valid.get());
+                Set<Long> validSet = valid.isEmpty()
+                        ? Set.of() : new HashSet<>(valid.get());
                 for (Long id : requested) {
                     if (!validSet.contains(id)) {
                         throw new BaseException(BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT,
@@ -185,7 +196,7 @@ public class NodeFunctionService {
                     row.getFuncKey(), row.getFuncVersion(), nodeKey, participants.size());
             writeAudit(row, context, "SUCCEEDED", null,
                     "participants=" + participants.size(), startMs);
-            return java.util.Optional.of(participants);
+            return Optional.of(participants);
         } catch (BaseException e) {
             writeAudit(row, context, "FAILED", e.getCode(), e.getMessage(), startMs);
             throw e;
@@ -194,19 +205,19 @@ public class NodeFunctionService {
             writeAudit(row, context, "FAILED", BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
                     String.valueOf(e.getMessage()), startMs);
             if ("FALLBACK".equals(row.getFailureStrategy())) {
-                return java.util.Optional.empty();
+                return Optional.empty();
             }
             throw new BaseException(BpmErrorCode.NODE_FUNCTION_FAILED);
         }
     }
 
     /** 结果处理函数：输出审计摘要与白名单变量，不改变流程走向；未配置函数返回 empty。 */
-    public java.util.Optional<NodeFunctionResult> handleResult(NodeFunctionContext context,
+    public Optional<NodeFunctionResult> handleResult(NodeFunctionContext context,
                                                                Map<String, Object> functionsConfig,
                                                                Map<String, Object> nodeResult) {
         BpmNodeFunction row = locate(functionsConfig, TYPE_HANDLE, context.getTenantId());
         if (row == null) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         ResultFunction impl = bean(row.getImplBean(), ResultFunction.class);
         if (impl == null) {
@@ -222,13 +233,13 @@ public class NodeFunctionService {
                 throw new BaseException(BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT);
             }
             writeAudit(row, context, "SUCCEEDED", null, result.getSummary(), startMs);
-            return java.util.Optional.of(result);
+            return Optional.of(result);
         } catch (RuntimeException e) {
             log.warn("结果函数失败: funcKey={}, error={}", row.getFuncKey(), e.getMessage());
             writeAudit(row, context, "FAILED", BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
                     String.valueOf(e.getMessage()), startMs);
             if ("FALLBACK".equals(row.getFailureStrategy())) {
-                return java.util.Optional.of(NodeFunctionResult.builder()
+                return Optional.of(NodeFunctionResult.builder()
                         .summary("function-fallback:" + row.getFuncKey())
                         .build());
             }
@@ -236,13 +247,12 @@ public class NodeFunctionService {
         }
     }
 
-
     /** V75：节点函数调用审计（成功/失败各一行），失败不因审计失败而翻转业务结果。 */
-    private void writeAudit(Object row, com.sw.ck.bpm.api.nodefunc.NodeFunctionContext context,
+    private void writeAudit(Object row, NodeFunctionContext context,
                             String outcome, Integer errorCode, String summary, long startMs) {
         try {
-            com.sw.ck.bpm.process.entity.BpmNodeFunction fn = (com.sw.ck.bpm.process.entity.BpmNodeFunction) row;
-            com.sw.ck.bpm.process.entity.BpmNodeFunctionAudit a = new com.sw.ck.bpm.process.entity.BpmNodeFunctionAudit();
+            BpmNodeFunction fn = (BpmNodeFunction) row;
+            BpmNodeFunctionAudit a = new BpmNodeFunctionAudit();
             a.setFuncKey(fn.getFuncKey());
             a.setFuncVersion(fn.getFuncVersion());
             a.setFuncType(fn.getFuncType());
@@ -309,10 +319,10 @@ public class NodeFunctionService {
             return true;
         }
         try {
-            com.fasterxml.jackson.databind.JsonNode nodes = new com.fasterxml.jackson.databind.ObjectMapper()
+            JsonNode nodes = new ObjectMapper()
                     .readTree(row.getAllowedNodes());
             if (nodes.isArray()) {
-                for (com.fasterxml.jackson.databind.JsonNode item : nodes) {
+                for (JsonNode item : nodes) {
                     if (item.asText("").equalsIgnoreCase(nodeType)) {
                         return true;
                     }

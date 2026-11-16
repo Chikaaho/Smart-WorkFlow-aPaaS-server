@@ -1,5 +1,7 @@
 package com.sw.ck.common.event;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
@@ -20,11 +22,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class DomainEventPublisher {
 
-    private final ApplicationEventPublisher delegate;
-
-    public DomainEventPublisher(ApplicationEventPublisher delegate) {
-        this.delegate = delegate;
-    }
+    @Autowired
+    private ApplicationEventPublisher delegate;
 
     /**
      * 发布领域事件。

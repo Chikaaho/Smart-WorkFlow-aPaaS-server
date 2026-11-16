@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.service.SystemOrgScriptService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -18,11 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/system/org")
 public class SystemOrgScriptController {
 
-    private final SystemOrgScriptService systemOrgScriptService;
-
-    public SystemOrgScriptController(SystemOrgScriptService systemOrgScriptService) {
-        this.systemOrgScriptService = systemOrgScriptService;
-    }
+    @Autowired
+    private SystemOrgScriptService systemOrgScriptService;
 
     @GetMapping("/script-context")
     @PreAuthorize("@ss.hasPermi('form:view')")

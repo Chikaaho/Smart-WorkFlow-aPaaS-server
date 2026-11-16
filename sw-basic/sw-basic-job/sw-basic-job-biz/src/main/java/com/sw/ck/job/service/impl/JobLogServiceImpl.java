@@ -1,5 +1,7 @@
 package com.sw.ck.job.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sw.ck.common.datascope.DataScopeFilter;
@@ -23,14 +25,10 @@ public class JobLogServiceImpl
         extends BaseServiceImpl<JobLogMapper, JobLog>
         implements JobLogService {
 
-    private final LoginContextProvider loginContextProvider;
-    private final DeptScopeProvider deptScopeProvider;
-
-    public JobLogServiceImpl(LoginContextProvider loginContextProvider,
-                             DeptScopeProvider deptScopeProvider) {
-        this.loginContextProvider = loginContextProvider;
-        this.deptScopeProvider = deptScopeProvider;
-    }
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    @Autowired
+    private DeptScopeProvider deptScopeProvider;
 
     @Override
     public List<JobLog> listByJobId(Long jobId) {

@@ -2,12 +2,16 @@ package com.sw.ck.system.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.entity.SysRefreshToken;
 import com.sw.ck.system.mapper.SysRefreshTokenMapper;
 import com.sw.ck.system.security.SystemErrorKeys;
+
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -27,7 +32,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * → SHA-256 哈希 → 存 sys_refresh_token.token_hash。
  * 原文经 httpOnly cookie 下发，服务端只存 hash。
  */
-@Slf4j
+@Log4j2
 @Service
 @RequiredArgsConstructor
 public class RefreshTokenService {
@@ -84,8 +89,8 @@ public class RefreshTokenService {
         String tokenHash = sha256(rawToken);
         // refresh 请求无 access 会话，租户上下文缺失属正常路径；行级租户语义由行内
         // tenant_id 承载，查询按 token_hash 全局唯一索引定位（I5 fail-closed 兼容）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return rotateRefreshTokenSuspended(tokenHash, refreshExpireSeconds);
         }
     }
@@ -141,8 +146,8 @@ public class RefreshTokenService {
             return; // 幂等：无 token 即已登出
         }
         // 登出可能发生在 access 过期后（无租户上下文）；按 token_hash 全局定位
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             String tokenHash = sha256(rawToken);
             SysRefreshToken existing = sysRefreshTokenMapper.selectOne(
                     new LambdaQueryWrapper<SysRefreshToken>()
@@ -161,8 +166,8 @@ public class RefreshTokenService {
      */
     public Long findUserIdByToken(String rawToken) {
         if (rawToken == null || rawToken.isEmpty()) return null;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             String tokenHash = sha256(rawToken);
             SysRefreshToken existing = sysRefreshTokenMapper.selectOne(
                     new LambdaQueryWrapper<SysRefreshToken>()

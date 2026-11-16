@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.common.page.PageResult;
@@ -8,11 +9,14 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
 import com.sw.ck.system.api.user.UserQueryFacade;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
+
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,9 +43,12 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import org.junit.jupiter.api.Assertions;
+import org.mockito.Mockito;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -82,7 +89,7 @@ class BpmProcessDefControllerAuthorizationTest {
         TestAuthenticationFilter.permissions = List.of("workflow:def:view");
         int status = mockMvc.perform(get("/workflow/defs").header("X-Test-User", "viewer"))
                 .andReturn().getResponse().getStatus();
-        org.junit.jupiter.api.Assertions.assertNotEquals(403, status);
+        Assertions.assertNotEquals(403, status);
 
         TestAuthenticationFilter.permissions = List.of();
         mockMvc.perform(get("/workflow/defs").header("X-Test-User", "limited"))
@@ -110,9 +117,9 @@ class BpmProcessDefControllerAuthorizationTest {
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"name\":\"P52流程\",\"formKey\":\"some_form\"}"))
                     .andReturn().getResponse().getStatus();
-            org.junit.jupiter.api.Assertions.assertNotEquals(401, status);
-            org.junit.jupiter.api.Assertions.assertNotEquals(403, status);
-        } catch (jakarta.servlet.ServletException e) {
+            Assertions.assertNotEquals(401, status);
+            Assertions.assertNotEquals(403, status);
+        } catch (ServletException e) {
             // 权限网关放行后进入业务层（mock service 抛错），即证明未在网关被拒
         }
     }
@@ -154,14 +161,14 @@ class BpmProcessDefControllerAuthorizationTest {
         BpmProcessDefController controller() {
             BpmNodeRegistry registry = mock(BpmNodeRegistry.class);
             // capabilities 当前契约恒 present（注册结果构造期已保证定义集非空）：桩需兑现契约
-            org.mockito.Mockito.when(registry.capabilities())
-                    .thenReturn(java.util.Optional.of(List.of()));
+            Mockito.when(registry.capabilities())
+                    .thenReturn(Optional.of(List.of()));
             BpmProcessDefService service = mock(BpmProcessDefService.class);
             // 列表网关放行后控制器读取分页结果，桩需返回真实空页而非 null
             when(service.listDefs(any(), any(), any())).thenReturn(PageResult.empty());
             return new BpmProcessDefController(service,
                     new ObjectMapper(), mock(UserQueryFacade.class), registry,
-                    mock(com.sw.ck.bpm.process.service.ProcessThemeService.class));
+                    mock(ProcessThemeService.class));
         }
 
         @Bean("ss")

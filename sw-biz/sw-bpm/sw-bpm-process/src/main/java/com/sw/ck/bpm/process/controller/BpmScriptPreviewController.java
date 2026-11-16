@@ -1,14 +1,17 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
+import com.sw.ck.bpm.process.dto.ScriptPreviewDTO;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dept.DeptDirectoryRow;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,22 +35,18 @@ import java.util.Set;
  * 按声明类型生成的示例变量，因此"模拟运行"与运行期语义一致，而不是另一套本地解释器。
  * </p>
  */
-@Slf4j
+@Log4j2
 @RestController
 @RequestMapping("/workflow/scripts")
 public class BpmScriptPreviewController {
 
-    private final BpmScriptEvaluatePort scriptEvaluatePort;
-    private final DeptQueryFacade deptQueryFacade;
+    @Autowired
+    private BpmScriptEvaluatePort scriptEvaluatePort;
+    @Autowired
+    private DeptQueryFacade deptQueryFacade;
 
     @Value("${sw.bpm.script.timeout-ms:5000}")
     private long timeoutMs = BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS;
-
-    public BpmScriptPreviewController(BpmScriptEvaluatePort scriptEvaluatePort,
-                                      DeptQueryFacade deptQueryFacade) {
-        this.scriptEvaluatePort = scriptEvaluatePort;
-        this.deptQueryFacade = deptQueryFacade;
-    }
 
     /**
      * 模拟执行流程脚本。
@@ -55,7 +54,7 @@ public class BpmScriptPreviewController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:def:design')")
     @PostMapping("/preview")
-    public R<Map<String, Object>> preview(@RequestBody(required = false) Map<String, Object> request) {
+    public R<ScriptPreviewDTO> preview(@RequestBody(required = false) Map<String, Object> request) {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         if (tenantId == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED);
@@ -71,13 +70,13 @@ public class BpmScriptPreviewController {
         BpmScriptEvaluatePort.ScriptOutcome outcome = scriptEvaluatePort
                 .run(script, samples, timeoutMs, functionContext)
                 .orElseThrow(() -> new BaseException(CommonErrorCode.SYSTEM_ERROR));
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("kind", outcome.kind());
-        result.put("value", outcome.value());
-        result.put("typeName", outcome.typeName());
-        result.put("errorMessage", outcome.errorMessage());
-        result.put("durationMs", outcome.durationMs());
-        result.put("samples", samples);
+        ScriptPreviewDTO result = new ScriptPreviewDTO();
+        result.setKind(outcome.kind());
+        result.setValue(outcome.value());
+        result.setTypeName(outcome.typeName());
+        result.setErrorMessage(outcome.errorMessage());
+        result.setDurationMs(outcome.durationMs());
+        result.setSamples(samples);
         return R.ok(result);
     }
 

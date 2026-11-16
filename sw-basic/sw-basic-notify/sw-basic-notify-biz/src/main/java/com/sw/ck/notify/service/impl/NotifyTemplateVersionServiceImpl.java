@@ -1,5 +1,7 @@
 package com.sw.ck.notify.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
@@ -15,11 +17,8 @@ import java.util.List;
 @Service
 public class NotifyTemplateVersionServiceImpl implements NotifyTemplateVersionService {
 
-    private final NotifyTemplateVersionMapper versionMapper;
-
-    public NotifyTemplateVersionServiceImpl(NotifyTemplateVersionMapper versionMapper) {
-        this.versionMapper = versionMapper;
-    }
+    @Autowired
+    private NotifyTemplateVersionMapper versionMapper;
 
     @Override
     public NotifyTemplateVersion release(NotifyTemplate template) {

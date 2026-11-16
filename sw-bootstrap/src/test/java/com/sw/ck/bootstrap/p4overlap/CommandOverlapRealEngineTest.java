@@ -1,9 +1,12 @@
 package com.sw.ck.bootstrap.p4overlap;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.engine.facade.BpmTaskFacadeImpl;
+import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -15,22 +18,29 @@ import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.bpm.process.service.impl.ApprovalActionServiceImpl;
 import com.sw.ck.bpm.process.service.impl.BpmInstanceServiceImpl;
+import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.flowable.engine.HistoryService;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.task.api.Task;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -39,10 +49,14 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
@@ -80,7 +94,7 @@ class CommandOverlapRealEngineTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @org.springframework.context.annotation.Configuration
+    @Configuration
     @Import(OverlapH2TestConfig.class)
     static class Config {
 
@@ -91,18 +105,18 @@ class CommandOverlapRealEngineTest {
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider() {
-            return new com.sw.ck.common.datascope.DeptScopeProvider() {
+        public DeptScopeProvider deptScopeProvider() {
+            return new DeptScopeProvider() {
                 @Override
-                public java.util.List<Long> listChildDeptIds(Long deptId) {
-                    return java.util.List.of();
+                public List<Long> listChildDeptIds(Long deptId) {
+                    return List.of();
                 }
             };
         }
 
         @Bean
         public BpmInstanceServiceImpl bpmInstanceService(LoginContextProvider provider,
-                                                         com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+                                                         DeptScopeProvider deptScopeProvider) {
             return new BpmInstanceServiceImpl(provider, deptScopeProvider);
         }
 
@@ -201,16 +215,16 @@ class CommandOverlapRealEngineTest {
     static class GatedTaskFacade extends BpmTaskFacadeImpl {
         static volatile boolean gatingEnabled = false;
         static volatile boolean byArrivalMode = false;
-        static final Map<String, CountDownLatch> ARRIVAL_GATES = new java.util.concurrent.ConcurrentHashMap<>();
-        static final Map<String, Integer> TASK_ARRIVALS = new java.util.concurrent.ConcurrentHashMap<>();
-        static final java.util.concurrent.atomic.AtomicInteger GLOBAL_ARRIVALS =
-                new java.util.concurrent.atomic.AtomicInteger();
+        static final Map<String, CountDownLatch> ARRIVAL_GATES = new ConcurrentHashMap<>();
+        static final Map<String, Integer> TASK_ARRIVALS = new ConcurrentHashMap<>();
+        static final AtomicInteger GLOBAL_ARRIVALS =
+                new AtomicInteger();
         static volatile CountDownLatch afterFirstArrival;
         static volatile CountDownLatch afterSecondArrival;
 
-        GatedTaskFacade(org.flowable.engine.TaskService taskService, RuntimeService runtimeService,
-                        org.flowable.engine.RepositoryService repositoryService,
-                        org.flowable.engine.HistoryService historyService) {
+        GatedTaskFacade(TaskService taskService, RuntimeService runtimeService,
+                        RepositoryService repositoryService,
+                        HistoryService historyService) {
             super(taskService, runtimeService, repositoryService, historyService);
         }
 
@@ -241,11 +255,11 @@ class CommandOverlapRealEngineTest {
          * Flowable 乐观锁（这是被测重叠窗口之外的噪声）。串行化变量写入，使断言只观察
          * 受门控的 complete 区间，不改变真实 complete 的并发语义。
          */
-        private static final java.util.concurrent.locks.ReentrantLock SET_VARIABLE_LOCK =
-                new java.util.concurrent.locks.ReentrantLock();
+        private static final ReentrantLock SET_VARIABLE_LOCK =
+                new ReentrantLock();
 
         @Override
-        public java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> setVariable(
+        public Optional<MutationOutcome> setVariable(
                 String processInstanceId, String name, Object value) {
             SET_VARIABLE_LOCK.lock();
             try {
@@ -256,20 +270,20 @@ class CommandOverlapRealEngineTest {
         }
 
         @Override
-        public java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> complete(
+        public Optional<MutationOutcome> complete(
                 String taskId, Map<String, Object> variables) {
             beforeComplete(taskId);
-            java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> outcome =
+            Optional<MutationOutcome> outcome =
                     super.complete(taskId, variables);
             afterComplete(taskId);
             return outcome;
         }
 
         @Override
-        public java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> completeAsUser(
+        public Optional<MutationOutcome> completeAsUser(
                 String taskId, String userId, Map<String, Object> variables) {
             beforeComplete(taskId);
-            java.util.Optional<com.sw.ck.bpm.api.result.MutationOutcome> outcome =
+            Optional<MutationOutcome> outcome =
                     super.completeAsUser(taskId, userId, variables);
             afterComplete(taskId);
             return outcome;
@@ -334,9 +348,9 @@ class CommandOverlapRealEngineTest {
                 "overlap_par", "biz-xchan-001",
                 Map.of("approver1", "7", "approver2", "8"), "1");
         String flowablePid = pi.getProcessInstanceId();
-        org.flowable.task.api.Task t1 = EngineHolder.TASK_SERVICE.createTaskQuery()
+        Task t1 = EngineHolder.TASK_SERVICE.createTaskQuery()
                 .processInstanceId(flowablePid).taskDefinitionKey("t1").singleResult();
-        org.flowable.task.api.Task t2 = EngineHolder.TASK_SERVICE.createTaskQuery()
+        Task t2 = EngineHolder.TASK_SERVICE.createTaskQuery()
                 .processInstanceId(flowablePid).taskDefinitionKey("t2").singleResult();
         insertInstance(998, flowablePid, "overlap_par", "biz-xchan-001", 7L);
 
@@ -432,7 +446,7 @@ class CommandOverlapRealEngineTest {
         var pi = EngineHolder.RUNTIME_SERVICE.startProcessInstanceByKeyAndTenantId(
                 "overlap_p", "biz-lease-001", Map.of("approver", "7"), "1");
         String flowablePid = pi.getProcessInstanceId();
-        org.flowable.task.api.Task task = EngineHolder.TASK_SERVICE.createTaskQuery()
+        Task task = EngineHolder.TASK_SERVICE.createTaskQuery()
                 .processInstanceId(flowablePid).singleResult();
         insertInstance(997, flowablePid, "overlap_p", "biz-lease-001", 7L);
 
@@ -542,7 +556,7 @@ class CommandOverlapRealEngineTest {
         var pi = EngineHolder.RUNTIME_SERVICE.startProcessInstanceByKeyAndTenantId(
                 "overlap_p", "biz-acklost-001", Map.of("approver", "7"), "1");
         String flowablePid = pi.getProcessInstanceId();
-        org.flowable.task.api.Task task = EngineHolder.TASK_SERVICE.createTaskQuery()
+        Task task = EngineHolder.TASK_SERVICE.createTaskQuery()
                 .processInstanceId(flowablePid).singleResult();
         insertInstance(996, flowablePid, "overlap_p", "biz-acklost-001", 7L);
 
@@ -668,7 +682,7 @@ class CommandOverlapRealEngineTest {
         env.setInitiatorId(initiatorId);
         ApprovalActionRequest req = new ApprovalActionRequest();
         req.setTaskId(taskId);
-        req.setAction(com.sw.ck.bpm.process.dto.ApprovalAction.APPROVE);
+        req.setAction(ApprovalAction.APPROVE);
         env.setPayload(new ObjectMapper().writeValueAsString(req));
         LoginUser previous = LoginUserHolder.get();
         LoginUser initiator = new LoginUser();
@@ -706,7 +720,7 @@ class CommandOverlapRealEngineTest {
             }
             Thread.sleep(20);
         }
-        org.junit.jupiter.api.Assertions.fail("命令 " + commandId + " 未在期限内进入 " + expected);
+        Assertions.fail("命令 " + commandId + " 未在期限内进入 " + expected);
     }
 
     private long eventTime(String name, String taskId) {

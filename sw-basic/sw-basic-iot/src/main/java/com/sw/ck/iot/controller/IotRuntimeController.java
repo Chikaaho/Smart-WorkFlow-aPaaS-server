@@ -1,7 +1,10 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.security.access.prepost.PreAuthorize;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotCommand;
 import com.sw.ck.iot.entity.IotEventRecord;
@@ -18,6 +21,8 @@ import com.sw.ck.iot.mapper.IotPropertyRecordMapper;
 import com.sw.ck.iot.mapper.IotScriptExecMapper;
 import com.sw.ck.iot.service.IotAuditService;
 import com.sw.ck.iot.api.IotDeviceFacade;
+import com.sw.ck.iot.entity.IotDevice;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,56 +32,44 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
-
 import java.util.List;
+import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 运行记录控制器：消息、属性/事件、命令、脚本执行、规则触发与流程发起关联查询。
  */
 @RestController
 @PreAuthorize("@ss.hasPermi('iot:runtime:view')")
 @RequestMapping("/iot/runtime")
+@Log4j2
 public class IotRuntimeController {
 
-    private static final org.slf4j.Logger log =
-            org.slf4j.LoggerFactory.getLogger(IotRuntimeController.class);
-
-    private final IotMessageLogMapper messageLogMapper;
-    private final IotPropertyRecordMapper propertyRecordMapper;
-    private final IotEventRecordMapper eventRecordMapper;
-    private final IotCommandMapper commandMapper;
-    private final IotScriptExecMapper scriptExecMapper;
-    private final IotProcessTriggerMapper triggerMapper;
-    private final ObjectProvider<IotDeviceFacade> deviceFacadeProvider;
-    private final IotDeviceMapper deviceMapper;
-    private final IotAuditService auditService;
-
-    public IotRuntimeController(IotMessageLogMapper messageLogMapper,
-                                IotPropertyRecordMapper propertyRecordMapper,
-                                IotEventRecordMapper eventRecordMapper,
-                                IotCommandMapper commandMapper,
-                                IotScriptExecMapper scriptExecMapper,
-                                IotProcessTriggerMapper triggerMapper,
-                                ObjectProvider<IotDeviceFacade> deviceFacadeProvider,
-                                IotDeviceMapper deviceMapper,
-                                IotAuditService auditService) {
-        this.messageLogMapper = messageLogMapper;
-        this.propertyRecordMapper = propertyRecordMapper;
-        this.eventRecordMapper = eventRecordMapper;
-        this.commandMapper = commandMapper;
-        this.scriptExecMapper = scriptExecMapper;
-        this.triggerMapper = triggerMapper;
-        this.deviceFacadeProvider = deviceFacadeProvider;
-        this.deviceMapper = deviceMapper;
-        this.auditService = auditService;
-    }
+    @Autowired
+    private IotMessageLogMapper messageLogMapper;
+    @Autowired
+    private IotPropertyRecordMapper propertyRecordMapper;
+    @Autowired
+    private IotEventRecordMapper eventRecordMapper;
+    @Autowired
+    private IotCommandMapper commandMapper;
+    @Autowired
+    private IotScriptExecMapper scriptExecMapper;
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
+    @Autowired
+    private ObjectProvider<IotDeviceFacade> deviceFacadeProvider;
+    @Autowired
+    private IotDeviceMapper deviceMapper;
+    @Autowired
+    private IotAuditService auditService;
 
     /**
      * 命令重试（G5c 审计动作）：按原命令记录重发，生成新命令记录
      * （source_ref=retry:<原命令ID>，沿原 flowInstanceId 关联），失败/超时命令可重试。
      */
     @PostMapping("/commands/{id}/retry")
-    public R<com.sw.ck.iot.entity.IotCommand> retryCommand(@PathVariable Long id) {
+    public R<IotCommand> retryCommand(@PathVariable Long id) {
         IotCommand origin = commandMapper.selectById(id);
         if (origin == null) {
             return R.fail(404, "命令不存在: id=" + id);
@@ -96,13 +89,13 @@ public class IotRuntimeController {
         retry.setSourceRef("retry:" + origin.getId());
         retry.setFlowInstanceId(origin.getFlowInstanceId());
         retry.setQos(origin.getQos());
-        retry.setCorrelationId(java.util.UUID.randomUUID().toString());
+        retry.setCorrelationId(UUID.randomUUID().toString());
         commandMapper.insert(retry);
         // 经统一命令路径真实重发；empty = 设备/连接/下行主题不合格（不适用），
         // 重试命令保持 PENDING 并由补偿调度继续尝试，不伪造下发成功。
         var facade = deviceFacadeProvider.getIfAvailable();
         if (facade != null) {
-            com.sw.ck.iot.entity.IotDevice device = deviceMapper.selectById(origin.getDeviceId());
+            IotDevice device = deviceMapper.selectById(origin.getDeviceId());
             if (device != null) {
                 facade.dispatchByDeviceKey(device.getTenantId(), device.getDeviceKey(),
                                 origin.getCapabilityId() == null ? "retry" : origin.getCapabilityId(),

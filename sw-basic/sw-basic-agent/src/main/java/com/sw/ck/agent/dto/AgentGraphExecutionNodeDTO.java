@@ -2,6 +2,8 @@ package com.sw.ck.agent.dto;
 
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 /**
  * 图执行节点明细 DTO（M07 Step12，只读端点）。
  * <p>
@@ -46,10 +48,10 @@ public class AgentGraphExecutionNodeDTO {
     private String output;
 
     /** 节点开始时间 */
-    private java.time.LocalDateTime startTime;
+    private LocalDateTime startTime;
 
     /** 节点结束时间 */
-    private java.time.LocalDateTime endTime;
+    private LocalDateTime endTime;
 
     /** 节点执行状态：SUCCESS / FAILED */
     private String status;

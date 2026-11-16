@@ -1,15 +1,18 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.form.api.facade.FormDataWritebackFacade;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormDefMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * P64 阶段Ⅱ（A06 隔离与准确回写）受控回写实现。
  * <p>
@@ -33,28 +37,21 @@ import java.util.UUID;
  * </p>
  */
 @Service
+@Log4j2
 public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
-
-    private static final Logger log = LoggerFactory.getLogger(FormDataWritebackFacadeImpl.class);
 
     /** UUID v4 形态正则（防伪造 id 注入，与 FormDataUpdateService 同口径）。 */
     private static final String UUID_PATTERN =
             "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
-    private final FormDefMapper formDefMapper;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
-    private final FormFieldValidator formFieldValidator;
-
-    public FormDataWritebackFacadeImpl(FormDefMapper formDefMapper,
-                                       JdbcTemplate jdbcTemplate,
-                                       ObjectMapper objectMapper,
-                                       FormFieldValidator formFieldValidator) {
-        this.formDefMapper = formDefMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-        this.formFieldValidator = formFieldValidator;
-    }
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -303,7 +300,7 @@ public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
         }
         try {
             Map<String, Object> raw = objectMapper.readValue(subTableMappingJson,
-                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+                    new TypeReference<Map<String, Object>>() { });
             Map<String, String> result = new LinkedHashMap<>();
             raw.forEach((field, table) -> result.put(field, String.valueOf(table)));
             return result;

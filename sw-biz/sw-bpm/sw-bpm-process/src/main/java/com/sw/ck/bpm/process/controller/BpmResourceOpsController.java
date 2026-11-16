@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.BpmResourceOpsViews;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.service.ResourcePolicyService;
@@ -29,14 +31,10 @@ import java.util.List;
 @RequestMapping("/workflow/resource")
 public class BpmResourceOpsController {
 
-    private final ResourcePolicyService policyService;
-    private final BpmResourceOpsService opsService;
-
-    public BpmResourceOpsController(ResourcePolicyService policyService,
-                                    BpmResourceOpsService opsService) {
-        this.policyService = policyService;
-        this.opsService = opsService;
-    }
+    @Autowired
+    private ResourcePolicyService policyService;
+    @Autowired
+    private BpmResourceOpsService opsService;
 
     // ==================== 策略（RG01：服务端策略配置/授权及发布校验） ====================
 

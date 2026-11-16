@@ -1,13 +1,17 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotProduct;
 import com.sw.ck.iot.entity.IotThingModel;
 import com.sw.ck.iot.service.IotDeviceManageService;
 import com.sw.ck.iot.service.IotProductService;
+
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import com.alibaba.fastjson2.JSONObject;
 
 import java.util.List;
 
@@ -19,14 +23,10 @@ import java.util.List;
 @RequestMapping("/iot/products")
 public class IotProductController {
 
-    private final IotProductService productService;
-    private final IotDeviceManageService deviceManageService;
-
-    public IotProductController(IotProductService productService,
-                                IotDeviceManageService deviceManageService) {
-        this.productService = productService;
-        this.deviceManageService = deviceManageService;
-    }
+    @Autowired
+    private IotProductService productService;
+    @Autowired
+    private IotDeviceManageService deviceManageService;
 
     // ---------------- 产品 ----------------
 
@@ -83,7 +83,7 @@ public class IotProductController {
         private Long connId;
         private String connType;
         private String description;
-        private com.alibaba.fastjson2.JSONObject model;
+        private JSONObject model;
 
         public IotProduct toProduct() {
             IotProduct product = new IotProduct();
@@ -95,7 +95,7 @@ public class IotProductController {
             return product;
         }
 
-        public com.alibaba.fastjson2.JSONObject getModel() {
+        public JSONObject getModel() {
             return model;
         }
 
@@ -119,7 +119,7 @@ public class IotProductController {
             this.description = description;
         }
 
-        public void setModel(com.alibaba.fastjson2.JSONObject model) {
+        public void setModel(JSONObject model) {
             this.model = model;
         }
     }

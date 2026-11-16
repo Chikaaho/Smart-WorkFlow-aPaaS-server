@@ -3,8 +3,10 @@ package com.sw.ck.bpm.process.queue.support;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandStatusEnum;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
+
 import org.springframework.dao.DuplicateKeyException;
 
 import java.time.LocalDateTime;
@@ -12,7 +14,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -44,7 +48,7 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
     public boolean requeueForContinuation(Long commandId, String claimToken) {
         BpmCommand command = store.get(commandId);
         if (command == null || !CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())
-                || !java.util.Objects.equals(command.getClaimToken(), claimToken)) {
+                || !Objects.equals(command.getClaimToken(), claimToken)) {
             return false;
         }
         command.setStatus(CommandStatusEnum.PENDING.getCode());
@@ -116,7 +120,7 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
         for (BpmCommand candidate : candidates) {
             // 原子领取语义：仅 PENDING 可转 PROCESSING；一次性租约令牌与持久实现同契约
             if (CommandStatusEnum.PENDING.getCode().equals(candidate.getStatus())) {
-                String claimToken = java.util.UUID.randomUUID().toString();
+                String claimToken = UUID.randomUUID().toString();
                 candidate.setStatus(CommandStatusEnum.PROCESSING.getCode());
                 candidate.setClaimedAt(now);
                 candidate.setClaimToken(claimToken);
@@ -131,7 +135,7 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
         BpmCommand command = store.get(commandId);
         if (command != null
                 && CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())
-                && java.util.Objects.equals(command.getClaimToken(), claimToken)) {
+                && Objects.equals(command.getClaimToken(), claimToken)) {
             command.setStatus(CommandStatusEnum.COMPLETED.getCode());
             command.setResult(resultJson);
             command.setFinishedAt(LocalDateTime.now());
@@ -142,7 +146,7 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
     public void reject(Long commandId, String claimToken, String reason) {
         BpmCommand command = store.get(commandId);
         if (command != null && CommandStatusEnum.PROCESSING.getCode().equals(command.getStatus())
-                && java.util.Objects.equals(command.getClaimToken(), claimToken)) {
+                && Objects.equals(command.getClaimToken(), claimToken)) {
             command.setStatus(CommandStatusEnum.FAILED.getCode());
             command.setResult("{\"status\":\"REJECTED\"}");
             command.setFailureReason(reason);
@@ -163,7 +167,7 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
             return false;
         }
         if (CommandStatusEnum.PROCESSING.getCode().equals(status)
-                && !java.util.Objects.equals(command.getClaimToken(), claimToken)) {
+                && !Objects.equals(command.getClaimToken(), claimToken)) {
             return false;
         }
         int retryCount = command.getRetryCount() == null ? 0 : command.getRetryCount();
@@ -210,7 +214,7 @@ public class InMemoryCommandQueue implements BpmCommandQueue {
     private CommandEnvelope toEnvelope(BpmCommand command) {
         CommandEnvelope envelope = new CommandEnvelope();
         envelope.setCommandId(command.getId());
-        envelope.setCommandType(com.sw.ck.bpm.process.entity.CommandTypeEnum.of(command.getCommandType()));
+        envelope.setCommandType(CommandTypeEnum.of(command.getCommandType()));
         envelope.setChannel(CommandChannelEnum.valueOf(command.getChannel()));
         envelope.setCommandKey(command.getCommandKey());
         envelope.setTenantId(command.getTenantId());

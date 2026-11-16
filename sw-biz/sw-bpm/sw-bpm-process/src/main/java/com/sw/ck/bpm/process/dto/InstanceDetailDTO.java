@@ -1,10 +1,12 @@
 package com.sw.ck.bpm.process.dto;
 
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 流程实例详情响应 DTO。
@@ -30,5 +32,5 @@ public class InstanceDetailDTO extends InstanceListItemDTO {
     /**
      * 流程变量中的表单数据（P21 G3b：IoT 触发流程的表单详情回查）。
      */
-    private java.util.Map<String, Object> formData;
+    private Map<String, Object> formData;
 }

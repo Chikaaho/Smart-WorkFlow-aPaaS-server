@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
@@ -37,26 +39,18 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     private static final Set<String> ALLOWED_EXTENSIONS =
             Set.of("pdf", "doc", "docx", "txt", "md", "markdown");
 
-    private final KnowledgeBaseMapper baseMapper;
-    private final KnowledgeDocumentMapper documentMapper;
-    private final KnowledgeChunkMapper chunkMapper;
-    private final KnowledgeDocumentParser parser;
-    private final KnowledgeEmbeddingClient embeddingClient;
-    private final KnowledgeVectorStore vectorStore;
-
-    public KnowledgeDocumentServiceImpl(KnowledgeBaseMapper baseMapper,
-                                        KnowledgeDocumentMapper documentMapper,
-                                        KnowledgeChunkMapper chunkMapper,
-                                        KnowledgeDocumentParser parser,
-                                        KnowledgeEmbeddingClient embeddingClient,
-                                        KnowledgeVectorStore vectorStore) {
-        this.baseMapper = baseMapper;
-        this.documentMapper = documentMapper;
-        this.chunkMapper = chunkMapper;
-        this.parser = parser;
-        this.embeddingClient = embeddingClient;
-        this.vectorStore = vectorStore;
-    }
+    @Autowired
+    private KnowledgeBaseMapper baseMapper;
+    @Autowired
+    private KnowledgeDocumentMapper documentMapper;
+    @Autowired
+    private KnowledgeChunkMapper chunkMapper;
+    @Autowired
+    private KnowledgeDocumentParser parser;
+    @Autowired
+    private KnowledgeEmbeddingClient embeddingClient;
+    @Autowired
+    private KnowledgeVectorStore vectorStore;
 
     @Override
     public List<KnowledgeDocumentDTO> list(Long kbId) {

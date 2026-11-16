@@ -2,9 +2,13 @@ package com.sw.ck.agent.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.AgentConversationDTO;
 import com.sw.ck.agent.dto.AgentConversationMessageDTO;
 import com.sw.ck.agent.service.AgentConversationService;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.response.R;
 import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.security.config.SecurityProperties;
@@ -18,11 +22,15 @@ import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.jwt.JwtTokenProviderImpl;
 import com.sw.ck.security.spi.UserDetailsProvider;
 import com.sw.ck.security.support.PermissionService;
+
 import jakarta.servlet.Filter;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -232,8 +240,8 @@ class AgentConversationControllerTest {
     @DisplayName("用例7: 消息端点携带 token 但会话不存在/跨租户 → 404（Service 层语义透传）")
     void messages_notFoundSession_shouldReturn404() throws Exception {
         // doThrow 不覆盖既有 thenReturn stub（与 superAdmin 测试共享 mock）
-        org.mockito.Mockito.doThrow(new com.sw.ck.common.exception.BaseException(
-                        com.sw.ck.common.exception.CommonErrorCode.NOT_FOUND, "会话不存在"))
+        Mockito.doThrow(new BaseException(
+                        CommonErrorCode.NOT_FOUND, "会话不存在"))
                 .when(agentConversationService).listMessages(999L);
 
         MvcResult result = mockMvc.perform(get("/agent/conversations/999/messages")
@@ -335,8 +343,8 @@ class AgentConversationControllerTest {
         public LoginUserLoader loginUserLoader(
                 UserDetailsProvider userDetailsProvider,
                 LoginUserCacheService loginUserCacheService) {
-            org.springframework.beans.factory.ObjectProvider<UserDetailsProvider> provider =
-                    mock(org.springframework.beans.factory.ObjectProvider.class);
+            ObjectProvider<UserDetailsProvider> provider =
+                    mock(ObjectProvider.class);
             when(provider.getIfAvailable()).thenReturn(userDetailsProvider);
             return new LoginUserLoader(provider, loginUserCacheService);
         }
@@ -396,7 +404,7 @@ class AgentConversationControllerTest {
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties) {
             return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
-            org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
+            Mockito.mock(LoginUserCacheService.class));
         }
 
         @Bean
@@ -437,10 +445,10 @@ class AgentConversationControllerTest {
         @RestControllerAdvice
         static class TestBusinessExceptionAdvice {
 
-            @ExceptionHandler(com.sw.ck.common.exception.BaseException.class)
-            public com.sw.ck.common.response.R<Void> handleBaseException(
-                    com.sw.ck.common.exception.BaseException ex) {
-                return com.sw.ck.common.response.R.fail(ex.getCode(), ex.getMessage());
+            @ExceptionHandler(BaseException.class)
+            public R<Void> handleBaseException(
+                    BaseException ex) {
+                return R.fail(ex.getCode(), ex.getMessage());
             }
         }
 

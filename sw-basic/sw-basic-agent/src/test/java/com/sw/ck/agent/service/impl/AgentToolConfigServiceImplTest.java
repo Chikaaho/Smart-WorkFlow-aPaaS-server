@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
 import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
@@ -23,10 +24,12 @@ import com.sw.ck.agent.mapper.AgentModelMapper;
 import com.sw.ck.agent.mapper.AgentProviderMapper;
 import com.sw.ck.agent.orchestration.AgentGraphFactory;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
+
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
 import com.sw.ck.agent.service.AgentOrchestrationService;
 import com.sw.ck.agent.service.AgentToolConfigService;
@@ -41,6 +44,7 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.bsc.langgraph4j.CompiledGraph;
@@ -63,6 +67,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.annotation.Transactional;
+import org.apache.ibatis.session.SqlSessionFactory;
 
 import javax.sql.DataSource;
 import java.io.IOException;
@@ -725,7 +730,7 @@ class AgentToolConfigServiceImplTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {

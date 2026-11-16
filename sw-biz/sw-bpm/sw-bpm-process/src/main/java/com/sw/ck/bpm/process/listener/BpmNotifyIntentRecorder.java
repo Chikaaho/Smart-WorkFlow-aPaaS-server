@@ -1,13 +1,13 @@
 package com.sw.ck.bpm.process.listener;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.process.notify.BpmNotifyChannels;
 import com.sw.ck.bpm.process.notify.BpmNotifyMessages;
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifyRoutingService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -15,6 +15,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.List;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 通知投递意图的事务内登记器（Phase 4 可靠业务事件 —— 通知 MUST_PERSIST_INTENT）。
  *
@@ -30,17 +31,13 @@ import java.util.Optional;
  * </ul>
  */
 @Component
+@Log4j2
 public class BpmNotifyIntentRecorder {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmNotifyIntentRecorder.class);
-
-    private final NotifyFacade notifyFacade;
-    private final NotifyRoutingService notifyRoutingService;
-
-    public BpmNotifyIntentRecorder(NotifyFacade notifyFacade, NotifyRoutingService notifyRoutingService) {
-        this.notifyFacade = notifyFacade;
-        this.notifyRoutingService = notifyRoutingService;
-    }
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private NotifyRoutingService notifyRoutingService;
 
     @EventListener
     public void onBpmNotify(BpmNotifyEvent event) {

@@ -1,12 +1,24 @@
 package com.sw.ck.bootstrap.i5;
 
+import com.sw.ck.common.crypto.AesGcmCipher;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+import com.sw.ck.system.sso.SsoCredentialCipher;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -44,21 +56,21 @@ class I5SsoCipherRuntimeDiagTest {
         props.put("sw.security.jwt.secret", "i5-g4s-test-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8());
         props.put("sw.security.login.digest-secret", "i5-g4s-test-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("i5-g4s-diag", props));
+                            new MapPropertySource("i5-g4s-diag", props));
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getSystemProperties().put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("i5G4sLoginContextProvider", provider);
                 })
                 .run();
@@ -66,14 +78,14 @@ class I5SsoCipherRuntimeDiagTest {
 
     private static String generatedRsaPkcs8() {
         try {
-            java.security.KeyPairGenerator g = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
             g.initialize(2048);
-            java.security.KeyPair kp = g.generateKeyPair();
-            java.security.KeyFactory f = java.security.KeyFactory.getInstance("RSA");
-            java.security.spec.PKCS8EncodedKeySpec spec =
-                    new java.security.spec.PKCS8EncodedKeySpec(kp.getPrivate().getEncoded());
+            KeyPair kp = g.generateKeyPair();
+            KeyFactory f = KeyFactory.getInstance("RSA");
+            PKCS8EncodedKeySpec spec =
+                    new PKCS8EncodedKeySpec(kp.getPrivate().getEncoded());
             f.generatePrivate(spec);
-            return java.util.Base64.getEncoder().encodeToString(kp.getPrivate().getEncoded());
+            return Base64.getEncoder().encodeToString(kp.getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -82,8 +94,8 @@ class I5SsoCipherRuntimeDiagTest {
     @Test
     @DisplayName("运行容器：共享 AesGcmCipher bean 仅 agent 实例；SSO 专属密钥显式构造往返成功且缺失 fail-fast")
     void cipherExplicitBindingDiagnostic() {
-        Map<String, com.sw.ck.common.crypto.AesGcmCipher> beans =
-                app.getBeansOfType(com.sw.ck.common.crypto.AesGcmCipher.class);
+        Map<String, AesGcmCipher> beans =
+                app.getBeansOfType(AesGcmCipher.class);
         System.out.println("[G4S-DIAG] AesGcmCipher beans=" + beans.keySet()
                 + " count=" + beans.size());
         // 共享 bean 只剩 agent 实例：SSO 不再注册同型 bean，密钥来源不随注册顺序漂移
@@ -98,14 +110,14 @@ class I5SsoCipherRuntimeDiagTest {
         // SSO 专属密钥源：与装配工厂同源（sw.security.sso.cipher-key）显式构造，
         // 加解密往返成功；密钥缺失 fail-fast
         String ssoKey = app.getEnvironment().getProperty("sw.security.sso.cipher-key");
-        com.sw.ck.system.sso.SsoCredentialCipher ssoCipher =
-                new com.sw.ck.system.sso.SsoCredentialCipher(ssoKey);
+        SsoCredentialCipher ssoCipher =
+                new SsoCredentialCipher(ssoKey);
         String plain = "g4s-roundtrip-sample";
         String enc = ssoCipher.encrypt(plain);
         assertThat(ssoCipher.decrypt(enc)).isEqualTo(plain);
         assertThat(ssoCipher.decryptable(enc)).isTrue();
         System.out.println("[G4S-DIAG] ssoCredentialCipher roundtrip=OK (explicit sw.security.sso.cipher-key)");
-        assertThatThrownBy(() -> new com.sw.ck.system.sso.SsoCredentialCipher(" "))
+        assertThatThrownBy(() -> new SsoCredentialCipher(" "))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("sw.security.sso.cipher-key");
         System.out.println("[G4S-DIAG] blank-key fail-fast=OK");

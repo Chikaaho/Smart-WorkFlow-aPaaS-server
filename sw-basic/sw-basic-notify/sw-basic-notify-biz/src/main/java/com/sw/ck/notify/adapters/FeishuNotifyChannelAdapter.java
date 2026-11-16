@@ -2,11 +2,16 @@ package com.sw.ck.notify.adapters;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyChannelAdapter;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.api.NotifyTargetResolver;
+import com.sw.ck.notify.config.NotifyChannelProperties;
+import com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps;
+
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -36,17 +41,18 @@ public class FeishuNotifyChannelAdapter implements NotifyChannelAdapter {
     private static final long TOKEN_TTL_MS = 50L * 60L * 1000L;
     private static final NotifyChannel CHANNEL = NotifyChannel.FEISHU;
 
-    private final NotifyTargetResolver targetResolver;
-    private final String appId;
-    private final String appSecret;
+    @Autowired
+    private NotifyTargetResolver targetResolver;
+    @Autowired
+    private NotifyChannelProperties props;
+    private String appId;
+    private String appSecret;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, Object[]> tokenCache = new ConcurrentHashMap<>();
 
-    @Autowired
-    public FeishuNotifyChannelAdapter(NotifyTargetResolver targetResolver,
-                                      com.sw.ck.notify.config.NotifyChannelProperties props) {
-        this.targetResolver = targetResolver;
-        com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps cp = props.getChannels().get("FEISHU");
+    @PostConstruct
+    void initChannelProps() {
+        ChannelProps cp = props.getChannels().get("FEISHU");
         this.appId = cp.getAppId();
         this.appSecret = cp.getFeishuAppSecret();
     }

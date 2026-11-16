@@ -1,5 +1,7 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.dto.FormIntegrationCandidateDTO;
 import com.sw.ck.form.dto.FormIntegrationInvokeReq;
@@ -26,11 +28,8 @@ import java.util.List;
 @RequestMapping("/form/integration")
 public class FormIntegrationController {
 
-    private final FormIntegrationService formIntegrationService;
-
-    public FormIntegrationController(FormIntegrationService formIntegrationService) {
-        this.formIntegrationService = formIntegrationService;
-    }
+    @Autowired
+    private FormIntegrationService formIntegrationService;
 
     /** 设计器可选择的、本租户启用且已分类的能力（不含 URL/方法）。 */
     @GetMapping("/candidates")

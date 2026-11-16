@@ -1,13 +1,17 @@
 package com.sw.ck.system.controller;
 
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.entity.SysUserGroup;
 import com.sw.ck.system.service.SysUserGroupService;
+
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
@@ -105,7 +109,7 @@ class UserGroupControllerTest {
 
         assertThat(result.getCode()).isZero();
         assertThat(result.getData()).isEqualTo(100L);
-        verify(sysUserGroupService).create(org.mockito.ArgumentMatchers.<SysUserGroup>argThat(g ->
+        verify(sysUserGroupService).create(ArgumentMatchers.<SysUserGroup>argThat(g ->
                 "G-100".equals(g.getGroupCode())
                         && "新用户组".equals(g.getGroupName())
                         && g.getMemberIds() != null && g.getMemberIds().equals(List.of(1L, 2L))));
@@ -127,7 +131,7 @@ class UserGroupControllerTest {
         R<Void> result = controller.update(req);
 
         assertThat(result.getCode()).isZero();
-        verify(sysUserGroupService).update(org.mockito.ArgumentMatchers.<SysUserGroup>argThat(g ->
+        verify(sysUserGroupService).update(ArgumentMatchers.<SysUserGroup>argThat(g ->
                 g.getId() == 1L && "技术委员会改名".equals(g.getGroupName()) && g.getMemberIds() == null));
     }
 
@@ -138,8 +142,8 @@ class UserGroupControllerTest {
         req.setGroupCode("G-001");
         req.setGroupName("x");
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.update(req))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+        Assertions.assertThatThrownBy(() -> controller.update(req))
+                .isInstanceOf(BaseException.class);
     }
 
     // ==================== DELETE /{id} / 启停 ====================

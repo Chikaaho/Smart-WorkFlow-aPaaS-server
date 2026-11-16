@@ -8,9 +8,11 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.ExtQueryResult;
@@ -22,12 +24,16 @@ import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormExtQueryMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -82,7 +89,7 @@ class FormExtQueryAdmissionTest {
 
         @Bean
         public DataSource dataSource() {
-            return org.springframework.boot.jdbc.DataSourceBuilder.create()
+            return DataSourceBuilder.create()
                     .url("jdbc:h2:mem:f020admission;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
                     .driverClassName("org.h2.Driver")
                     .username("sa")
@@ -107,16 +114,16 @@ class FormExtQueryAdmissionTest {
                     return u == null ? null : u.getTenantId();
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource, LoginContextProvider loginContextProvider) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
@@ -190,8 +197,8 @@ class FormExtQueryAdmissionTest {
                 }
 
                 @Override
-                public java.util.Optional<Boolean> isReferenceAllowed(Long datasourceId) {
-                    return java.util.Optional.of(isReferenceAllowedInternal(datasourceId));
+                public Optional<Boolean> isReferenceAllowed(Long datasourceId) {
+                    return Optional.of(isReferenceAllowedInternal(datasourceId));
                 }
 
                 private boolean isReferenceAllowedInternal(Long datasourceId) {
@@ -217,7 +224,7 @@ class FormExtQueryAdmissionTest {
                     if (user.getRoles() != null && !user.getRoles().isEmpty()) {
                         String in = user.getRoles().stream()
                                 .map(role -> "'" + role.replace("'", "''") + "'")
-                                .collect(java.util.stream.Collectors.joining(","));
+                                .collect(Collectors.joining(","));
                         Integer roleMatched = jdbcTemplate.queryForObject(
                                 "SELECT COUNT(*) FROM sw_bpm_ext_datasource_grant "
                                         + "WHERE tenant_id = ? AND datasource_id = ? AND deleted = 0 "
@@ -229,8 +236,8 @@ class FormExtQueryAdmissionTest {
                 }
 
                 @Override
-                public java.util.Optional<Set<Long>> referenceAllowedDatasourceIds() {
-                    return java.util.Optional.of(referenceAllowedDatasourceIdsInternal());
+                public Optional<Set<Long>> referenceAllowedDatasourceIds() {
+                    return Optional.of(referenceAllowedDatasourceIdsInternal());
                 }
 
                 private Set<Long> referenceAllowedDatasourceIdsInternal() {
@@ -260,8 +267,8 @@ class FormExtQueryAdmissionTest {
         @Bean
         public FormExtDataService formExtDataService(
                 FormExtQueryMapper extQueryMapper,
-                org.springframework.beans.factory.ObjectProvider<ExtDatasourceQueryPort> queryPort,
-                org.springframework.beans.factory.ObjectProvider<ExtDatasourceGrantPort> grantPort,
+                ObjectProvider<ExtDatasourceQueryPort> queryPort,
+                ObjectProvider<ExtDatasourceGrantPort> grantPort,
                 FormDefMapper formDefMapper,
                 FormConfigMapper formConfigMapper,
                 FieldPermissionService fieldPermissionService,

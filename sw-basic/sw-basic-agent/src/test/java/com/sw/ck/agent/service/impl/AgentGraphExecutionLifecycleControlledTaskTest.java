@@ -3,17 +3,23 @@ package com.sw.ck.agent.service.impl;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
+
 import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionEventMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionRequestMapper;
+import com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.lang.reflect.Method;
@@ -169,10 +175,10 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
                 AgentGraphExecutionRequest.class);
         AgentGraphExecutionRequestMapper requests = mock(AgentGraphExecutionRequestMapper.class);
         AgentGraphExecutionEventMapper events = mock(AgentGraphExecutionEventMapper.class);
-        com.sw.ck.agent.mapper.AgentGraphExecutionMapper execRows =
-                org.mockito.Mockito.mock(com.sw.ck.agent.mapper.AgentGraphExecutionMapper.class);
-        com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper humanTasks =
-                mock(com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper.class);
+        AgentGraphExecutionMapper execRows =
+                Mockito.mock(AgentGraphExecutionMapper.class);
+        AgentGraphHumanTaskMapper humanTasks =
+                mock(AgentGraphHumanTaskMapper.class);
         AgentGraphDefMapper graphs = mock(AgentGraphDefMapper.class);
         AgentGraphExecutionService executions = mock(AgentGraphExecutionService.class);
         LoginContextProvider login = mock(LoginContextProvider.class);
@@ -180,7 +186,7 @@ class AgentGraphExecutionLifecycleControlledTaskTest {
         PlatformTransactionManager tx = mock(PlatformTransactionManager.class);
         service = new AgentGraphExecutionLifecycleServiceImpl(
                 requests, events, humanTasks, execRows, graphs, executions, login, tx,
-                org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class),
+                Mockito.mock(ApplicationEventPublisher.class),
                 workers, queueCapacity);
         return new Fixture(requests, events, graphs, executions);
     }

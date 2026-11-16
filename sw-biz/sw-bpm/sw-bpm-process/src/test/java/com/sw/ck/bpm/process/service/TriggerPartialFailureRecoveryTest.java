@@ -2,6 +2,7 @@ package com.sw.ck.bpm.process.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
@@ -19,12 +20,15 @@ import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.bpm.process.queue.support.QueueH2TestConfig;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -64,9 +68,9 @@ class TriggerPartialFailureRecoveryTest {
     @Autowired
     private TransactionTemplate txTemplate;
     @Autowired
-    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private JdbcTemplate jdbcTemplate;
     @Autowired
-    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    private PlatformTransactionManager transactionManager;
     @Autowired
     private BpmActionRefMapper actionRefMapper;
     @Autowired
@@ -94,7 +98,7 @@ class TriggerPartialFailureRecoveryTest {
     private TriggerExecutionService triggerService() {
         BpmScriptEvaluatePort okScript = mock(BpmScriptEvaluatePort.class);
         when(okScript.run(anyString(), any(), anyLong(), any())).thenAnswer(inv ->
-                java.util.Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
+                Optional.of(new BpmScriptEvaluatePort.ScriptOutcome(
                         "OK", 1L, "NUMBER", null, 1L)));
         BpmVariableSnapshotService snapshotService = mock(BpmVariableSnapshotService.class);
         when(snapshotService.buildSnapshot(any(), any(), any(), any(), any(), anyLong()))

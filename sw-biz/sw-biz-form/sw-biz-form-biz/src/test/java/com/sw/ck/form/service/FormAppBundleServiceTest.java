@@ -7,7 +7,9 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -34,6 +36,10 @@ import com.sw.ck.form.mapper.FormListConfigMapper;
 import com.sw.ck.form.txn.mapper.TxnActionMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.common.datascope.DataScopeType;
+
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -41,6 +47,7 @@ import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -58,6 +65,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import java.nio.charset.StandardCharsets;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -104,7 +113,7 @@ class FormAppBundleServiceTest {
 
         @Bean
         public DataSource dataSource() {
-            return org.springframework.boot.jdbc.DataSourceBuilder.create()
+            return DataSourceBuilder.create()
                     .url("jdbc:h2:mem:f022bundle;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
                     .driverClassName("org.h2.Driver")
                     .username("sa")
@@ -134,16 +143,16 @@ class FormAppBundleServiceTest {
                     return u == null ? null : u.getTenantId();
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource, LoginContextProvider loginContextProvider) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
@@ -236,7 +245,7 @@ class FormAppBundleServiceTest {
 
         @Override
         public Optional<List<BundleProcessExport>> loadProcessesByMainFormKeys(
-                java.util.Collection<String> formKeys) {
+                Collection<String> formKeys) {
             if (formKeys == null || formKeys.isEmpty()) {
                 return Optional.empty();
             }
@@ -758,23 +767,23 @@ class FormAppBundleServiceTest {
     /** 以租户1身份导出包（缓存一次），导出后恢复原登录上下文，返回字节。 */
     private byte[] bundleBytes() {
         if (exportedBundle == null) {
-            com.sw.ck.security.holder.LoginUser current = LoginUserHolder.get();
+            LoginUser current = LoginUserHolder.get();
             login(ADMIN, TENANT_1);
             try {
                 exportedBundle = new String(
                         bundleService.exportAppBundle("app-src").content(),
-                        java.nio.charset.StandardCharsets.UTF_8);
+                        StandardCharsets.UTF_8);
             } finally {
                 LoginUserHolder.set(current);
             }
         }
-        return exportedBundle.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return exportedBundle.getBytes(StandardCharsets.UTF_8);
     }
 
     /** 在导出包基础上把字典编码改为目标租户全库不存在的编码（验证缺失新建路径）。 */
     private byte[] bundleBytesWithFreshDict() throws Exception {
         Map<String, Object> doc = objectMapper.readValue(bundleBytes(),
-                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                new TypeReference<>() { });
         List<Map<String, Object>> dictTypes = (List<Map<String, Object>>) doc.get("dictTypes");
         for (Map<String, Object> type : dictTypes) {
             type.put("code", "dict_fresh");
@@ -783,7 +792,7 @@ class FormAppBundleServiceTest {
         for (Map<String, Object> form : forms) {
             Map<String, Object> def = objectMapper.readValue(
                     String.valueOf(form.get("configDefinition")),
-                    new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                    new TypeReference<>() { });
             List<Map<String, Object>> fields = (List<Map<String, Object>>) def.get("fields");
             for (Map<String, Object> field : fields) {
                 if ("DICT".equals(field.get("type"))) {
@@ -867,7 +876,7 @@ class FormAppBundleServiceTest {
                 "SELECT c.definition FROM sw_form_config c JOIN sw_form_def d ON c.form_id = d.id "
                         + "WHERE d.form_key = 'lead_form' AND d.tenant_id = 2 AND c.parent_table IS NULL",
                 String.class);
-        Map<String, Object> defMap = objectMapper.readValue(leadDef, new com.fasterxml.jackson.core.type.TypeReference<>() { });
+        Map<String, Object> defMap = objectMapper.readValue(leadDef, new TypeReference<>() { });
         List<Map<String, Object>> fields = (List<Map<String, Object>>) defMap.get("fields");
         Map<String, Object> refField = fields.stream()
                 .filter(f -> "REFERENCE".equals(f.get("type"))).findFirst().orElseThrow();
@@ -902,7 +911,7 @@ class FormAppBundleServiceTest {
         assertThat(proc.categoryId()).isEqualTo(88L);
         assertThat(proc.iotAccessEnabled()).isTrue();
         Map<String, Object> newGraph = objectMapper.readValue(proc.graphJson(),
-                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                new TypeReference<>() { });
         assertThat(newGraph.get("processKey")).isEqualTo(proc.processKey());
         List<Map<String, Object>> elements = (List<Map<String, Object>>) newGraph.get("elements");
         Map<String, Object> n1 = elements.get(0);
@@ -965,7 +974,7 @@ class FormAppBundleServiceTest {
         login(ADMIN, TENANT_2);
 
         Map<String, Object> doc = objectMapper.readValue(bundleBytesWithFreshDict(),
-                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                new TypeReference<>() { });
         List<Map<String, Object>> processes = (List<Map<String, Object>>) doc.get("processes");
         Map<String, Object> second = new LinkedHashMap<>(processes.get(0));
         second.put("processKey", "bpm_src_2");
@@ -1003,8 +1012,8 @@ class FormAppBundleServiceTest {
         FormBundlePreviewResult preview = bundleService.previewBundle(bundleBytes());
         assertThat(preview.getApp().getNameConflict()).isTrue();
         assertThat(preview.getForms()).extracting("formKey", "keyConflict")
-                .containsExactly(org.assertj.core.groups.Tuple.tuple("lead_form", true),
-                        org.assertj.core.groups.Tuple.tuple("opp_form", false));
+                .containsExactly(Tuple.tuple("lead_form", true),
+                        Tuple.tuple("opp_form", false));
         assertThat(preview.getOpinionForms().get(0).getConflict()).isTrue();
         assertThat(preview.getOpinionForms().get(0).getSuggestedKey()).startsWith("op_form_");
         assertThat(preview.getDictTypes().get(0).getAction()).isEqualTo("OCCUPIED");
@@ -1059,7 +1068,7 @@ class FormAppBundleServiceTest {
         assertThat(newOpKey).isEqualTo("op_form_new");
         FormAppBundleProcessPort.BundleProcessImport proc = stubProcessPort.inserted.get(0);
         Map<String, Object> newGraph = objectMapper.readValue(proc.graphJson(),
-                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                new TypeReference<>() { });
         Map<String, Object> n1Cfg = (Map<String, Object>)
                 ((List<Map<String, Object>>) newGraph.get("elements")).get(0).get("config");
         assertThat(((Map<String, Object>) n1Cfg.get("nodeForm")).get("formKey")).isEqualTo("op_form_new");
@@ -1075,14 +1084,14 @@ class FormAppBundleServiceTest {
                         + "AND c.parent_table IS NULL",
                 String.class);
         Map<String, Object> occupiedDefMap = objectMapper.readValue(occupiedLeadDef,
-                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                new TypeReference<>() { });
         List<Map<String, Object>> occupiedFields =
                 (List<Map<String, Object>>) occupiedDefMap.get("fields");
         Map<String, Object> occupiedDictField = occupiedFields.stream()
                 .filter(f -> "DICT".equals(f.get("type"))).findFirst().orElseThrow();
         assertThat(occupiedDictField.get("dictType")).isNull();
         assertThat(report.getClearedRefs()).extracting("kind", "location")
-                .contains(org.assertj.core.groups.Tuple.tuple("DICT", "表单 线索 · 字段 颜色 · 字典"));
+                .contains(Tuple.tuple("DICT", "表单 线索 · 字段 颜色 · 字典"));
         assertThat(count("SELECT COUNT(*) FROM sw_form_app_import_record WHERE tenant_id = 2")).isEqualTo(1);
     }
 
@@ -1114,7 +1123,7 @@ class FormAppBundleServiceTest {
 
         // 篡改 bundleFormatVersion → 结构化拒绝
         Map<String, Object> tampered = objectMapper.readValue(bundleBytes(),
-                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                new TypeReference<>() { });
         tampered.put("bundleFormatVersion", 999);
         byte[] tamperedBytes = objectMapper.writeValueAsBytes(tampered);
         assertThatThrownBy(() -> bundleService.previewBundle(tamperedBytes))
@@ -1128,7 +1137,7 @@ class FormAppBundleServiceTest {
                 "SELECT c.definition FROM sw_form_config c JOIN sw_form_def d ON c.form_id = d.id "
                         + "WHERE d.form_key = 'lead_form' AND d.tenant_id = 2 AND c.parent_table IS NULL",
                 String.class);
-        Map<String, Object> defMap = objectMapper.readValue(leadDef, new com.fasterxml.jackson.core.type.TypeReference<>() { });
+        Map<String, Object> defMap = objectMapper.readValue(leadDef, new TypeReference<>() { });
         List<Map<String, Object>> fields = (List<Map<String, Object>>) defMap.get("fields");
         Map<String, Object> dsBinding = (Map<String, Object>) fields.stream()
                 .filter(f -> "DATASOURCE".equals(f.get("type"))).findFirst().orElseThrow().get("dsBinding");
@@ -1141,7 +1150,7 @@ class FormAppBundleServiceTest {
     @DisplayName("字典项缺少 dictValue：跳过并计入清除清单，报告项数只统计实际导入项（0.3.0 修复）")
     void dictItemWithoutValueIsSkippedAndReported() throws Exception {
         Map<String, Object> doc = objectMapper.readValue(bundleBytesWithFreshDict(),
-                new com.fasterxml.jackson.core.type.TypeReference<>() { });
+                new TypeReference<>() { });
         List<Map<String, Object>> dictTypes = (List<Map<String, Object>>) doc.get("dictTypes");
         Map<String, Object> firstType = dictTypes.get(0);
         List<Map<String, Object>> items = (List<Map<String, Object>>) firstType.get("items");

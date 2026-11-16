@@ -1,6 +1,8 @@
 package com.sw.ck.system.security;
 
-import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.log4j.Log4j2;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Cipher;
@@ -16,6 +18,10 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.security.interfaces.RSAPrivateCrtKey;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.spec.RSAPublicKeySpec;
 
 /**
  * RSA 登录密码密钥管理器（P45）。
@@ -27,7 +33,7 @@ import java.util.Map;
  *   必须用 {@link OAEPParameterSpec} 显式声明）。
  * - 解密一律以挑战绑定的密钥版本为准，不信任客户端任意指定版本。
  */
-@Slf4j
+@Log4j2
 @Component
 public class RsaLoginKeyManager {
 
@@ -35,17 +41,14 @@ public class RsaLoginKeyManager {
     /** OAEP(SHA-256) 下 2048 位密钥的单次加密明文上限：modulus - 2*hashLen - 2 */
     private static final int MAX_PLAINTEXT_BYTES = 190;
 
-    private final LoginSecurityProperties properties;
+    @Autowired
+    private LoginSecurityProperties properties;
 
     private final Map<String, PrivateKey> privateKeys = new HashMap<>();
     private final Map<String, String> publicKeysBase64 = new HashMap<>();
 
-    public RsaLoginKeyManager(LoginSecurityProperties properties) {
-        this.properties = properties;
-        // 构造期完成密钥装载与 fail-fast 校验（不依赖 @PostConstruct，保证任何装配方式下都不会带空密钥表上线）
-        init();
-    }
-
+    // 初始化期完成密钥装载与 fail-fast 校验，保证任何装配方式下都不会带空密钥表上线
+    @PostConstruct
     void init() {
         Map<String, String> configured = new HashMap<>(properties.getRsaExtraKeys());
         String activeVersion = properties.getRsaKeyVersion();
@@ -120,7 +123,7 @@ public class RsaLoginKeyManager {
             // MGF1 显式 SHA-256：与 WebCrypto RSA-OAEP(SHA-256) 对齐（见类注释）
             cipher.init(Cipher.DECRYPT_MODE, privateKey, new OAEPParameterSpec(
                     "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT));
-            return new String(cipher.doFinal(ciphertext), java.nio.charset.StandardCharsets.UTF_8);
+            return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new PasswordDecryptException("解密失败: " + e.getClass().getSimpleName());
         }
@@ -135,7 +138,7 @@ public class RsaLoginKeyManager {
     public static String sha256Hex(String input) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexFormat.of().formatHex(digest.digest(input.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException("SHA-256 不可用", e);
         }
@@ -157,7 +160,7 @@ public class RsaLoginKeyManager {
 
     private int keyBits(PrivateKey privateKey) {
         try {
-            return ((java.security.interfaces.RSAPrivateKey) privateKey).getModulus().bitLength();
+            return ((RSAPrivateKey) privateKey).getModulus().bitLength();
         } catch (ClassCastException e) {
             throw new IllegalStateException("登录私钥必须是 RSA 私钥", e);
         }
@@ -165,10 +168,10 @@ public class RsaLoginKeyManager {
 
     private String derivePublicKeyBase64(PrivateKey privateKey) {
         try {
-            java.security.interfaces.RSAPrivateCrtKey crt =
-                    (java.security.interfaces.RSAPrivateCrtKey) privateKey;
-            java.security.KeyFactory factory = java.security.KeyFactory.getInstance("RSA");
-            PublicKey publicKey = factory.generatePublic(new java.security.spec.RSAPublicKeySpec(
+            RSAPrivateCrtKey crt =
+                    (RSAPrivateCrtKey) privateKey;
+            KeyFactory factory = KeyFactory.getInstance("RSA");
+            PublicKey publicKey = factory.generatePublic(new RSAPublicKeySpec(
                     crt.getModulus(), crt.getPublicExponent()));
             return Base64.getEncoder().encodeToString(publicKey.getEncoded());
         } catch (ClassCastException e) {

@@ -1,12 +1,16 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bpm.api.dto.GraphElement;
+import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.queue.CommandDispatcher;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.service.FormDefService;
@@ -16,17 +20,36 @@ import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.flowable.engine.ManagementService;
+import org.flowable.spring.boot.ProcessEngineConfigurationConfigurer;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.KeyPairGenerator;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * P62 复核02 G2a：真实中断恢复演练进程入口（隔离环境，不直接由 Maven 运行）。
@@ -79,42 +102,42 @@ public final class P62RecoveryDrillWorker {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-drill", props));
+                            new MapPropertySource("p62-drill", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62DrillLoginContextProvider", provider);
                     // 演练资产（仅隔离进程）：异步任务锁 60s——真实中断后新进程在锁过期后重执行
-                    org.springframework.beans.factory.support.RootBeanDefinition lockConfigurer =
-                            new org.springframework.beans.factory.support.RootBeanDefinition();
+                    RootBeanDefinition lockConfigurer =
+                            new RootBeanDefinition();
                     lockConfigurer.setInstanceSupplier(() ->
-                            (org.flowable.spring.boot.ProcessEngineConfigurationConfigurer) cfg ->
+                            (ProcessEngineConfigurationConfigurer) cfg ->
                                     cfg.setAsyncExecutorAsyncJobLockTimeInMillis(60_000));
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62DrillAsyncLockConfigurer", lockConfigurer);
                     // debug-auth kickOut 走 Redis 缓存：隔离演练无 Redis，替换为无操作缓存
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
-                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                            ((DefaultListableBeanFactory) bf)
                                     .setAllowBeanDefinitionOverriding(true);
-                            ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
+                            ((BeanDefinitionRegistry) bf)
                                     .registerBeanDefinition("loginUserCacheService",
-                                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                                            new RootBeanDefinition(
                                                     P62BudgetMeasurementPgTest.NoopLoginUserCacheService.class));
                         }
                     });
                 })
                 .run();
-        ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
-                org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
-        root.setLevel(ch.qos.logback.classic.Level.WARN);
-        ch.qos.logback.classic.Logger flowableJobs = (ch.qos.logback.classic.Logger)
-                org.slf4j.LoggerFactory.getLogger("org.flowable.job.service.impl.asyncexecutor");
-        flowableJobs.setLevel(ch.qos.logback.classic.Level.INFO);
+        Logger root = (Logger)
+                LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        root.setLevel(Level.WARN);
+        Logger flowableJobs = (Logger)
+                LoggerFactory.getLogger("org.flowable.job.service.impl.asyncexecutor");
+        flowableJobs.setLevel(Level.INFO);
 
         switch (mode) {
             case "accept" -> acceptAndHold(app, evidenceDir, runId);
@@ -138,16 +161,16 @@ public final class P62RecoveryDrillWorker {
         writeNewFile(evidenceDir.resolve(readyFile == null ? "window-recover-ready.txt" : readyFile),
                 "pid=" + ProcessHandle.current().pid()
                         + " mode=execute-job jobId=" + jobId
-                        + " at=" + java.time.LocalDateTime.now() + "\n");
+                        + " at=" + LocalDateTime.now() + "\n");
         String result = asOperator(() -> {
-            var managementService = app.getBean(org.flowable.engine.ManagementService.class);
+            var managementService = app.getBean(ManagementService.class);
             managementService.executeJob(jobId);
             return "EXECUTED";
         });
         writeNewFile(evidenceDir.resolve("window-job-executed.txt"),
                 "pid=" + ProcessHandle.current().pid() + " jobId=" + jobId
                         + " managementService.executeJob=" + result
-                        + " at=" + java.time.LocalDateTime.now() + "\n");
+                        + " at=" + LocalDateTime.now() + "\n");
         System.out.println("[P62-EV] g3a.window recover executeJob=" + result);
         Thread.sleep(15 * 60 * 1000L);
         app.close();
@@ -160,7 +183,7 @@ public final class P62RecoveryDrillWorker {
      */
     private static void windowSubmitAndHold(ConfigurableApplicationContext app, Path evidenceDir,
                                             String runId, String readyFile) throws Exception {
-        var jdbc = app.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var jdbc = app.getBean(JdbcTemplate.class);
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'drill-operator', 'seed-not-a-login-secret', '恢复演练员', ?, 0) "
                 + "ON CONFLICT (id) DO NOTHING", USER, TENANT);
@@ -198,7 +221,7 @@ public final class P62RecoveryDrillWorker {
         // 轻流程发布（默认 instanceBusinessKey 源）
         asOperator(() -> {
             var processDefService = app.getBean(
-                    com.sw.ck.bpm.process.service.BpmProcessDefService.class);
+                    BpmProcessDefService.class);
             long publishedFlows = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM sw_bpm_process_def WHERE form_key = ?"
                             + " AND name = '窗口演练轻流程' AND status = 'PUBLISHED'", Long.class, FORM_KEY);
@@ -207,23 +230,23 @@ public final class P62RecoveryDrillWorker {
             }
             var def = processDefService.createDef("窗口演练轻流程", FORM_KEY);
             var elements = List.of(
-                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("w-start").kind("node")
+                    GraphElement.builder().id("w-start").kind("node")
                             .type("START").config(Map.of()).style(Map.of()).build(),
-                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("act-1").kind("node")
+                    GraphElement.builder().id("act-1").kind("node")
                             .type("TXN_ACTION").config(Map.of(
                                     "name", "窗口预占", "actionId", actionId,
                                     "recordIdSource", "instanceBusinessKey", "quantity", "1"))
                             .style(Map.of()).build(),
-                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("w-end").kind("node")
+                    GraphElement.builder().id("w-end").kind("node")
                             .type("END").config(Map.of()).style(Map.of()).build(),
-                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("we1").kind("edge")
+                    GraphElement.builder().id("we1").kind("edge")
                             .source("w-start").target("act-1").config(Map.of()).style(Map.of()).build(),
-                    com.sw.ck.bpm.api.dto.GraphElement.builder().id("we2").kind("edge")
+                    GraphElement.builder().id("we2").kind("edge")
                             .source("act-1").target("w-end").config(Map.of()).style(Map.of()).build());
-            var graph = com.sw.ck.bpm.api.dto.ProcessGraph.builder()
+            var graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name("窗口演练轻流程")
                     .formKey(FORM_KEY).version(1).elements(elements).build();
-            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(graph);
+            String json = new ObjectMapper().writeValueAsString(graph);
             processDefService.saveDraftGraph(def.getId(), json);
             var published = processDefService.publish(def.getId());
             if (!"PUBLISHED".equals(published.getStatus())) {
@@ -240,7 +263,7 @@ public final class P62RecoveryDrillWorker {
                         + " recordId=" + recordId
                         + " actionId=" + actionId
                         + " formKey=" + FORM_KEY
-                        + " at=" + java.time.LocalDateTime.now() + "\n");
+                        + " at=" + LocalDateTime.now() + "\n");
         System.out.println("[P62-EV] g3a.window submitted recordId=" + recordId);
         Thread.sleep(15 * 60 * 1000L);
         app.close();
@@ -249,7 +272,7 @@ public final class P62RecoveryDrillWorker {
     /** 进程 A：受理 100 条 → 真实消费 20 条 → 真实 claim 1 条不执行 → 驻留待 SIGKILL。 */
     private static void acceptAndHold(ConfigurableApplicationContext app, Path evidenceDir,
                                       String runId) throws Exception {
-        var jdbc = app.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var jdbc = app.getBean(JdbcTemplate.class);
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'drill-operator', 'seed-not-a-login-secret', '恢复演练员', ?, 0) "
                 + "ON CONFLICT (id) DO NOTHING", USER, TENANT);
@@ -341,7 +364,7 @@ public final class P62RecoveryDrillWorker {
                 + " effectsByA=" + effectsByA
                 + " pgPort=" + jdbc.queryForObject(
                         "SELECT inet_server_port()", Long.class)
-                + " at=" + java.time.LocalDateTime.now();
+                + " at=" + LocalDateTime.now();
         writeNewFile(evidenceDir.resolve("a-accepted.txt"),
                 snapshot + "\ncommandIds=" + commandIds + "\nstockTable=" + stockTable
                         + "\nactionId=" + actionId + "\nrunId=" + runId + "\n");
@@ -384,7 +407,7 @@ public final class P62RecoveryDrillWorker {
         writeNewFile(evidenceDir.resolve(readyFile == null ? "worker-ready.txt" : readyFile),
                 "pid=" + ProcessHandle.current().pid()
                         + " port=" + app.getEnvironment().getProperty("local.server.port")
-                        + " at=" + java.time.LocalDateTime.now()
+                        + " at=" + LocalDateTime.now()
                         + " state=SERVABLE\n");
         System.out.println("[P62-EV] g2a.recover ready");
         Thread.sleep(15 * 60 * 1000L);
@@ -397,7 +420,7 @@ public final class P62RecoveryDrillWorker {
      */
     private static void seedIsolationAndHold(ConfigurableApplicationContext app, Path evidenceDir,
                                              String runId, String readyFile) throws Exception {
-        var jdbc = app.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var jdbc = app.getBean(JdbcTemplate.class);
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'iso-operator', 'seed-not-a-login-secret', '隔离演练员', ?, 0) "
                 + "ON CONFLICT (id) DO NOTHING", USER, TENANT);
@@ -440,15 +463,15 @@ public final class P62RecoveryDrillWorker {
         }
         // 旧类型 FLOW_START 经真实队列 API 入队（旧消费者存活期按旧语义消费）
         PersistentBpmCommandQueue queue = app.getBean(PersistentBpmCommandQueue.class);
-        var tx = new org.springframework.transaction.support.TransactionTemplate(
-                app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
-        com.sw.ck.bpm.process.queue.CommandEnvelope legacy = new com.sw.ck.bpm.process.queue.CommandEnvelope();
-        legacy.setCommandType(com.sw.ck.bpm.process.entity.CommandTypeEnum.FLOW_START);
+        var tx = new TransactionTemplate(
+                app.getBean(PlatformTransactionManager.class));
+        CommandEnvelope legacy = new CommandEnvelope();
+        legacy.setCommandType(CommandTypeEnum.FLOW_START);
         legacy.setChannel(CommandChannelEnum.NORMAL);
         legacy.setCommandKey("FLOW_START:iso-" + runId + "-" + records.get(0));
         legacy.setTenantId(TENANT);
         legacy.setInitiatorId(USER);
-        legacy.setPayload(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
+        legacy.setPayload(new ObjectMapper().writeValueAsString(Map.of(
                 "formKey", FORM_KEY, "recordId", records.get(0), "submitter", String.valueOf(USER))));
         // 入队需登录态（租户填充拦截器），与消费身份同口径
         Long legacy1Id = asOperator(() -> tx.execute(status -> queue.enqueue(legacy)));
@@ -460,7 +483,7 @@ public final class P62RecoveryDrillWorker {
                         + " formKey=" + FORM_KEY + " actionId=" + actionId
                         + " recordIds=" + records
                         + " legacy1CommandId=" + legacy1Id
-                        + " batchEnabled=false at=" + java.time.LocalDateTime.now() + "\n");
+                        + " batchEnabled=false at=" + LocalDateTime.now() + "\n");
         System.out.println("[P62-EV] g5a.old ready port=" + app.getEnvironment()
                 .getProperty("local.server.port") + " legacy1=" + legacy1Id);
         Thread.sleep(15 * 60 * 1000L);
@@ -479,10 +502,10 @@ public final class P62RecoveryDrillWorker {
         props.put("sw.security.jwt.secret", "p62-drill-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", RsaKeyHolder.RSA_KEY);
         props.put("sw.security.login.digest-secret", "p62-drill-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("logging.level.root", "WARN");
         return props;
     }
@@ -492,7 +515,7 @@ public final class P62RecoveryDrillWorker {
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
     }
 
-    private static <T> T asOperator(java.util.concurrent.Callable<T> action) {
+    private static <T> T asOperator(Callable<T> action) {
         LoginUser previous = LoginUserHolder.get();
         LoginUser user = new LoginUser();
         user.setUserId(USER);
@@ -538,10 +561,10 @@ public final class P62RecoveryDrillWorker {
 
         private static String generated() {
             try {
-                java.security.KeyPairGenerator generator =
-                        java.security.KeyPairGenerator.getInstance("RSA");
+                KeyPairGenerator generator =
+                        KeyPairGenerator.getInstance("RSA");
                 generator.initialize(2048);
-                return java.util.Base64.getEncoder()
+                return Base64.getEncoder()
                         .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
             } catch (Exception e) {
                 throw new IllegalStateException(e);

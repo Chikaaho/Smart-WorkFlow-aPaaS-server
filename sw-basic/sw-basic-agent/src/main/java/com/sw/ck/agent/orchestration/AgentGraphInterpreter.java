@@ -5,18 +5,27 @@ import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
+import dev.langchain4j.model.output.TokenUsage;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -533,7 +542,7 @@ public class AgentGraphInterpreter {
         // 上抛）。轨迹由调用方（执行 Service）经 getTraces() 读取落库——解释器只采集
         // 不持久化，保持纯 Java 无 Mapper 依赖（方向文档 §5.4）。
         // CopyOnWriteArrayList：执行超时取消时主线程可安全读取已产生的轨迹
-        traces = new java.util.concurrent.CopyOnWriteArrayList<>();
+        traces = new CopyOnWriteArrayList<>();
         long traceSeq = 0;
         int steps = 0;
         while (!activePoints.isEmpty()) {
@@ -668,7 +677,7 @@ public class AgentGraphInterpreter {
         if (AgentExecutionEventContext.get() == null) {
             return;
         }
-        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("nodeId", trace.getNodeId());
         payload.put("nodeType", trace.getNodeType());
         payload.put("branchId", trace.getBranchId());
@@ -684,7 +693,7 @@ public class AgentGraphInterpreter {
         }
         try {
             AgentExecutionEventContext.emitNode(type, trace.getNodeId(), JSON.writeValueAsString(payload));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+        } catch (JsonProcessingException ignored) {
             AgentExecutionEventContext.emitNode(type, trace.getNodeId(), null);
         }
     }
@@ -842,7 +851,7 @@ public class AgentGraphInterpreter {
             throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
                     "子图节点缺少 graphDefId/graphDefVersion: " + node.getId());
         }
-        Map<String, String> subInputs = new java.util.LinkedHashMap<>();
+        Map<String, String> subInputs = new LinkedHashMap<>();
         List<Map<String, Object>> inputMappings = configMapList(node, CONFIG_KEY_SUBGRAPH_INPUTS);
         if (!inputMappings.isEmpty()) {
             for (Map<String, Object> mapping : inputMappings) {
@@ -906,7 +915,7 @@ public class AgentGraphInterpreter {
         try {
             trace.setInputText(JSON.writeValueAsString(subInputs));
             trace.setOutputText(JSON.writeValueAsString(result.outputs));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+        } catch (JsonProcessingException ignored) {
             // 轨迹文本仅展示用途，序列化失败不阻断执行
         }
         trace.setChildExecutionId(result.childExecutionId);
@@ -923,7 +932,7 @@ public class AgentGraphInterpreter {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Object item : list) {
             if (item instanceof Map<?, ?> map) {
-                Map<String, Object> copy = new java.util.LinkedHashMap<>();
+                Map<String, Object> copy = new LinkedHashMap<>();
                 map.forEach((k, v) -> {
                     if (k != null) copy.put(String.valueOf(k), v);
                 });
@@ -1011,7 +1020,7 @@ public class AgentGraphInterpreter {
             // === Prompt 契约组装 ===
             String systemPrompt = configString(node, CONFIG_KEY_SYSTEM_PROMPT);
             String userPromptTemplate = configString(node, CONFIG_KEY_USER_PROMPT_TEMPLATE);
-            List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
+            List<ChatMessage> messages = new ArrayList<>();
             if (systemPrompt != null && !systemPrompt.isBlank()) {
                 messages.add(SystemMessage.from(systemPrompt));
             }
@@ -1066,7 +1075,7 @@ public class AgentGraphInterpreter {
         }
         int topK = configInt(node, CONFIG_KEY_TOP_K, DEFAULT_KNOWLEDGE_TOP_K);
         double threshold = configDouble(node, CONFIG_KEY_SIMILARITY_THRESHOLD, 0.0);
-        java.util.List<KnowledgeHitDTO> hits;
+        List<KnowledgeHitDTO> hits;
         try {
             hits = service.retrieve(kbId, query, topK, threshold);
         } catch (GraphExecutionException e) {
@@ -1083,7 +1092,7 @@ public class AgentGraphInterpreter {
         return output;
     }
 
-    private static String formatKnowledgeHits(java.util.List<KnowledgeHitDTO> hits) {
+    private static String formatKnowledgeHits(List<KnowledgeHitDTO> hits) {
         if (hits == null || hits.isEmpty()) {
             return "未检索到相关内容。";
         }
@@ -1095,7 +1104,7 @@ public class AgentGraphInterpreter {
             }
             sb.append('[').append(index++).append("] 文档：")
                     .append(hit.getDocumentName() == null ? "-" : hit.getDocumentName())
-                    .append("（相似度 ").append(String.format(java.util.Locale.ROOT, "%.3f",
+                    .append("（相似度 ").append(String.format(Locale.ROOT, "%.3f",
                             hit.getSimilarity() == null ? 0.0 : hit.getSimilarity()))
                     .append("）\n").append(hit.getContent());
         }
@@ -1130,7 +1139,7 @@ public class AgentGraphInterpreter {
                                        Long tenantId,
                                        GraphElement node,
                                        Long modelConfigId,
-                                       List<dev.langchain4j.data.message.ChatMessage> messages,
+                                       List<ChatMessage> messages,
                                        NodeExecutionTrace trace) {
         List<String> toolNames = configStringList(node, CONFIG_KEY_TOOL_NAMES);
         List<AgentToolCallbackFactory.ToolHandle> handles = new ArrayList<>();
@@ -1149,7 +1158,7 @@ public class AgentGraphInterpreter {
                 handles.add(handle);
             }
         }
-        List<dev.langchain4j.agent.tool.ToolSpecification> specs = handles.stream()
+        List<ToolSpecification> specs = handles.stream()
                 .map(AgentToolCallbackFactory.ToolHandle::specification)
                 .toList();
         int maxRounds = configInt(node, CONFIG_KEY_MAX_TOOL_ROUNDS, DEFAULT_MAX_TOOL_ROUNDS);
@@ -1167,7 +1176,7 @@ public class AgentGraphInterpreter {
                     ? runtime.chatWithRotation(modelConfigId, messages, specs)
                     : runtime.chatStreamingWithRotation(modelConfigId, messages, specs,
                             delta -> lifecycleListener.accept("MODEL_DELTA", null, delta));
-            dev.langchain4j.model.output.TokenUsage usage =
+            TokenUsage usage =
                     response.metadata() != null ? response.metadata().tokenUsage() : null;
             if (usage != null && usage.inputTokenCount() != null) {
                 inputTokens += usage.inputTokenCount();
@@ -1214,7 +1223,7 @@ public class AgentGraphInterpreter {
                 }
                 String decoded = decodeIfJsonString(result);
                 trace.addToolCall(new ToolCallTrace(request.name(), request.arguments(), decoded));
-                messages.add(dev.langchain4j.data.message.ToolExecutionResultMessage
+                messages.add(ToolExecutionResultMessage
                         .from(request, decoded));
             }
         }
@@ -1675,7 +1684,7 @@ public class AgentGraphInterpreter {
         private Long childExecutionId;
 
         /** 该节点内 LLM 工具调用轨迹（阶段 2；非工具调用节点为空列表） */
-        private final java.util.List<ToolCallTrace> toolCalls = new java.util.ArrayList<>();
+        private final List<ToolCallTrace> toolCalls = new ArrayList<>();
 
         public NodeExecutionTrace(long nodeSeq, String branchId, String nodeId, String nodeType) {
             this.nodeSeq = nodeSeq;
@@ -1786,7 +1795,7 @@ public class AgentGraphInterpreter {
             this.childExecutionId = childExecutionId;
         }
 
-        public java.util.List<ToolCallTrace> getToolCalls() {
+        public List<ToolCallTrace> getToolCalls() {
             return toolCalls;
         }
 

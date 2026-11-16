@@ -1,13 +1,16 @@
 package com.sw.ck.form.dynamic;
 
 import com.sw.ck.common.jdbc.DatabaseVendor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 动态宽表运行时 DDL 管理器。
  * <p>
@@ -34,9 +37,8 @@ import java.util.*;
  * </ul>
  */
 @Component
+@Log4j2
 public class DynamicTableManager {
-
-    private static final Logger log = LoggerFactory.getLogger(DynamicTableManager.class);
 
     // ==================== 常量 ====================
 
@@ -100,16 +102,14 @@ public class DynamicTableManager {
 
     // ==================== 实例状态 ====================
 
-    private final JdbcTemplate jdbcTemplate;
-    private final VendorDialect dialect;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    private VendorDialect dialect;
 
-    // ==================== 构造 ====================
+    // ==================== 初始化 ====================
 
-    /**
-     * @param jdbcTemplate JDBC 模板（依赖其 DataSource 做方言检测）
-     */
-    public DynamicTableManager(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    @PostConstruct
+    void initDialect() {
         Objects.requireNonNull(jdbcTemplate.getDataSource(),
                 "JdbcTemplate must have a non-null DataSource for dialect detection");
         this.dialect = VendorDialect.detect(jdbcTemplate.getDataSource());
@@ -337,9 +337,9 @@ public class DynamicTableManager {
     /** 系统固定列定义 */
     public record SystemColumnDef(String name, String type, String constraints) {
         public SystemColumnDef {
-            java.util.Objects.requireNonNull(name, "name must not be null");
-            java.util.Objects.requireNonNull(type, "type must not be null");
-            java.util.Objects.requireNonNull(constraints, "constraints must not be null");
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(type, "type must not be null");
+            Objects.requireNonNull(constraints, "constraints must not be null");
         }
     }
 

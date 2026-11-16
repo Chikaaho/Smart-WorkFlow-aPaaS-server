@@ -1,7 +1,11 @@
 package com.sw.ck.job.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+import com.sw.ck.job.typehandler.BooleanSmallintTypeHandler;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -41,8 +45,8 @@ public class JobInfo extends BaseEntity {
      * 故显式绑定类型处理器（H2 曾掩盖该差异）。
      * </p>
      */
-    @com.baomidou.mybatisplus.annotation.TableField(value = "concurrent",
-            typeHandler = com.sw.ck.job.typehandler.BooleanSmallintTypeHandler.class)
+    @TableField(value = "concurrent",
+            typeHandler = BooleanSmallintTypeHandler.class)
     private Boolean concurrent;
 
     /** Misfire 策略（0=忽略 / 1=立即触发一次 / 2=放弃） */

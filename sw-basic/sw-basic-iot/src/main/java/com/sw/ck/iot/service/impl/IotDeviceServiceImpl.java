@@ -1,11 +1,18 @@
 package com.sw.ck.iot.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.service.BaseServiceImpl;
+import com.sw.ck.common.trace.DiagnosticText;
+import com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.entity.IotProduct;
@@ -17,16 +24,17 @@ import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.service.IotDeviceService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * IoT 设备控制服务实现。
  * <p>
@@ -35,24 +43,18 @@ import java.util.UUID;
  * </p>
  */
 @Service
+@Log4j2
 public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDevice>
         implements IotDeviceService {
 
-    private static final Logger log = LoggerFactory.getLogger(IotDeviceServiceImpl.class);
-
     private static final Set<String> REPORTABLE_STATUS = Set.of("SUCCESS", "FAILED");
 
-    private final IotDeviceCommandMapper commandMapper;
-    private final IotProductMapper productMapper;
-    private final IotThingModelMapper thingModelMapper;
-
-    public IotDeviceServiceImpl(IotDeviceCommandMapper commandMapper,
-                                IotProductMapper productMapper,
-                                IotThingModelMapper thingModelMapper) {
-        this.commandMapper = commandMapper;
-        this.productMapper = productMapper;
-        this.thingModelMapper = thingModelMapper;
-    }
+    @Autowired
+    private IotDeviceCommandMapper commandMapper;
+    @Autowired
+    private IotProductMapper productMapper;
+    @Autowired
+    private IotThingModelMapper thingModelMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -103,8 +105,8 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
             return null;
         }
         // 调度线程无登录态：挂起租户拦截器，以显式 tenantId 为边界过滤
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return baseMapper.selectOne(Wrappers.<IotDevice>lambdaQuery()
                     .eq(IotDevice::getDeviceKey, deviceKey)
                     .eq(IotDevice::getTenantId, tenantId)
@@ -124,12 +126,12 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
     }
 
     @Override
-    public com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget resolveDeviceTarget(Long tenantId, Long deviceId) {
+    public DeviceTarget resolveDeviceTarget(Long tenantId, Long deviceId) {
         if (tenantId == null || deviceId == null) {
             return null;
         }
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             IotDevice device = baseMapper.selectById(deviceId);
             if (device == null || !tenantId.equals(device.getTenantId())
                     || Integer.valueOf(1).equals(device.getDeleted())
@@ -138,20 +140,20 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
                     || device.getProcessAccessEnabled() == null || device.getProcessAccessEnabled() != 1) {
                 return null;
             }
-            return new com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget(
+            return new DeviceTarget(
                     device.getDeviceKey(), device.getProductId(), device.getDeviceName());
         }
     }
 
     @Override
-    public com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget resolveDeviceTargetByKey(Long tenantId, String deviceKey) {
+    public DeviceTarget resolveDeviceTargetByKey(Long tenantId, String deviceKey) {
         if (tenantId == null || deviceKey == null || deviceKey.isBlank()) {
             return null;
         }
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             IotDevice device = baseMapper.selectOne(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDevice>lambdaQuery()
+                    Wrappers.<IotDevice>lambdaQuery()
                             .eq(IotDevice::getDeviceKey, deviceKey)
                             .eq(IotDevice::getTenantId, tenantId)
                             .eq(IotDevice::getDeleted, 0)
@@ -162,7 +164,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
             if (device == null || !tenantId.equals(device.getTenantId())) {
                 return null;
             }
-            return new com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget(
+            return new DeviceTarget(
                     device.getDeviceKey(), device.getProductId(), device.getDeviceName());
         }
     }
@@ -196,10 +198,10 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         if (device == null) {
             // 调度线程（预约到点下发）无登录态：按幂等键前缀识别预约来源并回退显式租户解析
             if (idempotentKey != null && idempotentKey.startsWith("RESERVATION:")) {
-                try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                             com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+                try (Suspended ignored =
+                             TenantLineSuspension.suspended()) {
                     device = baseMapper.selectOne(
-                            com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDevice>lambdaQuery()
+                            Wrappers.<IotDevice>lambdaQuery()
                                     .eq(IotDevice::getProductId, productId)
                                     .eq(IotDevice::getDeviceName, deviceName)
                                     .eq(IotDevice::getDeleted, 0)
@@ -234,7 +236,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         command.setApprovalBizId(approvalBizId);
         try {
             commandMapper.insert(command);
-        } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+        } catch (DuplicateKeyException duplicate) {
             IotDeviceCommand winner = commandMapper.selectByIdempotentKey(idempotentKey);
             if (winner != null) {
                 log.info("设备命令并发同键，复用既有命令: id={}, idempotentKey={}",
@@ -276,7 +278,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         // R8c：result 是设备可控文本（可能携带堆栈帧、绝对路径、超长噪声），
         // 与 MQTT ingest / 连接失败等设备侧输入同口径：DiagnosticText 清洗限长后落库，
         // 授权运维仍可按分类摘要定位，但原始噪声不进存储与页面。
-        command.setResult(com.sw.ck.common.trace.DiagnosticText.sanitize(result, 2000));
+        command.setResult(DiagnosticText.sanitize(result, 2000));
         commandMapper.updateById(command);
         log.info("设备命令结果已回写: id={}, status={}", commandId, status);
         return command;
@@ -297,8 +299,8 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
             return List.of();
         }
         // 跨模块回查按显式租户边界执行（挂起线程租户，避免登录态缺失/错位）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return commandMapper.selectList(
                     Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getTenantId, tenantId)
@@ -314,14 +316,14 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
 
     @Override
     public void validatePublishedFunction(Long tenantId, String deviceKey, String commandType, String commandKey) {
-        com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget target = resolveDeviceTargetByKey(tenantId, deviceKey);
+        DeviceTarget target = resolveDeviceTargetByKey(tenantId, deviceKey);
         if (target == null) {
             throw new BaseException(404, "设备目标已失效或跨租户: deviceKey=" + deviceKey);
         }
         // 沿设备行 product_ref_id → 产品 → 已发布物模型的真实权威链解析，不按冻结值放行
         IotDevice device;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             device = baseMapper.selectOne(Wrappers.<IotDevice>lambdaQuery()
                     .eq(IotDevice::getDeviceKey, deviceKey)
                     .eq(IotDevice::getTenantId, tenantId)

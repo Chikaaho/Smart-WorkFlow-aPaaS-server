@@ -14,18 +14,26 @@ import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
+import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.security.KeyPairGenerator;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -84,14 +92,14 @@ class AgentToolEnabledPgTest {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p66-x1", props));
+                            new MapPropertySource("p66-x1", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p66X1LoginContextProvider", provider);
                 })
                 .run();
@@ -171,11 +179,11 @@ class AgentToolEnabledPgTest {
 
             // 9/10：服务层 listEnabled
             assertThat(toolService.listEnabledInternalTools(TENANT))
-                    .extracting(com.sw.ck.agent.entity.tool.AgentToolInternalConfig::getName)
+                    .extracting(AgentToolInternalConfig::getName)
                     .contains("p66_enabled_probe")
                     .doesNotContain("p66_disabled_probe");
             assertThat(toolService.listEnabledExternalTools(TENANT))
-                    .extracting(com.sw.ck.agent.entity.tool.AgentToolExternalConfig::getName)
+                    .extracting(AgentToolExternalConfig::getName)
                     .contains("p66_ext_probe");
 
             // 1/2：表单外部能力门面 listEnabled / findEnabled（requireConfig）
@@ -215,7 +223,7 @@ class AgentToolEnabledPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
             return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());

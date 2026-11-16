@@ -4,10 +4,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.event.FormSubmittedEvent;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FlowStartPort;
@@ -18,19 +21,24 @@ import com.sw.ck.form.entity.*;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
+import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单提交服务。
  * <p>
@@ -51,131 +59,42 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @Service
+@Log4j2
 public class FormSubmitService {
 
-    private static final Logger log = LoggerFactory.getLogger(FormSubmitService.class);
-
-    private final FormDefMapper formDefMapper;
-    private final FormTraceMapper formTraceMapper;
-    private final DynamicTableManager dynamicTableManager;
-    private final FormIdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
-    private final JdbcTemplate jdbcTemplate;
-    private final DictFacade dictFacade;
-    private final AesGcmCipher aesCipher;
-    private final FormFieldValidator formFieldValidator;
-    private final FlowStartPort flowStartPort;
-    private final FormVisibilityRules visibilityRules;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormTraceMapper formTraceMapper;
+    @Autowired
+    private DynamicTableManager dynamicTableManager;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private DictFacade dictFacade;
+    @Autowired(required = false)
+    private AesGcmCipher aesCipher;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
+    @Autowired(required = false)
+    private FlowStartPort flowStartPort;
+    @Autowired
+    private FormVisibilityRules visibilityRules;
     /** I2 写路径增补（可选：既有测试构造不注入时跳过增补管线）。 */
-    private final FormFieldEnrichmentService enrichment;
+    @Autowired(required = false)
+    private FormFieldEnrichmentService enrichment;
 
     /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
-    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setC1PolicyService(com.sw.ck.form.txn.service.C1PolicyService c1PolicyService) {
-        this.c1PolicyService = c1PolicyService;
-    }
+    @Autowired(required = false)
+    private C1PolicyService c1PolicyService;
 
     /** 应用范围访问闸门（可选注入；既有测试构造不注入时不受本闸门约束）。 */
+    @Autowired(required = false)
     private FormAppAccessGuard appAccessGuard;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setAppAccessGuard(FormAppAccessGuard appAccessGuard) {
-        this.appAccessGuard = appAccessGuard;
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public FormSubmitService(FormDefMapper formDefMapper,
-                             FormTraceMapper formTraceMapper,
-                             DynamicTableManager dynamicTableManager,
-                             FormIdGenerator idGenerator,
-                             ObjectMapper objectMapper,
-                             JdbcTemplate jdbcTemplate,
-                             DictFacade dictFacade,
-                             DomainEventPublisher eventPublisher,
-                             Optional<AesGcmCipher> aesCipher,
-                             FormFieldValidator formFieldValidator,
-                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
-                             FormVisibilityRules visibilityRules,
-                             org.springframework.beans.factory.ObjectProvider<FormFieldEnrichmentService> enrichment) {
-        this.formDefMapper = formDefMapper;
-        this.formTraceMapper = formTraceMapper;
-        this.dynamicTableManager = dynamicTableManager;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.dictFacade = dictFacade;
-        this.aesCipher = aesCipher.orElse(null);
-        this.formFieldValidator = formFieldValidator;
-        this.flowStartPort = flowStartPort.getIfAvailable();
-        this.visibilityRules = visibilityRules;
-        this.enrichment = enrichment.getIfAvailable();
-    }
-
-    /** 兼容既有测试构造（无显隐规则注入时使用默认实现；不注入 I2 增补）。 */
-    public FormSubmitService(FormDefMapper formDefMapper,
-                             FormTraceMapper formTraceMapper,
-                             DynamicTableManager dynamicTableManager,
-                             FormIdGenerator idGenerator,
-                             ObjectMapper objectMapper,
-                             JdbcTemplate jdbcTemplate,
-                             DictFacade dictFacade,
-                             DomainEventPublisher eventPublisher,
-                             Optional<AesGcmCipher> aesCipher,
-                             FormFieldValidator formFieldValidator,
-                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
-                             FormFieldEnrichmentService enrichment) {
-        this(formDefMapper, formTraceMapper, dynamicTableManager, idGenerator, objectMapper,
-                jdbcTemplate, dictFacade, eventPublisher, aesCipher, formFieldValidator,
-                flowStartPort, new FormVisibilityRules(objectMapper), enrichment, false);
-    }
-
-    /** 兼容既有测试构造（无显隐规则注入时使用默认实现）。 */
-    public FormSubmitService(FormDefMapper formDefMapper,
-                             FormTraceMapper formTraceMapper,
-                             DynamicTableManager dynamicTableManager,
-                             FormIdGenerator idGenerator,
-                             ObjectMapper objectMapper,
-                             JdbcTemplate jdbcTemplate,
-                             DictFacade dictFacade,
-                             DomainEventPublisher eventPublisher,
-                             Optional<AesGcmCipher> aesCipher,
-                             FormFieldValidator formFieldValidator,
-                             org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort) {
-        this(formDefMapper, formTraceMapper, dynamicTableManager, idGenerator, objectMapper,
-                jdbcTemplate, dictFacade, eventPublisher, aesCipher, formFieldValidator,
-                flowStartPort, new FormVisibilityRules(objectMapper), null, false);
-    }
-
-    /** 私有全参构造（唯一赋值点）。 */
-    private FormSubmitService(FormDefMapper formDefMapper,
-                              FormTraceMapper formTraceMapper,
-                              DynamicTableManager dynamicTableManager,
-                              FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper,
-                              JdbcTemplate jdbcTemplate,
-                              DictFacade dictFacade,
-                              DomainEventPublisher eventPublisher,
-                              Optional<AesGcmCipher> aesCipher,
-                              FormFieldValidator formFieldValidator,
-                              org.springframework.beans.factory.ObjectProvider<FlowStartPort> flowStartPort,
-                              FormVisibilityRules visibilityRules,
-                              FormFieldEnrichmentService enrichment,
-                              boolean unusedMarker) {
-        this.formDefMapper = formDefMapper;
-        this.formTraceMapper = formTraceMapper;
-        this.dynamicTableManager = dynamicTableManager;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.dictFacade = dictFacade;
-        this.aesCipher = aesCipher.orElse(null);
-        this.formFieldValidator = formFieldValidator;
-        this.flowStartPort = flowStartPort.getIfAvailable();
-        this.visibilityRules = visibilityRules;
-        this.enrichment = enrichment;
-    }
 
     // ==================== 主入口 ====================
 
@@ -189,7 +108,7 @@ public class FormSubmitService {
     public void validateSubmission(String formKey, Map<String, Object> submittedData) {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         FormDefEntity formDef = formDefMapper.selectOne(
                 Wrappers.lambdaQuery(FormDefEntity.class).eq(FormDefEntity::getFormKey, formKey));
@@ -333,7 +252,7 @@ public class FormSubmitService {
         // ==========================================================
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         Long tenantId = loginUser.getTenantId();
         Long userId = loginUser.getUserId();
@@ -619,11 +538,11 @@ public class FormSubmitService {
             return true;
         }
         try {
-            com.fasterxml.jackson.databind.JsonNode ids = objectMapper.readTree(scope).get("userIds");
+            JsonNode ids = objectMapper.readTree(scope).get("userIds");
             if (ids == null || !ids.isArray()) {
                 return false;
             }
-            for (com.fasterxml.jackson.databind.JsonNode id : ids) {
+            for (JsonNode id : ids) {
                 if (current.getUserId().toString().equals(id.asText())) {
                     return true;
                 }
@@ -679,15 +598,15 @@ public class FormSubmitService {
             if ("DATE".equals(type)) {
                 if ("datetime".equalsIgnoreCase(format)) {
                     // P63 日期时间：接受 "YYYY-MM-DD HH:mm[:ss]" 与 ISO "YYYY-MM-DDTHH:mm[:ss]"
-                    return java.time.LocalDateTime.parse(text.trim().replace(' ', 'T'));
+                    return LocalDateTime.parse(text.trim().replace(' ', 'T'));
                 }
-                return java.time.LocalDate.parse(text);
+                return LocalDate.parse(text);
             }
             if ("NUMBER".equals(type)) {
-                return new java.math.BigDecimal(text);
+                return new BigDecimal(text);
             }
         } catch (RuntimeException e) {
-            throw new org.springframework.dao.InvalidDataAccessApiUsageException(
+            throw new InvalidDataAccessApiUsageException(
                     "字段类型转换失败: " + type + " 值=" + text, e);
         }
         return value;

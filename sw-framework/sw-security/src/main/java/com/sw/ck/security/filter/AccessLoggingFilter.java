@@ -1,12 +1,15 @@
 package com.sw.ck.security.filter;
 
+import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j;
+
+import lombok.extern.log4j.Log4j2;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -19,7 +22,7 @@ import java.io.IOException;
  * 必须注册在安全链内 {@link DebugAuthenticationFilter} 之后：日志在链完成后输出，
  * 此时调试/JWT 认证上下文尚未被上游 finally 清理，userId 仍可读。
  */
-@Slf4j
+@Log4j2
 public class AccessLoggingFilter extends OncePerRequestFilter {
 
     @Override
@@ -32,7 +35,7 @@ public class AccessLoggingFilter extends OncePerRequestFilter {
         } finally {
             // P61 R5：事件引用由服务端权威生成（客户端头仅作对照），两者同时落日志，
             // 使「用户报出的引用 ↔ 访问日志 ↔ 诊断日志」三方可关联且不可由客户端伪造。
-            String eventRef = com.sw.ck.common.trace.EventRef.current();
+            String eventRef = EventRef.current();
             String clientRequestId = request.getHeader("X-Request-Id");
             if (clientRequestId == null || clientRequestId.isBlank()) {
                 clientRequestId = request.getRequestId();

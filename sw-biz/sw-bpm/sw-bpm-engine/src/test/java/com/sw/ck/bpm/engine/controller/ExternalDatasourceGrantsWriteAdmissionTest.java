@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService;
 import com.sw.ck.bpm.engine.service.impl.ExternalDatasourceServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
@@ -18,6 +19,9 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
 import com.sw.ck.bpm.engine.executor.SqlExecutor;
+import com.sw.ck.bpm.engine.mapper.ExternalDatasourceGrantMapper;
+import com.sw.ck.common.datascope.DataScopeType;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -45,13 +49,22 @@ import jakarta.servlet.Filter;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.security.config.BeanIds;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.test.context.web.WebAppConfiguration;
 
 import java.io.IOException;
 import java.util.List;
+import jakarta.servlet.FilterChain;
+import java.util.Base64;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -68,9 +81,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  * ExternalDatasourceControllerTest/授权端口测试承接，不在本批新建。
  * </p>
  */
-@org.springframework.test.context.junit.jupiter.SpringJUnitConfig(
+@SpringJUnitConfig(
         ExternalDatasourceGrantsWriteAdmissionTest.TestConfig.class)
-@org.springframework.test.context.web.WebAppConfiguration
+@WebAppConfiguration
 @DisplayName("BE020-G1 余项：grants 替换写请求真实拒绝与双租户零变更")
 class ExternalDatasourceGrantsWriteAdmissionTest {
 
@@ -91,7 +104,7 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
 
         @Bean
         public DataSource dataSource() {
-            return org.springframework.boot.jdbc.DataSourceBuilder.create()
+            return DataSourceBuilder.create()
                     .url("jdbc:h2:mem:g1grantswrite;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
                     .driverClassName("org.h2.Driver")
                     .username("sa")
@@ -116,16 +129,16 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
                     return u == null ? null : u.getTenantId();
                 }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource, LoginContextProvider loginContextProvider) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
@@ -153,7 +166,7 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
 
         @Bean
         public AesGcmCipher aesGcmCipher() {
-            return new AesGcmCipher(java.util.Base64.getEncoder().encodeToString(new byte[32]));
+            return new AesGcmCipher(Base64.getEncoder().encodeToString(new byte[32]));
         }
 
         @Bean
@@ -163,7 +176,7 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
 
         @Bean
         public ExternalDatasourceGrantService externalDatasourceGrantService(
-                com.sw.ck.bpm.engine.mapper.ExternalDatasourceGrantMapper grantMapper,
+                ExternalDatasourceGrantMapper grantMapper,
                 ExternalDatasourceServiceImpl datasourceService,
                 PermissionService permissionService) {
             return new ExternalDatasourceGrantService(grantMapper, datasourceService.getBaseMapper(),
@@ -206,7 +219,7 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
 
         @Bean
         MockMvc mockMvc(WebApplicationContext context,
-                        @org.springframework.beans.factory.annotation.Qualifier(
+                        @Qualifier(
                                 BeanIds.SPRING_SECURITY_FILTER_CHAIN) Filter chain) {
             return MockMvcBuilders.webAppContextSetup(context).addFilters(chain).build();
         }
@@ -221,7 +234,7 @@ class ExternalDatasourceGrantsWriteAdmissionTest {
 
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
-                                        jakarta.servlet.FilterChain filterChain)
+                                        FilterChain filterChain)
                 throws ServletException, IOException {
             LoginUser user = new LoginUser();
             user.setUserId(userId);

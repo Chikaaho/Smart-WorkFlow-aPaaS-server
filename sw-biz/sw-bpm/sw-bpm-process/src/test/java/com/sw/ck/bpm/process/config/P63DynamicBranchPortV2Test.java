@@ -4,10 +4,15 @@ import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
 
 import java.util.List;
 import java.util.Optional;
@@ -28,10 +33,10 @@ class P63DynamicBranchPortV2Test {
 
     @BeforeAll
     static void initTableInfo() {
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
-                com.sw.ck.bpm.process.entity.DynamicBranchSnapshot.class);
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
+                DynamicBranchSnapshot.class);
     }
 
     private List<DynamicBranchPort.BranchCandidateV2> candidates() {
@@ -96,7 +101,7 @@ class P63DynamicBranchPortV2Test {
         assertThat(frozen).hasSize(1);
         assertThat(frozen.get(0).objectId()).as("冻结权威：不采纳新候选").isEqualTo("7");
         verify(mapper, never()).insert(any(DynamicBranchSnapshot.class));
-        verify(mapper, never()).update(org.mockito.ArgumentMatchers.isNull(), any());
+        verify(mapper, never()).update(ArgumentMatchers.isNull(), any());
     }
 
     @Test
@@ -122,7 +127,7 @@ class P63DynamicBranchPortV2Test {
         verify(mapper, times(1)).insert(rows.capture());
         assertThat(rows.getValue().getRoundNo()).as("新轮次 = 旧最大 + 1").isEqualTo(1L);
         assertThat(rows.getValue().getExecutionId()).isEqualTo("exec-2");
-        verify(mapper, times(1)).update(org.mockito.ArgumentMatchers.isNull(), any());
+        verify(mapper, times(1)).update(ArgumentMatchers.isNull(), any());
     }
 
     @Test
@@ -142,7 +147,7 @@ class P63DynamicBranchPortV2Test {
         Optional<MutationOutcome> first = port.recordAction("1", "pi-1", "dyn", "30", "task-1",
                 "START", null);
         assertThat(first).contains(MutationOutcome.APPLIED);
-        verify(mapper, times(1)).updateById(org.mockito.ArgumentMatchers.<DynamicBranchSnapshot>argThat(patch ->
+        verify(mapper, times(1)).updateById(ArgumentMatchers.<DynamicBranchSnapshot>argThat(patch ->
                 "task-1".equals(((DynamicBranchSnapshot) patch).getTaskId())));
 
         // 第二次回调（同 task）：task_id 命中同一行
@@ -171,6 +176,6 @@ class P63DynamicBranchPortV2Test {
 
         Optional<MutationOutcome> outcome = port.closeRemaining("1", "pi-1", "dyn", "VETO:neg");
         assertThat(outcome).contains(MutationOutcome.APPLIED);
-        verify(mapper, times(1)).update(org.mockito.ArgumentMatchers.isNull(), any());
+        verify(mapper, times(1)).update(ArgumentMatchers.isNull(), any());
     }
 }

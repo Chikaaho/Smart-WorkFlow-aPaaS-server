@@ -6,18 +6,29 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageResult;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FilterOp;
 import com.sw.ck.form.api.dto.FormDataFilter;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.port.FlowStartPort;
+import com.sw.ck.form.dto.FormDataRecordDTO;
+import com.sw.ck.form.dto.WorkspaceAggregateDTO;
+import com.sw.ck.form.dto.WorkspaceFieldDTO;
+import com.sw.ck.form.dto.WorkspaceFieldsDTO;
+import com.sw.ck.form.dto.WorkspaceGroupDTO;
 import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
 import com.sw.ck.form.dto.workspace.WorkspaceMetric;
 import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
 import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.entity.FormBaseEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
@@ -25,18 +36,26 @@ import com.sw.ck.form.mapper.FormSnapshotMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
 import com.sw.ck.form.service.FormFieldValidator;
 import com.sw.ck.form.service.impl.FormDefServiceImpl;
+import com.sw.ck.security.holder.DataScope;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
+import com.sw.ck.system.api.dict.DictItemDTO;
+import com.sw.ck.system.api.dict.DictTypeDetailDTO;
+
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -46,6 +65,11 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.*;
+import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -106,11 +130,11 @@ class FormDataQueryServiceTest {
     @BeforeEach
     void setUp() {
         // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
-        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
-            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+        if (LoginUserHolder.get() == null) {
+            LoginUser i5TenantZeroSetup = new LoginUser();
             i5TenantZeroSetup.setUserId(0L);
             i5TenantZeroSetup.setTenantId(0L);
-            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+            LoginUserHolder.set(i5TenantZeroSetup);
         }
         createMetadataTables();
 
@@ -344,7 +368,7 @@ class FormDataQueryServiceTest {
         likeFilter.setValue(targetId);
         likeRequest.setFilters(List.of(likeFilter));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(
+        Assertions.assertThatThrownBy(
                         () -> formDataQueryService.queryFormData(setup.formKey, likeRequest))
                 .isInstanceOf(BaseException.class)
                 .hasMessageContaining("仅支持 EQ");
@@ -941,9 +965,8 @@ class FormDataQueryServiceTest {
                 UUID.randomUUID().toString(), TEST_TENANT_ID, createBy, createBy, title, score, approved);
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Object> valuesOf(Map<String, Object> group) {
-        return (List<Object>) group.get("values");
+    private List<Object> valuesOf(WorkspaceGroupDTO group) {
+        return group.getValues();
     }
 
     private WorkspaceMetric metric(String field, String agg) {
@@ -965,36 +988,34 @@ class FormDataQueryServiceTest {
         self.setUserId(TEST_USER_ID);
         self.setTenantId(TEST_TENANT_ID);
         self.setUsername("test_user");
-        self.setDataScope(com.sw.ck.security.holder.DataScope.SELF);
+        self.setDataScope(DataScope.SELF);
         LoginUserHolder.set(self);
 
         WorkspaceAggregateReq req = new WorkspaceAggregateReq();
         req.setFormKey(setup.formKey);
         req.setGroupBy("is_approved");
         req.setMetrics(List.of(metric("score", "SUM"), metric(null, "COUNT")));
-        Map<String, Object> result = formDataQueryService.aggregateWorkspaceData(setup.formKey, req);
+        WorkspaceAggregateDTO result = formDataQueryService.aggregateWorkspaceData(setup.formKey, req);
 
-        assertThat(result.get("totalRecords")).isEqualTo(2L);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> groups = (List<Map<String, Object>>) result.get("groups");
+        assertThat(result.getTotalRecords()).isEqualTo(2L);
+        List<WorkspaceGroupDTO> groups = result.getGroups();
         assertThat(groups).hasSize(2);
-        Map<String, Object> approved = groups.stream()
-                .filter(g -> String.valueOf(g.get("key")).equals("1"))
+        WorkspaceGroupDTO approved = groups.stream()
+                .filter(g -> String.valueOf(g.getKey()).equals("1"))
                 .findFirst().orElseThrow();
         assertThat(valuesOf(approved)).containsExactly(
-                new java.math.BigDecimal("10.000000"), 1L);
-        Map<String, Object> rejected = groups.stream()
-                .filter(g -> String.valueOf(g.get("key")).equals("0"))
+                new BigDecimal("10.000000"), 1L);
+        WorkspaceGroupDTO rejected = groups.stream()
+                .filter(g -> String.valueOf(g.getKey()).equals("0"))
                 .findFirst().orElseThrow();
         assertThat(valuesOf(rejected)).containsExactly(
-                new java.math.BigDecimal("20.000000"), 1L);
+                new BigDecimal("20.000000"), 1L);
 
         // 无维度 → 单行总值（指标卡/仪表盘）
         req.setGroupBy(null);
         req.setMetrics(List.of(metric(null, "COUNT")));
-        Map<String, Object> total = formDataQueryService.aggregateWorkspaceData(setup.formKey, req);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> totalGroups = (List<Map<String, Object>>) total.get("groups");
+        WorkspaceAggregateDTO total = formDataQueryService.aggregateWorkspaceData(setup.formKey, req);
+        List<WorkspaceGroupDTO> totalGroups = total.getGroups();
         assertThat(totalGroups).hasSize(1);
         assertThat(valuesOf(totalGroups.get(0))).containsExactly(2L);
     }
@@ -1012,7 +1033,7 @@ class FormDataQueryServiceTest {
         self.setUserId(TEST_USER_ID);
         self.setTenantId(TEST_TENANT_ID);
         self.setUsername("test_user");
-        self.setDataScope(com.sw.ck.security.holder.DataScope.SELF);
+        self.setDataScope(DataScope.SELF);
         LoginUserHolder.set(self);
         assertThat(formDataQueryService.workspaceRecordCount(setup.formKey)).isEqualTo(1L);
 
@@ -1020,7 +1041,7 @@ class FormDataQueryServiceTest {
         all.setUserId(TEST_USER_ID);
         all.setTenantId(TEST_TENANT_ID);
         all.setUsername("test_user");
-        all.setDataScope(com.sw.ck.security.holder.DataScope.ALL);
+        all.setDataScope(DataScope.ALL);
         LoginUserHolder.set(all);
         assertThat(formDataQueryService.workspaceRecordCount(setup.formKey)).isEqualTo(2L);
 
@@ -1040,7 +1061,7 @@ class FormDataQueryServiceTest {
         all.setUserId(TEST_USER_ID);
         all.setTenantId(TEST_TENANT_ID);
         all.setUsername("test_user");
-        all.setDataScope(com.sw.ck.security.holder.DataScope.ALL);
+        all.setDataScope(DataScope.ALL);
         LoginUserHolder.set(all);
 
         WorkspaceRowsReq req = new WorkspaceRowsReq();
@@ -1050,13 +1071,14 @@ class FormDataQueryServiceTest {
         req.setSortOrder("ASC");
         req.setPageNum(1);
         req.setPageSize(2);
-        PageResult<Map<String, Object>> page = formDataQueryService.queryWorkspaceRows(setup.formKey, req);
+        PageResult<FormDataRecordDTO> page = formDataQueryService.queryWorkspaceRows(setup.formKey, req);
 
         assertThat(page.getTotal()).isEqualTo(3L);
         assertThat(page.getRecords()).hasSize(2);
-        assertThat(page.getRecords().get(0)).containsKeys("id", "title", "score");
-        assertThat(page.getRecords().get(0)).doesNotContainKey("content");
-        assertThat(((Number) page.getRecords().get(0).get("score")).intValue()).isEqualTo(10);
+        Map<String, Object> first = page.getRecords().get(0).getValues();
+        assertThat(first).containsKeys("id", "title", "score");
+        assertThat(first).doesNotContainKey("content");
+        assertThat(((Number) first.get("score")).intValue()).isEqualTo(10);
 
         WorkspaceRowsReq richText = new WorkspaceRowsReq();
         richText.setFormKey(setup.formKey);
@@ -1109,13 +1131,13 @@ class FormDataQueryServiceTest {
         current.setUserId(TEST_USER_ID);
         current.setTenantId(TEST_TENANT_ID);
         current.setUsername("test_user");
-        current.setDataScope(com.sw.ck.security.holder.DataScope.ALL);
+        current.setDataScope(DataScope.ALL);
         LoginUserHolder.set(current);
 
-        Map<String, Object> fields = formDataQueryService.workspaceFields(formKey);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> fieldList = (List<Map<String, Object>>) fields.get("fields");
-        assertThat(fieldList).extracting(f -> f.get("name")).contains("title").doesNotContain("score");
+        WorkspaceFieldsDTO fields = formDataQueryService.workspaceFields(formKey);
+        List<WorkspaceFieldDTO> fieldList = fields.getFields();
+        assertThat(fieldList).extracting(WorkspaceFieldDTO::getName)
+                .contains("title").doesNotContain("score");
 
         WorkspaceAggregateReq aggregate = new WorkspaceAggregateReq();
         aggregate.setFormKey(formKey);
@@ -1158,7 +1180,7 @@ class FormDataQueryServiceTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -1177,27 +1199,27 @@ class FormDataQueryServiceTest {
             factory.setGlobalConfig(globalConfig);
 
             // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+            CommonMetaObjectHandler i5MetaObjectHandler =
+                    new CommonMetaObjectHandler(new LoginContextProvider() {
                         @Override public Long getUserId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getUserId() : null;
                         }
                         @Override public Long getTenantId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getTenantId() : null;
                         }
                         @Override public Long getDeptId() { return null; }
-                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        @Override public DataScopeType getDataScopeType() {
+                            return DataScopeType.ALL;
                         }
-                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                         @Override public boolean isSuperAdmin() { return false; }
                     });
             i5MetaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
-                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
+                    f.setId(new FormIdGenerator().generate());
                 }
             });
             globalConfig.setMetaObjectHandler(i5MetaObjectHandler);
@@ -1247,7 +1269,7 @@ class FormDataQueryServiceTest {
                 }
 
                 @Override
-                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
+                public Optional<List<DictItemDTO>> listByType(String dictType) {
                     if (dictType == null || dictType.isBlank()) {
                         return Optional.empty();
                     }
@@ -1255,10 +1277,10 @@ class FormDataQueryServiceTest {
                 }
 
                 @Override
-                public Optional<Map<String, com.sw.ck.system.api.dict.DictTypeDetailDTO>> findDictTypeDetails(
-                        java.util.Collection<String> codes) {
+                public Optional<Map<String, DictTypeDetailDTO>> findDictTypeDetails(
+                        Collection<String> codes) {
                     return codes == null || codes.isEmpty()
-                            ? Optional.empty() : Optional.of(java.util.Map.of());
+                            ? Optional.empty() : Optional.of(Map.of());
                 }
 
                 @Override
@@ -1269,7 +1291,7 @@ class FormDataQueryServiceTest {
                 @Override
                 public Optional<Boolean> createDictTypeForImport(String code, String name,
                                                                  Integer status, String description,
-                                                                 java.util.List<com.sw.ck.system.api.dict.DictItemDTO> items) {
+                                                                 List<DictItemDTO> items) {
                     return Optional.of(false);
                 }
             };
@@ -1277,7 +1299,7 @@ class FormDataQueryServiceTest {
 
         @Bean
         public DomainEventPublisher domainEventPublisher(
-                org.springframework.context.ApplicationEventPublisher delegate) {
+                ApplicationEventPublisher delegate) {
             return new DomainEventPublisher(delegate);
         }
 
@@ -1299,8 +1321,8 @@ class FormDataQueryServiceTest {
             return new FormSubmitService(formDefMapper, formTraceMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper, jdbcTemplate,
                     dictFacade, eventPublisher, Optional.empty(), formFieldValidator,
-                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
-                @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+                    new ObjectProvider<FlowStartPort>() {
+                @Override public FlowStartPort getIfAvailable() { return null; }
             });
         }
 

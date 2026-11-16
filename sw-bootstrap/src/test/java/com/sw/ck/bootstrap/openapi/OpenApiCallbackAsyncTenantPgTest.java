@@ -9,6 +9,10 @@ import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import com.sun.net.httpserver.HttpServer;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
@@ -19,19 +23,27 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -85,10 +97,10 @@ class OpenApiCallbackAsyncTenantPgTest {
         props.put("sw.security.jwt.secret", "oc-async-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "oc-async-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.enabled", "true");
         props.put("sw.form.enabled", "true");
         props.put("sw.iot.enabled", "true");
@@ -98,17 +110,17 @@ class OpenApiCallbackAsyncTenantPgTest {
         props.put("sw.notify.recovery.fixed-delay-ms", "3600000");
         props.put("sw.iot.trigger.recovery.fixed-delay-ms", "3600000");
         props.put("sw.openapi.callback.recovery.fixed-delay-ms", "3600000");
-        app = new SpringApplicationBuilder(com.sw.ck.bootstrap.i5.ProdBootTestApplication.class)
+        app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("oc-async", props));
+                            new MapPropertySource("oc-async", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("ocAsyncLoginContextProvider", provider);
                 })
                 .run();
@@ -250,7 +262,7 @@ class OpenApiCallbackAsyncTenantPgTest {
         // 同步直调未代理实例：拒绝路径确定性可断言（生产链路由 @Async 代理调用同一方法体）
         OpenApiCallbackListener raw = new OpenApiCallbackListener(
                 app.getBean(OpenApiAppMapper.class), app.getBean(OpenApiCallbackDeliveryService.class),
-                app.getBean(com.sw.ck.common.tenant.TenantWorkAdmission.class));
+                app.getBean(TenantWorkAdmission.class));
         long logsBefore = count("select count(*) from sw_openapi_callback_log");
         int a0 = hitsA.get();
         int b0 = hitsB.get();
@@ -308,11 +320,11 @@ class OpenApiCallbackAsyncTenantPgTest {
     }
 
     private String text(String sql, Object... args) {
-        java.util.List<String> rows = jdbc.queryForList(sql, String.class, args);
+        List<String> rows = jdbc.queryForList(sql, String.class, args);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    private void await(String description, java.util.function.BooleanSupplier condition, long timeoutMillis) {
+    private void await(String description, BooleanSupplier condition, long timeoutMillis) {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         while (System.currentTimeMillis() < deadline) {
             if (condition.getAsBoolean()) {
@@ -342,7 +354,7 @@ class OpenApiCallbackAsyncTenantPgTest {
     private void seedCallbackApp(String appId, long tenantId, long actorUserId, String callbackUrl) {
         String digest;
         try {
-            digest = java.util.HexFormat.of().formatHex(
+            digest = HexFormat.of().formatHex(
                     MessageDigest.getInstance("SHA-256")
                             .digest(("oc-secret-" + appId).getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
@@ -357,9 +369,9 @@ class OpenApiCallbackAsyncTenantPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);

@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.process.dto.InstanceDetailDTO;
@@ -7,28 +9,37 @@ import com.sw.ck.bpm.process.dto.InstanceFilterDTO;
 import com.sw.ck.bpm.process.dto.InstanceListItemDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.CopyRecord;
+import com.sw.ck.bpm.process.mapper.CopyRecordMapper;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.InitiatorDisplay;
 import com.sw.ck.bpm.process.service.ParticipantNameService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.PermissionService;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程实例监控控制器。
  * <p>
@@ -47,33 +58,23 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/workflow/instances")
+@Log4j2
 public class BpmInstanceController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmInstanceController.class);
-
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmRuntimeFacade bpmRuntimeFacade;
-    private final BpmProcessDefService bpmProcessDefService;
-    private final UserQueryFacade userQueryFacade;
-    private final ParticipantNameService participantNameService;
-    private final com.sw.ck.security.support.PermissionService permissionService;
-    private final com.sw.ck.bpm.process.mapper.CopyRecordMapper copyRecordMapper;
-
-    public BpmInstanceController(BpmInstanceService bpmInstanceService,
-                                  BpmRuntimeFacade bpmRuntimeFacade,
-                                  BpmProcessDefService bpmProcessDefService,
-                                  UserQueryFacade userQueryFacade,
-                                  ParticipantNameService participantNameService,
-                                  com.sw.ck.security.support.PermissionService permissionService,
-                                  com.sw.ck.bpm.process.mapper.CopyRecordMapper copyRecordMapper) {
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmRuntimeFacade = bpmRuntimeFacade;
-        this.bpmProcessDefService = bpmProcessDefService;
-        this.userQueryFacade = userQueryFacade;
-        this.participantNameService = participantNameService;
-        this.permissionService = permissionService;
-        this.copyRecordMapper = copyRecordMapper;
-    }
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmRuntimeFacade bpmRuntimeFacade;
+    @Autowired
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private ParticipantNameService participantNameService;
+    @Autowired
+    private PermissionService permissionService;
+    @Autowired
+    private CopyRecordMapper copyRecordMapper;
 
     /**
      * 分页查询流程实例列表。
@@ -89,7 +90,7 @@ public class BpmInstanceController {
      * @return 分页实例列表
      */
     @GetMapping
-    @org.springframework.security.access.prepost.PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
+    @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     public R<PageResult<InstanceListItemDTO>> listInstances(PageParam pageParam,
                                                              InstanceFilterDTO filter) {
         PageResult<BpmInstance> page = bpmInstanceService.pageInstances(pageParam, filter);
@@ -189,7 +190,7 @@ public class BpmInstanceController {
      * </p>
      */
     private void assertInstanceReadable(BpmInstance instance, String processInstanceId) {
-        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        var loginUser = LoginUserHolder.get();
         if (loginUser == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED.getCode(), "未认证");
         }
@@ -219,9 +220,9 @@ public class BpmInstanceController {
                     processInstanceId, e.getMessage());
         }
         Long copyCount = copyRecordMapper.selectCount(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.sw.ck.bpm.process.entity.CopyRecord>()
-                        .eq(com.sw.ck.bpm.process.entity.CopyRecord::getProcessInstanceId, processInstanceId)
-                        .eq(com.sw.ck.bpm.process.entity.CopyRecord::getRecipientId,
+                new LambdaQueryWrapper<CopyRecord>()
+                        .eq(CopyRecord::getProcessInstanceId, processInstanceId)
+                        .eq(CopyRecord::getRecipientId,
                                 String.valueOf(loginUser.getUserId())));
         if (copyCount != null && copyCount > 0) {
             return;
@@ -247,7 +248,7 @@ public class BpmInstanceController {
         }
         try {
             // empty = 查询上下文缺失（ids 为 null，此处已判非空，契约上不产生）
-            java.util.Optional<Map<Long, String>> names = userQueryFacade.getUserDisplayNames(ids);
+            Optional<Map<Long, String>> names = userQueryFacade.getUserDisplayNames(ids);
             if (names.isEmpty()) {
                 log.warn("用户展示名批量查询未返回结果（查询上下文缺失），回退为空映射");
                 return Map.of();
@@ -267,7 +268,7 @@ public class BpmInstanceController {
         dto.setBusinessKey(entity.getBusinessKey());
         dto.setFormKey(entity.getFormKey());
         dto.setInitiatorId(entity.getInitiatorId());
-        dto.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+        dto.setInitiatorName(InitiatorDisplay.resolve(
                 entity.getInitiatorId(), resolveUserNames(
                         entity.getInitiatorId() == null ? List.of() : List.of(entity.getInitiatorId()))));
         dto.setStatus(entity.getStatus());
@@ -297,7 +298,7 @@ public class BpmInstanceController {
                                            Object formDataVariable) {
         InstanceDetailDTO dto = new InstanceDetailDTO();
         if (formDataVariable instanceof Map<?, ?> formDataMap) {
-            java.util.Map<String, Object> formData = new java.util.LinkedHashMap<>();
+            Map<String, Object> formData = new LinkedHashMap<>();
             formDataMap.forEach((k, v) -> formData.put(String.valueOf(k), v));
             dto.setFormData(formData);
         }
@@ -308,7 +309,7 @@ public class BpmInstanceController {
         dto.setBusinessKey(instance.getBusinessKey());
         dto.setFormKey(instance.getFormKey());
         dto.setInitiatorId(instance.getInitiatorId());
-        dto.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+        dto.setInitiatorName(InitiatorDisplay.resolve(
                 instance.getInitiatorId(), resolveUserNames(
                         instance.getInitiatorId() == null ? List.of() : List.of(instance.getInitiatorId()))));
         dto.setStatus(instance.getStatus());

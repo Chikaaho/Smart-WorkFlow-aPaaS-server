@@ -2,9 +2,13 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * P64 阶段Ⅱ（A05）子流程派发批次：一次 CHILD 动作派发一批（主方向 §3.3 派发冻结）。
@@ -80,7 +84,7 @@ public class BpmChildBatch extends BaseEntity {
     private String blockReason;
 
     @TableField("settled_at")
-    private java.time.LocalDateTime settledAt;
+    private LocalDateTime settledAt;
 
     /** 派发时冻结的动作配置 JSON（ActionConfig）。 */
     @TableField("config_json")

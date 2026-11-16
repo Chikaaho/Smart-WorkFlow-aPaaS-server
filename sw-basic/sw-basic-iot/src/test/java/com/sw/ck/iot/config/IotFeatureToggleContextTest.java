@@ -2,21 +2,32 @@ package com.sw.ck.iot.config;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDevice;
+import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.hook.TencentDeviceStatusHook;
+import com.sw.ck.iot.mapper.IotConnectionMapper;
+import com.sw.ck.iot.mapper.IotTopicMapper;
+import com.sw.ck.iot.mqtt.MqttBrokerManager;
 import com.sw.ck.iot.mqtt.MqttDownlinkPublisher;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.provider.MockCloudProvider;
 import com.sw.ck.iot.service.CommandQueueService;
+import com.sw.ck.iot.service.IotConnectionService;
 import com.sw.ck.iot.service.IotDeviceService;
 import com.sw.ck.iot.util.DeferredControlUtil;
 import com.sw.ck.iot.util.OnlineConfirmControlUtil;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+
+import java.time.Clock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,7 +52,7 @@ class IotFeatureToggleContextTest {
             .withConfiguration(AutoConfigurations.of(IotPropertiesAutoConfiguration.class,
                     IotAutoConfiguration.class))
             .withUserConfiguration(IotComponentsConfiguration.class)
-            .withBean(java.time.Clock.class, java.time.Clock::systemUTC);
+            .withBean(Clock.class, Clock::systemUTC);
 
     @BeforeEach
     void stubDeviceLookup() {
@@ -91,8 +102,8 @@ class IotFeatureToggleContextTest {
                                     .controlProperty("test-product", "test-device", "{\"power\":true}", null));
                     assertThat(deferred.getCode()).isEqualTo(503);
                     // 无控制通道时连"已入队"都不产生：调用点在任何副作用前失败
-                    verify(COMMAND_QUEUE_SERVICE, org.mockito.Mockito.never())
-                            .enqueue(org.mockito.ArgumentMatchers.any());
+                    verify(COMMAND_QUEUE_SERVICE, Mockito.never())
+                            .enqueue(ArgumentMatchers.any());
                 });
     }
 
@@ -114,7 +125,7 @@ class IotFeatureToggleContextTest {
                     assertThat(provider).isInstanceOf(MockCloudProvider.class);
                     ((MockCloudProvider) provider).setDeviceStatus("test-product", "test-device", "online");
 
-                    com.sw.ck.iot.entity.IotDeviceCommand command =
+                    IotDeviceCommand command =
                             context.getBean(OnlineConfirmControlUtil.class)
                                     .controlPropertyOnline("test-product", "test-device", "{\"power\":true}");
                     assertThat(command.getStatus()).isEqualTo("SENT");
@@ -143,11 +154,11 @@ class IotFeatureToggleContextTest {
         @Bean
         MqttDownlinkPublisher mqttDownlinkPublisher() {
             return new MqttDownlinkPublisher(
-                    mock(com.sw.ck.iot.mapper.IotConnectionMapper.class),
-                    mock(com.sw.ck.iot.mapper.IotTopicMapper.class),
-                    mock(com.sw.ck.iot.mqtt.MqttBrokerManager.class),
-                    new org.springframework.beans.factory.support.DefaultListableBeanFactory()
-                            .getBeanProvider(com.sw.ck.iot.service.IotConnectionService.class));
+                    mock(IotConnectionMapper.class),
+                    mock(IotTopicMapper.class),
+                    mock(MqttBrokerManager.class),
+                    new DefaultListableBeanFactory()
+                            .getBeanProvider(IotConnectionService.class));
         }
     }
 }

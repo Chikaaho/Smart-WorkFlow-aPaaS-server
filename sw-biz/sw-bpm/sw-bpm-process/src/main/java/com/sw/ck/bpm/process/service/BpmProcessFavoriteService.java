@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.process.dto.FavoriteItemDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
@@ -36,17 +38,12 @@ import java.util.Map;
 @Service
 public class BpmProcessFavoriteService {
 
-    private final BpmProcessFavoriteMapper favoriteMapper;
-    private final BpmInstanceMapper instanceMapper;
-    private final BpmProcessDefMapper processDefMapper;
-
-    public BpmProcessFavoriteService(BpmProcessFavoriteMapper favoriteMapper,
-                                     BpmInstanceMapper instanceMapper,
-                                     BpmProcessDefMapper processDefMapper) {
-        this.favoriteMapper = favoriteMapper;
-        this.instanceMapper = instanceMapper;
-        this.processDefMapper = processDefMapper;
-    }
+    @Autowired
+    private BpmProcessFavoriteMapper favoriteMapper;
+    @Autowired
+    private BpmInstanceMapper instanceMapper;
+    @Autowired
+    private BpmProcessDefMapper processDefMapper;
 
     /** 当前用户收藏列表（最近收藏在前 → 列表置顶语义）。 */
     public List<FavoriteItemDTO> listMyFavorites() {

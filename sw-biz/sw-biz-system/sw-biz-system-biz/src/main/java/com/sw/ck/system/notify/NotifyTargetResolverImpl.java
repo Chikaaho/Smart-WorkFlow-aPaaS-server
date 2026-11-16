@@ -1,12 +1,15 @@
 package com.sw.ck.system.notify;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.notify.api.NotifyTargetResolution;
 import com.sw.ck.notify.api.NotifyTargetResolver;
+import com.sw.ck.system.entity.NotifySubjectBinding;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.mapper.NotifySubjectBindingMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -104,7 +107,7 @@ public class NotifyTargetResolverImpl implements NotifyTargetResolver {
             return Optional.empty();
         }
         // 异步投递线程无 LoginUserHolder：租户由投递请求权威携带（显式 tenant_id 条件）
-        com.sw.ck.system.entity.NotifySubjectBinding binding =
+        NotifySubjectBinding binding =
                 subjectBindingMapper.selectActive(tenantId, userId, provider.trim().toUpperCase());
         if (binding == null || !"ACTIVE".equals(binding.getBindStatus())) {
             return Optional.empty();

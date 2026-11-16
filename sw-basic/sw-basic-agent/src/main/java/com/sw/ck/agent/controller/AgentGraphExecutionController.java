@@ -1,14 +1,19 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
 import com.sw.ck.agent.dto.AgentNodeRunReqDTO;
 import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,11 +36,8 @@ import java.util.List;
 @RequestMapping("/agent/graph-executions")
 public class AgentGraphExecutionController {
 
-    private final AgentGraphExecutionService agentGraphExecutionService;
-
-    public AgentGraphExecutionController(AgentGraphExecutionService agentGraphExecutionService) {
-        this.agentGraphExecutionService = agentGraphExecutionService;
-    }
+    @Autowired
+    private AgentGraphExecutionService agentGraphExecutionService;
 
     /** 执行历史列表（分页，create_time 倒序；可按图定义 id 过滤；不含 input/output 大字段） */
     @GetMapping
@@ -68,8 +70,8 @@ public class AgentGraphExecutionController {
     public R<AgentNodeRunRespDTO> runNode(@RequestBody AgentNodeRunReqDTO request) {
         Long graphDefId = request.getGraphDefId();
         if (graphDefId == null) {
-            throw new com.sw.ck.common.exception.BaseException(
-                    com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "graphDefId 不能为空");
+            throw new BaseException(
+                    CommonErrorCode.PARAM_ERROR, "graphDefId 不能为空");
         }
         return R.ok(agentGraphExecutionService.runNode(graphDefId, request.getNodeId(),
                 request.getInputs()));

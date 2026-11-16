@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
@@ -15,8 +17,9 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.security.support.PermissionService;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程业务命令通道控制器。
  * <p>
@@ -38,24 +42,17 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/workflow/commands")
+@Log4j2
 public class BpmCommandController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmCommandController.class);
-
-    private final CommandAcceptService commandAcceptService;
-    private final BpmCommandService bpmCommandService;
-    private final CommandSyncWaiter syncWaiter;
-    private final com.sw.ck.security.support.PermissionService permissionService;
-
-    public BpmCommandController(CommandAcceptService commandAcceptService,
-                                BpmCommandService bpmCommandService,
-                                CommandSyncWaiter syncWaiter,
-                                com.sw.ck.security.support.PermissionService permissionService) {
-        this.commandAcceptService = commandAcceptService;
-        this.bpmCommandService = bpmCommandService;
-        this.syncWaiter = syncWaiter;
-        this.permissionService = permissionService;
-    }
+    @Autowired
+    private CommandAcceptService commandAcceptService;
+    @Autowired
+    private BpmCommandService bpmCommandService;
+    @Autowired
+    private CommandSyncWaiter syncWaiter;
+    @Autowired
+    private PermissionService permissionService;
 
     /**
      * 受理审批动作（channel=NORMAL 异步 / P0 同步优先）。
@@ -190,7 +187,7 @@ public class BpmCommandController {
         }
         String recordId;
         try {
-            recordId = new com.fasterxml.jackson.databind.ObjectMapper()
+            recordId = new ObjectMapper()
                     .readTree(command.getResult()).path("recordId").asText(null);
         } catch (Exception e) {
             log.warn("启动结果关联解析失败: commandId={}", command.getId());

@@ -2,9 +2,13 @@ package com.sw.ck.notify.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * 通知发送尝试流水（v0.0.2 OA）。
@@ -47,9 +51,9 @@ public class NotifySendAttempt extends BaseEntity {
     private String failureClass;
 
     @TableField("started_at")
-    private java.time.LocalDateTime startedAt;
+    private LocalDateTime startedAt;
 
     @TableField("finished_at")
-    private java.time.LocalDateTime finishedAt;
+    private LocalDateTime finishedAt;
 }
 

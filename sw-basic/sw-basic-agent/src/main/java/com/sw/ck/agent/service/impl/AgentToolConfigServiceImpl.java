@@ -1,5 +1,7 @@
 package com.sw.ck.agent.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -49,11 +51,8 @@ public class AgentToolConfigServiceImpl
     /** 外部工具默认超时（秒），与 V20 表结构 DEFAULT 30 一致 */
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
 
-    private final AgentToolExternalConfigMapper externalMapper;
-
-    public AgentToolConfigServiceImpl(AgentToolExternalConfigMapper externalMapper) {
-        this.externalMapper = externalMapper;
-    }
+    @Autowired
+    private AgentToolExternalConfigMapper externalMapper;
 
     // ==================== 内部工具 ====================
 

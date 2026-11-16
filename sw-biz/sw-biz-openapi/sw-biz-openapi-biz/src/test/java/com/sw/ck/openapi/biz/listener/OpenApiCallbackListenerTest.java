@@ -8,6 +8,7 @@ import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -18,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,7 +54,7 @@ class OpenApiCallbackListenerTest {
     @BeforeEach
     void setUp() {
         lenient().when(tenantWorkAdmission.claim(any(), any())).thenAnswer(invocation ->
-                invocation.getArgument(1, java.util.function.IntSupplier.class).getAsInt());
+                invocation.getArgument(1, IntSupplier.class).getAsInt());
         listener = new OpenApiCallbackListener(appMapper, deliveryService, tenantWorkAdmission);
         LoginUserHolder.clear();
     }

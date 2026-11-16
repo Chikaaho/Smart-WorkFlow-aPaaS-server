@@ -5,15 +5,20 @@ import com.sw.ck.bpm.process.entity.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -61,7 +66,7 @@ class Phase4PgLifecycleBehaviourTest extends Phase4PgSupport {
     }
 
     /** 用例间隔离：本类遗留的非终态意图就地终结，避免下一条用例的"可领取集合"被污染。 */
-    @org.junit.jupiter.api.AfterEach
+    @AfterEach
     void retireLeftovers() {
         int retired = jdbc.update("update sw_bpm_command set status = ?, finished_at = now()"
                 + " where command_key like ? and status in (?, ?)",
@@ -116,7 +121,7 @@ class Phase4PgLifecycleBehaviourTest extends Phase4PgSupport {
         boolean duplicateRejected = false;
         try {
             inTransaction(true, () -> queue.enqueue(envelope(key, TENANT_A)));
-        } catch (org.springframework.dao.DuplicateKeyException e) {
+        } catch (DuplicateKeyException e) {
             duplicateRejected = true;
         }
         long rows = count("select count(*) from sw_bpm_command where command_key = ?", key);
@@ -158,7 +163,7 @@ class Phase4PgLifecycleBehaviourTest extends Phase4PgSupport {
                     System.out.println("[P4-EV] g1.concurrent-claim worker-error=" + index
                             + " exceptionClass=" + e.getClass().getSimpleName());
                 } finally {
-                    com.sw.ck.security.holder.LoginUserHolder.clear();
+                    LoginUserHolder.clear();
                     done.countDown();
                 }
             }, "p4-claim-" + index);
@@ -302,7 +307,7 @@ class Phase4PgLifecycleBehaviourTest extends Phase4PgSupport {
 
 
     /** 队列入口要求已认证租户上下文（与生产调度线程一致）。 */
-    private <T> T asSystem(java.util.concurrent.Callable<T> action) {
+    private <T> T asSystem(Callable<T> action) {
         return asTenant(TENANT_A, USER_A, action);
     }
 

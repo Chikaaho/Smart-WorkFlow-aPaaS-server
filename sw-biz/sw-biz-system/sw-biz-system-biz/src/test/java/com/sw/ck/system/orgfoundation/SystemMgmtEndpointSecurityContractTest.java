@@ -3,13 +3,14 @@ package com.sw.ck.system.orgfoundation;
 import com.sw.ck.system.controller.DeptController;
 import com.sw.ck.system.controller.PostController;
 import com.sw.ck.system.controller.RoleController;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,7 +58,7 @@ class SystemMgmtEndpointSecurityContractTest {
     }
 
     private Map<String, String> permissionStrings(Class<?> controllerClass) {
-        Map<String, String> result = new java.util.LinkedHashMap<>();
+        Map<String, String> result = new LinkedHashMap<>();
         Arrays.stream(controllerClass.getDeclaredMethods())
                 .filter(m -> m.isAnnotationPresent(PreAuthorize.class))
                 .forEach(m -> {

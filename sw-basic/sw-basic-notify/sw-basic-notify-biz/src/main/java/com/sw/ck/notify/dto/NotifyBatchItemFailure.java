@@ -1,5 +1,7 @@
 package com.sw.ck.notify.dto;
 
+import com.sw.ck.common.i18n.LocalizedMessages;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -35,7 +37,7 @@ public class NotifyBatchItemFailure {
     public static NotifyBatchItemFailure of(String recipientRef, String category) {
         String errorKey = NotifyBatchFailureCategory.errorKeyOf(category);
         return new NotifyBatchItemFailure(recipientRef, category, errorKey,
-                com.sw.ck.common.i18n.LocalizedMessages.text(
+                LocalizedMessages.text(
                         errorKey, NotifyBatchFailureCategory.defaultMessageOf(category)));
     }
 }

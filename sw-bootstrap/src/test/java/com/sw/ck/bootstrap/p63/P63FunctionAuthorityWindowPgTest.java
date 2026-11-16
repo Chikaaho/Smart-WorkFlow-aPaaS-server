@@ -12,30 +12,44 @@ import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.CommandAcceptService;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.entity.IotCommandReservation;
+import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.job.IotReservationDispatchJob;
 import com.sw.ck.iot.mapper.IotCommandReservationMapper;
+import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.util.DeferredControlUtil;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.assertj.core.api.Assertions;
+import org.flowable.engine.TaskService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.Method;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -44,6 +58,9 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -102,7 +119,7 @@ class P63FunctionAuthorityWindowPgTest {
         testClock = new SettableClock(clockNow, ZoneOffset.UTC);
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -112,31 +129,31 @@ class P63FunctionAuthorityWindowPgTest {
         props.put("sw.security.jwt.secret", "p63-fa-window-jwt-secret-0123456789abcdef0123456789");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p63-fa-window-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         // IoT 启用；无传输 provider——外发断言针对命令/预约持久事实与发送入口守卫
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.receipt.secret", "p63-fa-window-receipt-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p63-fa-window", props));
+                            new MapPropertySource("p63-fa-window", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63FaLoginContextProvider", provider);
                     // 受控时钟覆盖 IoT 链默认 Clock（测试上下文已允许 Bean 覆盖）
-                    org.springframework.beans.factory.support.RootBeanDefinition clockDef =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(Clock.class,
+                    RootBeanDefinition clockDef =
+                            new RootBeanDefinition(Clock.class,
                                     () -> testClock);
                     clockDef.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("iotClock", clockDef);
                 })
                 .run();
@@ -317,11 +334,11 @@ class P63FunctionAuthorityWindowPgTest {
     void crossTenantDesignatedApproverRejectedWithZeroTaskSideEffects() {
         BpmProcessDef def = draftProcessWithDesignatedApprover(String.valueOf(TENANT2_USER));
         // 跨租户审批人在发布翻译写死 assignee 前被权威租户校验 fail-closed 拒绝（明确提示）
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> asUser(INITIATOR, () -> {
+        Assertions.assertThatThrownBy(() -> asUser(INITIATOR, () -> {
             processDefService.publish(def.getId());
             return null;
         })).as("跨租户审批人配置在发布链被拒绝").isInstanceOf(RuntimeException.class);
-        long assigned = app.getBean(org.flowable.engine.TaskService.class)
+        long assigned = app.getBean(TaskService.class)
                 .createTaskQuery().taskAssignee(String.valueOf(TENANT2_USER)).count();
         assertThat(assigned).as("跨租户用户零任务副作用").isZero();
         Integer published = jdbc.queryForObject(
@@ -366,8 +383,8 @@ class P63FunctionAuthorityWindowPgTest {
         // 时钟推进过窗但真实对账入口尚未运行（对账滞后竞态窗口）
         advanceClock(Duration.ofSeconds(30 * 60 + 61));
         IotCommandReservation reservation;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             reservation = app.getBean(IotCommandReservationMapper.class).selectByInstance(TENANT, pi);
         }
         assertThat(reservation).isNotNull();
@@ -375,8 +392,8 @@ class P63FunctionAuthorityWindowPgTest {
                 "claimAndDispatchSuspended", IotCommandReservation.class, LocalDateTime.class);
         ReflectionUtils.makeAccessible(claim);
         LocalDateTime nowUtc = LocalDateTime.ofInstant(clockNow.get(), ZoneOffset.UTC);
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             ReflectionUtils.invokeMethod(claim, dispatchJob, reservation, nowUtc);
         }
 
@@ -406,11 +423,11 @@ class P63FunctionAuthorityWindowPgTest {
 
         // 时钟越过窗口终点：真实发送入口守卫不外发（调度线程同口径挂起租户线）
         advanceClock(Duration.ofSeconds(56));
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             DeferredControlUtil sender = app.getBean(DeferredControlUtil.class);
-            com.sw.ck.iot.entity.IotDeviceCommand queued = app.getBean(
-                    com.sw.ck.iot.mapper.IotDeviceCommandMapper.class).selectById(commandId);
+            IotDeviceCommand queued = app.getBean(
+                    IotDeviceCommandMapper.class).selectById(commandId);
             sender.sendCommand(queued);
         }
         String afterSend = jdbc.queryForObject(
@@ -418,7 +435,7 @@ class P63FunctionAuthorityWindowPgTest {
         assertThat(afterSend).as("窗外真实发送入口：过期不外发").isEqualTo("EXPIRED");
 
         // 补偿入口不再返回过期命令（无重试路径）
-        List<com.sw.ck.iot.entity.IotDeviceCommand> retryable = app.getBean(CommandQueueService.class)
+        List<IotDeviceCommand> retryable = app.getBean(CommandQueueService.class)
                 .findRetryableFailed(5, 50);
         assertThat(retryable).extracting("id").as("窗外补偿不重试").doesNotContain(commandId);
         assertThat(commandsFor(pi)).as("全程恰一条命令（不新增外发）").isEqualTo(1);
@@ -554,7 +571,7 @@ class P63FunctionAuthorityWindowPgTest {
     }
 
     private String awaitTask(String processInstanceId) {
-        org.flowable.engine.TaskService taskService = app.getBean(org.flowable.engine.TaskService.class);
+        TaskService taskService = app.getBean(TaskService.class);
         long deadline = System.currentTimeMillis() + 60_000L;
         while (System.currentTimeMillis() < deadline) {
             var task = taskService.createTaskQuery().processInstanceId(processInstanceId).singleResult();
@@ -628,7 +645,7 @@ class P63FunctionAuthorityWindowPgTest {
     }
 
     private Map<String, Object> data(String... kv) {
-        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) {
             m.put(kv[i], kv[i + 1]);
         }
@@ -637,7 +654,7 @@ class P63FunctionAuthorityWindowPgTest {
 
     private String toJson(Object obj) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj);
+            return new ObjectMapper().writeValueAsString(obj);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -680,10 +697,10 @@ class P63FunctionAuthorityWindowPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
             gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
+            KeyPair pair = gen.generateKeyPair();
+            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

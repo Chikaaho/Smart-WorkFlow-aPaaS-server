@@ -21,8 +21,18 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.bpm.process.entity.BpmTaskDeadline;
+import com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper;
+import com.sw.ck.bpm.process.service.ApprovalActionService;
+import com.sw.ck.bpm.process.service.ApprovalHistoryEnricher;
+import com.sw.ck.bpm.process.service.InitiatorDisplay;
+import com.sw.ck.bpm.process.service.ParticipantNameService;
+import com.sw.ck.system.api.dept.DeptQueryFacade;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,10 +43,17 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 待办中心控制器（查询入口 + 审批动作 HTTP 入口）。
  * <p>
@@ -54,68 +71,29 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/workflow/tasks")
+@Log4j2
 public class BpmTodoController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmTodoController.class);
-
-    private final BpmTaskFacade bpmTaskFacade;
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmProcessDefService bpmProcessDefService;
-    private final TaskActionService taskActionService;
-    private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
-    private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService;
-    private final com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper;
-    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade;
-    private final com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade;
-
-    public BpmTodoController(BpmTaskFacade bpmTaskFacade,
-                             BpmInstanceService bpmInstanceService,
-                             BpmProcessDefService bpmProcessDefService,
-                             TaskActionService taskActionService,
-                             com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
-                             com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
-        this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
-                approvalActionService, objectMapper, null, null, null, null);
-    }
-
-    public BpmTodoController(BpmTaskFacade bpmTaskFacade,
-                             BpmInstanceService bpmInstanceService,
-                             BpmProcessDefService bpmProcessDefService,
-                             TaskActionService taskActionService,
-                             com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
-                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
-                             com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper) {
-        this(bpmTaskFacade, bpmInstanceService, bpmProcessDefService, taskActionService,
-                approvalActionService, objectMapper, participantNameService, deadlineMapper, null, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public BpmTodoController(BpmTaskFacade bpmTaskFacade,
-                             BpmInstanceService bpmInstanceService,
-                             BpmProcessDefService bpmProcessDefService,
-                             TaskActionService taskActionService,
-                             com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
-                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                             com.sw.ck.bpm.process.service.ParticipantNameService participantNameService,
-                             @org.springframework.beans.factory.annotation.Autowired(required = false)
-                             com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper deadlineMapper,
-                             @org.springframework.beans.factory.annotation.Autowired(required = false)
-                             com.sw.ck.system.api.user.UserQueryFacade userQueryFacade,
-                             @org.springframework.beans.factory.annotation.Autowired(required = false)
-                             com.sw.ck.system.api.dept.DeptQueryFacade deptQueryFacade) {
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmProcessDefService = bpmProcessDefService;
-        this.taskActionService = taskActionService;
-        this.approvalActionService = approvalActionService;
-        this.objectMapper = objectMapper;
-        this.participantNameService = participantNameService;
-        this.deadlineMapper = deadlineMapper;
-        this.userQueryFacade = userQueryFacade;
-        this.deptQueryFacade = deptQueryFacade;
-    }
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private TaskActionService taskActionService;
+    @Autowired
+    private ApprovalActionService approvalActionService;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private ParticipantNameService participantNameService;
+    @Autowired(required = false)
+    private BpmTaskDeadlineMapper deadlineMapper;
+    @Autowired(required = false)
+    private UserQueryFacade userQueryFacade;
+    @Autowired(required = false)
+    private DeptQueryFacade deptQueryFacade;
 
     /**
      * 当前用户待办列表（分页）。
@@ -139,15 +117,15 @@ public class BpmTodoController {
         // 3:2 截止标签：批量取本页任务的既有期限（只读展示；无期限不伪造）。
         // 提醒触发后 run_state 会变为 DONE，但任务仍待办时期限仍然有效（过期如实展示），
         // 因此只排除 CANCELLED（转办/撤销后失效的旧期限）。
-        java.util.Map<String, LocalDateTime> dueByTask = new java.util.HashMap<>();
+        Map<String, LocalDateTime> dueByTask = new HashMap<>();
         if (deadlineMapper != null && !tasks.isEmpty()) {
-            java.util.List<String> taskIds = tasks.stream()
-                    .map(BpmTaskDTO::getTaskId).filter(java.util.Objects::nonNull).toList();
+            List<String> taskIds = tasks.stream()
+                    .map(BpmTaskDTO::getTaskId).filter(Objects::nonNull).toList();
             if (!taskIds.isEmpty()) {
-                for (com.sw.ck.bpm.process.entity.BpmTaskDeadline d : deadlineMapper.selectList(
-                        com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.bpm.process.entity.BpmTaskDeadline>lambdaQuery()
-                                .in(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getTaskId, taskIds)
-                                .ne(com.sw.ck.bpm.process.entity.BpmTaskDeadline::getRunState, "CANCELLED"))) {
+                for (BpmTaskDeadline d : deadlineMapper.selectList(
+                        Wrappers.<BpmTaskDeadline>lambdaQuery()
+                                .in(BpmTaskDeadline::getTaskId, taskIds)
+                                .ne(BpmTaskDeadline::getRunState, "CANCELLED"))) {
                     if (d.getDueAt() == null) continue;
                     dueByTask.merge(d.getTaskId(), d.getDueAt(),
                             (a, b) -> a.isBefore(b) ? a : b);
@@ -251,7 +229,7 @@ public class BpmTodoController {
     @GetMapping("/{taskId}")
     public R<TaskDetailRespDTO> detail(@PathVariable String taskId) {
         // 运行期优先；empty 回落已完成历史（已办详情），两处均空仍为 404 语义，不改变错误码
-        java.util.Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(taskId);
+        Optional<BpmTaskDTO> taskLookup = bpmTaskFacade.getTask(taskId);
         boolean finished = false;
         if (taskLookup.isEmpty()) {
             taskLookup = bpmTaskFacade.getHistoricTask(taskId);
@@ -310,11 +288,11 @@ public class BpmTodoController {
                     dto.setInstanceId(instance.getId());
                     dto.setInitiatorId(instance.getInitiatorId());
                     dto.setInstanceStatus(instance.getStatus());
-                    dto.setInitiatorName(com.sw.ck.bpm.process.service.InitiatorDisplay.resolve(
+                    dto.setInitiatorName(InitiatorDisplay.resolve(
                             instance.getInitiatorId(), taskActionService.resolveUserNames(
                                     instance.getInitiatorId() == null
-                                            ? java.util.Set.of()
-                                            : java.util.Set.of(instance.getInitiatorId()))));
+                                            ? Set.of()
+                                            : Set.of(instance.getInitiatorId()))));
                 });
 
         // 任务创建时间
@@ -325,7 +303,7 @@ public class BpmTodoController {
 
         // 流程变量：运行期优先；实例已结束（运行期视图被清空）回落历史变量快照（已办详情）
         // empty = 实例标识缺失或该实例不存在且无历史：不设置（响应中仍为 null，原变量缺省语义）
-        java.util.Optional<Map<String, Object>> variables =
+        Optional<Map<String, Object>> variables =
                 bpmTaskFacade.getVariables(task.getProcessInstanceId());
         if (variables.isEmpty() && task.getProcessInstanceId() != null) {
             variables = bpmTaskFacade.getHistoricVariables(task.getProcessInstanceId());
@@ -346,7 +324,7 @@ public class BpmTodoController {
 
         if (task.getAssignee() != null && task.getAssignee().matches("\\d+")) {
             dto.setAssigneeName(taskActionService.resolveUserNames(
-                            java.util.Set.of(Long.valueOf(task.getAssignee())))
+                            Set.of(Long.valueOf(task.getAssignee())))
                     .get(Long.valueOf(task.getAssignee())));
         }
 
@@ -357,7 +335,7 @@ public class BpmTodoController {
         List<BpmTaskDTO> historyTasks = bpmTaskFacade
                 .queryHistoryByProcessInstance(task.getProcessInstanceId())
                 .orElse(List.of());
-        List<ApprovalHistoryItemDTO> history = new java.util.ArrayList<>();
+        List<ApprovalHistoryItemDTO> history = new ArrayList<>();
         for (BpmTaskDTO h : historyTasks) {
             ApprovalHistoryItemDTO item = new ApprovalHistoryItemDTO();
             item.setTaskId(h.getTaskId());
@@ -379,7 +357,7 @@ public class BpmTodoController {
             actions = approvalActionService
                     .findByProcessInstanceId(task.getProcessInstanceId()).stream()
                     .collect(Collectors.toMap(ApprovalActionRecord::getTaskId,
-                            java.util.function.Function.identity(), (left, right) -> left));
+                            Function.identity(), (left, right) -> left));
             for (ApprovalHistoryItemDTO item : history) {
                 ApprovalActionRecord action = actions.get(item.getTaskId());
                 if (action == null) continue;
@@ -416,7 +394,7 @@ public class BpmTodoController {
             }
         }
         // 意见字段与处理人部门：与「我发起的」实例详情共用同一解析实现
-        com.sw.ck.bpm.process.service.ApprovalHistoryEnricher.enrich(
+        ApprovalHistoryEnricher.enrich(
                 history, actions, objectMapper, taskActionService, userQueryFacade, deptQueryFacade);
         dto.setApprovalHistory(history);
 
@@ -491,7 +469,7 @@ public class BpmTodoController {
                     dto.setTheme(instance.getTheme());
                     if (instance.getInitiatorId() != null) {
                         dto.setInitiatorName(taskActionService.resolveUserNames(
-                                java.util.Set.of(instance.getInitiatorId()))
+                                Set.of(instance.getInitiatorId()))
                                 .get(instance.getInitiatorId()));
                     }
                 });

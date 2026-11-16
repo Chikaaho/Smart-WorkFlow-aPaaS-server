@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.validator;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
@@ -13,12 +15,15 @@ import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -34,7 +39,7 @@ import java.util.Set;
  * 冻结版本解析。无 variables/triggers/节点表单绑定的旧图零校验、零行为。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 public class ProcessVariableValidator {
 
@@ -56,23 +61,16 @@ public class ProcessVariableValidator {
             "initiatorId", "tenantId", "currentNodeKey", "roundNo");
     private static final Set<String> MATCH_TYPES = Set.of("NUMBER", "STRING", "BOOLEAN");
 
-    private final FormDefinitionService formDefinitionService;
-    private final BpmFormBindingService formBindingService;
-    private final BpmScriptEvaluatePort scriptRunner;
-    private final ObjectMapper objectMapper;
-    private final UserQueryFacade userQueryFacade;
-
-    public ProcessVariableValidator(FormDefinitionService formDefinitionService,
-                                    BpmFormBindingService formBindingService,
-                                    BpmScriptEvaluatePort scriptRunner,
-                                    ObjectMapper objectMapper,
-                                    UserQueryFacade userQueryFacade) {
-        this.formDefinitionService = formDefinitionService;
-        this.formBindingService = formBindingService;
-        this.scriptRunner = scriptRunner;
-        this.objectMapper = objectMapper;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private FormDefinitionService formDefinitionService;
+    @Autowired
+    private BpmFormBindingService formBindingService;
+    @Autowired
+    private BpmScriptEvaluatePort scriptRunner;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     /**
      * 发布期校验（图内变量、触发器、节点表单绑定一致性）。
@@ -190,7 +188,7 @@ public class ProcessVariableValidator {
         }
         Set<String> varIds = new HashSet<>();
         // 节点表单绑定索引（nodeKey → formKey）
-        Map<String, String> nodeForms = new java.util.HashMap<>();
+        Map<String, String> nodeForms = new HashMap<>();
         if (graph.getElements() != null) {
             for (var element : graph.getElements()) {
                 if ("node".equals(element.getKind()) && element.getConfig() != null
@@ -440,7 +438,7 @@ public class ProcessVariableValidator {
             }
             if (matchType.equals("NUMBER")) {
                 try {
-                    new java.math.BigDecimal(branch.getMatchValue());
+                    new BigDecimal(branch.getMatchValue());
                 } catch (Exception e) {
                     errors.add(error(locator, BpmErrorCode.TRIGGER_INVALID,
                             "触发器 " + trigger.getTriggerId() + " 分支匹配值不是数字: " + branch.getMatchValue()));

@@ -1,11 +1,19 @@
 package com.sw.ck.bpm.process.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.facade.BpmDeployFacade;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
+import com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
+import com.sw.ck.bpm.process.service.NodeFunctionService;
 import com.sw.ck.bpm.process.validator.GraphValidator;
+import com.sw.ck.bpm.process.validator.LightProcessGraphValidator;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.form.api.form.FormDefinitionService;
+
 import org.mybatis.spring.mapper.MapperScannerConfigurer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +23,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -74,15 +84,15 @@ class GraphJsonPersistenceIntegrationTest {
         // I5 fail-closed：测试种子与断言均在租户 0 语境；本测试上下文提供固定
         // 租户 0 的登录上下文（生产由 SecurityLoginContextProvider 从认证态读取）
         @Bean
-        public com.sw.ck.common.security.LoginContextProvider i5TenantZeroLoginContextProvider() {
-            return new com.sw.ck.common.security.LoginContextProvider() {
+        public LoginContextProvider i5TenantZeroLoginContextProvider() {
+            return new LoginContextProvider() {
                 @Override public Long getUserId() { return 0L; }
                 @Override public Long getTenantId() { return 0L; }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
@@ -93,11 +103,11 @@ class GraphJsonPersistenceIntegrationTest {
                 BpmProcessDefMapper mapper,
                 ObjectMapper objectMapper) {
             return new BpmProcessDefServiceImpl(mapper,
-                    mock(com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper.class),
-                    mock(com.sw.ck.bpm.process.service.NodeFunctionService.class),
+                    mock(BpmProcessDefVersionMapper.class),
+                    mock(NodeFunctionService.class),
                     mock(GraphValidator.class),
-                    mock(com.sw.ck.bpm.process.validator.LightProcessGraphValidator.class),
-                    mock(com.sw.ck.form.api.form.FormDefinitionService.class),
+                    mock(LightProcessGraphValidator.class),
+                    mock(FormDefinitionService.class),
                     mock(BpmDeployFacade.class), mock(BpmFormBindingService.class), objectMapper);
         }
 

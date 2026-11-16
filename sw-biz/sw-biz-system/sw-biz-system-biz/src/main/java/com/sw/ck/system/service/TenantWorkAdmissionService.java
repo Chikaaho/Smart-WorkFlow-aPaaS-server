@@ -4,6 +4,8 @@ import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.system.entity.SysTenant;
 import com.sw.ck.system.mapper.SysTenantMapper;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -16,11 +18,14 @@ import java.util.function.IntSupplier;
 /** 租户行锁与持久认领同事务，和停用写入形成明确先后，不把外部发送包进锁内。 */
 @Service
 public class TenantWorkAdmissionService implements TenantWorkAdmission {
-    private final SysTenantMapper tenants;
-    private final TransactionTemplate claims;
+    @Autowired
+    private SysTenantMapper tenants;
+    @Autowired
+    private PlatformTransactionManager transactions;
+    private TransactionTemplate claims;
 
-    public TenantWorkAdmissionService(SysTenantMapper tenants, PlatformTransactionManager transactions) {
-        this.tenants = tenants;
+    @PostConstruct
+    void initClaims() {
         claims = new TransactionTemplate(transactions);
         claims.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         claims.setTimeout(10);

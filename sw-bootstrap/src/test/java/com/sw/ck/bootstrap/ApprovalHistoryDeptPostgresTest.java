@@ -3,6 +3,7 @@ package com.sw.ck.bootstrap;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.service.ApprovalHistoryEnricher;
@@ -11,6 +12,8 @@ import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.service.impl.DeptFacadeImpl;
 import com.sw.ck.system.service.impl.UserFacadeImpl;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -168,7 +171,7 @@ class ApprovalHistoryDeptPostgresTest {
 
         List<ApprovalHistoryItemDTO> history = List.of(signItem, plainItem, noDeptItem);
         ApprovalHistoryEnricher.enrich(history, Map.of("t-sign", action),
-                new com.fasterxml.jackson.databind.ObjectMapper(), taskActionService,
+                new ObjectMapper(), taskActionService,
                 userFacade, deptFacade);
 
         assertNotNull(signItem.getOpinionFields());

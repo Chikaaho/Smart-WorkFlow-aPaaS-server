@@ -5,6 +5,7 @@ import org.springframework.core.type.classreading.MetadataReader;
 import org.springframework.core.type.classreading.MetadataReaderFactory;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -28,7 +29,7 @@ final class BootstrapTestFixtureExcludeFilter extends TypeExcludeFilter {
             "com.sw.ck.bootstrap.i5.ProdBootTestApplication");
 
     /** 实际被本过滤器排除的类（供用例断言过滤范围）。 */
-    static final Set<String> EXCLUDED = java.util.Collections.synchronizedSet(new LinkedHashSet<>());
+    static final Set<String> EXCLUDED = Collections.synchronizedSet(new LinkedHashSet<>());
 
     @Override
     public boolean match(MetadataReader metadataReader, MetadataReaderFactory metadataReaderFactory)

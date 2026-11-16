@@ -3,6 +3,7 @@ package com.sw.ck.notify.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
@@ -15,6 +16,9 @@ import com.sw.ck.notify.mapper.NotifyTemplateMapper;
 import com.sw.ck.notify.render.TemplateRenderException;
 import com.sw.ck.notify.render.TemplateRenderService;
 import com.sw.ck.notify.service.NotifyTemplateService;
+import com.sw.ck.notify.service.NotifyTemplateVersionService;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashSet;
@@ -31,25 +35,14 @@ import java.util.Set;
 @Service
 public class NotifyTemplateServiceImpl implements NotifyTemplateService {
 
-    private final NotifyTemplateMapper templateMapper;
+    @Autowired
+    private NotifyTemplateMapper templateMapper;
 
-    private final TemplateRenderService renderService;
+    @Autowired
+    private TemplateRenderService renderService;
 
-    private final com.sw.ck.notify.service.NotifyTemplateVersionService versionService;
-
-    public NotifyTemplateServiceImpl(NotifyTemplateMapper templateMapper,
-                                     TemplateRenderService renderService) {
-        this(templateMapper, renderService, null);
-    }
-
-@org.springframework.beans.factory.annotation.Autowired
-    public NotifyTemplateServiceImpl(NotifyTemplateMapper templateMapper,
-                                     TemplateRenderService renderService,
-                                     com.sw.ck.notify.service.NotifyTemplateVersionService versionService) {
-        this.templateMapper = templateMapper;
-        this.renderService = renderService;
-        this.versionService = versionService;
-    }
+    @Autowired
+    private NotifyTemplateVersionService versionService;
 
     @Override
     public PageResult<NotifyTemplateDTO> pageTemplates(NotifyTemplateQuery query) {

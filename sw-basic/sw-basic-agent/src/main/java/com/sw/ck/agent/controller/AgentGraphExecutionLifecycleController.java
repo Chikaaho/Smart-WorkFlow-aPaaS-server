@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentGraphExecuteReqDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
@@ -7,6 +9,8 @@ import com.sw.ck.agent.dto.AgentHumanTaskDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
 import com.sw.ck.common.response.R;
+import com.sw.ck.agent.dto.AgentHumanTaskSubmitDTO;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,11 +26,8 @@ import java.util.List;
 @RestController
 @RequestMapping("/agent/graph-execution-lifecycle")
 public class AgentGraphExecutionLifecycleController {
-    private final AgentGraphExecutionLifecycleService service;
-
-    public AgentGraphExecutionLifecycleController(AgentGraphExecutionLifecycleService service) {
-        this.service = service;
-    }
+    @Autowired
+    private AgentGraphExecutionLifecycleService service;
 
     @PostMapping("/graphs/{graphDefId}/executions")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
@@ -71,7 +72,7 @@ public class AgentGraphExecutionLifecycleController {
     public R<AgentGraphExecutionLifecycleDTO> submitHumanTask(
             @PathVariable Long executionId,
             @PathVariable Long taskId,
-            @RequestBody com.sw.ck.agent.dto.AgentHumanTaskSubmitDTO request) {
+            @RequestBody AgentHumanTaskSubmitDTO request) {
         return R.ok(service.submitHumanTask(executionId, taskId,
                 request.getValues(), request.getDecision()));
     }

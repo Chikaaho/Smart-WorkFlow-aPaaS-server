@@ -1,5 +1,7 @@
 package com.sw.ck.iot.api.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.iot.entity.IotCommand;
@@ -12,14 +14,13 @@ import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
 import com.sw.ck.iot.service.IotAuditService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * A6 统一命令下发（MQTT 路径）：运行时重校验 + 单命令 + 全链同关联标识。
  * <p>
@@ -28,30 +29,22 @@ import java.util.UUID;
  * </p>
  */
 @Service
+@Log4j2
 public class IotDeviceMqttDispatchService {
 
-    private static final Logger log = LoggerFactory.getLogger(IotDeviceMqttDispatchService.class);
-
-    private final IotDeviceMapper deviceMapper;
-    private final IotConnectionMapper connectionMapper;
-    private final IotTopicMapper topicMapper;
-    private final IotCommandMapper commandMapper;
-    private final MqttBrokerManager mqttBrokerManager;
-    private final IotAuditService auditService;
-
-    public IotDeviceMqttDispatchService(IotDeviceMapper deviceMapper,
-                                        IotConnectionMapper connectionMapper,
-                                        IotTopicMapper topicMapper,
-                                        IotCommandMapper commandMapper,
-                                        @Lazy MqttBrokerManager mqttBrokerManager,
-                                        IotAuditService auditService) {
-        this.deviceMapper = deviceMapper;
-        this.connectionMapper = connectionMapper;
-        this.topicMapper = topicMapper;
-        this.commandMapper = commandMapper;
-        this.mqttBrokerManager = mqttBrokerManager;
-        this.auditService = auditService;
-    }
+    @Autowired
+    private IotDeviceMapper deviceMapper;
+    @Autowired
+    private IotConnectionMapper connectionMapper;
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired
+    private IotCommandMapper commandMapper;
+    @Autowired
+    @Lazy
+    private MqttBrokerManager mqttBrokerManager;
+    @Autowired
+    private IotAuditService auditService;
 
     /**
      * @return 命令记录 ID；设备/连接不合格返回 null（不伪造受理成功）

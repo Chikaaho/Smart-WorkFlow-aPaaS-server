@@ -3,6 +3,11 @@ package com.sw.ck.system.security;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.security.KeyFactory;
+import java.security.PublicKey;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Base64;
+
 import static com.sw.ck.system.controller.LoginChallengeTestSupport.TEST_PRIVATE_KEY_PEM;
 import static com.sw.ck.system.controller.LoginChallengeTestSupport.encryptPassword;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -72,10 +77,10 @@ class RsaLoginKeyManagerTest {
     void activePublicKey_shouldBeValidSpki() throws Exception {
         RsaLoginKeyManager manager = new RsaLoginKeyManager(props(TEST_PRIVATE_KEY_PEM, "v1"));
 
-        byte[] spki = java.util.Base64.getDecoder().decode(manager.activePublicKeyBase64());
-        java.security.KeyFactory factory = java.security.KeyFactory.getInstance("RSA");
-        java.security.PublicKey publicKey =
-                factory.generatePublic(new java.security.spec.X509EncodedKeySpec(spki));
+        byte[] spki = Base64.getDecoder().decode(manager.activePublicKeyBase64());
+        KeyFactory factory = KeyFactory.getInstance("RSA");
+        PublicKey publicKey =
+                factory.generatePublic(new X509EncodedKeySpec(spki));
 
         assertThat(publicKey.getAlgorithm()).isEqualTo("RSA");
         assertThat(manager.maxPlaintextBytes()).isEqualTo(190);

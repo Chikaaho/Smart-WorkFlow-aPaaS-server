@@ -2,6 +2,7 @@ package com.sw.ck.openapi.biz.service;
 
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.openapi.biz.dto.OpenApiCallbackResendDTO;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.entity.OpenApiCallbackLog;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
@@ -20,7 +21,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -106,18 +106,20 @@ class OpenApiCallbackDeliveryServiceTest {
         // countSuccess 调用序列：resend 前置检查 0 → dispatch 内部去重检查 0 → resend 后置确认 1
         when(logMapper.selectCount(any())).thenReturn(0L, 0L, 1L);
 
-        Map<String, Object> first = service.resend("i4-test-app", BpmNotifyTrigger.PROCESS_APPROVED, "pi-e");
+        OpenApiCallbackResendDTO first = service.resend("i4-test-app", BpmNotifyTrigger.PROCESS_APPROVED, "pi-e");
 
-        assertThat(first).containsEntry("deduped", false).containsEntry("delivered", true);
+        assertThat(first.isDeduped()).isFalse();
+        assertThat(first.isDelivered()).isTrue();
         ArgumentCaptor<OpenApiCallbackLog> captor = ArgumentCaptor.forClass(OpenApiCallbackLog.class);
         verify(logMapper, times(1)).insert(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo("SUCCESS");
 
         // 已成功：重发去重零新增（不再 insert，不再发起 HTTP）
         when(logMapper.selectCount(any())).thenReturn(1L);
-        Map<String, Object> second = service.resend("i4-test-app", BpmNotifyTrigger.PROCESS_APPROVED, "pi-e");
+        OpenApiCallbackResendDTO second = service.resend("i4-test-app", BpmNotifyTrigger.PROCESS_APPROVED, "pi-e");
 
-        assertThat(second).containsEntry("deduped", true).containsEntry("delivered", false);
+        assertThat(second.isDeduped()).isTrue();
+        assertThat(second.isDelivered()).isFalse();
         verify(logMapper, times(1)).insert(any(OpenApiCallbackLog.class));
     }
 

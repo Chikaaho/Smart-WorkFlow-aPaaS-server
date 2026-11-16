@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import org.springframework.stereotype.Service;
@@ -11,11 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CommandRetryService {
 
-    private final BpmCommandQueue commandQueue;
-
-    public CommandRetryService(BpmCommandQueue commandQueue) {
-        this.commandQueue = commandQueue;
-    }
+    @Autowired
+    private BpmCommandQueue commandQueue;
 
     @Transactional
     public Long requeueFailed(CommandEnvelope envelope) {

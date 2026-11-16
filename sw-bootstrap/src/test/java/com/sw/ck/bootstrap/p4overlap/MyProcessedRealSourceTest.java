@@ -1,6 +1,8 @@
 package com.sw.ck.bootstrap.p4overlap;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.engine.facade.BpmTaskFacadeImpl;
 import com.sw.ck.bpm.process.controller.BpmMyProcessedController;
@@ -8,13 +10,17 @@ import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.MyProcessedItemDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
+import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
+import com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper;
 import com.sw.ck.bpm.process.queue.TaskActionCommandHandler;
 import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.NodeFunctionService;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.bpm.process.service.impl.ApprovalActionServiceImpl;
 import com.sw.ck.bpm.process.service.impl.BpmInstanceServiceImpl;
 import com.sw.ck.bpm.process.service.impl.BpmProcessDefServiceImpl;
+import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -22,23 +28,31 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.history.HistoricTaskInstance;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -63,8 +77,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MyProcessedRealSourceTest {
 
     /** 引擎历史在同一 JVM 内累积：每个用例装配使用全新用户，保证查询对象唯一。 */
-    private static final java.util.concurrent.atomic.AtomicLong USER_SEQ =
-            new java.util.concurrent.atomic.AtomicLong(21);
+    private static final AtomicLong USER_SEQ =
+            new AtomicLong(21);
     private static final ConcurrentLinkedQueue<Object> PUBLISHED = new ConcurrentLinkedQueue<>();
 
     private long u1;
@@ -79,7 +93,7 @@ class MyProcessedRealSourceTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @org.springframework.context.annotation.Configuration
+    @Configuration
     @Import(OverlapH2TestConfig.class)
     static class Config {
 
@@ -92,18 +106,18 @@ class MyProcessedRealSourceTest {
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider() {
-            return new com.sw.ck.common.datascope.DeptScopeProvider() {
+        public DeptScopeProvider deptScopeProvider() {
+            return new DeptScopeProvider() {
                 @Override
-                public java.util.List<Long> listChildDeptIds(Long deptId) {
-                    return java.util.List.of();
+                public List<Long> listChildDeptIds(Long deptId) {
+                    return List.of();
                 }
             };
         }
 
         @Bean
         public BpmInstanceServiceImpl bpmInstanceService(LoginContextProvider provider,
-                                                         com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
+                                                         DeptScopeProvider deptScopeProvider) {
             return new BpmInstanceServiceImpl(provider, deptScopeProvider);
         }
 
@@ -118,12 +132,12 @@ class MyProcessedRealSourceTest {
         }
 
         @Bean
-        public BpmProcessDefService bpmProcessDefService(com.sw.ck.bpm.process.mapper.BpmProcessDefMapper mapper,
+        public BpmProcessDefService bpmProcessDefService(BpmProcessDefMapper mapper,
                                                          ObjectMapper objectMapper) {
             // 仅用到 findByProcessKey（真实 mapper 查询）；图校验/部署等编辑能力本测试不触达
             return new BpmProcessDefServiceImpl(mapper,
-                    org.mockito.Mockito.mock(com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper.class),
-                    org.mockito.Mockito.mock(com.sw.ck.bpm.process.service.NodeFunctionService.class),
+                    Mockito.mock(BpmProcessDefVersionMapper.class),
+                    Mockito.mock(NodeFunctionService.class),
                     null, null, null, null, null, objectMapper);
         }
 
@@ -181,7 +195,7 @@ class MyProcessedRealSourceTest {
         instance3TaskId = startAndCancel("biz-p3-real-c", u1, "会签结算取消");
 
         // I4：独立任务被删除（deleteReason="deleted"，同真实任务清理语义），本人从未办理
-        org.flowable.task.api.Task standalone = CommandOverlapRealEngineTest.EngineHolder.TASK_SERVICE
+        Task standalone = CommandOverlapRealEngineTest.EngineHolder.TASK_SERVICE
                 .newTask();
         standalone.setName("独立任务");
         standalone.setAssignee(String.valueOf(u1));
@@ -215,7 +229,7 @@ class MyProcessedRealSourceTest {
                 .startProcessInstanceByKeyAndTenantId("overlap_p", businessKey,
                         Map.of("approver", String.valueOf(userId)), "1");
         String flowablePid = pi.getProcessInstanceId();
-        org.flowable.task.api.Task task = CommandOverlapRealEngineTest.EngineHolder.TASK_SERVICE
+        Task task = CommandOverlapRealEngineTest.EngineHolder.TASK_SERVICE
                 .createTaskQuery().processInstanceId(flowablePid).singleResult();
         insertInstanceRow(flowablePid, businessKey, userId);
         LoginUser user = new LoginUser();
@@ -246,7 +260,7 @@ class MyProcessedRealSourceTest {
                 .startProcessInstanceByKeyAndTenantId("overlap_p", businessKey,
                         Map.of("approver", String.valueOf(assigneeId)), "1");
         String flowablePid = pi.getProcessInstanceId();
-        org.flowable.task.api.Task task = CommandOverlapRealEngineTest.EngineHolder.TASK_SERVICE
+        Task task = CommandOverlapRealEngineTest.EngineHolder.TASK_SERVICE
                 .createTaskQuery().processInstanceId(flowablePid).singleResult();
         insertInstanceRow(flowablePid, businessKey, assigneeId);
         CommandOverlapRealEngineTest.EngineHolder.RUNTIME_SERVICE
@@ -254,8 +268,8 @@ class MyProcessedRealSourceTest {
         return task.getId();
     }
 
-    private static final java.util.concurrent.atomic.AtomicLong INSTANCE_ID =
-            new java.util.concurrent.atomic.AtomicLong(8100);
+    private static final AtomicLong INSTANCE_ID =
+            new AtomicLong(8100);
 
     private void insertInstanceRow(String flowablePid, String businessKey, long initiatorId) {
         jdbcTemplate.update("""
@@ -370,19 +384,19 @@ class MyProcessedRealSourceTest {
     }
 
     @Autowired
-    private com.sw.ck.bpm.api.facade.BpmTaskFacade bpmTaskFacade;
+    private BpmTaskFacade bpmTaskFacade;
 
 
     /** Flowable 独立内存引擎使用自身数据源（ACT_ 表不在业务 H2 中），历史表时间归一经该数据源执行。 */
-    private org.springframework.jdbc.core.JdbcTemplate flowableJdbc() {
-        return new org.springframework.jdbc.core.JdbcTemplate(
+    private JdbcTemplate flowableJdbc() {
+        return new JdbcTemplate(
                 CommandOverlapRealEngineTest.EngineHolder.ENGINE
                         .getProcessEngineConfiguration().getDataSource());
     }
 
     private String histTableName() {
         return CommandOverlapRealEngineTest.EngineHolder.ENGINE.getManagementService()
-                .getTableName(org.flowable.task.api.history.HistoricTaskInstance.class);
+                .getTableName(HistoricTaskInstance.class);
     }
 
     private String histTaskSql(String[] cols) {
@@ -406,16 +420,16 @@ class MyProcessedRealSourceTest {
         String t1 = startAndHandle("biz-p3-real-same-1", u3, false);
         String t2 = startAndHandle("biz-p3-real-same-2", u3, false);
         assertThat(t1).isNotEqualTo(t2);
-        java.time.LocalDateTime sameEnd = java.time.LocalDateTime.now().withNano(0);
+        LocalDateTime sameEnd = LocalDateTime.now().withNano(0);
         int normalized = flowableJdbc().update(histTaskSql(new String[]{"END_TIME_", "ID_"}),
-                java.sql.Timestamp.valueOf(sameEnd), t1, t2);
+                Timestamp.valueOf(sameEnd), t1, t2);
         assertThat(normalized).as("两条历史任务 END_TIME_ 必须已归一为同值").isEqualTo(2);
 
-        List<String> pageOrders = new java.util.ArrayList<>();
+        List<String> pageOrders = new ArrayList<>();
         for (int round = 0; round < 2; round++) {
-            List<String> seen = new java.util.ArrayList<>();
+            List<String> seen = new ArrayList<>();
             for (int pageNum = 1; pageNum <= 2; pageNum++) {
-                List<com.sw.ck.bpm.api.dto.BpmTaskDTO> tasks =
+                List<BpmTaskDTO> tasks =
                         bpmTaskFacade.queryProcessedPage("1", String.valueOf(u3), pageNum - 1, 1)
                                 .orElseThrow(() -> new IllegalStateException(
                                         "已办分页上下文缺失：tenantId=1, assignee=" + u3));
@@ -437,15 +451,15 @@ class MyProcessedRealSourceTest {
         String a2 = startAndHandle("biz-p3-real-same-4", u4, true);
         int normalizedActions = jdbcTemplate.update(
                 "update sw_bpm_approval_action set create_time = ? where task_id in (?, ?)",
-                java.time.LocalDateTime.now().withNano(0), a1, a2);
+                LocalDateTime.now().withNano(0), a1, a2);
         assertThat(normalizedActions).as("两条 ACTION 记录时间必须已归一为同值").isEqualTo(2);
 
         login(u4);
-        List<String> mergedOrders = new java.util.ArrayList<>();
-        java.util.LinkedHashSet<String> lastRoundSeen = null;
+        List<String> mergedOrders = new ArrayList<>();
+        LinkedHashSet<String> lastRoundSeen = null;
         for (int round = 0; round < 2; round++) {
-            java.util.LinkedHashSet<String> seenRound = new java.util.LinkedHashSet<>();
-            List<String> order = new java.util.ArrayList<>();
+            LinkedHashSet<String> seenRound = new LinkedHashSet<>();
+            List<String> order = new ArrayList<>();
             for (int pageNum = 1; pageNum <= 2; pageNum++) {
                 PageResult<MyProcessedItemDTO> page = page(null, pageNum, 1);
                 assertThat(page.getTotal()).as("合并 total 精确（ACTION 权威去重后=2）").isEqualTo(2L);

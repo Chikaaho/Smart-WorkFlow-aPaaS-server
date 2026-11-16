@@ -1,10 +1,13 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.dto.OpinionDraftDTO;
 import com.sw.ck.bpm.process.entity.BpmTaskOpinionDraft;
 import com.sw.ck.bpm.process.mapper.BpmTaskOpinionDraftMapper;
 import com.sw.ck.common.exception.BaseException;
@@ -17,28 +20,22 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** 审批意见暂存：绑定任务、轮次、办理人和意见表单，仅本人可读写。 */
 @RestController
 @RequestMapping("/workflow/tasks/{taskId}/opinion-draft")
 public class BpmTaskOpinionDraftController {
-    private final BpmTaskFacade taskFacade;
-    private final BpmTaskOpinionDraftMapper mapper;
-    private final ObjectMapper objectMapper;
-
-    public BpmTaskOpinionDraftController(BpmTaskFacade taskFacade,
-                                         BpmTaskOpinionDraftMapper mapper,
-                                         ObjectMapper objectMapper) {
-        this.taskFacade = taskFacade;
-        this.mapper = mapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private BpmTaskFacade taskFacade;
+    @Autowired
+    private BpmTaskOpinionDraftMapper mapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public R<Map<String, Object>> get(@PathVariable String taskId) {
+    public R<OpinionDraftDTO> get(@PathVariable String taskId) {
         LoginUser actor = requireActor();
         BpmTaskDTO task = requireOwnedRunningTask(taskId, actor);
         BpmTaskOpinionDraft draft = find(taskId, actor);
@@ -48,8 +45,8 @@ public class BpmTaskOpinionDraftController {
     @Transactional
     @PutMapping
     @PreAuthorize("isAuthenticated()")
-    public R<Map<String, Object>> save(@PathVariable String taskId,
-                                       @RequestBody OpinionDraftRequest request) {
+    public R<OpinionDraftDTO> save(@PathVariable String taskId,
+                                   @RequestBody OpinionDraftRequest request) {
         LoginUser actor = requireActor();
         BpmTaskDTO task = requireOwnedRunningTask(taskId, actor);
         if (request == null || request.comment() != null && request.comment().length() > 20_000) {
@@ -130,24 +127,24 @@ public class BpmTaskOpinionDraftController {
                 .last("LIMIT 1"));
     }
 
-    private Map<String, Object> view(BpmTaskDTO task, BpmTaskOpinionDraft draft) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("taskId", draft.getTaskId());
-        out.put("processInstanceId", task.getProcessInstanceId());
-        out.put("nodeKey", draft.getNodeKey());
-        out.put("roundNo", draft.getRoundNo());
-        out.put("assigneeId", String.valueOf(draft.getAssigneeId()));
-        out.put("opinionFormId", draft.getOpinionFormId());
-        out.put("opinionFormVersion", draft.getOpinionFormVersion());
-        out.put("comment", draft.getOpinionComment());
+    private OpinionDraftDTO view(BpmTaskDTO task, BpmTaskOpinionDraft draft) {
+        OpinionDraftDTO out = new OpinionDraftDTO();
+        out.setTaskId(draft.getTaskId());
+        out.setProcessInstanceId(task.getProcessInstanceId());
+        out.setNodeKey(draft.getNodeKey());
+        out.setRoundNo(draft.getRoundNo());
+        out.setAssigneeId(String.valueOf(draft.getAssigneeId()));
+        out.setOpinionFormId(draft.getOpinionFormId());
+        out.setOpinionFormVersion(draft.getOpinionFormVersion());
+        out.setComment(draft.getOpinionComment());
         try {
-            out.put("opinionData", objectMapper.readValue(
+            out.setOpinionData(objectMapper.readValue(
                     draft.getOpinionData() == null ? "{}" : draft.getOpinionData(),
                     new TypeReference<Map<String, Object>>() {}));
         } catch (Exception ignored) {
-            out.put("opinionData", Map.of());
+            out.setOpinionData(Map.of());
         }
-        out.put("updateTime", draft.getUpdateTime());
+        out.setUpdateTime(draft.getUpdateTime());
         return out;
     }
 

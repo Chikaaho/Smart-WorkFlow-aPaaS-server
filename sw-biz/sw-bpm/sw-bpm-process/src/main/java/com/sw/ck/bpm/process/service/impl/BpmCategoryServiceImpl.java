@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.process.dto.CategoryDTO;
 import com.sw.ck.bpm.process.dto.CategorySaveReq;
@@ -10,8 +12,6 @@ import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.bpm.process.service.BpmCategoryService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,20 +20,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /** 流程分类服务实现。 */
 @Service
+@Log4j2
 public class BpmCategoryServiceImpl implements BpmCategoryService {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmCategoryServiceImpl.class);
-
-    private final BpmCategoryMapper categoryMapper;
-    private final BpmProcessDefMapper processDefMapper;
-
-    public BpmCategoryServiceImpl(BpmCategoryMapper categoryMapper,
-                                  BpmProcessDefMapper processDefMapper) {
-        this.categoryMapper = categoryMapper;
-        this.processDefMapper = processDefMapper;
-    }
+    @Autowired
+    private BpmCategoryMapper categoryMapper;
+    @Autowired
+    private BpmProcessDefMapper processDefMapper;
 
     @Override
     public List<CategoryDTO> listCategories() {

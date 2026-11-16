@@ -12,13 +12,20 @@ import com.sw.ck.bpm.api.result.BpmProcessStatus;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
+import com.sw.ck.openapi.biz.dto.OpenApiStartResultDTO;
+import com.sw.ck.openapi.biz.dto.OpenApiStatusDTO;
 import com.sw.ck.system.api.tenant.TenantValidityFacade;
+import com.sw.ck.openapi.biz.entity.OpenApiNonce;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
 import java.util.Map;
@@ -56,7 +63,7 @@ class OpenApiServiceTest {
 
     @AfterEach
     void clear() {
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
     }
 
     private OpenApiApp app() {
@@ -95,13 +102,13 @@ class OpenApiServiceTest {
                 .isInstanceOfSatisfying(BaseException.class, e ->
                         assertThat(e.getCode()).isEqualTo(OpenApiErrorCode.TIMESTAMP_EXPIRED.getCode()));
 
-        when(nonceMapper.insert(any(com.sw.ck.openapi.biz.entity.OpenApiNonce.class)))
-                .thenThrow(new org.springframework.dao.DuplicateKeyException("dup"));
+        when(nonceMapper.insert(any(OpenApiNonce.class)))
+                .thenThrow(new DuplicateKeyException("dup"));
         assertThatThrownBy(() -> auth.authenticate("ext-app", headers[0], headers[1], headers[2],
                 "{}", "PROCESS_START")).isInstanceOfSatisfying(BaseException.class,
                 e -> assertThat(e.getCode()).isEqualTo(OpenApiErrorCode.NONCE_REUSED.getCode()));
 
-        when(nonceMapper.insert(any(com.sw.ck.openapi.biz.entity.OpenApiNonce.class))).thenReturn(1);
+        when(nonceMapper.insert(any(OpenApiNonce.class))).thenReturn(1);
         assertThatThrownBy(() -> auth.authenticate("ext-app", headers[0], "fresh-nonce",
                 OpenApiAuthService.sign(app.getSecretHash(), "ext-app", headers[0],
                         "fresh-nonce", "{}"), "{}", "TASK_HANDLE"))
@@ -122,15 +129,15 @@ class OpenApiServiceTest {
         when(submitFacade.submit(anyString(), any(), contains("BK:record-1")))
                 .thenReturn(Optional.of("record-1"));
 
-        Map<String, Object> first = service.start(context, "leave_form", Map.of("days", 1),
+        OpenApiStartResultDTO first = service.start(context, "leave_form", Map.of("days", 1),
                 "record-1", null);
-        assertThat(first).containsEntry("recordId", "record-1")
-                .containsEntry("idempotentReplay", false);
+        assertThat(first.getRecordId()).isEqualTo("record-1");
+        assertThat(first.isIdempotentReplay()).isFalse();
 
         when(idemMapper.selectOne(any())).thenReturn(idemRow("record-1"));
-        Map<String, Object> second = service.start(context, "leave_form", Map.of("days", 1),
+        OpenApiStartResultDTO second = service.start(context, "leave_form", Map.of("days", 1),
                 "record-1", null);
-        assertThat(second).containsEntry("idempotentReplay", true);
+        assertThat(second.isIdempotentReplay()).isTrue();
     }
 
     @Test
@@ -150,7 +157,7 @@ class OpenApiServiceTest {
                 signature, body, "PROCESS_START"))
                 .isInstanceOfSatisfying(BaseException.class, e ->
                         assertThat(e.getCode()).isEqualTo(OpenApiErrorCode.TENANT_INVALID.getCode()));
-        verify(nonceMapper, never()).insert(any(com.sw.ck.openapi.biz.entity.OpenApiNonce.class));
+        verify(nonceMapper, never()).insert(any(OpenApiNonce.class));
     }
 
     @Test
@@ -182,11 +189,11 @@ class OpenApiServiceTest {
         when(runtimeFacade.getProcessVariables("pi-miss")).thenReturn(Optional.empty());
         when(runtimeFacade.getProcessInstanceStatus("pi-miss")).thenReturn(Optional.empty());
 
-        Map<String, Object> result = service.status(context, "pi-miss");
+        OpenApiStatusDTO result = service.status(context, "pi-miss");
 
         // 契约内部以 empty 表达“实例不存在”，对外 HTTP 字符串必须保持原字面量
-        assertThat(result).containsEntry("status", "NOT_FOUND")
-                .containsEntry("businessKey", "record-1");
+        assertThat(result.getStatus()).isEqualTo("NOT_FOUND");
+        assertThat(result.getBusinessKey()).isEqualTo("record-1");
     }
 
     @Test
@@ -203,9 +210,9 @@ class OpenApiServiceTest {
         when(runtimeFacade.getProcessInstanceStatus("pi-run"))
                 .thenReturn(Optional.of(BpmProcessStatus.RUNNING));
 
-        Map<String, Object> result = service.status(context, "pi-run");
+        OpenApiStatusDTO result = service.status(context, "pi-run");
 
-        assertThat(result).containsEntry("status", "RUNNING");
+        assertThat(result.getStatus()).isEqualTo("RUNNING");
     }
 
     @Test
@@ -238,10 +245,10 @@ class OpenApiServiceTest {
     /** 占位类型：保持 import 简洁。 */
     private static final class LoginUserHolderContext {
         static void set(Long tenantId) {
-            com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+            LoginUser user = new LoginUser();
             user.setUserId(8L);
             user.setTenantId(tenantId);
-            com.sw.ck.security.holder.LoginUserHolder.set(user);
+            LoginUserHolder.set(user);
         }
     }
 }

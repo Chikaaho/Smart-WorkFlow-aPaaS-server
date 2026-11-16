@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
@@ -25,19 +26,30 @@ import com.sw.ck.notify.impl.NotifyFacadeImpl;
 import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
 import com.sw.ck.notify.service.impl.NotifyDeliveryRecoveryServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
+
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.scheduling.annotation.EnableScheduling;
+
 import com.sw.ck.notify.api.NotifySendRequest;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.notify.api.NotifySendResult;
+import com.sw.ck.notify.mapper.NotifyTemplateMapper;
+import com.sw.ck.notify.render.TemplateRenderService;
+import com.sw.ck.notify.service.impl.NotifyTemplateServiceImpl;
+
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Set;
+import java.net.SocketTimeoutException;
+import java.util.Optional;
 
 /**
  * G1 持久投递恢复测试支撑：文件 H2（跨 JVM 持久）+ 真实通知域通道 + 固定失败适配器。
@@ -63,8 +75,8 @@ public class I6NotifyRestartSupport {
     }
 
     @Bean
-    public org.springframework.jdbc.core.JdbcTemplate jdbcTemplate(DataSource dataSource) {
-        return new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
     }
 
     @Bean
@@ -78,8 +90,8 @@ public class I6NotifyRestartSupport {
     }
 
     @Bean
-    public com.sw.ck.notify.render.TemplateRenderService templateRenderService() {
-        return new com.sw.ck.notify.render.TemplateRenderService();
+    public TemplateRenderService templateRenderService() {
+        return new TemplateRenderService();
     }
 
     @Bean
@@ -124,11 +136,11 @@ public class I6NotifyRestartSupport {
 
     @Bean
     public NotifyMessageService notifyMessageService(
-            com.sw.ck.notify.mapper.NotifyTemplateMapper templateMapper,
-            com.sw.ck.notify.render.TemplateRenderService render,
+            NotifyTemplateMapper templateMapper,
+            TemplateRenderService render,
             TestLoginContext ctx) {
         return new NotifyMessageServiceImpl(
-                new com.sw.ck.notify.service.impl.NotifyTemplateServiceImpl(templateMapper, render, null),
+                new NotifyTemplateServiceImpl(templateMapper, render, null),
                 render, ctx);
     }
 
@@ -137,20 +149,20 @@ public class I6NotifyRestartSupport {
     public NotifyChannelAdapter failingAdapter() {
         return new NotifyChannelAdapter() {
             @Override
-            public java.util.Optional<NotifyChannel> channel() {
-                return java.util.Optional.of(NotifyChannel.FEISHU);
+            public Optional<NotifyChannel> channel() {
+                return Optional.of(NotifyChannel.FEISHU);
             }
 
             @Override
-            public java.util.Optional<com.sw.ck.notify.api.NotifySendResult> send(NotifySendRequest request) {
-                throw new RuntimeException(new java.net.SocketTimeoutException("飞书发送超时(测试注入)"));
+            public Optional<NotifySendResult> send(NotifySendRequest request) {
+                throw new RuntimeException(new SocketTimeoutException("飞书发送超时(测试注入)"));
             }
         };
     }
 
     @Bean
-    public NotifyFacade notifyFacade(NotifyMessageService svc, List<NotifyChannelAdapter> adapters, com.sw.ck.notify.mapper.NotifySendAttemptMapper attemptMapper) {
-        return new com.sw.ck.notify.impl.NotifyFacadeImpl(svc, adapters, attemptMapper,
+    public NotifyFacade notifyFacade(NotifyMessageService svc, List<NotifyChannelAdapter> adapters, NotifySendAttemptMapper attemptMapper) {
+        return new NotifyFacadeImpl(svc, adapters, attemptMapper,
                 (tenantId, claim) -> claim.getAsInt());
     }
 
@@ -182,8 +194,8 @@ public class I6NotifyRestartSupport {
         public Long getDeptId() { return null; }
 
         @Override
-        public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-            return com.sw.ck.common.datascope.DataScopeType.ALL;
+        public DataScopeType getDataScopeType() {
+            return DataScopeType.ALL;
         }
 
         @Override
@@ -194,7 +206,7 @@ public class I6NotifyRestartSupport {
     }
 
     /** 启停租户过滤、按稳定身份读取与重建投递请求；重启前后共用。 */
-    public static NotifyMessage findByIdentity(org.springframework.jdbc.core.JdbcTemplate jdbc,
+    public static NotifyMessage findByIdentity(JdbcTemplate jdbc,
                                                Long tenantId, Long recipientId, String channel) {
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             return jdbc.query("""

@@ -1,12 +1,18 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.bpm.process.dto.AnalyticsSummaryDTO;
+import com.sw.ck.bpm.process.dto.TaskDeadlineDTO;
 import com.sw.ck.bpm.process.entity.BpmInstanceIntervention;
+import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.service.BpmMonitorService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+
 import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,21 +25,17 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 流程运营监控/干预/基础分析（I4 §3.3）。管理端专用权限；数据范围同时约束汇总与明细。
  */
-@Slf4j
+@Log4j2
 @RestController
 @RequestMapping("/workflow/monitor")
 public class BpmMonitorController {
 
-    private final BpmMonitorService monitorService;
-
-    public BpmMonitorController(BpmMonitorService monitorService) {
-        this.monitorService = monitorService;
-    }
+    @Autowired
+    private BpmMonitorService monitorService;
 
     @Data
     public static class InterveneRequest {
@@ -41,7 +43,7 @@ public class BpmMonitorController {
         private String reason;
         private Long toAssignee;
         /** 可选迁移任务集合：仅 TRANSFER 且提供时迁移所选子集，未选任务保持原办理人。 */
-        private java.util.List<String> taskIds;
+        private List<String> taskIds;
     }
 
     /** 七类条件检索：defKey / instanceId / initiator / status / nodeKey / assignee / 时间范围。 */
@@ -81,20 +83,20 @@ public class BpmMonitorController {
     /** 动态并行分支冻结快照勾稽（I4 §3.1 运营回读）：逐条展示冻结来源部门/负责人/状态/取消原因。 */
     @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     @GetMapping("/instances/{processInstanceId}/deadlines")
-    public R<List<Map<String, Object>>> deadlines(@PathVariable String processInstanceId) {
+    public R<List<TaskDeadlineDTO>> deadlines(@PathVariable String processInstanceId) {
         return R.ok(monitorService.deadlines(processInstanceId));
     }
 
     @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     @GetMapping("/instances/{processInstanceId}/branches")
-    public R<List<com.sw.ck.bpm.process.entity.DynamicBranchSnapshot>> branches(
+    public R<List<DynamicBranchSnapshot>> branches(
             @PathVariable String processInstanceId) {
         return R.ok(monitorService.branches(processInstanceId));
     }
 
     @PreAuthorize("@ss.hasPermi('workflow:monitor:view')")
     @GetMapping("/analytics/summary")
-    public R<Map<String, Object>> analyticsSummary(
+    public R<AnalyticsSummaryDTO> analyticsSummary(
             @RequestParam(required = false) String processDefKey,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime timeFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime timeTo) {

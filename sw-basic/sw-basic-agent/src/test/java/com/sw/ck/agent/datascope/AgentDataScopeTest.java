@@ -7,8 +7,16 @@ import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInt
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
+import com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -20,6 +28,10 @@ import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.DataScope;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -27,6 +39,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -314,15 +327,15 @@ class AgentDataScopeTest {
         }
 
         @Bean
-        public com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+        public ObjectMapper objectMapper() {
             // 与 agent 模块既有测试同款：TestConfig 手动装配（本测试不启用自动配置）
-            return new com.fasterxml.jackson.databind.ObjectMapper()
-                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+            return new ObjectMapper()
+                    .registerModule(new JavaTimeModule());
         }
 
         @Bean
-        public com.sw.ck.agent.orchestration.AgentModelRuntimeService agentModelRuntimeService() {
-            return org.mockito.Mockito.mock(com.sw.ck.agent.orchestration.AgentModelRuntimeService.class);
+        public AgentModelRuntimeService agentModelRuntimeService() {
+            return Mockito.mock(AgentModelRuntimeService.class);
         }
 
         @Bean
@@ -414,7 +427,7 @@ class AgentDataScopeTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -439,17 +452,17 @@ class AgentDataScopeTest {
 
         @Bean
         public AgentGraphExecutionService agentGraphExecutionService(
-                com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                com.sw.ck.agent.orchestration.AgentModelRuntimeService modelRuntimeService,
-                com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
+                ObjectMapper objectMapper,
+                AgentModelRuntimeService modelRuntimeService,
+                AgentToolInternalConfigMapper internalToolMapper,
+                AgentToolExternalConfigMapper externalToolMapper,
+                AgentGraphExecutionMapper executionMapper,
+                AgentGraphExecutionNodeMapper executionNodeMapper,
                 LoginContextProvider loginContextProvider,
                 DeptScopeProvider deptScopeProvider) {
-            return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
+            return new AgentGraphExecutionServiceImpl(
                     objectMapper, modelRuntimeService,
-                    org.mockito.Mockito.mock(com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl.class),
+                    Mockito.mock(AgentGraphSnapshotServiceImpl.class),
                     internalToolMapper, externalToolMapper,
                     executionMapper, executionNodeMapper,
                     loginContextProvider, deptScopeProvider);

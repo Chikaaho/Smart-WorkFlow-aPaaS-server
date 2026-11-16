@@ -2,6 +2,7 @@ package com.sw.ck.agent.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
 import com.sw.ck.agent.service.AgentToolConfigService;
@@ -18,11 +19,15 @@ import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.jwt.JwtTokenProviderImpl;
 import com.sw.ck.security.spi.UserDetailsProvider;
 import com.sw.ck.security.support.PermissionService;
+
 import jakarta.servlet.Filter;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -308,8 +313,8 @@ class AgentToolConfigControllerTest {
         public LoginUserLoader loginUserLoader(
                 UserDetailsProvider userDetailsProvider,
                 LoginUserCacheService loginUserCacheService) {
-            org.springframework.beans.factory.ObjectProvider<UserDetailsProvider> provider =
-                    mock(org.springframework.beans.factory.ObjectProvider.class);
+            ObjectProvider<UserDetailsProvider> provider =
+                    mock(ObjectProvider.class);
             when(provider.getIfAvailable()).thenReturn(userDetailsProvider);
             return new LoginUserLoader(provider, loginUserCacheService);
         }
@@ -369,7 +374,7 @@ class AgentToolConfigControllerTest {
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties) {
             return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
-            org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
+            Mockito.mock(LoginUserCacheService.class));
         }
 
         @Bean

@@ -1,14 +1,21 @@
 package com.sw.ck.iot.job;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
+import com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget;
 import com.sw.ck.iot.entity.IotCommandReservation;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotCommandReservationMapper;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
-import lombok.extern.slf4j.Slf4j;
+import com.sw.ck.iot.util.DeferredControlUtil;
+
+import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -30,38 +37,29 @@ import java.util.List;
  * 超时/UNKNOWN 沿既有边界不变。时钟经注入 Clock 供给，受控验证可贯穿真实入口。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 public class IotReservationDispatchJob {
 
-    private final IotCommandReservationMapper reservationMapper;
-    private final IotDeviceCommandMapper commandMapper;
-    private final IotDeviceService deviceService;
-    private final ObjectProvider<com.sw.ck.iot.util.DeferredControlUtil> senderProvider;
-    private final CommandQueueService commandQueueService;
-    private final Clock clock;
-    private final com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
-
-    public IotReservationDispatchJob(IotCommandReservationMapper reservationMapper,
-                                     IotDeviceCommandMapper commandMapper,
-                                     IotDeviceService deviceService,
-                                     ObjectProvider<com.sw.ck.iot.util.DeferredControlUtil> senderProvider,
-                                     CommandQueueService commandQueueService,
-                                     Clock clock,
-                                     com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission) {
-        this.reservationMapper = reservationMapper;
-        this.commandMapper = commandMapper;
-        this.deviceService = deviceService;
-        this.senderProvider = senderProvider;
-        this.commandQueueService = commandQueueService;
-        this.clock = clock;
-        this.tenantWorkAdmission = java.util.Objects.requireNonNull(tenantWorkAdmission);
-    }
+    @Autowired
+    private IotCommandReservationMapper reservationMapper;
+    @Autowired
+    private IotDeviceCommandMapper commandMapper;
+    @Autowired
+    private IotDeviceService deviceService;
+    @Autowired(required = false)
+    private ObjectProvider<DeferredControlUtil> senderProvider;
+    @Autowired
+    private CommandQueueService commandQueueService;
+    @Autowired(required = false)
+    private Clock clock = Clock.systemUTC();
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Scheduled(fixedDelay = 10_000L)
     public void dispatchDueReservations() {
         // 调度线程无登录态：挂起租户拦截器，行自身 tenant_id 为权威过滤（显式条件）
-        com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspend();
+        TenantLineSuspension.suspend();
         try {
             LocalDateTime nowUtc = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
             expireOverdue(nowUtc);
@@ -71,7 +69,7 @@ public class IotReservationDispatchJob {
                 claimAndDispatch(reservation, nowUtc);
             }
         } finally {
-            com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.restore();
+            TenantLineSuspension.restore();
         }
     }
 
@@ -97,11 +95,11 @@ public class IotReservationDispatchJob {
     }
 
     private void claimAndDispatch(IotCommandReservation reservation, LocalDateTime nowUtc) {
-        com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspend();
+        TenantLineSuspension.suspend();
         try {
             claimAndDispatchSuspended(reservation, nowUtc);
         } finally {
-            com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.restore();
+            TenantLineSuspension.restore();
         }
     }
 
@@ -155,7 +153,7 @@ public class IotReservationDispatchJob {
         // 到点权威重核（P63 G03a 确证缺陷修复）：无论来源是否在受理时冻结 product/name，
         // 一律按 deviceKey+预约租户重解析执行目标——设备失效/改属他租户在到点拒绝并可查，
         // 不按冻结值跨租户入队（FORM_FIELD/VARIABLE 的既有设计语义统一到全部来源）。
-        com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget target =
+        DeviceTarget target =
                 deviceService.resolveDeviceTargetByKey(reservation.getTenantId(), reservation.getDeviceKey());
         if (target == null) {
             throw new IllegalStateException("设备目标已失效或跨租户: deviceKey=" + reservation.getDeviceKey());
@@ -188,7 +186,7 @@ public class IotReservationDispatchJob {
         // 状态迁移（QUEUED→SENDING）由共享发送路径 markSending 统一承载；
         // 此处不得预占 SENDING，否则 sendCommand 内的 markSending 必然撞状态判死。
         IotDeviceCommand queued = commandMapper.selectById(command.getId());
-        com.sw.ck.iot.util.DeferredControlUtil sender = senderProvider.getIfAvailable();
+        DeferredControlUtil sender = senderProvider.getIfAvailable();
         if (sender != null && queued != null) {
             sender.sendCommand(queued);
         } else if (queued != null) {

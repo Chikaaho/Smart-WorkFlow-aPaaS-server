@@ -6,13 +6,16 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.spi.UserDetailsProvider;
 import com.sw.ck.system.api.dict.DictFacade;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -23,8 +26,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
-
 import org.springframework.beans.factory.annotation.Autowired;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.util.List;
 import java.util.Map;
 
@@ -86,7 +90,7 @@ class FormDataIsolationIntegrationTest {
         @Bean
         FormConfigMapper formConfigMapper() {
             FormConfigMapper mock = Mockito.mock(FormConfigMapper.class);
-            com.sw.ck.form.entity.FormConfigEntity config = new com.sw.ck.form.entity.FormConfigEntity();
+            FormConfigEntity config = new FormConfigEntity();
             config.setFormId("form-isolation-1");
             config.setDefinition("{\"fields\":[{\"name\":\"name\",\"label\":\"姓名\",\"type\":\"TEXT\"}]}");
             when(mock.selectList(Mockito.any())).thenReturn(List.of(config));
@@ -95,15 +99,15 @@ class FormDataIsolationIntegrationTest {
 
         @Bean
         FormFieldValidator formFieldValidator(FormConfigMapper formConfigMapper,
-                                               com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                                               ObjectMapper objectMapper) {
             return new FormFieldValidator(formConfigMapper, objectMapper);
         }
 
         @Bean
-        FormDataQueryService formDataQueryService(com.sw.ck.form.mapper.FormDefMapper fdm,
-                                                  com.sw.ck.form.mapper.FormConfigMapper fcm,
+        FormDataQueryService formDataQueryService(FormDefMapper fdm,
+                                                  FormConfigMapper fcm,
                                                   JdbcTemplate jdbcTemplate,
-                                                  com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                                                  ObjectMapper objectMapper,
                                                   FormDefService formDefService) {
             return new FormDataQueryService(formDefService, fdm, fcm, jdbcTemplate, objectMapper);
         }
@@ -113,7 +117,7 @@ class FormDataIsolationIntegrationTest {
                                                      FormDefMapper formDefMapper,
                                                      FormConfigMapper formConfigMapper,
                                                      JdbcTemplate jdbcTemplate,
-                                                     com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                                                     ObjectMapper objectMapper,
                                                      FormFieldValidator formFieldValidator) {
             return new FormDataUpdateService(formDefService, formDefMapper, formConfigMapper,
                     jdbcTemplate, objectMapper, new FormIdGenerator(),
@@ -121,14 +125,14 @@ class FormDataIsolationIntegrationTest {
         }
 
         @Bean
-        com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
-            return new com.fasterxml.jackson.databind.ObjectMapper();
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
         }
 
         /** 满足 sw-security 启动自检：本测试不经过 HTTP 认证链，直接持有 LoginUser 上下文。 */
         @Bean
-        com.sw.ck.security.spi.UserDetailsProvider userDetailsProvider() {
-            return new com.sw.ck.security.spi.UserDetailsProvider() {
+        UserDetailsProvider userDetailsProvider() {
+            return new UserDetailsProvider() {
                 @Override public LoginUser loadByUsername(String username) { return null; }
                 @Override public LoginUser loadByUserId(Long userId) { return null; }
             };

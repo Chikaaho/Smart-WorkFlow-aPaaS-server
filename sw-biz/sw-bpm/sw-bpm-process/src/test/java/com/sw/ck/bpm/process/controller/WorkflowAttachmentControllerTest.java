@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
+
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
@@ -13,6 +14,8 @@ import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.storage.api.StorageFacade;
+
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -68,7 +71,7 @@ class WorkflowAttachmentControllerTest {
                 .thenReturn(Optional.of(new ByteArrayInputStream(new byte[]{1, 2, 3})));
     }
 
-    private void forbidden(org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+    private void forbidden(ThrowingCallable action) {
         assertThatThrownBy(action).isInstanceOfSatisfying(BaseException.class,
                 e -> assertThat(e.getCode()).isEqualTo(403));
         verifyNoInteractions(storage);

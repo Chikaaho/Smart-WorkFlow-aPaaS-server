@@ -7,24 +7,36 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.nodefunc.NodeFunctionContext;
 import com.sw.ck.bpm.api.nodefunc.NodeFunctionResult;
 import com.sw.ck.bpm.api.nodefunc.ParticipantFunction;
+import com.sw.ck.bpm.process.mapper.BpmNodeFunctionMapper;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.mockito.Mockito;
 import org.mybatis.spring.mapper.MapperScannerConfigurer;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -181,7 +193,7 @@ class NodeFunctionNegativeContractTest {
     @Test
     void a6_fallbackStrategyReturnsNullWithoutRollback() {
         // FALLBACK 策略下无可用参与人：以 empty 表达“无函数输出”，由调用方走默认策略
-        java.util.Optional<List<String>> result = service.resolveParticipants(1L, "g13a-i6", "node_a",
+        Optional<List<String>> result = service.resolveParticipants(1L, "g13a-i6", "node_a",
                 "task-g13a-i6", configOf("func_fb_v1"), Map.of("submitter", "8801"));
         assertThat(result).isEmpty();
         assertThat(auditOf("g13a-i6", "func_fb_v1")).contains("outcome=FAILED");
@@ -241,7 +253,7 @@ class NodeFunctionNegativeContractTest {
         element.setId(id);
         element.setKind("node");
         element.setType("APPROVE");
-        element.setConfig(new java.util.HashMap<>(Map.of(
+        element.setConfig(new HashMap<>(Map.of(
                 "functions", List.of(Map.of("key", funcKey, "version", 1)))));
         return element;
     }
@@ -260,15 +272,15 @@ class NodeFunctionNegativeContractTest {
         // I5 fail-closed：测试种子与断言均在租户 0 语境；本测试上下文提供固定
         // 租户 0 的登录上下文（生产由 SecurityLoginContextProvider 从认证态读取）
         @Bean
-        public com.sw.ck.common.security.LoginContextProvider i5TenantZeroLoginContextProvider() {
-            return new com.sw.ck.common.security.LoginContextProvider() {
+        public LoginContextProvider i5TenantZeroLoginContextProvider() {
+            return new LoginContextProvider() {
                 @Override public Long getUserId() { return 0L; }
                 @Override public Long getTenantId() { return 0L; }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
@@ -276,29 +288,29 @@ class NodeFunctionNegativeContractTest {
 
         @Bean
         NodeFunctionService nodeFunctionService(
-                com.sw.ck.bpm.process.mapper.BpmNodeFunctionMapper mapper,
-                org.springframework.context.ApplicationContext applicationContext,
-                com.sw.ck.system.api.user.UserQueryFacade userFacade) {
-            org.springframework.beans.factory.ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade> provider =
-                    Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+                BpmNodeFunctionMapper mapper,
+                ApplicationContext applicationContext,
+                UserQueryFacade userFacade) {
+            ObjectProvider<UserQueryFacade> provider =
+                    Mockito.mock(ObjectProvider.class);
             Mockito.when(provider.getIfAvailable()).thenReturn(userFacade);
             return new NodeFunctionService(mapper, applicationContext, provider);
         }
 
         @Bean
-        com.sw.ck.system.api.user.UserQueryFacade g13aUserAuthority() {
-            com.sw.ck.system.api.user.UserQueryFacade facade =
-                    Mockito.mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+        UserQueryFacade g13aUserAuthority() {
+            UserQueryFacade facade =
+                    Mockito.mock(UserQueryFacade.class);
             Mockito.when(facade.findActiveUserIds(Mockito.anyCollection(), Mockito.eq(1L)))
                     .thenAnswer(inv -> {
-                        List<Long> requested = new ArrayList<>((java.util.Collection<Long>) inv.getArgument(0));
-                        return java.util.Optional.of(requested.stream()
+                        List<Long> requested = new ArrayList<>((Collection<Long>) inv.getArgument(0));
+                        return Optional.of(requested.stream()
                                 .filter(id -> id == 8801L || id == 8802L).toList());
                     });
             Mockito.when(facade.findActiveUserIds(Mockito.anyCollection(), Mockito.eq(777L)))
-                    .thenAnswer(inv -> java.util.Optional.of(List.of(999L)));
+                    .thenAnswer(inv -> Optional.of(List.of(999L)));
             Mockito.when(facade.findActiveUserIds(Mockito.anyCollection(), Mockito.eq(0L)))
-                    .thenAnswer(inv -> java.util.Optional.of(List.of()));
+                    .thenAnswer(inv -> Optional.of(List.of()));
             return facade;
         }
 
@@ -311,7 +323,7 @@ class NodeFunctionNegativeContractTest {
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException("interrupted");
                 }
-                return java.util.Optional.of(List.of("8801"));
+                return Optional.of(List.of("8801"));
             };
         }
 
@@ -324,12 +336,12 @@ class NodeFunctionNegativeContractTest {
 
         @Bean
         ParticipantFunction g13aBadFmt() {
-            return context -> java.util.Optional.of(List.of("abc"));
+            return context -> Optional.of(List.of("abc"));
         }
 
         @Bean
         ParticipantFunction g13aOver() {
-            return context -> java.util.Optional.of(java.util.stream.IntStream.rangeClosed(1, 1001)
+            return context -> Optional.of(IntStream.rangeClosed(1, 1001)
                     .mapToObj(String::valueOf).toList());
         }
 
@@ -344,13 +356,13 @@ class NodeFunctionNegativeContractTest {
         ParticipantFunction g13aOk() {
             return context -> {
                 OK_CALLS.incrementAndGet();
-                return java.util.Optional.of(List.of("8801"));
+                return Optional.of(List.of("8801"));
             };
         }
 
         @Bean
         ParticipantFunction g13aCross() {
-            return context -> java.util.Optional.of(List.of("999"));
+            return context -> Optional.of(List.of("999"));
         }
 
         @Bean

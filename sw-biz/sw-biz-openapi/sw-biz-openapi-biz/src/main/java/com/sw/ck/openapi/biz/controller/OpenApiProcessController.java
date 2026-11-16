@@ -1,11 +1,24 @@
 package com.sw.ck.openapi.biz.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
+import com.sw.ck.openapi.biz.dto.OpenApiCallbackRecordsDTO;
+import com.sw.ck.openapi.biz.dto.OpenApiCallbackResendDTO;
+import com.sw.ck.openapi.biz.dto.OpenApiCompleteTaskResultDTO;
+import com.sw.ck.openapi.biz.dto.OpenApiStartResultDTO;
+import com.sw.ck.openapi.biz.dto.OpenApiStatusDTO;
 import com.sw.ck.openapi.biz.service.OpenApiAuthService;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
 import com.sw.ck.openapi.biz.service.OpenApiProcessService;
-import lombok.extern.slf4j.Slf4j;
+import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,7 +38,7 @@ import java.util.Set;
  * 签名 + 时间窗 + 防重放 + scope + 租户边界；鉴权失败零业务效果。
  * </p>
  */
-@Slf4j
+@Log4j2
 @RestController
 @RequestMapping("/openapi/v1")
 public class OpenApiProcessController {
@@ -36,21 +49,16 @@ public class OpenApiProcessController {
             BpmNotifyTrigger.PROCESS_DISAPPROVED, BpmNotifyTrigger.PROCESS_WITHDRAWN,
             BpmNotifyTrigger.PROCESS_DISCARDED);
 
-    private final OpenApiAuthService authService;
-    private final OpenApiProcessService processService;
-    private final OpenApiCallbackDeliveryService deliveryService;
-
-    public OpenApiProcessController(OpenApiAuthService authService,
-                                    OpenApiProcessService processService,
-                                    OpenApiCallbackDeliveryService deliveryService) {
-        this.authService = authService;
-        this.processService = processService;
-        this.deliveryService = deliveryService;
-    }
+    @Autowired
+    private OpenApiAuthService authService;
+    @Autowired
+    private OpenApiProcessService processService;
+    @Autowired
+    private OpenApiCallbackDeliveryService deliveryService;
 
     /** 外部发起：经正式表单提交链（校验/版本/幂等/事件），不直接调用底层启动能力。签名材料=原始请求体字节。 */
     @PostMapping("/processes")
-    public R<Map<String, Object>> start(
+    public R<OpenApiStartResultDTO> start(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -71,13 +79,13 @@ public class OpenApiProcessController {
             log.info("开放接口外部发起: appId={}, formKey={}", appId, formKey);
             return R.ok(processService.start(context, formKey, formData, businessKey, idempotencyKey));
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 
     /** 外部状态查询。 */
     @GetMapping("/processes/{processInstanceId}")
-    public R<Map<String, Object>> status(
+    public R<OpenApiStatusDTO> status(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -88,13 +96,13 @@ public class OpenApiProcessController {
         try {
             return R.ok(processService.status(context, processInstanceId));
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 
     /** 嵌入式任务办理：服务端校验应用绑定用户的任务归属。签名材料=原始请求体字节。 */
     @PostMapping("/tasks/{taskId}/complete")
-    public R<Map<String, Object>> completeTask(
+    public R<OpenApiCompleteTaskResultDTO> completeTask(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -111,13 +119,13 @@ public class OpenApiProcessController {
                     ? (Map<String, Object>) raw : Map.of();
             return R.ok(processService.completeTask(context, taskId, variables));
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 
     /** 出站回调投递记录查询（失败可查，I4 §3.4）：仅本应用自身记录，scope=PROCESS_QUERY。 */
     @GetMapping("/callbacks")
-    public R<Map<String, Object>> callbacks(
+    public R<OpenApiCallbackRecordsDTO> callbacks(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -128,10 +136,11 @@ public class OpenApiProcessController {
         OpenApiAuthService.OpenApiAuthContext context = authService.authenticate(
                 appId, timestamp, nonce, signature, "", "PROCESS_QUERY");
         try {
-            return R.ok(Map.of("records",
-                    deliveryService.records(context.appId(), bizRef, event, status)));
+            OpenApiCallbackRecordsDTO result = new OpenApiCallbackRecordsDTO();
+            result.setRecords(deliveryService.records(context.appId(), bizRef, event, status));
+            return R.ok(result);
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 
@@ -140,7 +149,7 @@ public class OpenApiProcessController {
      * 已成功投递的事件按去重口径零新增返回。scope=PROCESS_QUERY（应用自助补投自身事件）。
      */
     @PostMapping("/callbacks/resend")
-    public R<Map<String, Object>> resend(
+    public R<OpenApiCallbackResendDTO> resend(
             @RequestHeader(value = "X-App-Id", required = false) String appId,
             @RequestHeader(value = "X-Timestamp", required = false) String timestamp,
             @RequestHeader(value = "X-Nonce", required = false) String nonce,
@@ -154,26 +163,26 @@ public class OpenApiProcessController {
             String bizRef = request.get("processInstanceId") == null
                     ? null : String.valueOf(request.get("processInstanceId"));
             if (eventName == null || bizRef == null || bizRef.isBlank()) {
-                throw new com.sw.ck.common.exception.BaseException(
-                        com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+                throw new BaseException(
+                        CommonErrorCode.PARAM_ERROR.getCode(),
                         "event 与 processInstanceId 不能为空");
             }
             BpmNotifyTrigger trigger;
             try {
                 trigger = BpmNotifyTrigger.valueOf(eventName);
             } catch (IllegalArgumentException e) {
-                throw new com.sw.ck.common.exception.BaseException(
-                        com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+                throw new BaseException(
+                        CommonErrorCode.PARAM_ERROR.getCode(),
                         "未知事件类型: " + eventName);
             }
             if (!TERMINAL_TRIGGERS.contains(trigger)) {
-                throw new com.sw.ck.common.exception.BaseException(
-                        com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
+                throw new BaseException(
+                        CommonErrorCode.PARAM_ERROR.getCode(),
                         "仅实例终态事件支持重发");
             }
             return R.ok(deliveryService.resend(context.appId(), trigger, bizRef));
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 
@@ -182,11 +191,11 @@ public class OpenApiProcessController {
             return Map.of();
         }
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readValue(raw, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+            return new ObjectMapper()
+                    .readValue(raw, new TypeReference<Map<String, Object>>() { });
         } catch (Exception e) {
-            throw new com.sw.ck.common.exception.BaseException(
-                    com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(), "请求体不是合法 JSON");
+            throw new BaseException(
+                    CommonErrorCode.PARAM_ERROR.getCode(), "请求体不是合法 JSON");
         }
     }
 }

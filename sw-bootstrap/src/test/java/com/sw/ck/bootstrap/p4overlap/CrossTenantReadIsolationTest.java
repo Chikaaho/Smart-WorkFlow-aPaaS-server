@@ -9,6 +9,8 @@ import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.bpm.process.service.impl.BpmInstanceServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.service.impl.BpmDraftServiceImpl;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -16,8 +18,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,21 +48,21 @@ class CrossTenantReadIsolationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @org.springframework.context.annotation.Configuration
+    @Configuration
     @Import(OverlapH2TestConfig.class)
     static class Config {
 
         @Bean
         public BpmDraftService bpmDraftService() {
-            return new com.sw.ck.bpm.process.service.impl.BpmDraftServiceImpl();
+            return new BpmDraftServiceImpl();
         }
 
         @Bean
         public DeptScopeProvider deptScopeProvider() {
             return new DeptScopeProvider() {
                 @Override
-                public java.util.List<Long> listChildDeptIds(Long deptId) {
-                    return java.util.List.of();
+                public List<Long> listChildDeptIds(Long deptId) {
+                    return List.of();
                 }
             };
         }

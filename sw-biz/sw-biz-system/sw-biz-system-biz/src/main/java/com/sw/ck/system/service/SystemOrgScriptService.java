@@ -1,5 +1,7 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
@@ -39,26 +41,18 @@ public class SystemOrgScriptService {
 
     private static final int MAX_USERS = 500;
 
-    private final SysUserMapper userMapper;
-    private final SysDeptMapper deptMapper;
-    private final SysRoleMapper roleMapper;
-    private final SysPostMapper postMapper;
-    private final SysUserRoleMapper userRoleMapper;
-    private final SysUserPostMapper userPostMapper;
-
-    public SystemOrgScriptService(SysUserMapper userMapper,
-                                  SysDeptMapper deptMapper,
-                                  SysRoleMapper roleMapper,
-                                  SysPostMapper postMapper,
-                                  SysUserRoleMapper userRoleMapper,
-                                  SysUserPostMapper userPostMapper) {
-        this.userMapper = userMapper;
-        this.deptMapper = deptMapper;
-        this.roleMapper = roleMapper;
-        this.postMapper = postMapper;
-        this.userRoleMapper = userRoleMapper;
-        this.userPostMapper = userPostMapper;
-    }
+    @Autowired
+    private SysUserMapper userMapper;
+    @Autowired
+    private SysDeptMapper deptMapper;
+    @Autowired
+    private SysRoleMapper roleMapper;
+    @Autowired
+    private SysPostMapper postMapper;
+    @Autowired
+    private SysUserRoleMapper userRoleMapper;
+    @Autowired
+    private SysUserPostMapper userPostMapper;
 
     public OrgScriptContext load() {
         LoginUser loginUser = LoginUserHolder.get();

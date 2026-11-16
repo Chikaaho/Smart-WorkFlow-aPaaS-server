@@ -14,8 +14,9 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -24,10 +25,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 我的已办控制器（D4：以本人真实办理行为为权威）。
  * <p>
@@ -38,35 +41,19 @@ import java.util.Set;
  */
 @RestController
 @RequestMapping("/workflow/my/processed")
+@Log4j2
 public class BpmMyProcessedController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmMyProcessedController.class);
-
-    private final ApprovalActionService approvalActionService;
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmProcessDefService bpmProcessDefService;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade;
-
-    public BpmMyProcessedController(ApprovalActionService approvalActionService,
-                                    BpmInstanceService bpmInstanceService,
-                                    BpmProcessDefService bpmProcessDefService,
-                                    BpmTaskFacade bpmTaskFacade) {
-        this(approvalActionService, bpmInstanceService, bpmProcessDefService, bpmTaskFacade, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public BpmMyProcessedController(ApprovalActionService approvalActionService,
-                                    BpmInstanceService bpmInstanceService,
-                                    BpmProcessDefService bpmProcessDefService,
-                                    BpmTaskFacade bpmTaskFacade,
-                                    com.sw.ck.system.api.user.UserQueryFacade userQueryFacade) {
-        this.approvalActionService = approvalActionService;
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmProcessDefService = bpmProcessDefService;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private ApprovalActionService approvalActionService;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     @GetMapping
     public R<PageResult<MyProcessedItemDTO>> myProcessed(PageParam pageParam,
@@ -119,11 +106,11 @@ public class BpmMyProcessedController {
                 }
             }
             // 唯一次键：同办理时间记录按 taskId 全序，合并分页跨页确定性不漏不重（A5）
-            java.util.Comparator<MyProcessedItemDTO> mergedOrder = java.util.Comparator
+            Comparator<MyProcessedItemDTO> mergedOrder = Comparator
                     .comparing(MyProcessedItemDTO::getHandleTime,
-                            java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder()))
+                            Comparator.nullsLast(Comparator.naturalOrder()))
                     .thenComparing(MyProcessedItemDTO::getTaskId,
-                            java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder()));
+                            Comparator.nullsLast(Comparator.naturalOrder()));
             merged.sort(mergedOrder.reversed());
             long total = merged.size();
             int from = (int) Math.min((long) (pageParam.getPageNum() - 1) * pageParam.getPageSize(), total);

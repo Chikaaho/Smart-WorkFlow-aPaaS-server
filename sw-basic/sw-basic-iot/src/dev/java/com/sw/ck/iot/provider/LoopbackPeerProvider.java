@@ -2,8 +2,8 @@ package com.sw.ck.iot.provider;
 
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 受控真实传输对端 Provider（P63 G07，仅 dev 源根）。
  * <p>
@@ -26,9 +27,8 @@ import java.util.UUID;
  * 生产选择器 {@code IotAutoConfiguration} 不引用本实现，正式制品不含。
  * </p>
  */
+@Log4j2
 public class LoopbackPeerProvider implements DeviceControlProvider {
-
-    private static final Logger log = LoggerFactory.getLogger(LoopbackPeerProvider.class);
 
     private final String peerUrl;
     private final IotDeviceCommandMapper commandMapper;
@@ -96,7 +96,7 @@ public class LoopbackPeerProvider implements DeviceControlProvider {
     private IotDeviceCommand currentSendingCommand(String productId, String deviceName) {
         try {
             List<IotDeviceCommand> rows = commandMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaQuery()
+                    Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getProductId, productId)
                             .eq(IotDeviceCommand::getDeviceName, deviceName)
                             .eq(IotDeviceCommand::getStatus, "SENDING")

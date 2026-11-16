@@ -1,19 +1,27 @@
 package com.sw.ck.form.service;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.dto.SubTableRowAction;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.port.FlowStartPort;
 import com.sw.ck.form.dynamic.DynamicTableManager;
 import com.sw.ck.form.entity.*;
+import com.sw.ck.form.entity.FormBaseEntity;
+import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
@@ -22,14 +30,20 @@ import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
+import com.sw.ck.system.api.dict.DictItemDTO;
+import com.sw.ck.system.api.dict.DictTypeDetailDTO;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -39,6 +53,11 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -64,11 +83,11 @@ class FormDataUpdateServiceTest {
     @BeforeEach
     void setUp() {
         // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
-        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
-            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+        if (LoginUserHolder.get() == null) {
+            LoginUser i5TenantZeroSetup = new LoginUser();
             i5TenantZeroSetup.setUserId(0L);
             i5TenantZeroSetup.setTenantId(0L);
-            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+            LoginUserHolder.set(i5TenantZeroSetup);
         }
         createMetadataTables();
         LoginUser u = new LoginUser();
@@ -185,7 +204,7 @@ class FormDataUpdateServiceTest {
         publishForm("upd_sa", "sa",
                 "{\"fields\":[{\"name\":\"t\",\"type\":\"TEXT\"},{\"name\":\"items\",\"type\":\"TABLE\",\"subFields\":[{\"name\":\"n\",\"type\":\"TEXT\"},{\"name\":\"q\",\"type\":\"NUMBER\"}]}]}");
         FormDefEntity e = formDefMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormDefEntity>()
+                new LambdaQueryWrapper<FormDefEntity>()
                         .eq(FormDefEntity::getFormKey, "upd_sa"));
         String subTn = parseSubTableName(e.getSubTableMapping(), "items");
         createdTables.add(subTn);
@@ -218,7 +237,7 @@ class FormDataUpdateServiceTest {
         publishForm("upd_su", "su",
                 "{\"fields\":[{\"name\":\"t\",\"type\":\"TEXT\"},{\"name\":\"items\",\"type\":\"TABLE\",\"subFields\":[{\"name\":\"n\",\"type\":\"TEXT\"}]}]}");
         FormDefEntity e = formDefMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormDefEntity>()
+                new LambdaQueryWrapper<FormDefEntity>()
                         .eq(FormDefEntity::getFormKey, "upd_su"));
         String subTn = parseSubTableName(e.getSubTableMapping(), "items");
         createdTables.add(subTn);
@@ -253,7 +272,7 @@ class FormDataUpdateServiceTest {
         publishForm("upd_sd", "sd",
                 "{\"fields\":[{\"name\":\"t\",\"type\":\"TEXT\"},{\"name\":\"items\",\"type\":\"TABLE\",\"subFields\":[{\"name\":\"n\",\"type\":\"TEXT\"}]}]}");
         FormDefEntity e = formDefMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormDefEntity>()
+                new LambdaQueryWrapper<FormDefEntity>()
                         .eq(FormDefEntity::getFormKey, "upd_sd"));
         String subTn = parseSubTableName(e.getSubTableMapping(), "items");
         createdTables.add(subTn);
@@ -288,7 +307,7 @@ class FormDataUpdateServiceTest {
         publishForm("upd_xp", "xp",
                 "{\"fields\":[{\"name\":\"t\",\"type\":\"TEXT\"},{\"name\":\"items\",\"type\":\"TABLE\",\"subFields\":[{\"name\":\"n\",\"type\":\"TEXT\"}]}]}");
         FormDefEntity e = formDefMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormDefEntity>()
+                new LambdaQueryWrapper<FormDefEntity>()
                         .eq(FormDefEntity::getFormKey, "upd_xp"));
         String subTn = parseSubTableName(e.getSubTableMapping(), "items");
         createdTables.add(subTn);
@@ -327,7 +346,7 @@ class FormDataUpdateServiceTest {
         publishForm("det_sr", "dsr",
                 "{\"fields\":[{\"name\":\"t\",\"type\":\"TEXT\"},{\"name\":\"items\",\"type\":\"TABLE\",\"subFields\":[{\"name\":\"n\",\"type\":\"TEXT\"}]}]}");
         FormDefEntity e = formDefMapper.selectOne(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormDefEntity>()
+                new LambdaQueryWrapper<FormDefEntity>()
                         .eq(FormDefEntity::getFormKey, "det_sr"));
         createdTables.add(parseSubTableName(e.getSubTableMapping(), "items"));
 
@@ -411,7 +430,7 @@ class FormDataUpdateServiceTest {
             return new DataSourceTransactionManager(ds);
         }
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource ds) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource ds) throws Exception {
             MybatisSqlSessionFactoryBean f = new MybatisSqlSessionFactoryBean();
             f.setDataSource(ds); f.setTypeAliasesPackage("com.sw.ck.form.entity");
             MybatisConfiguration c = new MybatisConfiguration(); c.setMapUnderscoreToCamelCase(true);
@@ -421,27 +440,27 @@ class FormDataUpdateServiceTest {
             db.setLogicDeleteField("deleted"); db.setLogicDeleteValue("1"); db.setLogicNotDeleteValue("0");
             gc.setDbConfig(db); f.setGlobalConfig(gc);
             // I5：租户归属改由 MetaObjectHandler 从登录态填充；测试上下文注册同一填充器
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler i5MetaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(new com.sw.ck.common.security.LoginContextProvider() {
+            CommonMetaObjectHandler i5MetaObjectHandler =
+                    new CommonMetaObjectHandler(new LoginContextProvider() {
                         @Override public Long getUserId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getUserId() : null;
                         }
                         @Override public Long getTenantId() {
-                            com.sw.ck.security.holder.LoginUser u = com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser u = LoginUserHolder.get();
                             return u != null ? u.getTenantId() : null;
                         }
                         @Override public Long getDeptId() { return null; }
-                        @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        @Override public DataScopeType getDataScopeType() {
+                            return DataScopeType.ALL;
                         }
-                        @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                        @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                         @Override public boolean isSuperAdmin() { return false; }
                     });
             i5MetaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f2 && f2.getId() == null) {
-                    f2.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f2 && f2.getId() == null) {
+                    f2.setId(new FormIdGenerator().generate());
                 }
             });
             gc.setMetaObjectHandler(i5MetaObjectHandler);
@@ -464,7 +483,7 @@ class FormDataUpdateServiceTest {
                     }
                     return Optional.of(true);
                 }
-                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String t) {
+                public Optional<List<DictItemDTO>> listByType(String t) {
                     if (t == null || t.isBlank()) {
                         return Optional.empty();
                     }
@@ -472,10 +491,10 @@ class FormDataUpdateServiceTest {
                 }
 
                 @Override
-                public Optional<Map<String, com.sw.ck.system.api.dict.DictTypeDetailDTO>> findDictTypeDetails(
-                        java.util.Collection<String> codes) {
+                public Optional<Map<String, DictTypeDetailDTO>> findDictTypeDetails(
+                        Collection<String> codes) {
                     return codes == null || codes.isEmpty()
-                            ? Optional.empty() : Optional.of(java.util.Map.of());
+                            ? Optional.empty() : Optional.of(Map.of());
                 }
 
                 @Override
@@ -486,12 +505,12 @@ class FormDataUpdateServiceTest {
                 @Override
                 public Optional<Boolean> createDictTypeForImport(String code, String name,
                                                                  Integer status, String description,
-                                                                 java.util.List<com.sw.ck.system.api.dict.DictItemDTO> items) {
+                                                                 List<DictItemDTO> items) {
                     return Optional.of(false);
                 }
             };
         }
-        @Bean public DomainEventPublisher dep(org.springframework.context.ApplicationEventPublisher d) {
+        @Bean public DomainEventPublisher dep(ApplicationEventPublisher d) {
             return new DomainEventPublisher(d);
         }
         @Bean public FormFieldValidator ffv(FormConfigMapper fcm, ObjectMapper om) {
@@ -501,9 +520,9 @@ class FormDataUpdateServiceTest {
                                             ObjectMapper om, JdbcTemplate jt, DictFacade df,
                                             DomainEventPublisher ep, FormFieldValidator ffv) {
             return new FormSubmitService(fdm, ftm, dtm, new FormIdGenerator(), om, jt, df, ep,
-                    java.util.Optional.empty(), ffv,
-                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
-                @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+                    Optional.empty(), ffv,
+                    new ObjectProvider<FlowStartPort>() {
+                @Override public FlowStartPort getIfAvailable() { return null; }
             });
         }
         @Bean public FormDataUpdateService fdus(FormDefService fds, FormDefMapper fdm, FormConfigMapper fcm,

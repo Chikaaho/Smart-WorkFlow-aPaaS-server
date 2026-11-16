@@ -1,10 +1,13 @@
 package com.sw.ck.bpm.engine.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.dto.ExternalDatasourceRequest;
 import com.sw.ck.bpm.api.dto.SqlExecutionRequest;
 import com.sw.ck.bpm.api.dto.SqlExecutionResult;
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.executor.SqlExecutor;
+import com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
@@ -14,9 +17,11 @@ import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededExcepti
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import jakarta.validation.Valid;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,32 +37,27 @@ import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 外部数据源管理 + SQL 执行控制器。
  */
 @RestController
 @RequestMapping("/workflow/external-datasource")
+@Log4j2
 public class ExternalDatasourceController {
 
-    private static final Logger log = LoggerFactory.getLogger(ExternalDatasourceController.class);
-
-    private final ExternalDatasourceService datasourceService;
-    private final SqlExecutor sqlExecutor;
-    private final com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService grantService;
+    @Autowired
+    private ExternalDatasourceService datasourceService;
+    @Autowired
+    private SqlExecutor sqlExecutor;
+    @Autowired
+    private ExternalDatasourceGrantService grantService;
 
     private static final Map<String, String> DRIVER_TYPES = Map.of(
             "postgresql", "org.postgresql.Driver",
             "mysql", "com.mysql.cj.jdbc.Driver",
             "h2", "org.h2.Driver",
             "oracle", "oracle.jdbc.OracleDriver");
-
-    public ExternalDatasourceController(ExternalDatasourceService datasourceService,
-                                        SqlExecutor sqlExecutor,
-                                        com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService grantService) {
-        this.datasourceService = datasourceService;
-        this.sqlExecutor = sqlExecutor;
-        this.grantService = grantService;
-    }
 
     /** 执行只读 SQL（需 workflow:datasource:execute 权限） */
     @PostMapping("/execute")
@@ -129,8 +129,8 @@ public class ExternalDatasourceController {
         long current = Math.max(1, pageNum);
         long size = Math.min(Math.max(1, pageSize), 100);
         var page = datasourceService.page(
-                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(current, size),
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<ExternalDatasource>lambdaQuery()
+                new Page<>(current, size),
+                Wrappers.<ExternalDatasource>lambdaQuery()
                         .like(name != null && !name.isBlank(), ExternalDatasource::getName,
                                 name == null ? null : name.trim())
                         .eq(enabled != null, ExternalDatasource::getEnabled, enabled)

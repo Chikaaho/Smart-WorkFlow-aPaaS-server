@@ -2,15 +2,16 @@ package com.sw.ck.iot.script;
 
 import com.alibaba.fastjson2.JSON;
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
 import org.graalvm.polyglot.proxy.ProxyExecutable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -18,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-
+import lombok.extern.log4j.Log4j2;
 /**
  * GraalJS 沙箱执行器。
  * <p>
@@ -27,9 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </p>
  */
 @Component
+@Log4j2
 public class GraalJsRunner {
-
-    private static final Logger log = LoggerFactory.getLogger(GraalJsRunner.class);
 
     /** 供宿主函数返回值在 JS 侧重建为纯 JS 对象（线程内绑定）。 */
     private static final ThreadLocal<Context> CURRENT_CONTEXT = new ThreadLocal<>();
@@ -56,7 +56,7 @@ public class GraalJsRunner {
                     .allowCreateProcess(false)
                     .allowNativeAccess(false)
                     .allowCreateThread(false)
-                    .allowEnvironmentAccess(org.graalvm.polyglot.EnvironmentAccess.NONE)
+                    .allowEnvironmentAccess(EnvironmentAccess.NONE)
                     .resourceLimits(ResourceLimits.newBuilder()
                             .statementLimit(MAX_STATEMENTS, null)
                             .onLimit(event -> statementLimitTripped.set(true))
@@ -96,7 +96,7 @@ public class GraalJsRunner {
             CURRENT_CONTEXT.remove();
             return ScriptRunResult.success(outputJson,
                     System.currentTimeMillis() - begin, host.getLogs());
-        } catch (org.graalvm.polyglot.PolyglotException e) {
+        } catch (PolyglotException e) {
             finished.set(true);
             CURRENT_CONTEXT.remove();
             long duration = System.currentTimeMillis() - begin;
@@ -114,7 +114,7 @@ public class GraalJsRunner {
             if (context != null) {
                 try {
                     context.close();
-                } catch (org.graalvm.polyglot.PolyglotException ignore) {
+                } catch (PolyglotException ignore) {
                     // 已取消/超限的 Context 关闭会重抛原异常，忽略
                 }
             }
@@ -159,8 +159,8 @@ public class GraalJsRunner {
                     Object out = target.invoke(host, converted);
                     return CURRENT_CONTEXT.get().eval("js", out == null ? "null" :
                             "(" + JSON.toJSONString(out) + ")");
-                } catch (java.lang.reflect.InvocationTargetException
-                        | java.lang.IllegalAccessException e) {
+                } catch (InvocationTargetException
+                        | IllegalAccessException e) {
                     Throwable cause = e.getCause() == null ? e : e.getCause();
                     throw new RuntimeException(cause.getMessage(), cause);
                 }

@@ -4,11 +4,13 @@ import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
+
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.IOException;
 import java.util.List;
@@ -140,7 +143,7 @@ class FormAppControllerAuthorizationTest {
         @Bean
         FormAppManageController formAppManageController() {
             return new FormAppManageController(mock(FormAppService.class),
-                    mock(org.springframework.jdbc.core.JdbcTemplate.class));
+                    mock(JdbcTemplate.class));
         }
 
         @Bean

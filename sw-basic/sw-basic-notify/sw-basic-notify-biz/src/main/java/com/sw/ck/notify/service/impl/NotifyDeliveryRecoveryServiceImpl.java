@@ -1,8 +1,10 @@
 package com.sw.ck.notify.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
+import com.sw.ck.common.trace.DiagnosticText;
 import com.sw.ck.notify.api.NotifyBizType;
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
@@ -15,15 +17,15 @@ import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
 import com.sw.ck.notify.service.NotifyDeliveryRecoveryService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 投递恢复与重试实现（I6）。
  * <p>
@@ -33,9 +35,8 @@ import java.util.Objects;
  * </p>
  */
 @Service
+@Log4j2
 public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecoveryService {
-
-    private static final Logger log = LoggerFactory.getLogger(NotifyDeliveryRecoveryServiceImpl.class);
 
     private static final int MAX_RETRY_COUNT = 5;
     private static final int MAX_BATCH = 100;
@@ -43,20 +44,14 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
     /** 投递租约判据（分钟）：RESENDING 超过该时长视为投递者已崩溃，回收为可重试失败。 */
     private static final int STALE_LEASE_MINUTES = 5;
 
-    private final NotifyMessageMapper messageMapper;
-    private final NotifySendAttemptMapper attemptMapper;
-    private final NotifyFacade notifyFacade;
-    private final TenantWorkAdmission tenantWorkAdmission;
-
-    public NotifyDeliveryRecoveryServiceImpl(NotifyMessageMapper messageMapper,
-                                             NotifySendAttemptMapper attemptMapper,
-                                             NotifyFacade notifyFacade,
-                                             TenantWorkAdmission tenantWorkAdmission) {
-        this.messageMapper = messageMapper;
-        this.attemptMapper = attemptMapper;
-        this.notifyFacade = notifyFacade;
-        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
-    }
+    @Autowired
+    private NotifyMessageMapper messageMapper;
+    @Autowired
+    private NotifySendAttemptMapper attemptMapper;
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Override
     @Scheduled(fixedDelayString = "${sw.notify.recovery.fixed-delay-ms:60000}")
@@ -172,7 +167,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
                 log.warn("投递恢复异常，按失败回写: id={}, exceptionClass={}", msg.getId(),
                         e.getClass().getSimpleName());
                 result = NotifySendResult.builder().channel(NotifyChannel.valueOf(msg.getChannel()))
-                        .status("FAILED").failureReason("恢复投递失败，请稍后重试：" + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200)).build();
+                        .status("FAILED").failureReason("恢复投递失败，请稍后重试：" + DiagnosticText.sanitize(e.getMessage(), 200)).build();
             } finally {
                 LoginUserHolder.clear();
             }

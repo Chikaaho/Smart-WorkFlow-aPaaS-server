@@ -1,18 +1,19 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.service.IotDeviceService;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * IoT 设备控制控制器。
  * <p>
@@ -23,15 +24,11 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/iot/devices")
+@Log4j2
 public class IotDeviceController {
 
-    private static final Logger log = LoggerFactory.getLogger(IotDeviceController.class);
-
-    private final IotDeviceService iotDeviceService;
-
-    public IotDeviceController(IotDeviceService iotDeviceService) {
-        this.iotDeviceService = iotDeviceService;
-    }
+    @Autowired
+    private IotDeviceService iotDeviceService;
 
     /**
      * 注册设备（productId + deviceName 组合唯一）。

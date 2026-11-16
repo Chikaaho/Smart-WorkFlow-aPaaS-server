@@ -7,18 +7,16 @@ import com.tencentcloudapi.common.profile.ClientProfile;
 import com.tencentcloudapi.common.profile.HttpProfile;
 import com.tencentcloudapi.iotexplorer.v20190423.IotexplorerClient;
 import com.tencentcloudapi.iotexplorer.v20190423.models.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 腾讯云 IoT Explorer 设备控制提供者。
  * <p>
  * 使用腾讯云 Java SDK 实现设备状态查询、属性下发和行为调用。
  * </p>
  */
+@Log4j2
 public class TencentCloudProvider implements DeviceControlProvider {
-
-    private static final Logger log = LoggerFactory.getLogger(TencentCloudProvider.class);
 
     private final TencentCloudProperties properties;
     private final IotexplorerClient client;

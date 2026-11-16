@@ -1,5 +1,7 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
@@ -50,42 +52,31 @@ public class TenantAdminService {
     /** 管理员角色模板编码（从租户 0 复制规则，不复制人员与业务数据）。 */
     private static final String ADMIN_ROLE_CODE = "admin";
 
-    private final SysTenantMapper tenantMapper;
-    private final SysDeptMapper deptMapper;
-    private final SysUserMapper userMapper;
-    private final SysRoleMapper roleMapper;
-    private final SysRoleMenuMapper roleMenuMapper;
-    private final SysUserRoleMapper userRoleMapper;
-    private final SysTenantStatusAuditMapper statusAuditMapper;
-    private final PasswordEncoder passwordEncoder;
-    private final PlatformTransactionManager transactionManager;
-
-    public TenantAdminService(SysTenantMapper tenantMapper,
-                              SysDeptMapper deptMapper,
-                              SysUserMapper userMapper,
-                              SysRoleMapper roleMapper,
-                              SysRoleMenuMapper roleMenuMapper,
-                              SysUserRoleMapper userRoleMapper,
-                              SysTenantStatusAuditMapper statusAuditMapper,
-                              PasswordEncoder passwordEncoder,
-                              PlatformTransactionManager transactionManager) {
-        this.tenantMapper = tenantMapper;
-        this.deptMapper = deptMapper;
-        this.userMapper = userMapper;
-        this.roleMapper = roleMapper;
-        this.roleMenuMapper = roleMenuMapper;
-        this.userRoleMapper = userRoleMapper;
-        this.statusAuditMapper = statusAuditMapper;
-        this.passwordEncoder = passwordEncoder;
-        this.transactionManager = transactionManager;
-    }
+    @Autowired
+    private SysTenantMapper tenantMapper;
+    @Autowired
+    private SysDeptMapper deptMapper;
+    @Autowired
+    private SysUserMapper userMapper;
+    @Autowired
+    private SysRoleMapper roleMapper;
+    @Autowired
+    private SysRoleMenuMapper roleMenuMapper;
+    @Autowired
+    private SysUserRoleMapper userRoleMapper;
+    @Autowired
+    private SysTenantStatusAuditMapper statusAuditMapper;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     /** 新建租户命令。 */
     public record CreateTenantCommand(String name, String adminUsername, String adminPassword, String requestId) {}
 
     /** 列表行。adminUsername 为空表示未配置首任管理员。 */
     public record TenantView(Long id, String code, String name, Long adminUserId, String adminUsername,
-                             Integer status, java.time.LocalDateTime createTime) {}
+                             Integer status, LocalDateTime createTime) {}
 
     public record AdminCandidate(Long id, String username, String realName) {}
 

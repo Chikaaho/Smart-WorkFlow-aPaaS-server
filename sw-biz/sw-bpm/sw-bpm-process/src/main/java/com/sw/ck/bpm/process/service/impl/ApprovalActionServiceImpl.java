@@ -28,7 +28,7 @@ public class ApprovalActionServiceImpl extends BaseServiceImpl<ApprovalActionRec
     }
 
     @Override
-    public java.util.List<ApprovalActionRecord> pageByActor(long actorId, int offset, int limit) {
+    public List<ApprovalActionRecord> pageByActor(long actorId, int offset, int limit) {
         return lambdaQuery()
                 .eq(ApprovalActionRecord::getActorId, actorId)
                 // 唯一次键：同 createTime 记录仍有确定性全序，分页不漏不重（A5）

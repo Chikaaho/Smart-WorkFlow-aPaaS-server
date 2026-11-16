@@ -1,6 +1,9 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotEventRule;
 import com.sw.ck.iot.entity.IotProcessTrigger;
@@ -8,11 +11,16 @@ import com.sw.ck.iot.api.IotFormContractChecker;
 import com.sw.ck.iot.mapper.IotEventRuleMapper;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
 import com.sw.ck.iot.service.IotAuditService;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * 事件规则控制器：条件/阈值/防抖/冷却/流程模板/表单映射与发布。
@@ -22,20 +30,14 @@ import java.util.List;
 @RequestMapping("/iot/rules")
 public class IotEventRuleController {
 
-    private final IotEventRuleMapper ruleMapper;
-    private final IotProcessTriggerMapper triggerMapper;
-    private final ObjectProvider<IotFormContractChecker> formContractCheckerProvider;
-    private final IotAuditService auditService;
-
-    public IotEventRuleController(IotEventRuleMapper ruleMapper,
-                                  IotProcessTriggerMapper triggerMapper,
-                                  ObjectProvider<IotFormContractChecker> formContractCheckerProvider,
-                                  IotAuditService auditService) {
-        this.ruleMapper = ruleMapper;
-        this.triggerMapper = triggerMapper;
-        this.formContractCheckerProvider = formContractCheckerProvider;
-        this.auditService = auditService;
-    }
+    @Autowired
+    private IotEventRuleMapper ruleMapper;
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
+    @Autowired
+    private ObjectProvider<IotFormContractChecker> formContractCheckerProvider;
+    @Autowired
+    private IotAuditService auditService;
 
     @GetMapping
     public R<List<IotEventRule>> list(@RequestParam(required = false) Long deviceId) {
@@ -95,7 +97,7 @@ public class IotEventRuleController {
         // empty = 无法裁决（如流程模板 key 空白）→ fail closed，不得当作通过。
         if (existing.getProcessEnabled() != null && existing.getProcessEnabled() == 1
                 && formContractCheckerProvider.getIfAvailable() instanceof IotFormContractChecker checker) {
-            java.util.Optional<List<String>> checkOutcome =
+            Optional<List<String>> checkOutcome =
                     checker.checkMapping(existing.getProcessTemplateKey(), existing.getFormMappingJson());
             if (checkOutcome.isEmpty()) {
                 return R.fail(400, "表单契约校验无法裁决: processTemplateKey="
@@ -113,7 +115,7 @@ public class IotEventRuleController {
         ruleMapper.updateById(patch);
         auditService.recordAction(existing.getTenantId(), null, "system:iot-rule-publish",
                 "RULE_PUBLISH", "RULE", String.valueOf(id), "PUBLISHED",
-                java.util.UUID.randomUUID().toString(), "ruleVersion=" + existing.getRuleVersion());
+                UUID.randomUUID().toString(), "ruleVersion=" + existing.getRuleVersion());
         return R.ok(ruleMapper.selectById(id));
     }
 
@@ -161,8 +163,8 @@ public class IotEventRuleController {
         }
         if (rule.getAgentFailureConfigJson() != null && !rule.getAgentFailureConfigJson().isBlank()) {
             try {
-                Object parsed = com.alibaba.fastjson2.JSON.parse(rule.getAgentFailureConfigJson());
-                if (!(parsed instanceof com.alibaba.fastjson2.JSONObject)) {
+                Object parsed = JSON.parse(rule.getAgentFailureConfigJson());
+                if (!(parsed instanceof JSONObject)) {
                     throw new IllegalArgumentException("失败升级配置必须是 JSON 对象");
                 }
             } catch (IllegalArgumentException e) {

@@ -1,5 +1,7 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.system.api.delegate.PositionDelegateFacade;
 import com.sw.ck.system.entity.SysPost;
@@ -7,7 +9,7 @@ import com.sw.ck.system.entity.SysPostDelegate;
 import com.sw.ck.system.mapper.SysPostDelegateMapper;
 import com.sw.ck.system.mapper.SysPostMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -30,7 +32,7 @@ import java.util.Set;
  * 多源岗位结果按用户 ID 并集去重，跳链按源岗位分组保留审计。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class PositionDelegateFacadeImpl implements PositionDelegateFacade {
 
@@ -39,17 +41,12 @@ public class PositionDelegateFacadeImpl implements PositionDelegateFacade {
 
     private static final int POST_STATUS_ENABLED = 1;
 
-    private final SysPostDelegateMapper delegateMapper;
-    private final SysPostMapper sysPostMapper;
-    private final SysUserMapper sysUserMapper;
-
-    public PositionDelegateFacadeImpl(SysPostDelegateMapper delegateMapper,
-                                      SysPostMapper sysPostMapper,
-                                      SysUserMapper sysUserMapper) {
-        this.delegateMapper = delegateMapper;
-        this.sysPostMapper = sysPostMapper;
-        this.sysUserMapper = sysUserMapper;
-    }
+    @Autowired
+    private SysPostDelegateMapper delegateMapper;
+    @Autowired
+    private SysPostMapper sysPostMapper;
+    @Autowired
+    private SysUserMapper sysUserMapper;
 
     @Override
     public Optional<ResolvedPostActors> resolvePostActors(Long tenantId,

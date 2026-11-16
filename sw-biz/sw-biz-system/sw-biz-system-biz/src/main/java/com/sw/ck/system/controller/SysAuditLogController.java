@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -24,14 +26,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/system/audit-log")
 public class SysAuditLogController {
 
-    private final AuditLogService auditLogService;
-    private final ManagementTenantContext tenantContext;
-
-    public SysAuditLogController(AuditLogService auditLogService,
-                                 ManagementTenantContext tenantContext) {
-        this.auditLogService = auditLogService;
-        this.tenantContext = tenantContext;
-    }
+    @Autowired
+    private AuditLogService auditLogService;
+    @Autowired
+    private ManagementTenantContext tenantContext;
 
     /**
      * 分页查询审计日志。类型/结果/模块/账号/IP/时间范围/租户组合筛选，时间倒序。

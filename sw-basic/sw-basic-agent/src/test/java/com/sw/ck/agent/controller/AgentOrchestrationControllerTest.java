@@ -9,13 +9,19 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.agent.mapper.AgentModelMapper;
+import com.sw.ck.agent.mapper.AgentProviderMapper;
 import com.sw.ck.agent.orchestration.AgentGraphFactory;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentOrchestrationService;
 import com.sw.ck.agent.service.impl.AgentOrchestrationServiceImpl;
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
+import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.cache.LoginUserLoader;
@@ -30,7 +36,10 @@ import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.jwt.JwtTokenProviderImpl;
 import com.sw.ck.security.spi.UserDetailsProvider;
 import com.sw.ck.security.support.PermissionService;
+
 import jakarta.servlet.Filter;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.state.AgentState;
@@ -39,7 +48,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -374,8 +385,8 @@ class AgentOrchestrationControllerTest {
         @Bean
         public TenantLineInnerInterceptor tenantLineInnerInterceptor(
                 LoginContextProvider loginContextProvider) {
-            return new TenantLineInnerInterceptor(new com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler(
-                    new com.sw.ck.common.config.mybatis.tenant.TenantProperties(), loginContextProvider));
+            return new TenantLineInnerInterceptor(new CommonTenantLineHandler(
+                    new TenantProperties(), loginContextProvider));
         }
 
         @Bean
@@ -388,7 +399,7 @@ class AgentOrchestrationControllerTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -421,17 +432,17 @@ class AgentOrchestrationControllerTest {
 
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() {
+        public DeptScopeProvider testDeptScopeProvider() {
             // 测试用映射实现：无子部门（本测试不覆盖 DEPT_AND_CHILD 展开）
-            return deptId -> java.util.List.of();
+            return deptId -> List.of();
         }
 
 
 
         @Bean
         public AgentModelRuntimeService agentModelRuntimeService(
-                com.sw.ck.agent.mapper.AgentModelMapper agentModelMapper,
-                com.sw.ck.agent.mapper.AgentProviderMapper agentProviderMapper,
+                AgentModelMapper agentModelMapper,
+                AgentProviderMapper agentProviderMapper,
                 AesGcmCipher agentAesGcmCipher) {
             return new AgentModelRuntimeService(agentModelMapper, agentProviderMapper, agentAesGcmCipher);
         }
@@ -510,8 +521,8 @@ class AgentOrchestrationControllerTest {
         public LoginUserLoader loginUserLoader(
                 UserDetailsProvider userDetailsProvider,
                 LoginUserCacheService loginUserCacheService) {
-            org.springframework.beans.factory.ObjectProvider<UserDetailsProvider> provider =
-                    mock(org.springframework.beans.factory.ObjectProvider.class);
+            ObjectProvider<UserDetailsProvider> provider =
+                    mock(ObjectProvider.class);
             when(provider.getIfAvailable()).thenReturn(userDetailsProvider);
             return new LoginUserLoader(provider, loginUserCacheService);
         }
@@ -571,7 +582,7 @@ class AgentOrchestrationControllerTest {
                 LoginUserLoader loginUserLoader,
                 SecurityProperties securityProperties) {
             return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
-            org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
+            Mockito.mock(LoginUserCacheService.class));
         }
 
         @Bean

@@ -15,41 +15,77 @@ import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
+import com.sw.ck.bpm.process.dto.StartCommand;
+import com.sw.ck.bpm.process.service.ProcessStartService;
+import com.sw.ck.form.txn.service.TxnActionService;
+import com.sw.ck.security.cache.LoginUserCacheService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import com.alibaba.druid.pool.DruidDataSource;
+import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -57,6 +93,11 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+import javax.sql.DataSource;
 
 /**
  * P62 分级执行 G1a/G1b/G2b：U08 固定预算测量（复核02 一级提示原子账本）。
@@ -85,7 +126,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * </pre>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@org.junit.jupiter.api.TestMethodOrder(org.junit.jupiter.api.MethodOrderer.OrderAnnotation.class)
+@TestMethodOrder(OrderAnnotation.class)
 @DisplayName("P62 复核02 G1/G2b 固定预算测量（真实HTTP入口，手动：-Dp62.budget.measurement=true）")
 @EnabledIfSystemProperty(named = "p62.budget.measurement", matches = "true")
 class P62BudgetMeasurementPgTest {
@@ -112,9 +153,9 @@ class P62BudgetMeasurementPgTest {
 
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .connectTimeout(Duration.ofSeconds(5))
             .build();
-    private static final java.time.Duration REQUEST_TIMEOUT = java.time.Duration.ofSeconds(10);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
 
     private static int port;
     private static ConfigurableApplicationContext appRef;
@@ -155,10 +196,10 @@ class P62BudgetMeasurementPgTest {
         props.put("sw.security.jwt.secret", "p62-budget-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-budget-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         // 连接池身份（复核03 后修正）：实际池为 Druid（dynamic-datasource 全局 druid 块），
         // 旧键 hikari.maximum-pool-size 无效——maxActive=5 导致 16 并发连接饥饿（10s 超时）。
         // 显式设 Druid 池并 boot 后断言实际值（env-frozen 记录真实池身份）
@@ -181,32 +222,32 @@ class P62BudgetMeasurementPgTest {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-budget", props));
+                            new MapPropertySource("p62-budget", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62BudgetLoginContextProvider", provider);
                     // debug-auth kickOut 走 Redis 缓存：隔离测量无 Redis，替换为无操作缓存（不注入权限、不影响回查）
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
-                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                            ((DefaultListableBeanFactory) bf)
                                     .setAllowBeanDefinitionOverriding(true);
-                            ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
+                            ((BeanDefinitionRegistry) bf)
                                     .registerBeanDefinition("loginUserCacheService",
-                                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                                            new RootBeanDefinition(
                                                     NoopLoginUserCacheService.class));
                         }
                     });
                 })
                 .run();
         // 压测下 DEBUG SQL 日志引入磁盘 I/O 背景负载，污染时序样本（固定合同要求无其他背景负载）
-        ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
-                org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
-        root.setLevel(ch.qos.logback.classic.Level.WARN);
+        Logger root = (Logger)
+                LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        root.setLevel(Level.WARN);
         appRef = app;
         jdbc = app.getBean(JdbcTemplate.class);
         long druidMaxActive = findDruidMaxActive();
@@ -242,7 +283,7 @@ class P62BudgetMeasurementPgTest {
     // ==================== G1a 场景一：实时动作（预算 P99≤300ms） ====================
 
     @Test
-    @org.junit.jupiter.api.Order(2)
+    @Order(2)
     @DisplayName("G1a 实时动作：16并发（两租户各8）× 预热60s + 正式5min，真实HTTP入口")
     void realTimeActionBudget() throws Exception {
         runLoad(new LoadSpec("realtime-action", CONCURRENCY_TOTAL,
@@ -254,7 +295,7 @@ class P62BudgetMeasurementPgTest {
     // ==================== G1a 场景二 + G1b：生产轻流程（受理 P99≤2s + 配对） ====================
 
     @Test
-    @org.junit.jupiter.api.Order(3)
+    @Order(3)
     @DisplayName("G1a 轻流程：16并发 × 预热60s + 正式5min，入口至持久受理 P99≤2s（真实HTTP入口）")
     void lightProcessAcceptanceBudget() throws Exception {
         runLoad(new LoadSpec("light-process-acceptance", CONCURRENCY_TOTAL,
@@ -264,11 +305,11 @@ class P62BudgetMeasurementPgTest {
     }
 
     @Test
-    @org.junit.jupiter.api.Order(4)
+    @Order(4)
     @DisplayName("G1b 受理→目标提交配对：同轮按 biz_record_id 关联，有效对数/未完成数/分布（PG时钟双侧）")
     void lightProcessAcceptanceToTargetPairs() throws Exception {
         Path samples = evidenceDir.resolve("light-process-acceptance-samples.csv.gz");
-        org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(samples),
+        Assumptions.assumeTrue(Files.exists(samples),
                 "先运行 lightProcessAcceptanceBudget 生成同轮样本");
         waitForDrain();
         List<PairRow> pairs = new ArrayList<>();
@@ -317,7 +358,7 @@ class P62BudgetMeasurementPgTest {
         }
         writeNew(evidenceDir.resolve("light-process-acceptance-pairs.csv.gz"),
                 out -> {
-                    try (java.util.zip.GZIPOutputStream gz = new java.util.zip.GZIPOutputStream(out)) {
+                    try (GZIPOutputStream gz = new GZIPOutputStream(out)) {
                         gz.write(pairCsv.toString().getBytes(StandardCharsets.UTF_8));
                     }
                 });
@@ -338,7 +379,7 @@ class P62BudgetMeasurementPgTest {
                 + " (提交后只读可见；accept_row_ts<=受理提交时刻, target_row_ts<=目标可见时刻)";
         writeEvidence("light-process-acceptance-pairs.txt", summary);
         System.out.println("[P62-EV] " + summary);
-        org.assertj.core.api.Assertions.assertThat(pairs.size()).as("有效配对数>0").isGreaterThan(0);
+        Assertions.assertThat(pairs.size()).as("有效配对数>0").isGreaterThan(0);
     }
 
     /** 配对前等待同轮命令队列与节点异步任务排干（有界）；超时按未完成如实计入。 */
@@ -393,7 +434,7 @@ class P62BudgetMeasurementPgTest {
                         String.valueOf(row.get("accept_ts"))));
         Map<String, String> commandIds = new HashMap<>();
         String commandKeys = recordIds.stream().map(id -> "'FLOW_START:" + id + "'")
-                .collect(java.util.stream.Collectors.joining(","));
+                .collect(Collectors.joining(","));
         jdbc.queryForList("SELECT substring(command_key from 12) AS rid, id::text AS cid"
                         + " FROM sw_bpm_command WHERE command_key IN (" + commandKeys + ")")
                 .forEach(row -> commandIds.put(String.valueOf(row.get("rid")),
@@ -405,9 +446,9 @@ class P62BudgetMeasurementPgTest {
                 continue;
             }
             String[] meta = recordMeta.get(recordId);
-            java.time.LocalDateTime a = LocalDateTime.parse(acc, TS);
-            java.time.LocalDateTime t = LocalDateTime.parse(String.valueOf(inv.get("target_ts")), TS);
-            double latency = java.time.Duration.between(a, t).toNanos() / 1_000_000.0;
+            LocalDateTime a = LocalDateTime.parse(acc, TS);
+            LocalDateTime t = LocalDateTime.parse(String.valueOf(inv.get("target_ts")), TS);
+            double latency = Duration.between(a, t).toNanos() / 1_000_000.0;
             if (latency < 0) {
                 continue;
             }
@@ -420,12 +461,12 @@ class P62BudgetMeasurementPgTest {
     // ==================== 恢复段（U08 套件内自检；权威证据=真实中断演练 G2a） ====================
 
     @Test
-    @org.junit.jupiter.api.Order(1)
+    @Order(1)
     @DisplayName("恢复段（套件内，先于负载场景单独度量）：100条无外部依赖命令收敛≤120s、重复效果=0")
     void recoveryDrainBudget() throws Exception {
         TenantFixture t0 = fixtures.get(0L);
-        com.sw.ck.bpm.process.service.TxnBatchService batchService =
-                app.getBean(com.sw.ck.bpm.process.service.TxnBatchService.class);
+        TxnBatchService batchService =
+                app.getBean(TxnBatchService.class);
         BpmCommandMapper commandMapper = app.getBean(BpmCommandMapper.class);
         List<Long> commandIds = new ArrayList<>(100);
         for (int i = 0; i < 100; i++) {
@@ -465,10 +506,10 @@ class P62BudgetMeasurementPgTest {
                 "SELECT COUNT(*) FROM sw_form_txn_invocation WHERE invocation_key LIKE 'BATCH:budget-recover-"
                         + runId + "-%'",
                 Long.class);
-        org.assertj.core.api.Assertions.assertThat(elapsed)
+        Assertions.assertThat(elapsed)
                 .as("100条命令收敛 %d ms ≤120s", elapsed).isLessThanOrEqualTo(120_000L);
-        org.assertj.core.api.Assertions.assertThat(effects).as("效果权威恰100").isEqualTo(100L);
-        org.assertj.core.api.Assertions.assertThat(invocations).as("调用记录恰100（重复效果=0）").isEqualTo(100L);
+        Assertions.assertThat(effects).as("效果权威恰100").isEqualTo(100L);
+        Assertions.assertThat(invocations).as("调用记录恰100（重复效果=0）").isEqualTo(100L);
         writeEvidence("recovery-drain.txt", "elapsedMs=" + elapsed + " completed=" + completed
                 + " effects=100 invocations=100 (≤120s budget, duplicate-effects=0) runId=" + runId);
         System.out.println("[P62-EV] budget.recovery elapsedMs=" + elapsed + " completed=100/100"
@@ -480,7 +521,7 @@ class P62BudgetMeasurementPgTest {
     @Test
     @DisplayName("G2b 压力边界：64并发（两租户各32）× 各1万对象 × 每租户50%争同一对象 × 5min 只度量")
     void stressBoundaryObservation() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
+        Assumptions.assumeTrue(
                 Boolean.getBoolean("p62.budget.stress"), "压力边界按需运行：-Dp62.budget.stress=true");
         seedTenant(0L, 92901L, "p62_stress_t0", OBJECTS_PER_TENANT_STRESS, 100000, "stress_reserve");
         TenantFixture t100 = seedTenant(100L, 92902L, "p62_stress_t100",
@@ -626,8 +667,8 @@ class P62BudgetMeasurementPgTest {
             String formKey = "p62_oa_todo_t" + tenant;
             long userId = fx.userId;
             BpmProcessDefService processDefService = appRef.getBean(BpmProcessDefService.class);
-            com.sw.ck.bpm.process.service.ProcessStartService startService =
-                    appRef.getBean(com.sw.ck.bpm.process.service.ProcessStartService.class);
+            ProcessStartService startService =
+                    appRef.getBean(ProcessStartService.class);
             asTenant(tenant, userId, () -> {
                 FormDefDTO draft = appRef.getBean(FormDefService.class)
                         .createDraft(formKey, "OA业务待办", null, null);
@@ -648,7 +689,7 @@ class P62BudgetMeasurementPgTest {
                 ProcessGraph graph = ProcessGraph.builder()
                         .processKey(def.getProcessKey()).name("OA业务待办流程-" + tenant)
                         .formKey(formKey).version(1).elements(elements).build();
-                String json = appRef.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+                String json = appRef.getBean(ObjectMapper.class)
                         .writeValueAsString(graph);
                 processDefService.saveDraftGraph(def.getId(), json);
                 BpmProcessDef published = processDefService.publish(def.getId());
@@ -658,8 +699,8 @@ class P62BudgetMeasurementPgTest {
                 return published.getProcessKey();
             });
             asTenant(tenant, userId, () -> {
-                com.sw.ck.bpm.process.dto.StartCommand cmd =
-                        new com.sw.ck.bpm.process.dto.StartCommand();
+                StartCommand cmd =
+                        new StartCommand();
                 cmd.setFormKey(formKey);
                 cmd.setRecordId("OA-TODO-" + tenant + "-" + userId);
                 cmd.setSubmitter(userId);
@@ -682,7 +723,7 @@ class P62BudgetMeasurementPgTest {
     }
 
     /** OA 业务代表读样本：tenant,user,endpoint,bizCode,bizObjects,httpStatus,ts,latencyMs,outcome。 */
-    private final List<String> oaBizWindowRows = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final List<String> oaBizWindowRows = new CopyOnWriteArrayList<>();
 
     /**
      * OA 业务代表读 worker（复核04 G2b 剩余项）：压力窗口内持续请求本租户
@@ -872,7 +913,7 @@ class P62BudgetMeasurementPgTest {
         TenantFixture fx = fixtures.get(tenant);
         String recordId = pickRecord(fx, worker);
         String invocationKey = "BUDGET-" + runId + "-" + tenant + "-" + worker + "-"
-                + java.util.UUID.randomUUID();
+                + UUID.randomUUID();
         long begin = System.nanoTime();
         String body = "{\"recordId\":\"" + recordId + "\",\"quantity\":\"1\",\"invocationKey\":\""
                 + invocationKey + "\"}";
@@ -885,7 +926,7 @@ class P62BudgetMeasurementPgTest {
     private String[] submitLightOnce(Long tenant, int worker) throws Exception {
         TenantFixture fx = fixtures.get(tenant);
         String material = "B-" + runId + "-" + tenant + "-" + worker + "-"
-                + java.util.UUID.randomUUID();
+                + UUID.randomUUID();
         // 实际动作目标：预置 1000 对象按固定序列选择（10% 热点跨线程共享），
         // 经 target_record_id 透传为流程变量，TXN_ACTION recordIdSource=variable 解析——
         // 样本 object_id 即真实动作目标（复核03 G1a 修正：不再以新业务键冒充目标）
@@ -909,7 +950,7 @@ class P62BudgetMeasurementPgTest {
 
     /** 单请求 HTTP 调用；返回结果分类（SUCCEEDED/ACCEPTED/REJECTED:<code>/TIMEOUT/ERROR）。 */
     private String post(String pathWithQuery, String bearer, String jsonBody,
-                        java.util.function.Function<String, String> outcomeOf) throws Exception {
+                        Function<String, String> outcomeOf) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + port + pathWithQuery))
                 .timeout(REQUEST_TIMEOUT)
@@ -930,7 +971,7 @@ class P62BudgetMeasurementPgTest {
             }
             String data = extractJsonField(body, "data");
             return outcomeOf.apply(data == null ? "" : data);
-        } catch (java.net.http.HttpTimeoutException e) {
+        } catch (HttpTimeoutException e) {
             return "TIMEOUT";
         } catch (IOException e) {
             return "ERROR:" + e.getClass().getSimpleName();
@@ -1009,7 +1050,7 @@ class P62BudgetMeasurementPgTest {
     /** 固定种子目标选择：每 worker 一条贯穿全程的前进随机序列（复核03 G1a 修正——
      * 旧实现每次调用重建同种子 Random，序列恒定导致每 worker 恒命中同一对象）。
      * 热点=每租户 records[0]，由两租户各 8/32 worker 跨线程共享；其余均匀分布。 */
-    private final Map<Integer, Random> workerRandoms = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Integer, Random> workerRandoms = new ConcurrentHashMap<>();
 
     private String pickRecord(TenantFixture fx, int worker) {
         List<String> records = fx.recordIds;
@@ -1102,8 +1143,8 @@ class P62BudgetMeasurementPgTest {
             OpenOption[] options = {StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE};
             thread = new Thread(() -> {
                 try (var out = Files.newOutputStream(file, options);
-                     var gz = new java.util.zip.GZIPOutputStream(out, 64 * 1024);
-                     var bw = new BufferedWriter(new java.io.OutputStreamWriter(gz, StandardCharsets.UTF_8),
+                     var gz = new GZIPOutputStream(out, 64 * 1024);
+                     var bw = new BufferedWriter(new OutputStreamWriter(gz, StandardCharsets.UTF_8),
                              256 * 1024)) {
                     bw.write("phase,seq,ts_iso,tenant,worker,object_id,request_id,latency_ms,outcome\n");
                     while (true) {
@@ -1200,8 +1241,8 @@ class P62BudgetMeasurementPgTest {
         // 唯一目标数/热点跨worker数 —— 由样本文件逐行统计
         Map<String, Long> tenantTotal = new LinkedHashMap<>();
         Map<String, Long> tenantHotspot = new LinkedHashMap<>();
-        Map<String, java.util.Set<String>> tenantTargets = new LinkedHashMap<>();
-        Map<String, java.util.Set<String>> hotspotWorkers = new LinkedHashMap<>();
+        Map<String, Set<String>> tenantTargets = new LinkedHashMap<>();
+        Map<String, Set<String>> hotspotWorkers = new LinkedHashMap<>();
         readGzipLines(sampleFile, line -> {
             String[] parts = line.split(",", -1);
             if (parts.length < 9 || !"FORMAL".equals(parts[0])) {
@@ -1211,11 +1252,11 @@ class P62BudgetMeasurementPgTest {
             String target = parts[5];
             String worker = parts[4];
             tenantTotal.merge(tenant, 1L, Long::sum);
-            tenantTargets.computeIfAbsent(tenant, k -> new java.util.HashSet<>()).add(target);
+            tenantTargets.computeIfAbsent(tenant, k -> new HashSet<>()).add(target);
             TenantFixture fx = fixtures.get(Long.valueOf(tenant));
             if (fx != null && !fx.recordIds.isEmpty() && fx.recordIds.get(0).equals(target)) {
                 tenantHotspot.merge(tenant, 1L, Long::sum);
-                hotspotWorkers.computeIfAbsent(tenant, k -> new java.util.HashSet<>()).add(worker);
+                hotspotWorkers.computeIfAbsent(tenant, k -> new HashSet<>()).add(worker);
             }
         });
         double rejectRate = formal[0] == 0 ? 1 : (double) rejected[0] / formal[0];
@@ -1249,7 +1290,7 @@ class P62BudgetMeasurementPgTest {
                             + " uniqueTargets=%d hotspotSharedWorkers=%d",
                     tenant, total, hot, total == 0 ? 0 : (double) hot / total,
                     tenantTargets.get(tenant).size(),
-                    hotspotWorkers.getOrDefault(tenant, java.util.Set.of()).size()));
+                    hotspotWorkers.getOrDefault(tenant, Set.of()).size()));
         }
         writeEvidence(name, summary + "\noutcomes=" + outcomes + distribution);
         System.out.println("[P62-EV] budget." + summary + distribution);
@@ -1257,7 +1298,7 @@ class P62BudgetMeasurementPgTest {
     }
 
     private static void assertThatPass(MeasurementReport report) {
-        org.assertj.core.api.Assertions.assertThat(report.verdict())
+        Assertions.assertThat(report.verdict())
                 .as("%s 预算裁决（formal=%d legal=%d illegal=%d）", report.scenario(),
                         report.formalSamples(), report.legal(), report.illegal())
                 .isEqualTo("PASS");
@@ -1271,8 +1312,8 @@ class P62BudgetMeasurementPgTest {
 
     private static void readGzipLines(Path gz, LineConsumer consumer) throws IOException {
         try (var in = Files.newInputStream(gz, StandardOpenOption.READ);
-             var stream = new java.util.zip.GZIPInputStream(in, 64 * 1024);
-             var reader = new java.io.BufferedReader(new java.io.InputStreamReader(stream,
+             var stream = new GZIPInputStream(in, 64 * 1024);
+             var reader = new BufferedReader(new InputStreamReader(stream,
                      StandardCharsets.UTF_8), 256 * 1024)) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -1282,7 +1323,7 @@ class P62BudgetMeasurementPgTest {
     }
 
     private interface Sink {
-        void write(java.io.OutputStream out) throws IOException;
+        void write(OutputStream out) throws IOException;
     }
 
     private static void writeNew(Path file, Sink sink) throws IOException {
@@ -1318,10 +1359,10 @@ class P62BudgetMeasurementPgTest {
     /** 解包 dynamic-datasource（baomidou 4.3.1）：DynamicRoutingDataSource.dataSourceMap →
      * ItemDataSource.realDataSource → DruidDataSource，读取真实 maxActive（环境合同字段）。 */
     private static long findDruidMaxActive() throws Exception {
-        for (javax.sql.DataSource ds : app.getBeanProvider(javax.sql.DataSource.class)
+        for (DataSource ds : app.getBeanProvider(DataSource.class)
                 .stream().toList()) {
-            if (ds instanceof com.baomidou.dynamic.datasource.DynamicRoutingDataSource routing) {
-                for (javax.sql.DataSource inner : routing.getDataSources().values()) {
+            if (ds instanceof DynamicRoutingDataSource routing) {
+                for (DataSource inner : routing.getDataSources().values()) {
                     Long v = druidMaxActiveOf(inner);
                     if (v != null) {
                         return v;
@@ -1334,7 +1375,7 @@ class P62BudgetMeasurementPgTest {
 
     private static Long druidMaxActiveOf(Object cur) throws Exception {
         for (int depth = 0; cur != null && depth < 6; depth++) {
-            if (cur instanceof com.alibaba.druid.pool.DruidDataSource druid) {
+            if (cur instanceof DruidDataSource druid) {
                 return (long) druid.getMaxActive();
             }
             cur = unwrapField(cur, "realDataSource");
@@ -1434,8 +1475,8 @@ class P62BudgetMeasurementPgTest {
                         + " AND menu_id = 350 AND deleted = 0) ON CONFLICT (id) DO NOTHING",
                 350000L + userId);
         FormDefService formDefService = app.getBean(FormDefService.class);
-        com.sw.ck.form.txn.service.TxnActionService actionService =
-                app.getBean(com.sw.ck.form.txn.service.TxnActionService.class);
+        TxnActionService actionService =
+                app.getBean(TxnActionService.class);
         BpmProcessDefService processDefService = app.getBean(BpmProcessDefService.class);
         FormSubmitService submitService = app.getBean(FormSubmitService.class);
 
@@ -1481,7 +1522,7 @@ class P62BudgetMeasurementPgTest {
             ProcessGraph graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name("预算轻流程-" + tenant)
                     .formKey(formKey).version(1).elements(elements).build();
-            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            String json = app.getBean(ObjectMapper.class)
                     .writeValueAsString(graph);
             processDefService.saveDraftGraph(def.getId(), json);
             BpmProcessDef published = processDefService.publish(def.getId());
@@ -1548,14 +1589,14 @@ class P62BudgetMeasurementPgTest {
     }
 
     private static <T> T asTenant(Long tenant, long userId, Callable<T> action) {
-        com.sw.ck.security.holder.LoginUser previous =
-                com.sw.ck.security.holder.LoginUserHolder.get();
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        LoginUser previous =
+                LoginUserHolder.get();
+        LoginUser user = new LoginUser();
         user.setUserId(userId);
         user.setTenantId(tenant);
         user.setPermissions(new ArrayList<>(List.of("form:action:invoke", "form:action:manage")));
         try {
-            com.sw.ck.security.holder.LoginUserHolder.set(user);
+            LoginUserHolder.set(user);
             return action.call();
         } catch (RuntimeException e) {
             throw e;
@@ -1563,9 +1604,9 @@ class P62BudgetMeasurementPgTest {
             throw new IllegalStateException(e);
         } finally {
             if (previous == null) {
-                com.sw.ck.security.holder.LoginUserHolder.clear();
+                LoginUserHolder.clear();
             } else {
-                com.sw.ck.security.holder.LoginUserHolder.set(previous);
+                LoginUserHolder.set(previous);
             }
         }
     }
@@ -1573,9 +1614,9 @@ class P62BudgetMeasurementPgTest {
     /** 生成 RSA PKCS#8 BASE64 测试私钥（同一批 P62 测试共用）。 */
     public static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
@@ -1583,18 +1624,18 @@ class P62BudgetMeasurementPgTest {
     }
 
     /** debug-auth 的 Redis 缓存无操作替换：隔离测量环境无 Redis；权限仍经 UserDetailsProvider 正式回查。 */
-    public static class NoopLoginUserCacheService extends com.sw.ck.security.cache.LoginUserCacheService {
+    public static class NoopLoginUserCacheService extends LoginUserCacheService {
         public NoopLoginUserCacheService() {
             super(null, null);
         }
 
         @Override
-        public void cache(com.sw.ck.security.holder.LoginUser loginUser) {
+        public void cache(LoginUser loginUser) {
             // no-op
         }
 
         @Override
-        public com.sw.ck.security.holder.LoginUser get(Long userId) {
+        public LoginUser get(Long userId) {
             return null;
         }
 

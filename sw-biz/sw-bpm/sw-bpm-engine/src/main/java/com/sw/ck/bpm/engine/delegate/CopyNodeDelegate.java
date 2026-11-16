@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.delegate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.participant.NodeActionAuditPort;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
@@ -11,10 +12,13 @@ import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.api.NotifyRoutingService;
 import com.sw.ck.notify.api.NotifyTemplateSelection;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.JavaDelegate;
-import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -23,19 +27,12 @@ import java.util.List;
 @Component("copyNodeDelegate")
 public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegate {
 
-    private final NotifyFacade notifyFacade;
-    private final NotifyRoutingService notifyRoutingService;
-    private final NodeActionAuditPort auditPort;
-
-    public CopyNodeDelegate(RepositoryService repositoryService, ObjectMapper objectMapper,
-                            ParticipantResolverRegistry participantResolverRegistry,
-                            NotifyFacade notifyFacade, NotifyRoutingService notifyRoutingService,
-                            ObjectProvider<NodeActionAuditPort> auditPort) {
-        super(repositoryService, objectMapper, participantResolverRegistry);
-        this.notifyFacade = notifyFacade;
-        this.notifyRoutingService = notifyRoutingService;
-        this.auditPort = auditPort.getIfAvailable();
-    }
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private NotifyRoutingService notifyRoutingService;
+    @Autowired(required = false)
+    private NodeActionAuditPort auditPort;
 
     @Override
     public void execute(DelegateExecution execution) {
@@ -76,8 +73,8 @@ public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegat
                         status = result.getStatus() == null ? "FAILED" : result.getStatus();
                         reason = result.getFailureReason();
                         if (shouldBlock(config)) {
-                            throw new com.sw.ck.common.exception.BaseException(
-                                    com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
+                            throw new BaseException(
+                                    BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
                                     reason == null ? "抄送投递失败" : reason);
                         }
                     }
@@ -85,8 +82,8 @@ public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegat
             } catch (Exception e) {
                 status = "FAILED";
                 reason = e.getMessage();
-                if (shouldBlock(config)) throw new com.sw.ck.common.exception.BaseException(
-                        com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
+                if (shouldBlock(config)) throw new BaseException(
+                        BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
                         reason == null ? "抄送投递失败" : reason);
             } finally {
                 if (auditPort != null) auditPort.recordCopy(execution.getProcessInstanceId(),

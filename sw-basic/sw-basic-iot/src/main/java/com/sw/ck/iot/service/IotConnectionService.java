@@ -2,26 +2,33 @@ package com.sw.ck.iot.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.common.crypto.AesGcmCipher;
+import com.sw.ck.common.trace.DiagnosticText;
 import com.sw.ck.iot.config.IotCipherProperties;
+import com.sw.ck.iot.dto.IotConnectResultDTO;
+import com.sw.ck.iot.dto.IotConnectionDTO;
+import com.sw.ck.iot.dto.IotConnectionTestResultDTO;
 import com.sw.ck.iot.entity.IotConnection;
+import com.sw.ck.iot.entity.IotTopic;
 import com.sw.ck.iot.mapper.IotConnectionMapper;
+import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
+
+import jakarta.annotation.PostConstruct;
 import org.eclipse.paho.client.mqttv3.MqttException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.net.UnknownHostException;
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-
 import javax.net.ssl.SSLException;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * IoT 连接配置服务。
  * <p>
@@ -30,9 +37,8 @@ import javax.net.ssl.SSLException;
  * </p>
  */
 @Service
+@Log4j2
 public class IotConnectionService {
-
-    private static final Logger log = LoggerFactory.getLogger(IotConnectionService.class);
 
     public static final String TYPE_TENCENT = "TENCENT";
     public static final String TYPE_MQTT = "MQTT";
@@ -40,28 +46,24 @@ public class IotConnectionService {
     /** 凭证脱敏占位（对外统一返回，不暴露密文/明文）。 */
     public static final String PASSWORD_MASK = "******";
 
-    private final IotConnectionMapper connectionMapper;
-    private final AesGcmCipher cipher;
-    private final MqttBrokerManager mqttBrokerManager;
-    private final com.sw.ck.iot.mapper.IotTopicMapper topicMapper;
+    @Autowired
+    private IotConnectionMapper connectionMapper;
+    @Autowired
+    private IotCipherProperties cipherProperties;
+    private AesGcmCipher cipher;
+    @Autowired
+    private MqttBrokerManager mqttBrokerManager;
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired(required = false)
     private IotAuditService auditService;
 
     /** 连接测试中的瞬时客户端（不进常驻连接池）。 */
     private final Map<Long, Boolean> testing = new ConcurrentHashMap<>();
 
-    public IotConnectionService(IotConnectionMapper connectionMapper,
-                                IotCipherProperties cipherProperties,
-                                com.sw.ck.iot.mapper.IotTopicMapper topicMapper,
-                                MqttBrokerManager mqttBrokerManager) {
-        this.connectionMapper = connectionMapper;
+    @PostConstruct
+    void initCipher() {
         this.cipher = new AesGcmCipher(cipherProperties.getCipherKey());
-        this.topicMapper = topicMapper;
-        this.mqttBrokerManager = mqttBrokerManager;
-    }
-
-    @Autowired
-    public void setAuditService(IotAuditService auditService) {
-        this.auditService = auditService;
     }
 
     public IotConnection getById(Long id) {
@@ -147,7 +149,7 @@ public class IotConnectionService {
     /**
      * 建立常驻连接并恢复订阅（幂等；失败抛出分类信息）。
      */
-    public Map<String, Object> connect(Long id) {
+    public IotConnectResultDTO connect(Long id) {
         IotConnection conn = connectionMapper.selectById(id);
         if (conn == null) {
             throw new IllegalArgumentException("连接不存在: id=" + id);
@@ -159,11 +161,11 @@ public class IotConnectionService {
             throw new IllegalStateException("连接已停用");
         }
         conn.setPlainPassword(decryptPassword(conn));
-        List<com.sw.ck.iot.entity.IotTopic> subscriptions =
-                topicMapper.selectList(new LambdaQueryWrapper<com.sw.ck.iot.entity.IotTopic>()
-                        .eq(com.sw.ck.iot.entity.IotTopic::getConnId, id)
-                        .eq(com.sw.ck.iot.entity.IotTopic::getEnabled, 1)
-                        .in(com.sw.ck.iot.entity.IotTopic::getDirection, "UP", "BOTH"));
+        List<IotTopic> subscriptions =
+                topicMapper.selectList(new LambdaQueryWrapper<IotTopic>()
+                        .eq(IotTopic::getConnId, id)
+                        .eq(IotTopic::getEnabled, 1)
+                        .in(IotTopic::getDirection, "UP", "BOTH"));
         try {
             mqttBrokerManager.ensureStarted(conn, subscriptions);
             IotConnection healthPatch = new IotConnection();
@@ -172,7 +174,10 @@ public class IotConnectionService {
             healthPatch.setLastCheckTime(LocalDateTime.now());
             healthPatch.setLastCheckResult("CONNECT: 常驻连接已建立");
             connectionMapper.updateById(healthPatch);
-            return Map.of("connected", true, "subscriptions", subscriptions.size());
+            IotConnectResultDTO result = new IotConnectResultDTO();
+            result.setConnected(true);
+            result.setSubscriptions(subscriptions.size());
+            return result;
         } catch (Exception e) {
             // 按 Paho 结构化 reason code 分类认证失败。
             String category = mqttBrokerManager.isAuthenticationFailure(e)
@@ -182,10 +187,10 @@ public class IotConnectionService {
             healthPatch.setHealthStatus("UNHEALTHY");
             healthPatch.setLastCheckTime(LocalDateTime.now());
             healthPatch.setLastCheckResult("CONNECT: " + category + " "
-                    + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 300));
+                    + DiagnosticText.sanitize(e.getMessage(), 300));
             connectionMapper.updateById(healthPatch);
             throw new IllegalStateException("连接失败（" + category + "）："
-                    + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200), e);
+                    + DiagnosticText.sanitize(e.getMessage(), 200), e);
         }
     }
 
@@ -200,7 +205,7 @@ public class IotConnectionService {
      * @return 分类结果（SUCCESS / DNS_UNREACHABLE / NETWORK_UNREACHABLE / AUTH_FAILED /
      *         TLS_FAILED / PROTOCOL_FAILED / UNSUPPORTED）
      */
-    public Map<String, Object> testConnection(Long id) {
+    public IotConnectionTestResultDTO testConnection(Long id) {
         IotConnection conn = connectionMapper.selectById(id);
         if (conn == null) {
             throw new IllegalArgumentException("连接不存在: id=" + id);
@@ -224,14 +229,14 @@ public class IotConnectionService {
         patch.setLastCheckTime(LocalDateTime.now());
         patch.setLastCheckResult(category + ": " + detail);
         connectionMapper.updateById(patch);
-        Map<String, Object> result = new HashMap<>();
-        result.put("category", category);
-        result.put("detail", detail);
-        result.put("healthStatus", patch.getHealthStatus());
+        IotConnectionTestResultDTO result = new IotConnectionTestResultDTO();
+        result.setCategory(category);
+        result.setDetail(detail);
+        result.setHealthStatus(patch.getHealthStatus());
         if (auditService != null) {
             auditService.recordAction(conn.getTenantId(), null, "system:iot-connection-test",
                     "CONNECTION_TEST", "CONNECTION", String.valueOf(id), category,
-                    java.util.UUID.randomUUID().toString(), "healthStatus=" + patch.getHealthStatus());
+                    UUID.randomUUID().toString(), "healthStatus=" + patch.getHealthStatus());
         }
         return result;
     }
@@ -249,11 +254,10 @@ public class IotConnectionService {
     /**
      * 对外视图：凭证脱敏。
      */
-    public Map<String, Object> toVO(IotConnection conn) {
-        Map<String, Object> vo = JSON.parseObject(JSON.toJSONString(conn), Map.class);
-        vo.put("passwordMasked", PASSWORD_MASK);
-        vo.put("hasPassword", conn.getPasswordCipher() != null && !conn.getPasswordCipher().isBlank());
-        vo.remove("passwordCipher");
+    public IotConnectionDTO toVO(IotConnection conn) {
+        IotConnectionDTO vo = JSON.parseObject(JSON.toJSONString(conn), IotConnectionDTO.class);
+        vo.setPasswordMasked(PASSWORD_MASK);
+        vo.setHasPassword(conn.getPasswordCipher() != null && !conn.getPasswordCipher().isBlank());
         return vo;
     }
 

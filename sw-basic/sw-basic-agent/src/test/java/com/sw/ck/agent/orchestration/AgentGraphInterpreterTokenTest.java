@@ -4,7 +4,9 @@ import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
+
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -136,8 +138,8 @@ class AgentGraphInterpreterTokenTest {
         // D022-05 轮换入口：委托回 acquire 打桩（每次调用仍经 acquire 解析，计数语义不变）
         when(modelRuntimeService.chatWithRotation(eq(id), anyList(), any())).thenAnswer(inv ->
                 modelRuntimeService.acquire(id).chatModel().chat(
-                        dev.langchain4j.model.chat.request.ChatRequest.builder()
-                                .messages((java.util.List<dev.langchain4j.data.message.ChatMessage>) inv.getArgument(1))
+                        ChatRequest.builder()
+                                .messages((List<ChatMessage>) inv.getArgument(1))
                                 .build()));
     }
 

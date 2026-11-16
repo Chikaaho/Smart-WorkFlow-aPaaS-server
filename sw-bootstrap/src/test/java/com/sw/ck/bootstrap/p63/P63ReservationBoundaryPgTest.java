@@ -17,24 +17,41 @@ import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.job.IotReservationDispatchJob;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.flowable.engine.TaskService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.Method;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
@@ -77,7 +94,7 @@ class P63ReservationBoundaryPgTest {
     void setUp() throws Exception {
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -87,24 +104,24 @@ class P63ReservationBoundaryPgTest {
         props.put("sw.security.jwt.secret", "p63-boundary-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p63-boundary-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         // IoT 启用；无传输对端——外发断言只针对命令行/预约行持久事实，不依赖传输成功
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.receipt.secret", "p63-boundary-receipt-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p63-boundary", props));
+                            new MapPropertySource("p63-boundary", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63BoundaryLoginContextProvider", provider);
                 })
                 .run();
@@ -187,7 +204,7 @@ class P63ReservationBoundaryPgTest {
     @DisplayName("批准时预约时刻已过且超迟到窗口 → 意图创建即 EXPIRED 保留记录、零外发")
     void approveAfterWindowCreatesExpiredIntentWithZeroDispatch() {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 60);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofMinutes(-10)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofMinutes(-10)));
         String pi = awaitInstanceStarted(recordId);
         Map<String, Object> intent = awaitIntentRow(pi);
         assertThat(intent.get("status")).as("窗口已过：意图创建即 EXPIRED（不补发）").isEqualTo("EXPIRED");
@@ -203,7 +220,7 @@ class P63ReservationBoundaryPgTest {
     @DisplayName("批准时预约时刻已到（即使窗口未过）→ 意图创建即 EXPIRED、零外发（G06a 合同修正）")
     void approveAlreadyDueEvenWithinWindowExpiresWithoutDispatch() {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(-5)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofSeconds(-5)));
         String pi = awaitInstanceStarted(recordId);
         Map<String, Object> intent = awaitIntentRow(pi);
         assertThat(String.valueOf(intent.get("status")))
@@ -219,7 +236,7 @@ class P63ReservationBoundaryPgTest {
     void frozenFutureThenDueCatchesUpExactlyOnce() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
         // 冻结时未来 2 秒（合法未来预约）；有界等待到点后触发真实调度入口
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Map<String, Object> intent = awaitIntentRow(pi);
         assertThat(String.valueOf(intent.get("status"))).as("冻结时未来：意图 PENDING").isEqualTo("PENDING");
@@ -244,7 +261,7 @@ class P63ReservationBoundaryPgTest {
     @DisplayName("合法未来意图真实扫描不外发；受控时钟驱动真实 expireOverdue 收敛 EXPIRED 仍零外发")
     void futureIntentMissedWindowExpiresWithoutDispatch() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 60);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofMinutes(30)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofMinutes(30)));
         String pi = awaitInstanceStarted(recordId);
         Map<String, Object> intent = awaitIntentRow(pi);
         assertThat(intent.get("status")).as("未来预约 PENDING").isEqualTo("PENDING");
@@ -254,12 +271,12 @@ class P63ReservationBoundaryPgTest {
         assertThat(commandsFor(pi)).isZero();
 
         // 受控时钟驱动真实持久收敛入口 expireOverdue（有限触发，不长等真实时钟）
-        LocalDateTime futureUtc = LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(31);
+        LocalDateTime futureUtc = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(31);
         Method expire = ReflectionUtils.findMethod(IotReservationDispatchJob.class,
                 "expireOverdue", LocalDateTime.class);
         ReflectionUtils.makeAccessible(expire);
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             ReflectionUtils.invokeMethod(expire, dispatchJob, futureUtc);
         }
         assertThat(intentStatus(pi)).as("超窗后收敛 EXPIRED").isEqualTo("EXPIRED");
@@ -295,7 +312,7 @@ class P63ReservationBoundaryPgTest {
         CommandAcceptRespDTO accepted = asUser(APPROVER, () -> acceptService.acceptTaskAction(taskId,
                 ApprovalAction.APPROVE, req("批准含非法本地时刻"), CommandChannelEnum.NORMAL));
         awaitCommandTerminalFailed(accepted.getCommandId());
-        long tasks = app.getBean(org.flowable.engine.TaskService.class)
+        long tasks = app.getBean(TaskService.class)
                 .createTaskQuery().processInstanceId(pi).count();
         assertThat(tasks).as("拒绝后审批任务保留（整体回滚）").isEqualTo(1);
         return recordId;
@@ -306,7 +323,7 @@ class P63ReservationBoundaryPgTest {
     void softDeleteActualTargetFailsAtDue() throws Exception {
         Long softDelId = 91513L;
         BpmProcessDef def = publishReservationProcessWithDevice("Asia/Shanghai", 3600, softDelId);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
         assertThat(intentStatus(pi)).isEqualTo("PENDING");
@@ -329,7 +346,7 @@ class P63ReservationBoundaryPgTest {
     void sameTenantUnauthorizedDeviceRejectedAtApproval() {
         BpmProcessDef def = publishReservationProcessWithDevice("Asia/Shanghai", 3600, 91512L);
         String recordId = asUser(INITIATOR, () -> submitService.submitForm(FORM_KEY,
-                data("topic", "无权设备", "plan_time", localShanghaiText(java.time.Duration.ofMinutes(30))),
+                data("topic", "无权设备", "plan_time", localShanghaiText(Duration.ofMinutes(30))),
                 null, null, null));
         String pi = awaitInstanceStarted(recordId);
         String taskId = awaitTask(pi);
@@ -348,7 +365,7 @@ class P63ReservationBoundaryPgTest {
     @DisplayName("G03a N5：批准后到点前撤销执行授权（access 1→0）→ 到点 FAILED 可查、零外发")
     void accessRevokedBeforeDueFailsAtDue() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
         assertThat(intentStatus(pi)).isEqualTo("PENDING");
@@ -374,11 +391,11 @@ class P63ReservationBoundaryPgTest {
     @DisplayName("取消先手：CAS 取消落原因/操作者、零外发；随后真实认领竞争失败")
     void cancelWinsPersistsReasonAndZeroDispatch() {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 60);
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofMinutes(20)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofMinutes(20)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
 
-        java.util.Optional<String> result = asController(
+        Optional<String> result = asController(
                 () -> reservationFacade.cancel(TENANT, reservationId, APPROVER, "G06b 取消先手（窗口未到）"));
         assertThat(result).as("PENDING 先手取消=CANCELED").contains(IotCommandReservationFacade.CANCEL_CANCELED);
         Map<String, Object> row = jdbc.queryForMap(
@@ -401,7 +418,7 @@ class P63ReservationBoundaryPgTest {
     void claimWinsMakesCancelNotCancellable() throws Exception {
         BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
         // 冻结时未来 2 秒（合法未来预约），到点后认领
-        String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
+        String recordId = submitAndApprove(def, localShanghaiText(Duration.ofSeconds(10)));
         String pi = awaitInstanceStarted(recordId);
         Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
         Thread.sleep(10500); // 有界场景等待：预约时刻到达
@@ -411,7 +428,7 @@ class P63ReservationBoundaryPgTest {
         assertThat(claimed).as("认领先手=调度侧已认领（DISPATCHING/DISPATCHED）")
                 .isIn("DISPATCHING", "DISPATCHED");
 
-        java.util.Optional<String> result = asController(
+        Optional<String> result = asController(
                 () -> reservationFacade.cancel(TENANT, reservationId, APPROVER, "G06b 认领后取消（应被拒）"));
         assertThat(result).as("认领后取消=NOT_CANCELLABLE")
                 .contains(IotCommandReservationFacade.CANCEL_NOT_CANCELLABLE);
@@ -432,14 +449,14 @@ class P63ReservationBoundaryPgTest {
         for (int round = 1; round <= 3; round++) {
             BpmProcessDef def = publishReservationProcess("Asia/Shanghai", 3600);
             // 冻结时未来 2 秒（合法未来预约），到点后进入竞争
-            String recordId = submitAndApprove(def, localShanghaiText(java.time.Duration.ofSeconds(10)));
+            String recordId = submitAndApprove(def, localShanghaiText(Duration.ofSeconds(10)));
             String pi = awaitInstanceStarted(recordId);
             Long reservationId = ((Number) awaitIntentRow(pi).get("id")).longValue();
             Thread.sleep(10500); // 有界场景等待：预约时刻到达
 
             CountDownLatch start = new CountDownLatch(1);
             final int roundNo = round;
-            AtomicReference<java.util.Optional<String>> cancelResult = new AtomicReference<>();
+            AtomicReference<Optional<String>> cancelResult = new AtomicReference<>();
             Thread canceller = new Thread(() -> {
                 try {
                     start.await();
@@ -477,7 +494,7 @@ class P63ReservationBoundaryPgTest {
                     "SELECT status, cancel_reason FROM sw_iot_command_reservation WHERE id = ?", reservationId);
             String finalStatus = String.valueOf(row.get("status"));
             int commands = commandsFor(pi);
-            boolean cancelWon = java.util.Optional.of(IotCommandReservationFacade.CANCEL_CANCELED)
+            boolean cancelWon = Optional.of(IotCommandReservationFacade.CANCEL_CANCELED)
                     .equals(cancelResult.get());
             // 恰一方获胜：取消胜→CANCELED；认领胜→DISPATCHING/DISPATCHED（发送完成即 DISPATCHED）
             if (cancelWon) {
@@ -577,7 +594,7 @@ class P63ReservationBoundaryPgTest {
         return recordId;
     }
 
-    private String localShanghaiText(java.time.Duration offset) {
+    private String localShanghaiText(Duration offset) {
         LocalDateTime due = LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plus(offset);
         return due.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
@@ -608,7 +625,7 @@ class P63ReservationBoundaryPgTest {
     }
 
     private String awaitTask(String processInstanceId) {
-        org.flowable.engine.TaskService taskService = app.getBean(org.flowable.engine.TaskService.class);
+        TaskService taskService = app.getBean(TaskService.class);
         long deadline = System.currentTimeMillis() + 60_000L;
         while (System.currentTimeMillis() < deadline) {
             var task = taskService.createTaskQuery().processInstanceId(processInstanceId).singleResult();
@@ -702,7 +719,7 @@ class P63ReservationBoundaryPgTest {
     }
 
     private Map<String, Object> data(String... kv) {
-        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) {
             m.put(kv[i], kv[i + 1]);
         }
@@ -711,7 +728,7 @@ class P63ReservationBoundaryPgTest {
 
     private String toJson(Object obj) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj);
+            return new ObjectMapper().writeValueAsString(obj);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -749,10 +766,10 @@ class P63ReservationBoundaryPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
             gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
+            KeyPair pair = gen.generateKeyPair();
+            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

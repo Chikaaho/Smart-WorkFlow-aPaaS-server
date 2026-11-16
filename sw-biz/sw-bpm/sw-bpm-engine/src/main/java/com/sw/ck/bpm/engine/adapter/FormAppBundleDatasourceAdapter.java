@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.adapter;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.mapper.ExternalDatasourceMapper;
@@ -16,11 +18,8 @@ import java.util.Optional;
 @Component
 public class FormAppBundleDatasourceAdapter implements FormAppBundleDatasourcePort {
 
-    private final ExternalDatasourceMapper datasourceMapper;
-
-    public FormAppBundleDatasourceAdapter(ExternalDatasourceMapper datasourceMapper) {
-        this.datasourceMapper = datasourceMapper;
-    }
+    @Autowired
+    private ExternalDatasourceMapper datasourceMapper;
 
     @Override
     public Optional<Long> findDatasourceIdByName(String name) {

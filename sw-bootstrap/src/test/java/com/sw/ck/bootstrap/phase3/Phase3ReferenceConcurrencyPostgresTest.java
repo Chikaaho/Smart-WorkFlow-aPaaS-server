@@ -1,29 +1,39 @@
 package com.sw.ck.bootstrap.phase3;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.service.FormDataDeleteService;
 import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.security.KeyPairGenerator;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -80,23 +90,23 @@ class Phase3ReferenceConcurrencyPostgresTest {
         props.put("sw.security.jwt.secret", "phase3-pg-test-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "phase3-pg-test-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("phase3-pg-test", props));
+                            new MapPropertySource("phase3-pg-test", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
                     // 与 I5 PG 用例同构：显式注册 primary LoginContextProvider，
                     // 消除 default/security 两个候选导致的注入歧义
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("phase3PgTestLoginContextProvider", provider);
                 })
                 .run();
@@ -174,7 +184,7 @@ class Phase3ReferenceConcurrencyPostgresTest {
         return asTenant(TENANT, USER, () -> submitService.submitForm(formKey, data, null, null, null));
     }
 
-    private static <T> T asTenant(Long tenantId, Long userId, java.util.concurrent.Callable<T> action) {
+    private static <T> T asTenant(Long tenantId, Long userId, Callable<T> action) {
         LoginUser previous = LoginUserHolder.get();
         LoginUser user = new LoginUser();
         user.setUserId(userId);
@@ -234,7 +244,7 @@ class Phase3ReferenceConcurrencyPostgresTest {
     }
 
     private static int errorCode(Throwable error) {
-        return error instanceof com.sw.ck.common.exception.BaseException base ? base.getCode() : -1;
+        return error instanceof BaseException base ? base.getCode() : -1;
     }
 
     // ==================== 1. 活库 schema（BAO-06 证据边界） ====================
@@ -416,11 +426,11 @@ class Phase3ReferenceConcurrencyPostgresTest {
                 deleteService.deleteRecord(targetKey, recordId);
                 return null;
             });
-        } catch (com.sw.ck.common.exception.BaseException e) {
+        } catch (BaseException e) {
             code = e.getCode();
         }
         System.out.println("[P3-PG-INSERT-FIRST] deleteCode=" + code + " parentLive=" + isLive(tableA, recordId));
-        assertThat(code).isEqualTo(com.sw.ck.form.api.exception.FormErrorCode.DELETE_RESTRICT_REFERENCED.getCode());
+        assertThat(code).isEqualTo(FormErrorCode.DELETE_RESTRICT_REFERENCED.getCode());
         assertThat(isLive(tableA, recordId)).isTrue();
         assertThat(liveReferences(tableB, refColumn, recordId)).isEqualTo(1);
     }
@@ -454,12 +464,12 @@ class Phase3ReferenceConcurrencyPostgresTest {
         int code = -1;
         try {
             submit(refKey, data("target", recordId));
-        } catch (com.sw.ck.common.exception.BaseException e) {
+        } catch (BaseException e) {
             code = e.getCode();
         }
         System.out.println("[P3-PG-DELETE-FIRST] insertCode=" + code
                 + " orphans=" + liveReferences(tableB, refColumn, recordId));
-        assertThat(code).isEqualTo(com.sw.ck.form.api.exception.FormErrorCode.REFERENCE_OBJECT_NOT_FOUND.getCode());
+        assertThat(code).isEqualTo(FormErrorCode.REFERENCE_OBJECT_NOT_FOUND.getCode());
         assertThat(liveReferences(tableB, refColumn, recordId)).isZero();
     }
 
@@ -482,14 +492,14 @@ class Phase3ReferenceConcurrencyPostgresTest {
             int code = -1;
             try {
                 submit(refKey, data("target", recordId));
-            } catch (com.sw.ck.common.exception.BaseException e) {
+            } catch (BaseException e) {
                 code = e.getCode();
             }
             long elapsed = System.currentTimeMillis() - start;
             System.out.println("[P3-PG-TIMEOUT] code=" + code + " elapsedMs=" + elapsed
                     + " orphans=" + liveReferences(tableB, refColumn, recordId));
             assertThat(code).isEqualTo(
-                    com.sw.ck.form.api.exception.FormErrorCode.DYNAMIC_ROW_LOCK_TIMEOUT.getCode());
+                    FormErrorCode.DYNAMIC_ROW_LOCK_TIMEOUT.getCode());
             assertThat(liveReferences(tableB, refColumn, recordId)).isZero();
         } finally {
             try {
@@ -526,12 +536,12 @@ class Phase3ReferenceConcurrencyPostgresTest {
         try {
             asTenant(TENANT_B, USER_B, () -> submitService.submitForm(refKey,
                     data("target", recordId), null, null, null));
-        } catch (com.sw.ck.common.exception.BaseException e) {
+        } catch (BaseException e) {
             insertCode = e.getCode();
         }
         System.out.println("[P3-PG-TENANT] crossTenantInsertCode=" + insertCode);
         assertThat(insertCode).isEqualTo(
-                com.sw.ck.form.api.exception.FormErrorCode.REFERENCE_OBJECT_NOT_FOUND.getCode());
+                FormErrorCode.REFERENCE_OBJECT_NOT_FOUND.getCode());
 
         // 租户 100 删除租户 0 的记录：幂等无操作，记录存活
         asTenant(TENANT_B, USER_B, () -> {
@@ -544,9 +554,9 @@ class Phase3ReferenceConcurrencyPostgresTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);

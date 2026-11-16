@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -25,6 +26,9 @@ import com.sw.ck.notify.service.impl.NotifyMessageServiceImpl;
 import com.sw.ck.notify.service.impl.NotifyTemplateServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.notify.api.NotifyFacade;
+import com.sw.ck.security.support.PermissionService;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,10 +49,15 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.mockito.Mockito;
+import org.springframework.security.access.AccessDeniedException;
 
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -309,7 +318,7 @@ class NotifyBatchSendEvidenceTest {
         NotifyBatchSendReq req = new NotifyBatchSendReq();
         req.setRecipientUserIds(List.of(USER_A));
         req.setTemplateCode("TPL_S2_DELETED");
-        req.setVariables(java.util.Map.of());
+        req.setVariables(Map.of());
         long dbBefore = countMsg();
         Throwable failure = catchThrowable(() -> notifyController.batchSend(req));
         long dbAfter = countMsg();
@@ -457,7 +466,7 @@ class NotifyBatchSendEvidenceTest {
     void r2b_exactly500() {
         for (int i = 200; i < 700; i++)
             jt.update("INSERT INTO sys_user VALUES(?,?,?,1,0,100,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", i, "u" + i, "U" + i);
-        List<Long> ids = new java.util.ArrayList<>();
+        List<Long> ids = new ArrayList<>();
         for (long i = 200; i < 700; i++) ids.add(i);
         long b = countMsg();
         NotifyBatchSendReq r = new NotifyBatchSendReq();
@@ -476,7 +485,7 @@ class NotifyBatchSendEvidenceTest {
     void r2c_over500() {
         for (int i = 200; i < 701; i++)
             jt.update("INSERT INTO sys_user VALUES(?,?,?,1,0,100,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", i, "u" + i, "U" + i);
-        List<Long> ids = new java.util.ArrayList<>();
+        List<Long> ids = new ArrayList<>();
         for (long i = 200; i <= 700; i++) ids.add(i);
         long b = countMsg();
         NotifyBatchSendReq r = new NotifyBatchSendReq();
@@ -496,7 +505,7 @@ class NotifyBatchSendEvidenceTest {
         NotifyBatchSendReq r = new NotifyBatchSendReq();
         r.setRecipientUserIds(List.of(USER_A));
         r.setTemplateCode("TPL_VAR");
-        r.setVariables(java.util.Map.of()); // 空变量，缺 userName 和 msg
+        r.setVariables(Map.of()); // 空变量，缺 userName 和 msg
         assertThatThrownBy(() -> notifyController.batchSend(r)).isInstanceOf(Exception.class);
         long a = countMsg();
         System.out.println("[R2-d] input=template=TPL_VAR+emptyVars, response=REJECTED, db_before=" + b + ", db_after=" + a + ", delta=" + (a - b));
@@ -510,7 +519,7 @@ class NotifyBatchSendEvidenceTest {
         NotifyBatchSendReq r = new NotifyBatchSendReq();
         r.setRecipientUserIds(List.of(USER_A));
         r.setTemplateCode("TPL_DISABLED");
-        r.setVariables(java.util.Map.of());
+        r.setVariables(Map.of());
         assertThatThrownBy(() -> notifyController.batchSend(r)).isInstanceOf(Exception.class);
         long a = countMsg();
         System.out.println("[R2-e] input=template=TPL_DISABLED(enabled=false), response=REJECTED, db_before=" + b + ", db_after=" + a + ", delta=" + (a - b));
@@ -524,7 +533,7 @@ class NotifyBatchSendEvidenceTest {
         NotifyBatchSendReq r = new NotifyBatchSendReq();
         r.setRecipientUserIds(List.of(USER_A));
         r.setTemplateCode("TPL_NONEXISTENT");
-        r.setVariables(java.util.Map.of());
+        r.setVariables(Map.of());
         assertThatThrownBy(() -> notifyController.batchSend(r)).isInstanceOf(Exception.class);
         long a = countMsg();
         System.out.println("[R2-f] input=template=TPL_NONEXISTENT(not exist), response=REJECTED, db_before=" + b + ", db_after=" + a + ", delta=" + (a - b));
@@ -568,7 +577,7 @@ class NotifyBatchSendEvidenceTest {
         r.setRecipientUserIds(List.of(USER_B));
         r.setTitle("R3b"); r.setContent("R3b");
         assertThatThrownBy(() -> notifyController.batchSend(r))
-                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+                .isInstanceOf(AccessDeniedException.class);
         long a = countMsg();
         System.out.println("[R3-b] identity=userId=2+permissions=[notify:view], response=HTTP403, db_delta=" + a);
     }
@@ -581,7 +590,7 @@ class NotifyBatchSendEvidenceTest {
         r.setRecipientUserIds(List.of(USER_C));
         r.setTitle("R3c"); r.setContent("R3c");
         assertThatThrownBy(() -> notifyController.batchSend(r))
-                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+                .isInstanceOf(AccessDeniedException.class);
         System.out.println("[R3-c] identity=userId=3+permissions=[notify:template:manage], response=HTTP403");
     }
 
@@ -676,7 +685,7 @@ class NotifyBatchSendEvidenceTest {
         @Bean public MybatisPlusInterceptor mybatisPlusInterceptor(TenantLineInnerInterceptor t) {
             MybatisPlusInterceptor i = new MybatisPlusInterceptor(); i.addInnerInterceptor(t); i.addInnerInterceptor(new OptimisticLockerInnerInterceptor()); return i;
         }
-        @Bean public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource ds, CommonMetaObjectHandler m, MybatisPlusInterceptor i) throws Exception {
+        @Bean public SqlSessionFactory sqlSessionFactory(DataSource ds, CommonMetaObjectHandler m, MybatisPlusInterceptor i) throws Exception {
             MybatisSqlSessionFactoryBean f = new MybatisSqlSessionFactoryBean(); f.setDataSource(ds); f.setTypeAliasesPackage("com.sw.ck.notify.entity");
             MybatisConfiguration c = new MybatisConfiguration(); c.setMapUnderscoreToCamelCase(true); c.setUseGeneratedKeys(true); f.setConfiguration(c);
             GlobalConfig g = new GlobalConfig(); GlobalConfig.DbConfig d = new GlobalConfig.DbConfig(); d.setLogicDeleteField("deleted"); d.setLogicDeleteValue("1"); d.setLogicNotDeleteValue("0");
@@ -690,7 +699,7 @@ class NotifyBatchSendEvidenceTest {
         @Bean public FailingNotifyMessageService failingNotifyMessageService(NotifyTemplateService ts, TemplateRenderService rs, LoginContextProvider lp, NotifyMessageMapper mapper) {
             return new FailingNotifyMessageService(ts, rs, lp, mapper);
         }
-        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class)); }
-        @Bean("ss") public com.sw.ck.security.support.PermissionService permissionService() { return new com.sw.ck.security.support.PermissionService(); }
+        @Bean public NotifyController notifyController(NotifyMessageService s) { return new NotifyController(s, Mockito.mock(NotifyFacade.class)); }
+        @Bean("ss") public PermissionService permissionService() { return new PermissionService(); }
     }
 }

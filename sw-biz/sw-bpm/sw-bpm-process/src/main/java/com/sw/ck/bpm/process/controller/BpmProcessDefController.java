@@ -3,37 +3,48 @@ package com.sw.ck.bpm.process.controller;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.api.dto.*;
 import com.sw.ck.bpm.api.node.BpmNodeCapabilityDTO;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.bpm.process.mapper.BpmCategoryMapper;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import jakarta.validation.Valid;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.Data;
 import org.springframework.web.bind.annotation.*;
+import com.alibaba.fastjson2.JSON;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程定义控制器 —— 图设计器后端。
  * <p>
@@ -46,53 +57,27 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/workflow/defs")
+@Log4j2
 public class BpmProcessDefController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmProcessDefController.class);
-
-    private final BpmProcessDefService bpmProcessDefService;
-    private final ObjectMapper objectMapper;
-    private final UserQueryFacade userQueryFacade;
-    private final BpmNodeRegistry nodeRegistry;
-    private final com.sw.ck.bpm.process.service.ProcessThemeService processThemeService;
-    /** 分类/实例数聚合数据源（列表展示字段回填；单元测试经 5 参构造保持 null，回填自动跳过）。 */
-    private final BpmCategoryMapper categoryMapper;
-    private final BpmInstanceMapper instanceMapper;
-    /** Q69（459:14712）租户名回填数据源；单测 5 参构造保持 null，回填自动跳过。 */
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
-
-    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
-                                   ObjectMapper objectMapper,
-                                   UserQueryFacade userQueryFacade) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, null, null, null, null, null);
-    }
-
-    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
-                                   ObjectMapper objectMapper,
-                                   UserQueryFacade userQueryFacade,
-                                   BpmNodeRegistry nodeRegistry,
-                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, nodeRegistry, processThemeService, null, null, null);
-    }
-
     @Autowired
-    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
-                                   ObjectMapper objectMapper,
-                                   UserQueryFacade userQueryFacade,
-                                   BpmNodeRegistry nodeRegistry,
-                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService,
-                                   BpmCategoryMapper categoryMapper,
-                                   BpmInstanceMapper instanceMapper,
-                                   org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
-        this.bpmProcessDefService = bpmProcessDefService;
-        this.objectMapper = objectMapper;
-        this.userQueryFacade = userQueryFacade;
-        this.nodeRegistry = nodeRegistry;
-        this.processThemeService = processThemeService;
-        this.categoryMapper = categoryMapper;
-        this.instanceMapper = instanceMapper;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private BpmNodeRegistry nodeRegistry;
+    @Autowired
+    private ProcessThemeService processThemeService;
+    /** 分类/实例数聚合数据源（列表展示字段回填；单元测试经 5 参构造保持 null，回填自动跳过）。 */
+    @Autowired
+    private BpmCategoryMapper categoryMapper;
+    @Autowired
+    private BpmInstanceMapper instanceMapper;
+    /** Q69（459:14712）租户名回填数据源；单测 5 参构造保持 null，回填自动跳过。 */
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * 创建流程定义（DRAFT 状态）。
@@ -254,7 +239,7 @@ public class BpmProcessDefController {
     public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
                                                  @RequestParam(required = false) String formKey,
                                                  @RequestParam(required = false) Long tenantId) {
-        com.sw.ck.security.holder.LoginUser user = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser user = LoginUserHolder.get();
         boolean superAdmin = user != null && user.isSuperAdmin();
         PageResult<BpmProcessDef> result =
                 bpmProcessDefService.listDefs(pageParam, formKey, superAdmin ? tenantId : null);
@@ -278,7 +263,7 @@ public class BpmProcessDefController {
         }
         Map<Long, String> names;
         try {
-            names = new java.util.HashMap<>();
+            names = new HashMap<>();
             for (Map<String, Object> row : jdbcTemplate.queryForList(
                     "SELECT id AS \"id\", name AS \"name\" FROM sys_tenant WHERE deleted = 0")) {
                 Object id = row.get("id");
@@ -397,7 +382,7 @@ public class BpmProcessDefController {
     /**
      * 版本列表回填发布人展示名：优先发布人，缺省回退最近修改人。
      */
-    private void fillPublisherNames(List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions) {
+    private void fillPublisherNames(List<BpmProcessDefVersion> versions) {
         if (versions == null || versions.isEmpty()) {
             return;
         }
@@ -417,7 +402,7 @@ public class BpmProcessDefController {
                 }));
     }
 
-    private Long publisherIdOf(com.sw.ck.bpm.process.entity.BpmProcessDefVersion version) {
+    private Long publisherIdOf(BpmProcessDefVersion version) {
         if (version.getPublishedBy() != null) {
             return version.getPublishedBy();
         }
@@ -450,7 +435,7 @@ public class BpmProcessDefController {
     public R<ProcessGraph> getDefByKey(@PathVariable String processKey) {
         BpmProcessDef entity = bpmProcessDefService.findByProcessKey(processKey);
         if (entity == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.NOT_FOUND.getCode(),
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(),
                     "流程定义不存在");
         }
         return R.ok(parseGraph(entity.getGraphJson()));
@@ -459,8 +444,8 @@ public class BpmProcessDefController {
     /** 列出流程定义全部发布版本（不含 graph_json）。 */
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping("/{id}/versions")
-    public R<List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion>> listVersions(@PathVariable Long id) {
-        List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions =
+    public R<List<BpmProcessDefVersion>> listVersions(@PathVariable Long id) {
+        List<BpmProcessDefVersion> versions =
                 bpmProcessDefService.listVersions(id);
         fillPublisherNames(versions);
         return R.ok(versions);
@@ -520,9 +505,9 @@ public class BpmProcessDefController {
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/iot-device-action")
     public R<BpmProcessDef> setIotDeviceAction(@PathVariable Long id,
-                                               @RequestBody java.util.Map<String, Object> body) {
+                                               @RequestBody Map<String, Object> body) {
         String actionJson = body.get("action") == null ? null
-                : com.alibaba.fastjson2.JSON.toJSONString(body.get("action"));
+                : JSON.toJSONString(body.get("action"));
         return R.ok(bpmProcessDefService.setIotDeviceAction(id, actionJson));
     }
 
@@ -542,12 +527,12 @@ public class BpmProcessDefController {
     public R<List<UserOptionDTO>> approverCandidates(
             @RequestParam(required = false, defaultValue = "") String keyword,
             @RequestParam(required = false) Long deptId) {
-        java.util.Optional<List<UserOptionDTO>> candidates =
+        Optional<List<UserOptionDTO>> candidates =
                 userQueryFacade.searchActiveUsersInDept(keyword, deptId, 50);
         if (candidates.isEmpty()) {
             // empty = 缺少可用租户范围等查询上下文：以空候选列表呈现，
             // 对外响应结构保持不变（不把“无法查询”暴露为 500）
-            return R.ok(java.util.List.<UserOptionDTO>of());
+            return R.ok(List.<UserOptionDTO>of());
         }
         return R.ok(candidates.get());
     }

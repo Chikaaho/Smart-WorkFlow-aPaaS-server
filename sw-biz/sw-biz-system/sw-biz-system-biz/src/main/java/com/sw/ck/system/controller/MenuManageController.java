@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.service.MenuManageService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -18,11 +20,8 @@ import java.util.Map;
 @RequestMapping("/system/menu")
 public class MenuManageController {
 
-    private final MenuManageService menuManageService;
-
-    public MenuManageController(MenuManageService menuManageService) {
-        this.menuManageService = menuManageService;
-    }
+    @Autowired
+    private MenuManageService menuManageService;
 
     /** 全量目录/菜单条目（按钮不下发）。 */
     @GetMapping("/manage-items")

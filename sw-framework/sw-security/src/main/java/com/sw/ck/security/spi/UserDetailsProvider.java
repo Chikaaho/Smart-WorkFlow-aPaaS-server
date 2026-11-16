@@ -2,6 +2,8 @@ package com.sw.ck.security.spi;
 
 import com.sw.ck.security.holder.LoginUser;
 
+import java.util.Objects;
+
 /**
  * 由 sw-module-system 实现：security 框架本身不持有用户数据，仅定义加载契约。
  * <p>
@@ -27,8 +29,8 @@ public interface UserDetailsProvider {
     default LoginUser loadClaimedWorkIdentity(Long userId, Long tenantId) {
         if (userId == null || tenantId == null) return null;
         LoginUser user = loadByUserId(userId);
-        return user != null && java.util.Objects.equals(userId, user.getUserId())
-                && java.util.Objects.equals(tenantId, user.getTenantId()) ? user : null;
+        return user != null && Objects.equals(userId, user.getUserId())
+                && Objects.equals(tenantId, user.getTenantId()) ? user : null;
     }
 
     /**
@@ -38,7 +40,7 @@ public interface UserDetailsProvider {
     default boolean isCachedIdentityValid(LoginUser cached) {
         if (cached == null || cached.getUserId() == null || cached.getTenantId() == null) return false;
         LoginUser current = loadByUserId(cached.getUserId());
-        return current != null && java.util.Objects.equals(current.getUserId(), cached.getUserId())
-                && java.util.Objects.equals(current.getTenantId(), cached.getTenantId());
+        return current != null && Objects.equals(current.getUserId(), cached.getUserId())
+                && Objects.equals(current.getTenantId(), cached.getTenantId());
     }
 }

@@ -2,7 +2,6 @@ package com.sw.ck.bpm.process.service;
 
 import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -74,21 +73,12 @@ public class ProcessThemeService {
     /** 自增序号位数上限（左补零），也是校验里拒绝 {SEQ:n} 的边界。 */
     private static final int SEQ_DIGITS_MAX = 10;
 
-    private final JdbcTemplate jdbcTemplate;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /** 可选：发起人展示名解析（缺省时数字身份回退为 ID 字符串）。 */
-    private final UserQueryFacade userQueryFacade;
-
-    public ProcessThemeService(JdbcTemplate jdbcTemplate) {
-        this(jdbcTemplate, null);
-    }
-
-    @Autowired
-    public ProcessThemeService(JdbcTemplate jdbcTemplate,
-                               ObjectProvider<UserQueryFacade> userQueryFacadeProvider) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.userQueryFacade = userQueryFacadeProvider == null ? null : userQueryFacadeProvider.getIfAvailable();
-    }
+    @Autowired(required = false)
+    private UserQueryFacade userQueryFacade;
 
     /** 规则合法性校验：非空、无未知占位符、位数 1..10、日期/时间格式在白名单、表达式可解析、长度 ≤ 200。非法抛 IllegalArgumentException。 */
     public void validateRule(String rule) {

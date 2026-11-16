@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.agent.service.AgentGraphDebugService;
@@ -31,13 +32,37 @@ import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.jwt.JwtTokenProviderImpl;
 import com.sw.ck.security.spi.UserDetailsProvider;
 import com.sw.ck.security.support.PermissionService;
+import com.sw.ck.agent.mapper.AgentGraphDebugNodeMapper;
+import com.sw.ck.agent.mapper.AgentGraphDebugSessionMapper;
+import com.sw.ck.agent.mapper.AgentGraphDefMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
+import com.sw.ck.agent.mapper.AgentGraphSnapshotMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
+import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import com.sw.ck.agent.service.AgentGraphDefService;
+import com.sw.ck.agent.service.AgentGraphExecutionService;
+import com.sw.ck.agent.service.impl.AgentGraphDebugServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl;
+import com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl;
+import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
+import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DeptScopeProvider;
+
 import jakarta.servlet.Filter;
+
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -72,6 +97,7 @@ import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.HashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -754,8 +780,8 @@ class AgentGraphDebugSecurityIntegrationTest {
 
         @Bean
         public TenantLineInnerInterceptor tenantLineInnerInterceptor(LoginContextProvider loginContextProvider) {
-            return new TenantLineInnerInterceptor(new com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler(
-                    new com.sw.ck.common.config.mybatis.tenant.TenantProperties(), loginContextProvider));
+            return new TenantLineInnerInterceptor(new CommonTenantLineHandler(
+                    new TenantProperties(), loginContextProvider));
         }
 
         @Bean
@@ -768,7 +794,7 @@ class AgentGraphDebugSecurityIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource, CommonMetaObjectHandler metaObjectHandler, MybatisPlusInterceptor interceptor) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
@@ -790,20 +816,20 @@ class AgentGraphDebugSecurityIntegrationTest {
         }
 
         @Bean
-        public ObjectMapper objectMapper() { ObjectMapper om = new ObjectMapper(); om.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule()); om.disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS); return om; }
+        public ObjectMapper objectMapper() { ObjectMapper om = new ObjectMapper(); om.registerModule(new JavaTimeModule()); om.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS); return om; }
 
         @Bean
-        public com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
-                com.sw.ck.agent.mapper.AgentGraphSnapshotMapper snapshotMapper,
+        public AgentGraphSnapshotServiceImpl agentGraphSnapshotService(
+                AgentGraphSnapshotMapper snapshotMapper,
                 ObjectMapper objectMapper) {
-            return new com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
+            return new AgentGraphSnapshotServiceImpl(snapshotMapper, objectMapper);
         }
 
         @Bean
-        public com.sw.ck.agent.service.AgentGraphDefService agentGraphDefService(
+        public AgentGraphDefService agentGraphDefService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl snapshotService) {
-            return new com.sw.ck.agent.service.impl.AgentGraphDefServiceImpl(objectMapper, snapshotService);
+                AgentGraphSnapshotServiceImpl snapshotService) {
+            return new AgentGraphDefServiceImpl(objectMapper, snapshotService);
         }
 
         private static final String TEST_CIPHER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
@@ -820,23 +846,23 @@ class AgentGraphDebugSecurityIntegrationTest {
         @Bean
         public AgentGraphDebugService agentGraphDebugService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.AgentGraphDefMapper graphDefMapper,
-                com.sw.ck.agent.mapper.AgentGraphDebugSessionMapper sessionMapper,
-                com.sw.ck.agent.mapper.AgentGraphDebugNodeMapper debugNodeMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
+                AgentGraphDefMapper graphDefMapper,
+                AgentGraphDebugSessionMapper sessionMapper,
+                AgentGraphDebugNodeMapper debugNodeMapper,
+                AgentToolInternalConfigMapper internalToolMapper,
+                AgentToolExternalConfigMapper externalToolMapper,
                 AgentModelRuntimeService modelRuntimeService,
-                com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl snapshotService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new com.sw.ck.agent.service.impl.AgentGraphDebugServiceImpl(
+                DeptScopeProvider deptScopeProvider) {
+            return new AgentGraphDebugServiceImpl(
                     objectMapper, graphDefMapper, sessionMapper, debugNodeMapper,
                     internalToolMapper, externalToolMapper,
                     modelRuntimeService, snapshotService, loginContextProvider, deptScopeProvider);
         }
 
         @Bean
-        public com.sw.ck.common.datascope.DeptScopeProvider testDeptScopeProvider() { return deptId -> List.of(); }
+        public DeptScopeProvider testDeptScopeProvider() { return deptId -> List.of(); }
 
         @Bean
         public AgentGraphDebugController agentGraphDebugController(AgentGraphDebugService agentGraphDebugService) {
@@ -845,23 +871,23 @@ class AgentGraphDebugSecurityIntegrationTest {
 
         @Bean
         public AgentGraphDefController agentGraphDefController(
-                com.sw.ck.agent.service.AgentGraphDefService agentGraphDefService,
-                com.sw.ck.agent.service.AgentGraphExecutionService agentGraphExecutionService) {
+                AgentGraphDefService agentGraphDefService,
+                AgentGraphExecutionService agentGraphExecutionService) {
             return new AgentGraphDefController(agentGraphDefService, agentGraphExecutionService);
         }
 
         @Bean
-        public com.sw.ck.agent.service.AgentGraphExecutionService agentGraphExecutionService(
+        public AgentGraphExecutionService agentGraphExecutionService(
                 ObjectMapper objectMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper internalToolMapper,
-                com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper externalToolMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
-                com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper executionNodeMapper,
+                AgentToolInternalConfigMapper internalToolMapper,
+                AgentToolExternalConfigMapper externalToolMapper,
+                AgentGraphExecutionMapper executionMapper,
+                AgentGraphExecutionNodeMapper executionNodeMapper,
                 AgentModelRuntimeService modelRuntimeService,
-                com.sw.ck.agent.service.impl.AgentGraphSnapshotServiceImpl snapshotService,
+                AgentGraphSnapshotServiceImpl snapshotService,
                 LoginContextProvider loginContextProvider,
-                com.sw.ck.common.datascope.DeptScopeProvider deptScopeProvider) {
-            return new com.sw.ck.agent.service.impl.AgentGraphExecutionServiceImpl(
+                DeptScopeProvider deptScopeProvider) {
+            return new AgentGraphExecutionServiceImpl(
                     objectMapper, modelRuntimeService, snapshotService,
                     internalToolMapper, externalToolMapper,
                     executionMapper, executionNodeMapper,
@@ -908,14 +934,14 @@ class AgentGraphDebugSecurityIntegrationTest {
         @Bean
         @SuppressWarnings("unchecked")
         public LoginUserLoader loginUserLoader(UserDetailsProvider userDetailsProvider, LoginUserCacheService loginUserCacheService) {
-            org.springframework.beans.factory.ObjectProvider<UserDetailsProvider> provider = mock(org.springframework.beans.factory.ObjectProvider.class);
+            ObjectProvider<UserDetailsProvider> provider = mock(ObjectProvider.class);
             when(provider.getIfAvailable()).thenReturn(userDetailsProvider);
             return new LoginUserLoader(provider, loginUserCacheService);
         }
 
         @Bean
         public UserDetailsProvider userDetailsProvider() {
-            Map<Long, LoginUser> users = new java.util.HashMap<>();
+            Map<Long, LoginUser> users = new HashMap<>();
             LoginUser u1 = new LoginUser(); u1.setUserId(1L); u1.setTenantId(100L); u1.setUsername("user_none"); u1.setPermissions(List.of()); u1.setSuperAdmin(false); users.put(1L, u1);
             LoginUser u2 = new LoginUser(); u2.setUserId(2L); u2.setTenantId(100L); u2.setUsername("user_manage"); u2.setPermissions(List.of("agent:model:manage")); u2.setSuperAdmin(false); users.put(2L, u2);
             LoginUser u3 = new LoginUser(); u3.setUserId(3L); u3.setTenantId(100L); u3.setUsername("super_admin"); u3.setPermissions(List.of()); u3.setSuperAdmin(true); users.put(3L, u3);
@@ -938,7 +964,7 @@ class AgentGraphDebugSecurityIntegrationTest {
         @Bean
         public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, LoginUserLoader loginUserLoader, SecurityProperties securityProperties) {
             return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties,
-            org.mockito.Mockito.mock(com.sw.ck.security.cache.LoginUserCacheService.class));
+            Mockito.mock(LoginUserCacheService.class));
         }
 
         @Bean

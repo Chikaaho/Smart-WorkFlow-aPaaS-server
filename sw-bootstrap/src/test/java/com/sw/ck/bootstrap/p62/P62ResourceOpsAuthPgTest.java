@@ -1,22 +1,40 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpClient.Version;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpRequest.Builder;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,11 +69,11 @@ class P62ResourceOpsAuthPgTest {
     private static Path evidenceDir;
     private static int port;
 
-    private static final java.net.http.HttpClient HTTP = java.net.http.HttpClient.newBuilder()
-            .version(java.net.http.HttpClient.Version.HTTP_1_1).build();
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .version(Version.HTTP_1_1).build();
 
     private static final class EmbeddedPostgresHolder {
-        io.zonky.test.db.postgres.embedded.EmbeddedPostgres pg;
+        EmbeddedPostgres pg;
     }
 
     @BeforeAll
@@ -65,7 +83,7 @@ class P62ResourceOpsAuthPgTest {
         evidenceDir = Path.of(dir);
         Files.createDirectories(evidenceDir);
         pg = new EmbeddedPostgresHolder();
-        pg.pg = io.zonky.test.db.postgres.embedded.EmbeddedPostgres.builder().start();
+        pg.pg = EmbeddedPostgres.builder().start();
         Map<String, Object> props = new LinkedHashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
@@ -77,10 +95,10 @@ class P62ResourceOpsAuthPgTest {
         props.put("sw.security.jwt.secret", "p62-ra03-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", P62BudgetMeasurementPgTest.generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-ra03-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.security.debug-auth.enabled", "true");
         // 合同配置（RA01 同款）：启用检查核验的是「消费者可用性与池相容」的真实运行值，
         // 本测试环境必须先满足合同画像（池64/异步ON/批量开），否则启用被如实拒绝
@@ -89,22 +107,22 @@ class P62ResourceOpsAuthPgTest {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-ra03", props));
+                            new MapPropertySource("p62-ra03", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("ra03LoginContextProvider", provider);
                     context.addBeanFactoryPostProcessor(bf -> {
                         if (bf.containsBeanDefinition("loginUserCacheService")) {
-                            ((org.springframework.beans.factory.support.DefaultListableBeanFactory) bf)
+                            ((DefaultListableBeanFactory) bf)
                                     .setAllowBeanDefinitionOverriding(true);
-                            ((org.springframework.beans.factory.support.BeanDefinitionRegistry) bf)
+                            ((BeanDefinitionRegistry) bf)
                                     .registerBeanDefinition("loginUserCacheService",
-                                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                                            new RootBeanDefinition(
                                                     P62BudgetMeasurementPgTest.NoopLoginUserCacheService.class));
                         }
                     });
@@ -200,8 +218,8 @@ class P62ResourceOpsAuthPgTest {
         ev.append("recordedAt=").append(LocalDateTime.now().format(TS)).append("\nrunId=")
                 .append(runId).append("\n");
         Files.writeString(evidenceDir.resolve("manage-global-boundary.txt"), ev.toString(),
-                StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE_NEW,
-                java.nio.file.StandardOpenOption.WRITE);
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
         System.out.println("[P62-EV] ra03a2-b manage global boundary ok");
     }
 
@@ -344,7 +362,7 @@ class P62ResourceOpsAuthPgTest {
         ev.append("\nrecordedAt=").append(LocalDateTime.now().format(TS)).append("\nrunId=")
                 .append(runId).append("\n");
         Files.writeString(evidenceDir.resolve("auth-matrix.txt"), ev.toString(), StandardCharsets.UTF_8,
-                java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE);
+                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         System.out.println("[P62-EV] ra03 auth matrix ok");
     }
 
@@ -429,8 +447,8 @@ class P62ResourceOpsAuthPgTest {
         ev.append("recordedAt=").append(LocalDateTime.now().format(TS)).append("\nrunId=")
                 .append(runId).append("\n");
         Files.writeString(evidenceDir.resolve("tenant-isolation.txt"), ev.toString(),
-                StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE_NEW,
-                java.nio.file.StandardOpenOption.WRITE);
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
         System.out.println("[P62-EV] ra03a2 tenant isolation ok");
     }
 
@@ -530,19 +548,19 @@ class P62ResourceOpsAuthPgTest {
 
     private String doExchange(String method, String path, String bearer, String json) {
         try {
-            java.net.http.HttpRequest.Builder builder = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create("http://127.0.0.1:" + port + path))
-                    .timeout(java.time.Duration.ofSeconds(10))
+            Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create("http://127.0.0.1:" + port + path))
+                    .timeout(Duration.ofSeconds(10))
                     .header("Authorization", bearer);
             if ("POST".equals(method)) {
                 builder.header("Content-Type", "application/json")
-                        .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                        .POST(BodyPublishers.ofString(
                                 json == null ? "{}" : json, StandardCharsets.UTF_8));
             } else {
                 builder.GET();
             }
-            java.net.http.HttpResponse<String> response = HTTP.send(builder.build(),
-                    java.net.http.HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response = HTTP.send(builder.build(),
+                    BodyHandlers.ofString(StandardCharsets.UTF_8));
             return response.statusCode() + "|" + response.body();
         } catch (Exception e) {
             return "EXCEPTION|" + e.getClass().getSimpleName();

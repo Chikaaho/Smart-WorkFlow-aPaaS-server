@@ -1,12 +1,16 @@
 package com.sw.ck.form.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
@@ -19,10 +23,10 @@ import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,7 +37,9 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.Date;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单数据导入导出服务。
  *
@@ -54,9 +60,8 @@ import java.util.*;
  * </ul>
  */
 @Service
+@Log4j2
 public class FormImportExportService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormImportExportService.class);
 
     /** 导入行数硬上限（含） */
     public static final int MAX_IMPORT_ROWS = 500;
@@ -78,47 +83,29 @@ public class FormImportExportService {
 
     private static final String ROW_NO_LABEL = "数据行号";
 
-    private final FormDefService formDefService;
-    private final FormConfigMapper formConfigMapper;
-    private final FormDefMapper formDefMapper;
-    private final ObjectMapper objectMapper;
-    private final FormSubmitService formSubmitService;
-    private final FormFieldValidator formFieldValidator;
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private FormSubmitService formSubmitService;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
     private FormFieldEnrichmentService enrichment;
-    private final FormDataQueryService formDataQueryService;
-    private final TransactionTemplate transactionTemplate;
-    private final JdbcTemplate jdbcTemplate;
-    private final LoginContextProvider loginContextProvider;
-    private final DeptScopeProvider deptScopeProvider;
-
-    public FormImportExportService(FormDefService formDefService,
-                                   FormConfigMapper formConfigMapper,
-                                   FormDefMapper formDefMapper,
-                                   ObjectMapper objectMapper,
-                                   FormSubmitService formSubmitService,
-                                   FormFieldValidator formFieldValidator,
-                                   FormDataQueryService formDataQueryService,
-                                   TransactionTemplate transactionTemplate,
-                                   JdbcTemplate jdbcTemplate,
-                                   LoginContextProvider loginContextProvider,
-                                   DeptScopeProvider deptScopeProvider) {
-        this.formDefService = formDefService;
-        this.formConfigMapper = formConfigMapper;
-        this.formDefMapper = formDefMapper;
-        this.objectMapper = objectMapper;
-        this.formSubmitService = formSubmitService;
-        this.formFieldValidator = formFieldValidator;
-        this.formDataQueryService = formDataQueryService;
-        this.transactionTemplate = transactionTemplate;
-        this.jdbcTemplate = jdbcTemplate;
-        this.loginContextProvider = loginContextProvider;
-        this.deptScopeProvider = deptScopeProvider;
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setEnrichment(FormFieldEnrichmentService enrichment) {
-        this.enrichment = enrichment;
-    }
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    @Autowired
+    private DeptScopeProvider deptScopeProvider;
 
     // ==================== 字段元数据 ====================
 
@@ -649,7 +636,7 @@ public class FormImportExportService {
 
         // —— 租户 + 数据权限 + 筛选条件下的有界查询（单页硬上限 = 导出行数上限） ——
         DataScopeFilter scopeFilter = DataScopeFilter.resolve(loginContextProvider, deptScopeProvider);
-        com.sw.ck.common.page.PageResult<Map<String, Object>> queryResult =
+        PageResult<Map<String, Object>> queryResult =
                 formDataQueryService.queryFormData(formKey, queryRequest, scopeFilter, MAX_EXPORT_ROWS);
 
         List<Map<String, Object>> records = queryResult.getRecords();
@@ -929,7 +916,7 @@ public class FormImportExportService {
         };
     }
 
-    private static LocalDateTime dateToLocalDateTime(java.util.Date date) {
+    private static LocalDateTime dateToLocalDateTime(Date date) {
         return LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault());
     }
 
@@ -995,7 +982,7 @@ public class FormImportExportService {
             }
             case DATE -> {
                 // 统一以 ISO 文本导出，避免日期被读成纯数值
-                if (value instanceof java.util.Date d) {
+                if (value instanceof Date d) {
                     writeTextCell(cell, d.toInstant().atZone(ZoneId.systemDefault()).toLocalDate().toString());
                 } else if (value instanceof LocalDateTime ldt) {
                     writeTextCell(cell, ldt.toString());
@@ -1020,7 +1007,7 @@ public class FormImportExportService {
     private LoginUser requireLogin() {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         return loginUser;
     }
@@ -1056,7 +1043,7 @@ public class FormImportExportService {
 
     private String loadDefinitionJson(String formId) {
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );

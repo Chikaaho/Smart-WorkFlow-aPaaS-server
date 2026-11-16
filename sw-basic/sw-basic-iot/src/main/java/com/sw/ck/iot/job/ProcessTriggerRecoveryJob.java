@@ -6,8 +6,11 @@ import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.entity.IotProcessTrigger;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.alibaba.fastjson2.JSON;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -17,8 +20,8 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * IoT 流程触发恢复调度（Phase 4 可靠业务事件 —— IoT 触发 MUST_DELIVER）。
  *
@@ -35,9 +38,8 @@ import java.util.Objects;
  * </ol>
  */
 @Component
+@Log4j2
 public class ProcessTriggerRecoveryJob {
-
-    private static final Logger log = LoggerFactory.getLogger(ProcessTriggerRecoveryJob.class);
 
     /** 触发恢复的重试预算（含首次执行后的失败重试）。 */
     static final int MAX_RETRY = 5;
@@ -52,19 +54,19 @@ public class ProcessTriggerRecoveryJob {
     private static final String PROCESSING = "PROCESSING";
     private static final String FAILED = "FAILED";
 
-    private final IotProcessTriggerMapper triggerMapper;
-    private final DomainEventPublisher eventPublisher;
-    private final TransactionTemplate transactionTemplate;
-    private final TenantWorkAdmission tenantWorkAdmission;
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
+    @Autowired
+    private DomainEventPublisher eventPublisher;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    private TransactionTemplate transactionTemplate;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
-    public ProcessTriggerRecoveryJob(IotProcessTriggerMapper triggerMapper,
-                                     DomainEventPublisher eventPublisher,
-                                     PlatformTransactionManager transactionManager,
-                                     TenantWorkAdmission tenantWorkAdmission) {
-        this.triggerMapper = triggerMapper;
-        this.eventPublisher = eventPublisher;
+    @PostConstruct
+    void initTransactionTemplate() {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
-        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
     }
 
     @Scheduled(fixedDelayString = "${sw.iot.trigger.recovery.fixed-delay-ms:60000}")
@@ -91,7 +93,7 @@ public class ProcessTriggerRecoveryJob {
         List<IotProcessTrigger> stale;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             stale = triggerMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaQuery()
+                    Wrappers.<IotProcessTrigger>lambdaQuery()
                             .eq(IotProcessTrigger::getStatus, PROCESSING)
                             .le(IotProcessTrigger::getUpdateTime,
                                     LocalDateTime.now().minusMinutes(STALE_MINUTES))
@@ -100,7 +102,7 @@ public class ProcessTriggerRecoveryJob {
         int reclaimed = 0;
         for (IotProcessTrigger trigger : stale) {
             reclaimed += tenantWorkAdmission.claim(trigger.getTenantId(), () -> triggerMapper.update(null,
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
+                    Wrappers.<IotProcessTrigger>lambdaUpdate()
                             .set(IotProcessTrigger::getStatus, PENDING)
                             .eq(IotProcessTrigger::getId, trigger.getId())
                             .eq(IotProcessTrigger::getTenantId, trigger.getTenantId())
@@ -114,7 +116,7 @@ public class ProcessTriggerRecoveryJob {
     private List<IotProcessTrigger> findDue() {
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             return triggerMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaQuery()
+                    Wrappers.<IotProcessTrigger>lambdaQuery()
                             .eq(IotProcessTrigger::getDeleted, 0)
                             .in(IotProcessTrigger::getStatus, PENDING, FAILED)
                             // AGENT 的 FAILED 是执行终态（失败升级已承接），不得按流程重投；
@@ -145,7 +147,7 @@ public class ProcessTriggerRecoveryJob {
     private boolean claimSuspended(IotProcessTrigger trigger) {
         int nextRetry = (trigger.getRetryCount() == null ? 0 : trigger.getRetryCount()) + 1;
         int affected = tenantWorkAdmission.claim(trigger.getTenantId(), () -> triggerMapper.update(null,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
+                Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .set(IotProcessTrigger::getStatus, PROCESSING)
                         .set(IotProcessTrigger::getRetryCount, nextRetry)
                         .set(IotProcessTrigger::getNextRetryTime,
@@ -177,7 +179,7 @@ public class ProcessTriggerRecoveryJob {
                 Map<String, Object> formData = new LinkedHashMap<>();
                 if (trigger.getFormSnapshot() != null && !trigger.getFormSnapshot().isBlank()) {
                     try {
-                        formData = com.alibaba.fastjson2.JSON.parseObject(trigger.getFormSnapshot(), Map.class);
+                        formData = JSON.parseObject(trigger.getFormSnapshot(), Map.class);
                     } catch (Exception e) {
                         log.warn("触发快照解析失败，按空表单重投: triggerId={}", trigger.getId());
                     }

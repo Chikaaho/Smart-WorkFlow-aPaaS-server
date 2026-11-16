@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class I6G1aNotifyFailureBootTest {
 
     @Autowired
-    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private JdbcTemplate jdbc;
 
     @Autowired
     private I6NotifyRestartSupport.TestLoginContext login;

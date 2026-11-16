@@ -3,6 +3,9 @@ package com.sw.ck.bpm.process.service.impl;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.mapper.BpmFormBindingMapper;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
+import com.sw.ck.common.datascope.DataScopeType;
+import com.sw.ck.common.security.LoginContextProvider;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.mapper.MapperScannerConfigurer;
@@ -18,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -202,15 +206,15 @@ class BpmFormBindingServiceImplTest {
         // I5 fail-closed：测试种子与断言均在租户 0 语境；本测试上下文提供固定
         // 租户 0 的登录上下文（生产由 SecurityLoginContextProvider 从认证态读取）
         @Bean
-        public com.sw.ck.common.security.LoginContextProvider i5TenantZeroLoginContextProvider() {
-            return new com.sw.ck.common.security.LoginContextProvider() {
+        public LoginContextProvider i5TenantZeroLoginContextProvider() {
+            return new LoginContextProvider() {
                 @Override public Long getUserId() { return 0L; }
                 @Override public Long getTenantId() { return 0L; }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }

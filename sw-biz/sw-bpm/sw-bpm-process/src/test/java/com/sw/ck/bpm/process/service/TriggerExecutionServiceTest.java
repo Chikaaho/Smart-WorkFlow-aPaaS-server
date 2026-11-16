@@ -1,12 +1,15 @@
 package com.sw.ck.bpm.process.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.ActionConfig;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
+import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmInstance;
@@ -17,11 +20,15 @@ import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmTriggerExecMapper;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
+import com.sw.ck.bpm.process.queue.CommandFingerprint;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DuplicateKeyException;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -73,35 +80,35 @@ class TriggerExecutionServiceTest {
      * 脚本端口桩（引擎侧 GraalJS 不在 process 测试类路径——隔离门禁）：
      * 按脚本内容映射可判定结果。
      */
-    private com.sw.ck.bpm.api.script.BpmScriptEvaluatePort scriptPort() {
-        com.sw.ck.bpm.api.script.BpmScriptEvaluatePort port =
-                mock(com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.class);
+    private BpmScriptEvaluatePort scriptPort() {
+        BpmScriptEvaluatePort port =
+                mock(BpmScriptEvaluatePort.class);
         when(port.run(anyString(), any(), anyLong(), any())).thenAnswer(invocation -> {
             String script = invocation.getArgument(0);
             if (script.contains("writes:")) {
-                java.util.Map<String, Object> writes = new java.util.LinkedHashMap<>();
+                Map<String, Object> writes = new LinkedHashMap<>();
                 writes.put("flag", 5L);
-                return java.util.Optional.of(
-                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                return Optional.of(
+                        new ScriptOutcome(
                                 "OK", 1L, "NUMBER", null, 5L, writes));
             }
             if (script.contains("nonexistent()")) {
-                return java.util.Optional.of(
-                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                return Optional.of(
+                        new ScriptOutcome(
                                 "SCRIPT_ERROR", null, null, "引用错误: nonexistent is not defined", 5L));
             }
             if (script.contains("'X'")) {
-                return java.util.Optional.of(
-                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                return Optional.of(
+                        new ScriptOutcome(
                                 "OK", "X", "STRING", null, 5L));
             }
             if (script.contains("true")) {
-                return java.util.Optional.of(
-                        new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+                return Optional.of(
+                        new ScriptOutcome(
                                 "OK", Boolean.TRUE, "BOOLEAN", null, 5L));
             }
-            return java.util.Optional.of(
-                    new com.sw.ck.bpm.api.script.BpmScriptEvaluatePort.ScriptOutcome(
+            return Optional.of(
+                    new ScriptOutcome(
                             "OK", 1L, "NUMBER", null, 5L));
         });
         return port;
@@ -615,15 +622,15 @@ class TriggerExecutionServiceTest {
         when(bpmTaskFacade.queryByProcessInstance("pi-1")).thenReturn(Optional.of(List.of()));
         when(actionRefMapper.selectOne(any())).thenReturn(null);
         // 首项：异载荷冲突；其余：同载荷幂等
-        com.sw.ck.bpm.process.queue.CommandEnvelope conflicting =
-                new com.sw.ck.bpm.process.queue.CommandEnvelope();
+        CommandEnvelope conflicting =
+                new CommandEnvelope();
         conflicting.setPayload("{\"data\":{\"owner\":\"999\"}}");
         conflicting.setPayloadFingerprint(
-                com.sw.ck.bpm.process.queue.CommandFingerprint.of(conflicting.getPayload()));
+                CommandFingerprint.of(conflicting.getPayload()));
         when(commandQueue.findByKey(any(), anyString()))
                 .thenReturn(Optional.of(conflicting));
         when(commandQueue.enqueue(any()))
-                .thenThrow(new org.springframework.dao.DuplicateKeyException("dup"))
+                .thenThrow(new DuplicateKeyException("dup"))
                 .thenReturn(401L, 402L);
 
         service.onTaskActionCompleted(instance, task("node_qc"), ApprovalAction.APPROVE);

@@ -8,14 +8,21 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.event.FormSubmittedEvent;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.api.port.FlowStartPort;
 import com.sw.ck.form.dynamic.DynamicTableManager;
 import com.sw.ck.form.dynamic.FieldSpec;
 import com.sw.ck.form.entity.*;
+import com.sw.ck.form.entity.FormBaseEntity;
+import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormSnapshotMapper;
@@ -25,6 +32,9 @@ import com.sw.ck.form.service.impl.FormDefServiceImpl;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
+import com.sw.ck.system.api.dict.DictItemDTO;
+import com.sw.ck.system.api.dict.DictTypeDetailDTO;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -40,11 +50,19 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.context.event.EventListener;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.ApplicationEventPublisher;
 
 import javax.sql.DataSource;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -92,10 +110,10 @@ class FormSubmitServiceTest {
     private ObjectMapper objectMapper;
 
     /** 测试中创建的动态宽表名，在 @AfterEach 中清理 */
-    private final java.util.ArrayList<String> createdTables = new java.util.ArrayList<>();
+    private final ArrayList<String> createdTables = new ArrayList<>();
 
     /** 测试中创建的 form ID，在 @AfterEach 中清理 */
-    private final java.util.ArrayList<String> createdFormIds = new java.util.ArrayList<>();
+    private final ArrayList<String> createdFormIds = new ArrayList<>();
 
     /** 默认测试用户 */
     private static final Long TEST_USER_ID = 1L;
@@ -104,11 +122,11 @@ class FormSubmitServiceTest {
     @BeforeEach
     void setUp() {
         // I5：租户归属改由登录态填充；测试种子统一落在租户 0 上下文
-        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
-            com.sw.ck.security.holder.LoginUser i5TenantZeroSetup = new com.sw.ck.security.holder.LoginUser();
+        if (LoginUserHolder.get() == null) {
+            LoginUser i5TenantZeroSetup = new LoginUser();
             i5TenantZeroSetup.setUserId(0L);
             i5TenantZeroSetup.setTenantId(0L);
-            com.sw.ck.security.holder.LoginUserHolder.set(i5TenantZeroSetup);
+            LoginUserHolder.set(i5TenantZeroSetup);
         }
         createMetadataTables();
         // 设置登录用户上下文
@@ -764,7 +782,7 @@ class FormSubmitServiceTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             MybatisSqlSessionFactoryBean factory = new MybatisSqlSessionFactoryBean();
             factory.setDataSource(dataSource);
             factory.setTypeAliasesPackage("com.sw.ck.form.entity");
@@ -788,19 +806,19 @@ class FormSubmitServiceTest {
 
             // I5：租户归属改由 MetaObjectHandler 从登录态填充（不再写死 0L），
             // 测试上下文注册同一填充器与登录态读取入口（与生产 CommonMetaObjectHandler 同源）
-            com.sw.ck.common.security.LoginContextProvider loginContextProvider =
-                    new com.sw.ck.common.security.LoginContextProvider() {
+            LoginContextProvider loginContextProvider =
+                    new LoginContextProvider() {
                         @Override
                         public Long getUserId() {
-                            com.sw.ck.security.holder.LoginUser user =
-                                    com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser user =
+                                    LoginUserHolder.get();
                             return user != null ? user.getUserId() : null;
                         }
 
                         @Override
                         public Long getTenantId() {
-                            com.sw.ck.security.holder.LoginUser user =
-                                    com.sw.ck.security.holder.LoginUserHolder.get();
+                            LoginUser user =
+                                    LoginUserHolder.get();
                             return user != null ? user.getTenantId() : null;
                         }
 
@@ -810,13 +828,13 @@ class FormSubmitServiceTest {
                         }
 
                         @Override
-                        public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                            return com.sw.ck.common.datascope.DataScopeType.ALL;
+                        public DataScopeType getDataScopeType() {
+                            return DataScopeType.ALL;
                         }
 
                         @Override
-                        public java.util.Set<Long> getCustomDeptIds() {
-                            return java.util.Set.of();
+                        public Set<Long> getCustomDeptIds() {
+                            return Set.of();
                         }
 
                         @Override
@@ -824,12 +842,12 @@ class FormSubmitServiceTest {
                             return false;
                         }
                     };
-            com.sw.ck.common.config.mybatis.CommonMetaObjectHandler metaObjectHandler =
-                    new com.sw.ck.common.config.mybatis.CommonMetaObjectHandler(loginContextProvider);
+            CommonMetaObjectHandler metaObjectHandler =
+                    new CommonMetaObjectHandler(loginContextProvider);
             metaObjectHandler.setFormIdFiller(meta -> {
                 Object original = meta.getOriginalObject();
-                if (original instanceof com.sw.ck.form.entity.FormBaseEntity f && f.getId() == null) {
-                    f.setId(new com.sw.ck.form.entity.FormIdGenerator().generate());
+                if (original instanceof FormBaseEntity f && f.getId() == null) {
+                    f.setId(new FormIdGenerator().generate());
                 }
             });
             globalConfig.setMetaObjectHandler(metaObjectHandler);
@@ -875,7 +893,7 @@ class FormSubmitServiceTest {
                 }
 
                 @Override
-                public Optional<List<com.sw.ck.system.api.dict.DictItemDTO>> listByType(String dictType) {
+                public Optional<List<DictItemDTO>> listByType(String dictType) {
                     if (dictType == null || dictType.isBlank()) {
                         return Optional.empty();
                     }
@@ -883,10 +901,10 @@ class FormSubmitServiceTest {
                 }
 
                 @Override
-                public Optional<Map<String, com.sw.ck.system.api.dict.DictTypeDetailDTO>> findDictTypeDetails(
-                        java.util.Collection<String> codes) {
+                public Optional<Map<String, DictTypeDetailDTO>> findDictTypeDetails(
+                        Collection<String> codes) {
                     return codes == null || codes.isEmpty()
-                            ? Optional.empty() : Optional.of(java.util.Map.of());
+                            ? Optional.empty() : Optional.of(Map.of());
                 }
 
                 @Override
@@ -897,7 +915,7 @@ class FormSubmitServiceTest {
                 @Override
                 public Optional<Boolean> createDictTypeForImport(String code, String name,
                                                                  Integer status, String description,
-                                                                 java.util.List<com.sw.ck.system.api.dict.DictItemDTO> items) {
+                                                                 List<DictItemDTO> items) {
                     return Optional.of(false);
                 }
             };
@@ -921,14 +939,14 @@ class FormSubmitServiceTest {
             return new FormSubmitService(formDefMapper, formTraceMapper,
                     dynamicTableManager, new FormIdGenerator(), objectMapper, jdbcTemplate,
                     dictFacade, eventPublisher, Optional.empty(), formFieldValidator,
-                    new org.springframework.beans.factory.ObjectProvider<com.sw.ck.form.api.port.FlowStartPort>() {
-                @Override public com.sw.ck.form.api.port.FlowStartPort getIfAvailable() { return null; }
+                    new ObjectProvider<FlowStartPort>() {
+                @Override public FlowStartPort getIfAvailable() { return null; }
             });
         }
 
         @Bean
         public DomainEventPublisher domainEventPublisher(
-                org.springframework.context.ApplicationEventPublisher delegate) {
+                ApplicationEventPublisher delegate) {
             return new DomainEventPublisher(delegate);
         }
 

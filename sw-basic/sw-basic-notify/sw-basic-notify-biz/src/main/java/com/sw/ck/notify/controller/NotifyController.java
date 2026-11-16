@@ -1,5 +1,7 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
@@ -16,13 +18,15 @@ import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.service.NotifyMessageService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 通知消息接收侧控制器（M05 Step 3 — 第四环闭合）。
  * <p>
@@ -44,17 +48,13 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/notify/messages")
+@Log4j2
 public class NotifyController {
 
-    private static final Logger log = LoggerFactory.getLogger(NotifyController.class);
-
-    private final NotifyMessageService notifyMessageService;
-    private final NotifyFacade notifyFacade;
-
-    public NotifyController(NotifyMessageService notifyMessageService, NotifyFacade notifyFacade) {
-        this.notifyMessageService = notifyMessageService;
-        this.notifyFacade = notifyFacade;
-    }
+    @Autowired
+    private NotifyMessageService notifyMessageService;
+    @Autowired
+    private NotifyFacade notifyFacade;
 
     /**
      * 当前用户的通知列表（支持过滤）。
@@ -192,13 +192,13 @@ public class NotifyController {
         }
         int count = notifyMessageService.resolveCount(req);
         var loginUser = LoginUserHolder.get();
-        String batchKey = java.util.UUID.randomUUID().toString();
+        String batchKey = UUID.randomUUID().toString();
         int delivered = 0;
         int processing = 0;
         // 与站内信批量共用同一判定：请求中被丢弃的对象进入失败明细，
         // 两条路由的「总量 = 成功 + 失败 + 处理中」对照同一个请求集合。
         List<NotifyBatchItemFailure> failures =
-                new java.util.ArrayList<>(notifyMessageService.invalidRecipientFailures(req));
+                new ArrayList<>(notifyMessageService.invalidRecipientFailures(req));
         for (Long recipientId : notifyMessageService.resolveRecipientUserIds(req)) {
             NotifySendResult result = notifyFacade.send(NotifySendRequest.builder()
                     .channel(channel)

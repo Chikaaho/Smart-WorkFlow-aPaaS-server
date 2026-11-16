@@ -7,19 +7,29 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.system.security.AuthErrorCode;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.NoSuchMessageException;
 import org.springframework.context.support.ResourceBundleMessageSource;
+
 import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -112,9 +122,9 @@ class BilingualMessageContractTest {
             assertThat(en).as("%s 的 en-US 文案不得为空", key).isNotBlank();
             assertThat(zh).as("%s 的 zh-CN 文案不得是键名占位", key).doesNotContain("error.");
             assertThat(en).as("%s 的 en-US 文案不得是键名占位", key).doesNotContain("error.");
-            assertThat(en.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            assertThat(en.getBytes(StandardCharsets.UTF_8))
                     .as("%s 的 en-US 文案不应是中文字节（避免机器翻译占位）", key)
-                    .isNotEqualTo(zh.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    .isNotEqualTo(zh.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -123,7 +133,7 @@ class BilingualMessageContractTest {
     void missingKey_shouldFallBackToEnumDefault() {
         bindWithEventRef("en-US");
         // 未来新增枚举但尚未收录目录时，必须回退到枚举缺省文案而不是显示键名
-        com.sw.ck.common.exception.ErrorCode futureKey = new com.sw.ck.common.exception.ErrorCode() {
+        ErrorCode futureKey = new ErrorCode() {
             @Override
             public int getCode() {
                 return 4999;
@@ -177,7 +187,7 @@ class BilingualMessageContractTest {
                 .isEqualTo(AuthErrorCode.CAPTCHA_ERROR.getMessage());
 
         R<Void> forbidden = handler.handleAuthorizationDenied(
-                new org.springframework.security.authorization.AuthorizationDeniedException("x"));
+                new AuthorizationDeniedException("x"));
         assertThat(forbidden.getMsg()).isEqualTo(CommonErrorCode.FORBIDDEN.getMessage());
     }
 
@@ -186,15 +196,15 @@ class BilingualMessageContractTest {
     void catalog_shouldCoverEveryEnumErrorKeyInBothLanguages() {
         ResourceBundleMessageSource source = source();
         List<ErrorCode> all = new ArrayList<>();
-        all.addAll(List.of(com.sw.ck.common.exception.CommonErrorCode.values()));
+        all.addAll(List.of(CommonErrorCode.values()));
         all.addAll(List.of(AuthErrorCode.values()));
-        all.addAll(List.of(com.sw.ck.form.api.exception.FormErrorCode.values()));
-        all.addAll(List.of(com.sw.ck.bpm.api.exception.BpmErrorCode.values()));
-        all.addAll(List.of(com.sw.ck.openapi.api.exception.OpenApiErrorCode.values()));
+        all.addAll(List.of(FormErrorCode.values()));
+        all.addAll(List.of(BpmErrorCode.values()));
+        all.addAll(List.of(OpenApiErrorCode.values()));
 
         List<String> missing = new ArrayList<>();
-        Set<String> zhKeys = new java.util.TreeSet<>();
-        Set<String> enKeys = new java.util.TreeSet<>();
+        Set<String> zhKeys = new TreeSet<>();
+        Set<String> enKeys = new TreeSet<>();
 
         for (ErrorCode code : all) {
             String key = "error." + code.getErrorKey();
@@ -202,13 +212,13 @@ class BilingualMessageContractTest {
             String en;
             try {
                 zh = source.getMessage(key, null, Locale.SIMPLIFIED_CHINESE);
-            } catch (org.springframework.context.NoSuchMessageException e) {
+            } catch (NoSuchMessageException e) {
                 missing.add(code.getErrorKey() + " 缺 zh-CN");
                 continue;
             }
             try {
                 en = source.getMessage(key, null, Locale.US);
-            } catch (org.springframework.context.NoSuchMessageException e) {
+            } catch (NoSuchMessageException e) {
                 missing.add(code.getErrorKey() + " 缺 en-US");
                 continue;
             }
@@ -288,27 +298,27 @@ class BilingualMessageContractTest {
         // 代表性修订键经真实统一异常出口：机器契约不变，仅文案更新
         bindAcceptLanguage("zh-CN");
         R<Void> orphan = handler().handleBaseException(
-                new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.GRAPH_ORPHAN_NODE));
+                new BaseException(BpmErrorCode.GRAPH_ORPHAN_NODE));
         assertThat(orphan.getCode()).as("数值码不随文案修订变化").isEqualTo(2005);
         assertThat(orphan.getErrorKey()).as("语义键不随文案修订变化").isEqualTo("bpm.graph_orphan_node");
         assertThat(orphan.getMsg()).isEqualTo("存在未与流程连接的节点，请连接或删除该节点");
 
         R<Void> filterOp = handler().handleBaseException(
-                new BaseException(com.sw.ck.form.api.exception.FormErrorCode.QUERY_FILTER_OP_NOT_SUPPORTED));
+                new BaseException(FormErrorCode.QUERY_FILTER_OP_NOT_SUPPORTED));
         assertThat(filterOp.getCode()).isEqualTo(1504);
         assertThat(filterOp.getErrorKey()).isEqualTo("form.query_filter_op_not_supported");
         assertThat(filterOp.getMsg()).isEqualTo("暂不支持该筛选方式，请调整筛选条件后重试");
 
         bindAcceptLanguage("en-US");
         R<Void> tableExists = handler().handleBaseException(
-                new BaseException(com.sw.ck.form.api.exception.FormErrorCode.TABLE_ALREADY_EXISTS));
+                new BaseException(FormErrorCode.TABLE_ALREADY_EXISTS));
         assertThat(tableExists.getCode()).isEqualTo(1202);
         assertThat(tableExists.getErrorKey()).isEqualTo("form.table_already_exists");
         assertThat(tableExists.getMsg())
                 .isEqualTo("The data table for this form already exists. Please refresh and try again.");
 
         R<Void> orphanEn = handler().handleBaseException(
-                new BaseException(com.sw.ck.bpm.api.exception.BpmErrorCode.GRAPH_ORPHAN_NODE));
+                new BaseException(BpmErrorCode.GRAPH_ORPHAN_NODE));
         assertThat(orphanEn.getMsg()).isEqualTo("A node is not connected to the rest of the flow.");
     }
 }

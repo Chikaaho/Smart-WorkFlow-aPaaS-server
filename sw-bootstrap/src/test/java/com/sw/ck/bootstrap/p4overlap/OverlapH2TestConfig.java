@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
 import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
 import com.sw.ck.bpm.process.service.impl.BpmCommandServiceImpl;
@@ -16,16 +17,30 @@ import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.entity.BpmCommand;
+import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
+import com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper;
+import com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper;
+import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
+import com.sw.ck.bpm.process.service.TenantRateBuckets;
+import com.sw.ck.common.datascope.DataScopeType;
+
+import org.apache.ibatis.logging.stdout.StdOutImpl;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.SQLException;
+import java.util.Set;
 import javax.sql.DataSource;
 
 /**
@@ -57,7 +72,7 @@ public class OverlapH2TestConfig {
                         menu_type int not null default 2, path varchar(200), component varchar(200),
                         permission varchar(128), icon varchar(64), sort int not null default 0)
                     """);
-        } catch (java.sql.SQLException e) {
+        } catch (SQLException e) {
             throw new IllegalStateException("预置 sys_menu 失败", e);
         }
         Flyway.configure()
@@ -75,8 +90,8 @@ public class OverlapH2TestConfig {
     }
 
     @Bean
-    public org.springframework.jdbc.core.JdbcTemplate jdbcTemplate(DataSource dataSource) {
-        return new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
     }
 
     @Bean
@@ -105,13 +120,13 @@ public class OverlapH2TestConfig {
             }
 
             @Override
-            public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                return com.sw.ck.common.datascope.DataScopeType.SELF;
+            public DataScopeType getDataScopeType() {
+                return DataScopeType.SELF;
             }
 
             @Override
-            public java.util.Set<Long> getCustomDeptIds() {
-                return java.util.Set.of();
+            public Set<Long> getCustomDeptIds() {
+                return Set.of();
             }
 
             @Override
@@ -139,7 +154,7 @@ public class OverlapH2TestConfig {
 
         MybatisConfiguration configuration = new MybatisConfiguration();
         configuration.setMapUnderscoreToCamelCase(true);
-        configuration.setLogImpl(org.apache.ibatis.logging.stdout.StdOutImpl.class);
+        configuration.setLogImpl(StdOutImpl.class);
 
         GlobalConfig globalConfig = new GlobalConfig();
         GlobalConfig.DbConfig dbConfig = new GlobalConfig.DbConfig();
@@ -167,29 +182,29 @@ public class OverlapH2TestConfig {
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.ResourceAdmissionService resourceAdmissionService(
-            com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper policyMapper,
-            com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper usageMapper,
-            com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper rejectLogMapper,
-            org.springframework.transaction.PlatformTransactionManager txManager) {
-        return new com.sw.ck.bpm.process.service.ResourceAdmissionService(policyMapper, usageMapper,
-                rejectLogMapper, new com.sw.ck.bpm.process.service.TenantRateBuckets(), txManager);
+    public ResourceAdmissionService resourceAdmissionService(
+            BpmResourcePolicyMapper policyMapper,
+            BpmResourceUsageMapper usageMapper,
+            BpmResourceRejectLogMapper rejectLogMapper,
+            PlatformTransactionManager txManager) {
+        return new ResourceAdmissionService(policyMapper, usageMapper,
+                rejectLogMapper, new TenantRateBuckets(), txManager);
     }
 
     @Bean
-    public com.sw.ck.bpm.process.service.ResourceReleaseService resourceReleaseService(
-            com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
+    public ResourceReleaseService resourceReleaseService(
+            ResourceAdmissionService admissionService,
             BpmCommandServiceImpl commandService,
-            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
-        return new com.sw.ck.bpm.process.service.ResourceReleaseService(admissionService,
+            JdbcTemplate jdbcTemplate) {
+        return new ResourceReleaseService(admissionService,
                 commandService, jdbcTemplate);
     }
 
     @Bean
     public PersistentBpmCommandQueue bpmCommandQueue(BpmCommandServiceImpl commandService,
-                                                     com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper,
-                                                     com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                                     com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+                                                     BpmCommandEffectMapper effectMapper,
+                                                     ResourceReleaseService releaseService,
+                                                     ResourceAdmissionService admissionService) {
         return new StaleReadWindowQueue(commandService, effectMapper, releaseService, admissionService);
     }
 
@@ -200,19 +215,19 @@ public class OverlapH2TestConfig {
      */
     public static class StaleReadWindowQueue extends PersistentBpmCommandQueue {
 
-        public volatile com.sw.ck.bpm.process.entity.BpmCommand staleSnapshot;
+        public volatile BpmCommand staleSnapshot;
 
         public StaleReadWindowQueue(BpmCommandServiceImpl commandService,
-                                    com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper effectMapper,
-                                    com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                    com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+                                    BpmCommandEffectMapper effectMapper,
+                                    ResourceReleaseService releaseService,
+                                    ResourceAdmissionService admissionService) {
             super(commandService, effectMapper, releaseService, admissionService,
                     (tenantId, claim) -> claim.getAsInt());
         }
 
         @Override
-        protected com.sw.ck.bpm.process.entity.BpmCommand readCommandForFailure(Long commandId) {
-            com.sw.ck.bpm.process.entity.BpmCommand snapshot = staleSnapshot;
+        protected BpmCommand readCommandForFailure(Long commandId) {
+            BpmCommand snapshot = staleSnapshot;
             return snapshot != null ? snapshot : super.readCommandForFailure(commandId);
         }
     }

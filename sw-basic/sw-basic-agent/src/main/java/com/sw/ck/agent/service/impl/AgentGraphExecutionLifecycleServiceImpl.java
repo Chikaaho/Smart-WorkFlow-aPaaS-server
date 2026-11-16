@@ -1,6 +1,8 @@
 package com.sw.ck.agent.service.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
@@ -23,9 +25,22 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.agent.entity.AgentGraphExecution;
+import com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -34,6 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,17 +58,17 @@ import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import lombok.extern.log4j.Log4j2;
 @Service
+@Log4j2
 public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecutionLifecycleService {
-    private static final org.slf4j.Logger log =
-            org.slf4j.LoggerFactory.getLogger(AgentGraphExecutionLifecycleServiceImpl.class);
-
     /** 结构化入参/出参 JSON 编解码（inputs_json / outputs_json 列）。 */
-    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
-            new com.fasterxml.jackson.databind.ObjectMapper();
+    private static final ObjectMapper JSON =
+            new ObjectMapper();
 
     static final String QUEUED = "QUEUED";
     static final String RUNNING = "RUNNING";
@@ -63,52 +79,44 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     static final String INTERRUPTED = "INTERRUPTED";
     static final String WAITING_HUMAN = "WAITING_HUMAN";
 
-    private final AgentGraphExecutionRequestMapper requestMapper;
-    private final AgentGraphExecutionEventMapper eventMapper;
-    private final AgentGraphHumanTaskMapper humanTaskMapper;
-    private final com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper;
-    private final AgentGraphDefMapper graphDefMapper;
-    private final AgentGraphExecutionService executionService;
-    private final LoginContextProvider loginContext;
-    private final TransactionTemplate transactionTemplate;
+    @Autowired
+    private AgentGraphExecutionRequestMapper requestMapper;
+    @Autowired
+    private AgentGraphExecutionEventMapper eventMapper;
+    @Autowired
+    private AgentGraphHumanTaskMapper humanTaskMapper;
+    @Autowired
+    private AgentGraphExecutionMapper executionMapper;
+    @Autowired
+    private AgentGraphDefMapper graphDefMapper;
+    @Autowired
+    private AgentGraphExecutionService executionService;
+    @Autowired
+    private LoginContextProvider loginContext;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    private TransactionTemplate transactionTemplate;
     /** 受理专用模板（REQUIRES_NEW：受理先独立提交再派发，跨模块触发可见性保证）。 */
-    private final TransactionTemplate acceptTemplate;
-    private final ThreadPoolExecutor executor;
+    private TransactionTemplate acceptTemplate;
+    private ThreadPoolExecutor executor;
     private final ConcurrentHashMap<Long, Thread> runningThreads = new ConcurrentHashMap<>();
-    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+    @Value("${sw.agent.execution.workers:4}")
+    private int workers = 4;
+    @Value("${sw.agent.execution.queue-capacity:64}")
+    private int queueCapacity = 64;
 
-    public AgentGraphExecutionLifecycleServiceImpl(
-            AgentGraphExecutionRequestMapper requestMapper,
-            AgentGraphExecutionEventMapper eventMapper,
-            AgentGraphHumanTaskMapper humanTaskMapper,
-            com.sw.ck.agent.mapper.AgentGraphExecutionMapper executionMapper,
-            AgentGraphDefMapper graphDefMapper,
-            AgentGraphExecutionService executionService,
-            LoginContextProvider loginContext,
-            PlatformTransactionManager transactionManager,
-            org.springframework.context.ApplicationEventPublisher eventPublisher,
-            @Value("${sw.agent.execution.workers:4}") int workers,
-            @Value("${sw.agent.execution.queue-capacity:64}") int queueCapacity) {
-        this.requestMapper = requestMapper;
-        this.eventMapper = eventMapper;
-        this.humanTaskMapper = humanTaskMapper;
-        this.executionMapper = executionMapper;
-        this.graphDefMapper = graphDefMapper;
-        this.executionService = executionService;
-        this.loginContext = loginContext;
+    @PostConstruct
+    void recover() {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.acceptTemplate = new TransactionTemplate(transactionManager);
         this.acceptTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.eventPublisher = eventPublisher;
         int boundedWorkers = Math.max(1, Math.min(workers, 16));
         int boundedCapacity = Math.max(1, Math.min(queueCapacity, 1000));
         this.executor = new ThreadPoolExecutor(boundedWorkers, boundedWorkers, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(boundedCapacity), Thread.ofVirtual().name("agent-graph-exec-", 0).factory(),
                 new ThreadPoolExecutor.AbortPolicy());
-    }
-
-    @PostConstruct
-    void recover() {
         if (!lifecycleTableAvailable()) return;
         requestMapper.update(null, Wrappers.<AgentGraphExecutionRequest>lambdaUpdate()
                 .in(AgentGraphExecutionRequest::getStatus, RUNNING, CANCEL_REQUESTED)
@@ -134,7 +142,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             requestMapper.selectCount(Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
                     .eq(AgentGraphExecutionRequest::getId, -1L));
             return true;
-        } catch (org.springframework.dao.DataAccessException missingInReducedTestContext) {
+        } catch (DataAccessException missingInReducedTestContext) {
             return false;
         }
     }
@@ -246,7 +254,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     private void dispatch(Long executionId, LoginUser loginUser) {
         try {
             executor.execute(() -> run(executionId, loginUser));
-        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+        } catch (RejectedExecutionException rejected) {
             requestMapper.update(null, Wrappers.<AgentGraphExecutionRequest>lambdaUpdate()
                     .eq(AgentGraphExecutionRequest::getId, executionId)
                     .eq(AgentGraphExecutionRequest::getStatus, QUEUED)
@@ -379,7 +387,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         }
         try {
             Map<String, Object> parsed = JSON.readValue(task.getResultJson(),
-                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {
+                    new TypeReference<LinkedHashMap<String, Object>>() {
                     });
             String decision = parsed.get("decision") == null
                     ? null : String.valueOf(parsed.get("decision"));
@@ -499,8 +507,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     public void scanHumanTaskTimeouts() {
         // 调度线程无登录身份：跨租户扫描时显式挂起租户拦截器，逐任务恢复所属租户上下文
         List<AgentGraphHumanTask> pending;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             pending = humanTaskMapper.selectList(
                     Wrappers.<AgentGraphHumanTask>lambdaQuery()
                             .eq(AgentGraphHumanTask::getStatus, "PENDING")
@@ -544,7 +552,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         if (payloadJson == null || payloadJson.isBlank()) return null;
         try {
             Map<String, Object> parsed = JSON.readValue(payloadJson,
-                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {
+                    new TypeReference<LinkedHashMap<String, Object>>() {
                     });
             Object value = parsed.get("timeoutSeconds");
             if (value instanceof Number number) return number.intValue();
@@ -578,7 +586,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         if (task.getPayloadJson() != null) {
             try {
                 Map<String, Object> payload = JSON.readValue(task.getPayloadJson(),
-                        new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {
+                        new TypeReference<LinkedHashMap<String, Object>>() {
                         });
                 dto.setInstructions(payload.get("instructions") == null
                         ? null : String.valueOf(payload.get("instructions")));
@@ -596,7 +604,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> castMapList(Object raw) {
         if (!(raw instanceof List<?> list)) return List.of();
-        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        List<Map<String, Object>> result = new ArrayList<>();
         for (Object item : list) {
             if (item instanceof Map<?, ?> map) {
                 Map<String, Object> copy = new LinkedHashMap<>();
@@ -614,7 +622,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         if (value == null) return null;
         try {
             return JSON.writeValueAsString(value);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (JsonProcessingException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "结构化数据序列化失败");
         }
     }
@@ -648,7 +656,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             return;
         }
         try {
-            com.sw.ck.agent.entity.AgentGraphExecution execution =
+            AgentGraphExecution execution =
                     executionMapper.selectById(resultExecutionId);
             if (execution != null && !isTerminalExecutionStatus(execution.getStatus())) {
                 execution.setStatus(CANCELLED);
@@ -672,11 +680,11 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             return;
         }
         try {
-            List<com.sw.ck.agent.entity.AgentGraphExecution> waitingChildren = executionMapper.selectList(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<com.sw.ck.agent.entity.AgentGraphExecution>lambdaQuery()
-                            .eq(com.sw.ck.agent.entity.AgentGraphExecution::getParentExecutionId, resultExecutionId)
-                            .eq(com.sw.ck.agent.entity.AgentGraphExecution::getStatus, WAITING_HUMAN));
-            for (com.sw.ck.agent.entity.AgentGraphExecution child : waitingChildren) {
+            List<AgentGraphExecution> waitingChildren = executionMapper.selectList(
+                    Wrappers.<AgentGraphExecution>lambdaQuery()
+                            .eq(AgentGraphExecution::getParentExecutionId, resultExecutionId)
+                            .eq(AgentGraphExecution::getStatus, WAITING_HUMAN));
+            for (AgentGraphExecution child : waitingChildren) {
                 humanTaskMapper.cancelPending(child.getId());
                 child.setStatus(CANCELLED);
                 executionMapper.updateById(child);
@@ -694,7 +702,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             return;
         }
         try {
-            eventPublisher.publishEvent(new com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent(
+            eventPublisher.publishEvent(new AgentGraphExecutionTerminalEvent(
                     terminal.getId(), terminal.getGraphDefId(), terminal.getTenantId(),
                     terminal.getCreateBy() == null ? null : String.valueOf(terminal.getCreateBy()),
                     terminal.getStatus(), terminal.getErrorCategory(), terminal.getErrorMessage()));
@@ -706,7 +714,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     }
 
     private void appendEvent(AgentGraphExecutionRequest request, String type, String nodeId, String payload) {
-        eventMapper.insertNext(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(), request.getTenantId(),
+        eventMapper.insertNext(IdWorker.getId(), request.getTenantId(),
                 String.valueOf(request.getCreateBy()), request.getId(), type, nodeId, payload);
     }
 
@@ -793,7 +801,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         if (map == null || map.isEmpty()) return null;
         try {
             return JSON.writeValueAsString(new TreeMap<>(map));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (JsonProcessingException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "入参序列化失败");
         }
     }
@@ -803,7 +811,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         if (json == null || json.isBlank()) return Map.of();
         try {
             Map<String, String> parsed = JSON.readValue(json,
-                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, String>>() {
+                    new TypeReference<LinkedHashMap<String, String>>() {
                     });
             return parsed == null ? Map.of() : parsed;
         } catch (Exception malformed) {

@@ -1,7 +1,9 @@
 package com.sw.ck.bpm.process.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.i18n.LocalizedMessages;
+
 import org.springframework.context.support.ResourceBundleMessageSource;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -16,16 +18,27 @@ import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
+import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
+import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
+import com.sw.ck.bpm.process.entity.BpmTaskFormData;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+import org.assertj.core.api.Assertions;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -58,15 +71,15 @@ class NodeFormDataServiceTest {
 
     @BeforeEach
     void setUpTenant() {
-        com.sw.ck.security.holder.LoginUser loginUser = new com.sw.ck.security.holder.LoginUser();
+        LoginUser loginUser = new LoginUser();
         loginUser.setUserId(2L);
         loginUser.setTenantId(9L);
-        com.sw.ck.security.holder.LoginUserHolder.set(loginUser);
+        LoginUserHolder.set(loginUser);
     }
 
     @AfterEach
     void clearTenant() {
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
     }
 
     private static final String QC_DEFINITION = "{\"fields\":["
@@ -111,7 +124,7 @@ class NodeFormDataServiceTest {
         when(userProvider.getIfAvailable()).thenReturn(userQueryFacade);
         when(userQueryFacade.findActiveUserIds(any(), eq(9L)))
                 .thenReturn(Optional.of(List.of(11L)));
-        com.sw.ck.system.api.dict.DictFacade dictFacade = mock(com.sw.ck.system.api.dict.DictFacade.class);
+        DictFacade dictFacade = mock(DictFacade.class);
         when(dictProvider.getIfAvailable()).thenReturn(dictFacade);
         when(dictFacade.isValidCode(eq("qc_verdict"), eq("PASS"))).thenReturn(Optional.of(true));
         when(dictFacade.isValidCode(eq("qc_verdict"), eq("NOT_IN_DICT"))).thenReturn(Optional.of(false));
@@ -193,11 +206,11 @@ class NodeFormDataServiceTest {
     @Test
     @DisplayName("当前轮次 = RETURN 动作数 + 1（退回旧轮不混入新轮）")
     void shouldComputeRoundFromReturnCount() {
-        com.sw.ck.bpm.process.entity.ApprovalActionRecord returnRecord =
-                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        ApprovalActionRecord returnRecord =
+                new ApprovalActionRecord();
         returnRecord.setAction("RETURN");
-        com.sw.ck.bpm.process.entity.ApprovalActionRecord approveRecord =
-                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        ApprovalActionRecord approveRecord =
+                new ApprovalActionRecord();
         approveRecord.setAction("APPROVE");
         when(approvalActionService.findByProcessInstanceId("pi-1"))
                 .thenReturn(List.of(approveRecord, returnRecord));
@@ -213,17 +226,17 @@ class NodeFormDataServiceTest {
         def.setProcessKey("def_main");
         def.setGraphJson("{\"processKey\":\"current-draft\"}");
         when(bpmProcessDefService.findByProcessKey("def_main")).thenReturn(def);
-        com.sw.ck.bpm.process.entity.BpmProcessDefVersion version =
-                new com.sw.ck.bpm.process.entity.BpmProcessDefVersion();
+        BpmProcessDefVersion version =
+                new BpmProcessDefVersion();
         version.setDefId(5L);
         version.setGraphVersion(2);
         version.setGraphJson("{\"processKey\":\"frozen-v2\"}");
         when(versionMapper.selectOne(any())).thenReturn(version);
 
-        com.sw.ck.bpm.api.dto.ProcessGraph graph = service.loadGraph("def_main", 2);
+        ProcessGraph graph = service.loadGraph("def_main", 2);
         assertThat(graph.getProcessKey()).isEqualTo("frozen-v2");
 
-        com.sw.ck.bpm.api.dto.ProcessGraph fallback = service.loadGraph("def_main", null);
+        ProcessGraph fallback = service.loadGraph("def_main", null);
         assertThat(fallback.getProcessKey()).isEqualTo("current-draft");
     }
 
@@ -237,12 +250,12 @@ class NodeFormDataServiceTest {
         when(dictProvider.getIfAvailable()).thenReturn(null);
 
         // 行内存储按 taskId 定位（currentTask 显式指向当前查询任务），模拟 (tenant_id, task_id) 唯一行
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        java.util.concurrent.atomic.AtomicReference<String> currentTask =
-                new java.util.concurrent.atomic.AtomicReference<>("task-1");
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        AtomicReference<String> currentTask =
+                new AtomicReference<>("task-1");
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId((long) (store.size() + 1));
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -250,7 +263,7 @@ class NodeFormDataServiceTest {
         when(taskFormDataMapper.selectOne(any())).thenAnswer(invocation ->
                 store.get(currentTask.get()));
         when(taskFormDataMapper.selectList(any())).thenAnswer(invocation ->
-                new java.util.ArrayList<>(store.values()));
+                new ArrayList<>(store.values()));
 
         // 第 1 轮：task-1 草稿→最终提交
         when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of());
@@ -260,8 +273,8 @@ class NodeFormDataServiceTest {
                 "qc_form", 3L, Map.of("verdict", "PASS", "ng_count", 1), 2L);
 
         // 退回后第 2 轮：task-2 独立草稿（查询指向新任务）
-        com.sw.ck.bpm.process.entity.ApprovalActionRecord returnRecord =
-                new com.sw.ck.bpm.process.entity.ApprovalActionRecord();
+        ApprovalActionRecord returnRecord =
+                new ApprovalActionRecord();
         returnRecord.setAction("RETURN");
         when(approvalActionService.findByProcessInstanceId("pi-1")).thenReturn(List.of(returnRecord));
         currentTask.set("task-2");
@@ -294,10 +307,10 @@ class NodeFormDataServiceTest {
         when(userQueryFacade.findActiveUserIds(any(), eq(9L)))
                 .thenReturn(Optional.of(List.of(11L)));
         when(dictProvider.getIfAvailable()).thenReturn(null);
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId(1L);
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -328,10 +341,10 @@ class NodeFormDataServiceTest {
     @DisplayName("校验失败零半提交：非法最终提交不改变草稿行（状态/数据/绑定版本原样）")
     void shouldLeaveDraftUntouchedWhenFinalSubmitRejected() {
         stubForm();
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId(1L);
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -341,15 +354,15 @@ class NodeFormDataServiceTest {
 
         service.saveDraft("pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
                 Map.of("verdict", "PASS", "ng_count", 1));
-        com.sw.ck.bpm.process.entity.BpmTaskFormData draft = store.get("task-1");
+        BpmTaskFormData draft = store.get("task-1");
         String draftJson = draft.getDataText();
         Long draftVersion = draft.getFormVersion();
 
         // 非法最终提交（必填缺失）：拒绝且草稿行零改写（无半成功状态）
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.submitFinal(
+        Assertions.assertThatThrownBy(() -> service.submitFinal(
                         "pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
                         Map.of("verdict", "PASS"), 2L))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+                .isInstanceOf(BaseException.class)
                 .hasMessageContaining("必填");
 
         assertThat(draft.getStatus()).isEqualTo("DRAFT");
@@ -362,10 +375,10 @@ class NodeFormDataServiceTest {
     @DisplayName("已最终提交的任务：草稿保存拒绝改写（2434），已提交事实保持")
     void shouldRejectDraftAfterSubmitted() {
         stubForm();
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId(1L);
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -377,10 +390,10 @@ class NodeFormDataServiceTest {
                 Map.of("verdict", "PASS", "ng_count", 1), 2L);
         String submittedJson = store.get("task-1").getDataText();
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.saveDraft(
+        Assertions.assertThatThrownBy(() -> service.saveDraft(
                         "pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
                         Map.of("verdict", "FAIL", "ng_count", 9)))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
 
         assertThat(store.get("task-1").getStatus()).isEqualTo("SUBMITTED");
         assertThat(store.get("task-1").getDataText()).isEqualTo(submittedJson);
@@ -390,10 +403,10 @@ class NodeFormDataServiceTest {
     @DisplayName("办理前表单再发布：最终提交仍按任务绑定版本快照校验并保留绑定版本")
     void shouldValidateAgainstBoundVersionSnapshotAfterRepublish() {
         stubForm();
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId(1L);
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -419,10 +432,10 @@ class NodeFormDataServiceTest {
                 .thenReturn(Optional.of(QC_DEFINITION));
 
         // 最终提交按绑定版本 v3 快照校验：v5 新字段即未知字段，v3 必填仍强制
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.submitFinal(
+        Assertions.assertThatThrownBy(() -> service.submitFinal(
                         "pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
                         Map.of("verdict", "PASS", "ng_reason", "x"), 2L))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+                .isInstanceOf(BaseException.class)
                 .hasMessageContaining("表单内容与当前版本不一致");
 
         // 合法提交：版本保持绑定的 v3，不漂移到 v5
@@ -445,10 +458,10 @@ class NodeFormDataServiceTest {
     @DisplayName("绑定版本快照缺失：最终提交可诊断拒绝且零持久改写（状态/数据/版本保持草稿）")
     void shouldRejectDiagnosablyWhenBoundSnapshotMissing() {
         stubForm();
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId(1L);
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -464,10 +477,10 @@ class NodeFormDataServiceTest {
 
         // v3 快照缺失（历史/清理异常）：提交不得按最新定义静默校验
         when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 3)).thenReturn(Optional.empty());
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.submitFinal(
+        Assertions.assertThatThrownBy(() -> service.submitFinal(
                         "pi-1", "def_main", "node_qc", "task-1", "qc_form", 3L,
                         Map.of("verdict", "PASS", "ng_count", 1), 2L))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class)
+                .isInstanceOf(BaseException.class)
                 .hasMessageContaining("该表单版本暂不可用")
                 .hasMessageNotContaining("qc_form@v3");
         // 零持久改写：仍为草稿、数据未变、版本未漂移
@@ -488,10 +501,10 @@ class NodeFormDataServiceTest {
         when(formDefinitionService.getFormDef("qc_form")).thenReturn(Optional.of(republished));
         when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 3))
                 .thenReturn(Optional.of(QC_DEFINITION));
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId(1L);
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -527,10 +540,10 @@ class NodeFormDataServiceTest {
                         + "{\"name\":\"ng_reason\",\"type\":\"TEXT\",\"required\":true}]}"));
         when(formDefinitionService.getFormDefinitionSnapshot("qc_form", 3))
                 .thenReturn(Optional.of(QC_DEFINITION));
-        Map<String, com.sw.ck.bpm.process.entity.BpmTaskFormData> store = new LinkedHashMap<>();
-        when(taskFormDataMapper.insert(any(com.sw.ck.bpm.process.entity.BpmTaskFormData.class)))
+        Map<String, BpmTaskFormData> store = new LinkedHashMap<>();
+        when(taskFormDataMapper.insert(any(BpmTaskFormData.class)))
                 .thenAnswer(invocation -> {
-                    com.sw.ck.bpm.process.entity.BpmTaskFormData row = invocation.getArgument(0);
+                    BpmTaskFormData row = invocation.getArgument(0);
                     row.setId(1L);
                     store.put(row.getTaskId(), row);
                     return 1;
@@ -553,8 +566,8 @@ class NodeFormDataServiceTest {
         def.setProcessKey("def_main");
         def.setGraphJson("{\"processKey\":\"draft\"}");
         when(bpmProcessDefService.findByProcessKey("def_main")).thenReturn(def);
-        com.sw.ck.bpm.process.entity.BpmProcessDefVersion version =
-                new com.sw.ck.bpm.process.entity.BpmProcessDefVersion();
+        BpmProcessDefVersion version =
+                new BpmProcessDefVersion();
         version.setDefId(5L);
         version.setGraphVersion(2);
         version.setGraphJson("{\"processKey\":\"frozen-v2\",\"elements\":["

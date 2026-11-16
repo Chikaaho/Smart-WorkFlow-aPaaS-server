@@ -9,7 +9,9 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.system.datascope.DeptScopeProviderImpl;
 import com.sw.ck.system.mapper.SysDeptMapper;
+import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.service.impl.UserFacadeImpl;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +27,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -181,7 +184,7 @@ class OrgAuthorityFacadeIntegrationTest {
         }
 
         @Bean
-        public UserQueryFacade userQueryFacade(com.sw.ck.system.mapper.SysUserMapper sysUserMapper,
+        public UserQueryFacade userQueryFacade(SysUserMapper sysUserMapper,
                                                SysDeptMapper sysDeptMapper) {
             return new UserFacadeImpl(sysUserMapper, sysDeptMapper);
         }
@@ -217,10 +220,10 @@ class OrgAuthorityFacadeIntegrationTest {
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
+                public Set<Long> getCustomDeptIds() {
                     LoginUser user = LoginUserHolder.get();
                     return user != null && user.getCustomDeptIds() != null
-                            ? user.getCustomDeptIds() : java.util.Set.of();
+                            ? user.getCustomDeptIds() : Set.of();
                 }
 
                 @Override

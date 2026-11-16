@@ -1,5 +1,8 @@
 package com.sw.ck.bpm.engine.delegate;
 
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.flowable.engine.delegate.DelegateExecution;
 import org.junit.jupiter.api.Test;
 
@@ -126,22 +129,22 @@ class ConsensusCompletionEvaluatorTest {
         when(execution.getTenantId()).thenReturn("9001");
         when(execution.getVariable("tenantId")).thenReturn(9001L);
         when(execution.getVariable("submitter")).thenReturn(91103L);
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
 
         boolean result = evaluator.shouldComplete(execution, "ALL", 100);
 
         assertThat(result).isTrue();
-        assertThat(com.sw.ck.security.holder.LoginUserHolder.get()).isNull();
+        assertThat(LoginUserHolder.get()).isNull();
 
         // 已有登录态时不覆盖调用方身份
-        com.sw.ck.security.holder.LoginUser caller = new com.sw.ck.security.holder.LoginUser();
+        LoginUser caller = new LoginUser();
         caller.setTenantId(9002L);
-        com.sw.ck.security.holder.LoginUserHolder.set(caller);
+        LoginUserHolder.set(caller);
         try {
             assertThat(evaluator.shouldComplete(execution, "ALL", 100)).isTrue();
-            assertThat(com.sw.ck.security.holder.LoginUserHolder.get().getTenantId()).isEqualTo(9002L);
+            assertThat(LoginUserHolder.get().getTenantId()).isEqualTo(9002L);
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
     }
 

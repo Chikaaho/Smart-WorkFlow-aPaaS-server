@@ -6,28 +6,37 @@ import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.model.TxnInvokeResult;
 import com.sw.ck.form.txn.service.TxnActionExecutor;
+import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.security.KeyPairGenerator;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -80,22 +89,22 @@ class P62CommitVisibilityPgTest {
         props.put("sw.security.jwt.secret", "p62-commit-vis-jwt-secret-0123456789abcdef0123456789abcdef");
         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
         props.put("sw.security.login.digest-secret", "p62-commit-vis-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.txn-batch.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-commit-vis", props));
+                            new MapPropertySource("p62-commit-vis", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62CommitVisLoginContextProvider", provider);
                 })
                 .run();
@@ -319,8 +328,8 @@ class P62CommitVisibilityPgTest {
             cfg.setBalanceField("qty_available");
             cfg.setReservedField("qty_reserved");
             cfg.setExpiresInSeconds(600L);
-            com.sw.ck.form.txn.service.TxnActionService actionService =
-                    app.getBean(com.sw.ck.form.txn.service.TxnActionService.class);
+            TxnActionService actionService =
+                    app.getBean(TxnActionService.class);
             String id = actionService.create(formId,
                     new TxnActionSaveRequest(key, "提交可见性预占", "RESERVE", null, cfg)).id();
             actionService.publish(id);
@@ -330,8 +339,8 @@ class P62CommitVisibilityPgTest {
 
     private String submit(String material, String available) {
         return asOperator(() -> {
-            com.sw.ck.form.service.FormSubmitService submitService =
-                    app.getBean(com.sw.ck.form.service.FormSubmitService.class);
+            FormSubmitService submitService =
+                    app.getBean(FormSubmitService.class);
             return submitService.submitForm(FORM_KEY,
                     data("material", material, "qty_available", available, "qty_reserved", "0"),
                     null, null, null);
@@ -374,9 +383,9 @@ class P62CommitVisibilityPgTest {
 
     private static String generatedRsaPkcs8Base64() {
         try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(2048);
-            return java.util.Base64.getEncoder()
+            return Base64.getEncoder()
                     .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
         } catch (Exception e) {
             throw new IllegalStateException(e);

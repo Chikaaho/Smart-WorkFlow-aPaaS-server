@@ -3,7 +3,7 @@ package com.sw.ck.storage.provider;
 import com.sw.ck.storage.config.StorageProperties;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  * 收集所有 StorageProvider 实现，提供按类型查询和获取当前活跃提供商的能力。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 @RequiredArgsConstructor
 public class StorageProviderRegistry {

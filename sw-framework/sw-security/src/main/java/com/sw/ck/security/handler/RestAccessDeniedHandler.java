@@ -1,10 +1,15 @@
 package com.sw.ck.security.handler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.i18n.LocalizedMessages;
 import com.sw.ck.common.response.R;
+import com.sw.ck.common.trace.EventRef;
+
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -27,9 +32,9 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
         JsonResponseWriter.write(response, objectMapper, HttpServletResponse.SC_FORBIDDEN,
                 R.fail(CommonErrorCode.FORBIDDEN.getCode(),
                         CommonErrorCode.FORBIDDEN.getErrorKey(),
-                        com.sw.ck.common.i18n.LocalizedMessages.text(
+                        LocalizedMessages.text(
                                 CommonErrorCode.FORBIDDEN.getErrorKey(),
                                 CommonErrorCode.FORBIDDEN.getMessage()),
-                        com.sw.ck.common.trace.EventRef.current()));
+                        EventRef.current()));
     }
 }

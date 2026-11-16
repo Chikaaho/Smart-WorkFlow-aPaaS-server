@@ -1,16 +1,17 @@
 package com.sw.ck.job.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.job.entity.JobInfo;
 import com.sw.ck.job.enums.JobStatus;
 import com.sw.ck.job.enums.TriggerType;
 import com.sw.ck.job.scheduler.SwJobBean;
 import org.quartz.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.TimeZone;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Quartz 调度器封装。
  * <p>
@@ -19,15 +20,11 @@ import java.util.TimeZone;
  * </p>
  */
 @Service
+@Log4j2
 public class QuartzSchedulerService {
 
-    private static final Logger log = LoggerFactory.getLogger(QuartzSchedulerService.class);
-
-    private final Scheduler scheduler;
-
-    public QuartzSchedulerService(Scheduler scheduler) {
-        this.scheduler = scheduler;
-    }
+    @Autowired
+    private Scheduler scheduler;
 
     /**
      * 将任务注册到 Quartz 调度器并启动。

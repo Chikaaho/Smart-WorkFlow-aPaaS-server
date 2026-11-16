@@ -1,18 +1,26 @@
 package com.sw.ck.bpm.process.queue;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.port.FlowStartPortImpl;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.service.ProcessStartService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.bpm.process.entity.BpmActionRef;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程发起命令处理器：消费 FLOW_START 受理，汇入 {@link ProcessStartService} 唯一入口。
  * <p>
@@ -23,28 +31,21 @@ import java.util.Map;
  * </p>
  */
 @Component
+@Log4j2
 public class FlowStartCommandHandler implements BpmCommandHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(FlowStartCommandHandler.class);
-
-    private final ProcessStartService processStartService;
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmActionRefMapper actionRefMapper;
-    private final ObjectMapper objectMapper;
-
-    public FlowStartCommandHandler(ProcessStartService processStartService,
-                                   BpmInstanceService bpmInstanceService,
-                                   BpmActionRefMapper actionRefMapper,
-                                   ObjectMapper objectMapper) {
-        this.processStartService = processStartService;
-        this.bpmInstanceService = bpmInstanceService;
-        this.actionRefMapper = actionRefMapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private ProcessStartService processStartService;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmActionRefMapper actionRefMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
-    public java.util.Set<CommandTypeEnum> types() {
-        return java.util.Set.of(CommandTypeEnum.FLOW_START);
+    public Set<CommandTypeEnum> types() {
+        return Set.of(CommandTypeEnum.FLOW_START);
     }
 
     @Override
@@ -88,18 +89,18 @@ public class FlowStartCommandHandler implements BpmCommandHandler {
             String text = reason == null ? null
                     : (reason.length() > 480 ? reason.substring(0, 480) : reason);
             // 调度线程无登录态：与命令行消费同口径挂起租户过滤，定位靠显式 tenant_id 条件
-            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            try (Suspended ignored =
+                         TenantLineSuspension.suspended()) {
                 int updated = actionRefMapper.update(null,
-                        com.baomidou.mybatisplus.core.toolkit.Wrappers
-                                .<com.sw.ck.bpm.process.entity.BpmActionRef>lambdaUpdate()
-                                .eq(com.sw.ck.bpm.process.entity.BpmActionRef::getTenantId,
+                        Wrappers
+                                .<BpmActionRef>lambdaUpdate()
+                                .eq(BpmActionRef::getTenantId,
                                         envelope.getTenantId())
-                                .eq(com.sw.ck.bpm.process.entity.BpmActionRef::getTargetRecordId,
+                                .eq(BpmActionRef::getTargetRecordId,
                                         String.valueOf(recordId))
-                                .eq(com.sw.ck.bpm.process.entity.BpmActionRef::getStatus, "STARTING")
-                                .set(com.sw.ck.bpm.process.entity.BpmActionRef::getStatus, "FAILED")
-                                .set(com.sw.ck.bpm.process.entity.BpmActionRef::getErrorText, text));
+                                .eq(BpmActionRef::getStatus, "STARTING")
+                                .set(BpmActionRef::getStatus, "FAILED")
+                                .set(BpmActionRef::getErrorText, text));
                 if (updated > 0) {
                     log.warn("二段流程发起失败，意图已标记可诊断失败: recordId={}, reason={}",
                             recordId, text);

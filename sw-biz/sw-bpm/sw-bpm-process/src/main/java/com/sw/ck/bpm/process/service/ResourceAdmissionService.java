@@ -1,6 +1,8 @@
 package com.sw.ck.bpm.process.service;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.entity.BpmResourceRejectLog;
@@ -11,14 +13,20 @@ import com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper;
 import com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper;
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
 import com.sw.ck.common.exception.BaseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 资源准入与占用会计（P62 资源保障）。
  * <p>
@@ -39,45 +47,39 @@ import java.util.List;
  * </p>
  */
 @Service
+@Log4j2
 public class ResourceAdmissionService {
 
-    private static final Logger log = LoggerFactory.getLogger(ResourceAdmissionService.class);
-
-    private final BpmResourcePolicyMapper policyMapper;
-    private final BpmResourceUsageMapper usageMapper;
-    private final BpmResourceRejectLogMapper rejectLogMapper;
-    private final TenantRateBuckets rateBuckets;
-    private final TransactionTemplate rejectAuditTemplate;
-    private final TransactionTemplate usageEnsureTemplate;
+    @Autowired
+    private BpmResourcePolicyMapper policyMapper;
+    @Autowired
+    private BpmResourceUsageMapper usageMapper;
+    @Autowired
+    private BpmResourceRejectLogMapper rejectLogMapper;
+    @Autowired
+    private TenantRateBuckets rateBuckets;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    private TransactionTemplate rejectAuditTemplate;
+    private TransactionTemplate usageEnsureTemplate;
 
     /**
      * 已建立计数行的租户（进程内加速）：计数行建后不再删除，稳态下受理路径零额外事务与
      * 零唯一键冲突（RA02 时效：原实现每次受理尝试插入-捕获冲突，突发负载下每秒数十次
      * 异常+独立事务，构成可观测的尾延迟成本）。多进程部署不属本阶段画像，届时失效。
      */
-    private final java.util.Set<Long> ensuredTenants = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<Long> ensuredTenants = ConcurrentHashMap.newKeySet();
 
     /** 生产环境由 Spring 注入；单测直接构造时为空，回退原 Mapper 探测。 */
+    @Autowired(required = false)
     private ResourceRowLockProbe rowLockProbe;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setRowLockProbe(ResourceRowLockProbe rowLockProbe) {
-        this.rowLockProbe = rowLockProbe;
-    }
 
     /** 准入凭证：受理冻结到命令行的段与策略版本。 */
     public record AdmissionTicket(String segment, Integer policyVersion, int units) {
     }
 
-    public ResourceAdmissionService(BpmResourcePolicyMapper policyMapper,
-                                    BpmResourceUsageMapper usageMapper,
-                                    BpmResourceRejectLogMapper rejectLogMapper,
-                                    TenantRateBuckets rateBuckets,
-                                    org.springframework.transaction.PlatformTransactionManager transactionManager) {
-        this.policyMapper = policyMapper;
-        this.usageMapper = usageMapper;
-        this.rejectLogMapper = rejectLogMapper;
-        this.rateBuckets = rateBuckets;
+    @PostConstruct
+    void initTemplates() {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.rejectAuditTemplate = template;
@@ -279,9 +281,9 @@ public class ResourceAdmissionService {
     private void forceEnsureUsageRows(Long tenantId) {
         try {
             usageEnsureTemplate.executeWithoutResult(status ->
-                    usageMapper.insertNew(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(),
+                    usageMapper.insertNew(IdWorker.getId(),
                             "TENANT", tenantId, "TOTAL"));
-        } catch (org.springframework.dao.DuplicateKeyException alreadyExists) {
+        } catch (DuplicateKeyException alreadyExists) {
             // 计数行已存在：另一并发首次受理已建立（或重启后首遇），幂等返回
         }
         ensuredTenants.add(tenantId);

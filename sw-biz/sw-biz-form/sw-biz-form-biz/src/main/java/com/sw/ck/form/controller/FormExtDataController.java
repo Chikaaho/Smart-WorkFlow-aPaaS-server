@@ -1,20 +1,23 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.ExtQueryResult;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.dto.ExtQueryContractDTO;
+import com.sw.ck.form.dto.ExtQueryContractStatusDTO;
 import com.sw.ck.form.dto.ExtQueryContractView;
 import com.sw.ck.form.entity.FormExtQueryEntity;
 import com.sw.ck.form.service.FormExtDataService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 受控外部数据源表单链路接口（I2，方向 §4.3）。
  * <p>
@@ -24,15 +27,11 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/form/ext")
+@Log4j2
 public class FormExtDataController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormExtDataController.class);
-
-    private final FormExtDataService extDataService;
-
-    public FormExtDataController(FormExtDataService extDataService) {
-        this.extDataService = extDataService;
-    }
+    @Autowired
+    private FormExtDataService extDataService;
 
     /** 登记或升版本查询契约（管理员）。 */
     public record RegisterReq(Long datasourceId, String queryKey, String sql,
@@ -41,12 +40,13 @@ public class FormExtDataController {
 
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PostMapping("/query-contract")
-    public R<Map<String, Object>> registerQuery(@RequestBody RegisterReq req) {
+    public R<ExtQueryContractDTO> registerQuery(@RequestBody RegisterReq req) {
         FormExtQueryEntity entity = extDataService.registerQuery(req.datasourceId(), req.queryKey(),
                 req.sql(), req.outputFields());
-        return R.ok(Map.of(
-                "queryKey", entity.getQueryKey(),
-                "version", entity.getQueryVersion()));
+        ExtQueryContractDTO result = new ExtQueryContractDTO();
+        result.setQueryKey(entity.getQueryKey());
+        result.setVersion(entity.getQueryVersion());
+        return R.ok(result);
     }
 
     /**
@@ -97,15 +97,16 @@ public class FormExtDataController {
 
     @PreAuthorize("@ss.hasPermi('form:design:save')")
     @PutMapping("/query-contract/{queryKey}/status")
-    public R<Map<String, Object>> setContractStatus(@PathVariable("queryKey") String queryKey,
-                                                    @RequestBody ContractStatusReq req) {
+    public R<ExtQueryContractStatusDTO> setContractStatus(@PathVariable("queryKey") String queryKey,
+                                                          @RequestBody ContractStatusReq req) {
         if (req == null || req.enabled() == null) {
             throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID.getCode(), "enabled 不能为空");
         }
         FormExtQueryEntity entity = extDataService.setContractEnabled(queryKey, req.enabled());
-        return R.ok(Map.of(
-                "queryKey", entity.getQueryKey(),
-                "version", entity.getQueryVersion(),
-                "enabled", entity.getEnabled()));
+        ExtQueryContractStatusDTO result = new ExtQueryContractStatusDTO();
+        result.setQueryKey(entity.getQueryKey());
+        result.setVersion(entity.getQueryVersion());
+        result.setEnabled(entity.getEnabled());
+        return R.ok(result);
     }
 }

@@ -8,13 +8,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,7 +62,7 @@ class P62RecoveryDrillOrchestrationTest {
         pg = EmbeddedPostgres.builder().start();
         pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort()
                 + "/postgres?stringtype=unspecified&user=postgres&password=postgres";
-        jdbc = new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(pgUrl));
+        jdbc = new JdbcTemplate(new DriverManagerDataSource(pgUrl));
         jdbc.execute("SELECT 1");
         System.out.println("[P62-EV] g2a orchestrator pid=" + ProcessHandle.current().pid()
                 + " pgPort=" + pg.getPort() + " runId=" + runId);
@@ -109,7 +112,7 @@ class P62RecoveryDrillOrchestrationTest {
 
         // 2. 真实中断：SIGKILL 进程 A 并留退出证据（非停轮询、非优雅关闭）
         a.destroyForcibly();
-        boolean exited = a.waitFor(60, java.util.concurrent.TimeUnit.SECONDS);
+        boolean exited = a.waitFor(60, TimeUnit.SECONDS);
         assertThat(exited).as("进程A已真实退出").isTrue();
         assertThat(a.isAlive()).as("进程A不再存活").isFalse();
         int exitCodeA = a.exitValue();
@@ -181,7 +184,7 @@ class P62RecoveryDrillOrchestrationTest {
                 + " duplicate-effects=0 pidB=" + pidB);
 
         b.destroy();
-        assertThat(b.waitFor(30, java.util.concurrent.TimeUnit.SECONDS))
+        assertThat(b.waitFor(30, TimeUnit.SECONDS))
                 .as("进程B清理退出").isTrue();
     }
 
@@ -222,7 +225,7 @@ class P62RecoveryDrillOrchestrationTest {
 
     private void writeNew(String fileName, String content) throws Exception {
         Files.writeString(EVIDENCE.resolve(fileName), content, StandardCharsets.UTF_8,
-                java.nio.file.StandardOpenOption.CREATE_NEW,
-                java.nio.file.StandardOpenOption.WRITE);
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
     }
 }

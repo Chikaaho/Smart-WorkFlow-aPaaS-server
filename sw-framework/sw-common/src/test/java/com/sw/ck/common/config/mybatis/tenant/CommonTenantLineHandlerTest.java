@@ -2,10 +2,12 @@ package com.sw.ck.common.config.mybatis.tenant;
 
 import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.security.LoginContextProvider;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -82,7 +84,7 @@ class CommonTenantLineHandlerTest {
     void normalUserStaysTenantScoped() {
         loginContext.superAdmin = false;
         loginContext.tenantId = 0L;
-        properties.setIgnoreTables(java.util.List.of("sys_menu"));
+        properties.setIgnoreTables(List.of("sys_menu"));
         CommonTenantLineHandler handler = new CommonTenantLineHandler(properties, loginContext);
 
         assertThat(handler.ignoreTable("sys_user")).as("租户 0 的普通用户同样受租户过滤").isFalse();

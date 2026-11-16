@@ -1,12 +1,17 @@
 package com.sw.ck.bpm.process.service.impl;
 
 import com.sw.ck.bpm.process.dto.CatalogItemDTO;
+import com.sw.ck.bpm.process.dto.CategoryCountsDTO;
+import com.sw.ck.bpm.process.mapper.BpmCategoryMapper;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.bpm.process.service.BpmCatalogService;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.page.PageParam;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.mapper.MapperScannerConfigurer;
@@ -20,6 +25,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,9 +62,9 @@ class BpmCatalogServiceTest {
         insertBinding("form_leave", "leave");
         insertBinding("form_expense", "expense");
 
-        Map<Long, Long> counts = catalogService.portalCategoryCounts();
+        CategoryCountsDTO counts = catalogService.portalCategoryCounts();
 
-        assertThat(counts).containsEntry(0L, 1L).containsEntry(5L, 1L);
+        assertThat(counts.getCounts()).containsEntry(0L, 1L).containsEntry(5L, 1L);
     }
 
     @Test
@@ -116,15 +123,15 @@ class BpmCatalogServiceTest {
         // I5 fail-closed：测试种子与断言均在租户 0 语境；本测试上下文提供固定
         // 租户 0 的登录上下文（生产由 SecurityLoginContextProvider 从认证态读取）
         @Bean
-        public com.sw.ck.common.security.LoginContextProvider i5TenantZeroLoginContextProvider() {
-            return new com.sw.ck.common.security.LoginContextProvider() {
+        public LoginContextProvider i5TenantZeroLoginContextProvider() {
+            return new LoginContextProvider() {
                 @Override public Long getUserId() { return 0L; }
                 @Override public Long getTenantId() { return 0L; }
                 @Override public Long getDeptId() { return null; }
-                @Override public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.ALL;
+                @Override public DataScopeType getDataScopeType() {
+                    return DataScopeType.ALL;
                 }
-                @Override public java.util.Set<Long> getCustomDeptIds() { return java.util.Set.of(); }
+                @Override public Set<Long> getCustomDeptIds() { return Set.of(); }
                 @Override public boolean isSuperAdmin() { return false; }
             };
         }
@@ -137,7 +144,7 @@ class BpmCatalogServiceTest {
 
         @Bean
         public BpmCatalogService bpmCatalogService(BpmProcessDefMapper processDefMapper,
-                                                   com.sw.ck.bpm.process.mapper.BpmCategoryMapper categoryMapper,
+                                                   BpmCategoryMapper categoryMapper,
                                                    BpmFormBindingService bindingService,
                                                    FormDefinitionService formDefinitionService) {
             return new BpmCatalogServiceImpl(processDefMapper, categoryMapper, bindingService,
@@ -149,25 +156,25 @@ class BpmCatalogServiceTest {
         public FormDefinitionService formDefinitionService() {
             return new FormDefinitionService() {
                 @Override
-                public java.util.Optional<String> getFormDefinition(String formKey) {
-                    return java.util.Optional.empty();
+                public Optional<String> getFormDefinition(String formKey) {
+                    return Optional.empty();
                 }
 
                 @Override
-                public java.util.Optional<Boolean> formExists(String formKey) {
-                    return java.util.Optional.of(true);
+                public Optional<Boolean> formExists(String formKey) {
+                    return Optional.of(true);
                 }
 
                 @Override
-                public java.util.Optional<FormDefDTO> getFormDef(String formKey) {
+                public Optional<FormDefDTO> getFormDef(String formKey) {
                     FormDefDTO dto = new FormDefDTO();
                     dto.setStatus("PUBLISHED");
-                    return java.util.Optional.of(dto);
+                    return Optional.of(dto);
                 }
 
                 @Override
-                public java.util.Optional<Boolean> canCurrentUserInitiate(String formKey) {
-                    return java.util.Optional.of(true);
+                public Optional<Boolean> canCurrentUserInitiate(String formKey) {
+                    return Optional.of(true);
                 }
             };
         }

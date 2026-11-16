@@ -1,8 +1,10 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.dto.TaskNodeFormDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
@@ -10,11 +12,13 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -115,8 +119,8 @@ class BpmNodeFormControllerTest {
         when(nodeFormDataService.resolveBinding("def_main", 2, "node_qc"))
                 .thenReturn(Optional.of(new NodeFormDataService.NodeFormBinding("qc_form", "3", "质检处理单")));
 
-        R<Map<String, Object>> read = controller.getTaskNodeForm("task-1");
-        assertThat(read.getData()).containsEntry("bound", true);
+        R<TaskNodeFormDTO> read = controller.getTaskNodeForm("task-1");
+        assertThat(read.getData().isBound()).isTrue();
 
         assertThatThrownBy(() -> controller.saveDraft("task-1", Map.of("data", Map.of())))
                 .isInstanceOf(BaseException.class)
@@ -132,7 +136,7 @@ class BpmNodeFormControllerTest {
         when(nodeFormDataService.resolveBinding("def_main", 2, "node_qc"))
                 .thenReturn(Optional.of(new NodeFormDataService.NodeFormBinding("qc_form", "3", "质检处理单")));
 
-        assertThat(controller.getTaskNodeForm("task-1").getData()).containsEntry("bound", true);
+        assertThat(controller.getTaskNodeForm("task-1").getData().isBound()).isTrue();
 
         when(nodeFormDataService.saveDraft(eq("pi-1"), eq("def_main"), eq("node_qc"), eq("task-1"),
                 any(), any(), any())).thenReturn(1L);
@@ -149,7 +153,7 @@ class BpmNodeFormControllerTest {
         when(nodeFormDataService.resolveBinding("def_main", 2, "node_qc"))
                 .thenReturn(Optional.of(new NodeFormDataService.NodeFormBinding("qc_form", "3", "质检处理单")));
 
-        assertThat(controller.getTaskNodeForm("task-1").getData()).containsEntry("bound", true);
+        assertThat(controller.getTaskNodeForm("task-1").getData().isBound()).isTrue();
 
         when(nodeFormDataService.saveDraft(any(), any(), any(), any(), any(), any(), any())).thenReturn(9L);
         assertThat(controller.saveDraft("task-1", Map.of("data", Map.of())).getData()).isEqualTo(9L);
@@ -164,11 +168,11 @@ class BpmNodeFormControllerTest {
         when(nodeFormDataService.resolveBinding("def_main", 2, "node_qc"))
                 .thenReturn(Optional.of(new NodeFormDataService.NodeFormBinding("qc_form", "3", "质检处理单")));
 
-        R<Map<String, Object>> read = controller.getTaskNodeForm("task-1");
-        Object definition = read.getData().get("definition");
+        R<TaskNodeFormDTO> read = controller.getTaskNodeForm("task-1");
+        Object definition = read.getData().getDefinition();
         assertThat(definition).as("definition 必须是对象（契约形状），不是 JSON 字符串")
                 .isInstanceOf(Map.class);
-        assertThat(((Map<?, ?>) definition).get("fields")).isInstanceOf(java.util.List.class);
+        assertThat(((Map<?, ?>) definition).get("fields")).isInstanceOf(List.class);
     }
 
     @Test

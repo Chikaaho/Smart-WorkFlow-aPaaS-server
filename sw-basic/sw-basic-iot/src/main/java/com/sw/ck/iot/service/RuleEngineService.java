@@ -4,7 +4,9 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.common.persistence.IdempotentInsert;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotEventRule;
 import com.sw.ck.iot.entity.IotProcessTrigger;
@@ -13,10 +15,11 @@ import com.sw.ck.iot.event.IotProcessTriggerEvent;
 import com.sw.ck.iot.mapper.IotEventRuleMapper;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
 import com.sw.ck.iot.mapper.IotPropertyRecordMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -25,8 +28,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 设备事件规则引擎。
  * <p>
@@ -36,41 +41,26 @@ import java.util.concurrent.ConcurrentHashMap;
  * </p>
  */
 @Service
+@Log4j2
 public class RuleEngineService {
-
-    private static final Logger log = LoggerFactory.getLogger(RuleEngineService.class);
 
     /** 连续次数计数（单节点内存态；条件 {continuousCount}）。 */
     private final Map<Long, Integer> continuousCounters = new ConcurrentHashMap<>();
 
-    private final IotEventRuleMapper ruleMapper;
-    private final IotProcessTriggerMapper triggerMapper;
-    private final IotPropertyRecordMapper propertyRecordMapper;
-    private final DomainEventPublisher eventPublisher;
+    @Autowired
+    private IotEventRuleMapper ruleMapper;
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
+    @Autowired
+    private IotPropertyRecordMapper propertyRecordMapper;
+    @Autowired
+    private DomainEventPublisher eventPublisher;
+    @Autowired
     private IotAuditService auditService;
 
     /** 幂等插入的保存点包装所需（可选装配：单元测试可缺省）。 */
-    private org.springframework.transaction.PlatformTransactionManager transactionManager;
-
-    public RuleEngineService(IotEventRuleMapper ruleMapper,
-                             IotProcessTriggerMapper triggerMapper,
-                             IotPropertyRecordMapper propertyRecordMapper,
-                             DomainEventPublisher eventPublisher) {
-        this.ruleMapper = ruleMapper;
-        this.triggerMapper = triggerMapper;
-        this.propertyRecordMapper = propertyRecordMapper;
-        this.eventPublisher = eventPublisher;
-    }
-
-    @Autowired
-    public void setAuditService(IotAuditService auditService) {
-        this.auditService = auditService;
-    }
-
     @Autowired(required = false)
-    public void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
-        this.transactionManager = transactionManager;
-    }
+    private PlatformTransactionManager transactionManager;
 
     /**
      * 属性上报入口。
@@ -240,7 +230,7 @@ public class RuleEngineService {
         Map<String, Object> formData = buildFormData(rule, device, eventFacts);
         String idempotentKey = "r" + rule.getId() + "-v" + rule.getRuleVersion() + "-"
                 + device.getId() + "-" + (dedupKey == null
-                ? java.util.UUID.randomUUID() : dedupKey);
+                ? UUID.randomUUID() : dedupKey);
 
         IotProcessTrigger trigger = new IotProcessTrigger();
         trigger.setRuleId(rule.getId());
@@ -268,7 +258,7 @@ public class RuleEngineService {
         Map<String, Object> agentInput = buildAgentInput(rule, device, eventFacts);
         String idempotentKey = "r" + rule.getId() + "-v" + rule.getRuleVersion() + "-"
                 + device.getId() + "-agent-" + (dedupKey == null
-                ? java.util.UUID.randomUUID() : dedupKey);
+                ? UUID.randomUUID() : dedupKey);
 
         IotProcessTrigger trigger = new IotProcessTrigger();
         trigger.setRuleId(rule.getId());
@@ -295,10 +285,10 @@ public class RuleEngineService {
         try {
             // PostgreSQL 上唯一键冲突会中止整个事务，故在保存点内插入，
             // 命中幂等键后仍能执行下面的降级写回（否则 ingest 事务整体失败）。
-            com.sw.ck.common.persistence.IdempotentInsert.execute(transactionManager,
+            IdempotentInsert.execute(transactionManager,
                     () -> triggerMapper.insert(trigger));
             return true;
-        } catch (org.springframework.dao.DuplicateKeyException e) {
+        } catch (DuplicateKeyException e) {
             log.info("幂等键命中，跳过重复触发: key={}", trigger.getIdempotentKey());
             return false;
         }

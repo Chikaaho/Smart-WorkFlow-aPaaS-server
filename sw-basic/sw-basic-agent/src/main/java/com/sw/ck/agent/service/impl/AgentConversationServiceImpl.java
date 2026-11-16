@@ -1,5 +1,7 @@
 package com.sw.ck.agent.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.agent.dto.AgentConversationDTO;
@@ -28,14 +30,10 @@ import java.util.List;
 @Service
 public class AgentConversationServiceImpl implements AgentConversationService {
 
-    private final AgentSessionMapper sessionMapper;
-    private final AgentMessageMapper messageMapper;
-
-    public AgentConversationServiceImpl(AgentSessionMapper sessionMapper,
-                                        AgentMessageMapper messageMapper) {
-        this.sessionMapper = sessionMapper;
-        this.messageMapper = messageMapper;
-    }
+    @Autowired
+    private AgentSessionMapper sessionMapper;
+    @Autowired
+    private AgentMessageMapper messageMapper;
 
     @Override
     public List<AgentConversationDTO> listConversations(Long agentModelConfigId) {

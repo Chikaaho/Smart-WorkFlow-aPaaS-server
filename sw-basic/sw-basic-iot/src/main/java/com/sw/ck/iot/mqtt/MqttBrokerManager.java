@@ -1,9 +1,15 @@
 package com.sw.ck.iot.mqtt;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.trace.DiagnosticText;
 import com.sw.ck.iot.entity.IotConnection;
 import com.sw.ck.iot.entity.IotTopic;
 import com.sw.ck.iot.service.IotConnectionService;
 import com.sw.ck.iot.service.MessageIngestService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
@@ -13,17 +19,21 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.MqttPersistenceException;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLSocketFactory;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 自建 MQTT Broker 连接管理器。
  * <p>
@@ -32,9 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * </p>
  */
 @Service
+@Log4j2
 public class MqttBrokerManager {
-
-    private static final Logger log = LoggerFactory.getLogger(MqttBrokerManager.class);
 
     public static final String TEST_SUCCESS = "SUCCESS";
     public static final String TEST_DNS = "DNS_UNREACHABLE";
@@ -43,12 +52,9 @@ public class MqttBrokerManager {
     public static final String TEST_TLS = "TLS_FAILED";
     public static final String TEST_PROTOCOL = "PROTOCOL_FAILED";
 
-    private final MessageIngestService messageIngestService;
+    @Autowired
+    private MessageIngestService messageIngestService;
     private final Map<Long, MqttAsyncClient> clients = new ConcurrentHashMap<>();
-
-    public MqttBrokerManager(MessageIngestService messageIngestService) {
-        this.messageIngestService = messageIngestService;
-    }
 
     /**
      * 独立连接测试（不入连接池）。返回 [category, detail]。
@@ -109,10 +115,10 @@ public class MqttBrokerManager {
                             // fail-closed 会拒绝全部 ingest 查询。按连接归属租户还原系统执行
                             // 身份（与 IoT→流程监听器同一口径），用后即清。
                             if (connTenantId != null) {
-                                com.sw.ck.security.holder.LoginUser systemUser =
-                                        new com.sw.ck.security.holder.LoginUser();
+                                LoginUser systemUser =
+                                        new LoginUser();
                                 systemUser.setTenantId(connTenantId);
-                                com.sw.ck.security.holder.LoginUserHolder.set(systemUser);
+                                LoginUserHolder.set(systemUser);
                             }
                             messageIngestService.ingest(connId, topic,
                                     new String(message.getPayload(), StandardCharsets.UTF_8),
@@ -121,7 +127,7 @@ public class MqttBrokerManager {
                             // 单条消息失败不得拖垮消费线程
                             log.error("消息处理失败（已隔离）: topic={}, error={}", topic, e.getMessage(), e);
                         } finally {
-                            com.sw.ck.security.holder.LoginUserHolder.clear();
+                            LoginUserHolder.clear();
                         }
                     }
 
@@ -247,7 +253,7 @@ public class MqttBrokerManager {
 
     /** 对外安全结论：分类由 reason code 决定，原文只进日志。 */
     private static String safeDetail(Throwable e) {
-        String sanitized = com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200);
+        String sanitized = DiagnosticText.sanitize(e.getMessage(), 200);
         return sanitized == null ? "请检查连接配置与网络可达性" : sanitized;
     }
 
@@ -259,13 +265,13 @@ public class MqttBrokerManager {
         }
         Throwable cause = e.getCause();
         while (cause != null) {
-            if (cause instanceof java.net.UnknownHostException) {
+            if (cause instanceof UnknownHostException) {
                 return TEST_DNS;
             }
-            if (cause instanceof javax.net.ssl.SSLException) {
+            if (cause instanceof SSLException) {
                 return TEST_TLS;
             }
-            if (cause instanceof java.net.ConnectException || cause instanceof java.net.SocketTimeoutException) {
+            if (cause instanceof ConnectException || cause instanceof SocketTimeoutException) {
                 return TEST_NETWORK;
             }
             cause = cause.getCause();
@@ -295,7 +301,7 @@ public class MqttBrokerManager {
         options.setMaxReconnectDelay(max * 1000);
         options.setConnectionTimeout(10);
         if (conn.getUseTls() != null && conn.getUseTls() == 1) {
-            options.setSocketFactory(javax.net.ssl.SSLSocketFactory.getDefault());
+            options.setSocketFactory(SSLSocketFactory.getDefault());
         }
         return options;
     }

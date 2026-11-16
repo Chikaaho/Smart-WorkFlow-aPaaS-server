@@ -1,22 +1,41 @@
 package com.sw.ck.system.sso;
 
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SsoAuditRecord;
 import com.sw.ck.system.entity.SsoAuthState;
 import com.sw.ck.system.entity.SsoProviderConfig;
 import com.sw.ck.system.entity.SsoUserBinding;
+import com.sw.ck.system.entity.SysTenant;
+import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.mapper.SsoAuditRecordMapper;
 import com.sw.ck.system.mapper.SsoAuthStateMapper;
 import com.sw.ck.system.mapper.SsoProviderConfigMapper;
 import com.sw.ck.system.mapper.SsoUserBindingMapper;
+import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.TenantValidityService;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,25 +63,25 @@ class SsoAuthServiceTest {
         stateMapper = Mockito.mock(SsoAuthStateMapper.class);
         auditMapper = Mockito.mock(SsoAuditRecordMapper.class);
         SysUserService sysUserService = Mockito.mock(SysUserService.class);
-        com.sw.ck.system.service.TenantValidityService tenantValidityService =
-                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        TenantValidityService tenantValidityService =
+                Mockito.mock(TenantValidityService.class);
         Mockito.doNothing().when(tenantValidityService)
-                .requireValid(org.mockito.ArgumentMatchers.any());
+                .requireValid(ArgumentMatchers.any());
         service = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 sysUserService, List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
                 new DingtalkSsoProviderClient()),
-                new com.sw.ck.system.sso.SsoCredentialCipher(
-                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCredentialCipher(
+                        Base64.getEncoder().encodeToString(new byte[32])),
                 new SsoCallbackPolicy("", List.of(), ""),
                 tenantValidityService,
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
-        Mockito.when(stateMapper.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any()))
+                Mockito.mock(SysTenantMapper.class), noopTxManager(), null, null);
+        Mockito.when(stateMapper.insert(ArgumentMatchers.<SsoAuthState>any()))
                 .thenAnswer(inv -> {
                     SsoAuthState s = inv.getArgument(0);
                     s.setId(1L);
                     return 1;
                 });
-        Mockito.when(configMapper.selectOne(org.mockito.ArgumentMatchers.any()))
+        Mockito.when(configMapper.selectOne(ArgumentMatchers.any()))
                 .thenAnswer(inv -> {
                     SsoProviderConfig config = new SsoProviderConfig();
                     config.setId(9L);
@@ -70,27 +89,27 @@ class SsoAuthServiceTest {
                     config.setProvider("WECOM");
                     config.setEnabled(1);
                     config.setAppId("ww-test-corp");
-                    config.setAppSecretEnc(new com.sw.ck.system.sso.SsoCredentialCipher(
-                            java.util.Base64.getEncoder().encodeToString(new byte[32]))
+                    config.setAppSecretEnc(new SsoCredentialCipher(
+                            Base64.getEncoder().encodeToString(new byte[32]))
                             .encrypt("secret-value"));
                     return config;
                 });
-        Mockito.when(auditMapper.insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>any()))
+        Mockito.when(auditMapper.insert(ArgumentMatchers.<SsoAuditRecord>any()))
                 .thenReturn(1);
-        Mockito.when(bindingMapper.insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any()))
+        Mockito.when(bindingMapper.insert(ArgumentMatchers.<SsoUserBinding>any()))
                 .thenReturn(1);
     }
 
     @AfterEach
     void tearDown() {
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
     }
 
     private void loginAs(Long tenantId) {
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+        LoginUser user = new LoginUser();
         user.setUserId(2L);
         user.setTenantId(tenantId);
-        com.sw.ck.security.holder.LoginUserHolder.set(user);
+        LoginUserHolder.set(user);
     }
 
     @Test
@@ -101,10 +120,10 @@ class SsoAuthServiceTest {
 
         assertThat(start.authorizeUrl()).contains("appid=ww-test-corp");
         assertThat(start.authorizeUrl()).doesNotContain("secret-value");
-        Mockito.verify(stateMapper).insert(org.mockito.ArgumentMatchers.<SsoAuthState>argThat(s ->
+        Mockito.verify(stateMapper).insert(ArgumentMatchers.<SsoAuthState>argThat(s ->
                 s.getStateValue().length() == 64 && s.getConsumed() == 0
                         && s.getExpireAt().isAfter(LocalDateTime.now())));
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "AUTH_START".equals(a.getEventType()) && "WECOM".equals(a.getProvider())));
     }
 
@@ -118,10 +137,10 @@ class SsoAuthServiceTest {
         var sm = Mockito.mock(SsoAuthStateMapper.class);
         var am = Mockito.mock(SsoAuditRecordMapper.class);
         var users = Mockito.mock(SysUserService.class);
-        var tvs = Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
-        Mockito.doNothing().when(tvs).requireValid(org.mockito.ArgumentMatchers.any());
-        var cipher = new com.sw.ck.system.sso.SsoCredentialCipher(
-                java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        var tvs = Mockito.mock(TenantValidityService.class);
+        Mockito.doNothing().when(tvs).requireValid(ArgumentMatchers.any());
+        var cipher = new SsoCredentialCipher(
+                Base64.getEncoder().encodeToString(new byte[32]));
         // 用例内 verify 依赖类字段引用：局部 mock 回写（setUp 已为每用例重建）
         this.auditMapper = am;
         this.bindingMapper = bm;
@@ -133,21 +152,21 @@ class SsoAuthServiceTest {
         config.setAppId("ww-test-corp");
         config.setAppSecretEnc(cipher.encrypt("secret-value"));
         config.setExtraConfig(extraConfig);
-        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(config);
-        Mockito.when(sm.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any())).thenAnswer(inv -> {
+        Mockito.when(cm.selectOne(ArgumentMatchers.any())).thenReturn(config);
+        Mockito.when(sm.insert(ArgumentMatchers.<SsoAuthState>any())).thenAnswer(inv -> {
             SsoAuthState st = inv.getArgument(0);
             st.setId(2L);
             return 1;
         });
-        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(sm.selectGlobalByState(ArgumentMatchers.anyString()))
                 .thenReturn(freshState(stateEnterpriseId));
-        Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        Mockito.when(sm.update(ArgumentMatchers.isNull(), ArgumentMatchers.any())).thenReturn(1);
         // B 端准入链默认无候选用户（个别用例显式覆盖）
-        Mockito.when(users.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<com.sw.ck.system.entity.SysUser>>any()))
-                .thenReturn(java.util.List.of());
+        Mockito.when(users.list(ArgumentMatchers.<Wrapper<SysUser>>any()))
+                .thenReturn(List.of());
         return new SsoAuthService(cm, bm, sm, am, users, List.of(client), cipher,
                 new SsoCallbackPolicy("", List.of(), ""), tvs,
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+                Mockito.mock(SysTenantMapper.class), noopTxManager(), null, null);
     }
 
     private SsoAuthState freshState() {
@@ -160,7 +179,7 @@ class SsoAuthServiceTest {
         st.setProvider("WECOM");
         st.setTenantId(1L);
         st.setConsumed(0);
-        st.setExpireAt(java.time.LocalDateTime.now().plusMinutes(5));
+        st.setExpireAt(LocalDateTime.now().plusMinutes(5));
         st.setConfigDigest(SsoAuthService.fingerprintOf("WECOM", "ww-test-corp", "secret-value", enterpriseId, 1));
         return st;
     }
@@ -187,7 +206,7 @@ class SsoAuthServiceTest {
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "ADMISSION_REJECTED".equals(a.getEventType())
                         && "trusted phone missing".equals(a.getDetail())));
     }
@@ -200,24 +219,24 @@ class SsoAuthServiceTest {
         var res = svc.handleCallback("WECOM", "code-ok", "state-ok");
         assertThat(res.bound()).isTrue();
         assertThat(res.userId()).isEqualTo(7L);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "BIND".equals(a.getEventType()) && "phone-admission auto-bind".equals(a.getDetail())));
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "LOGIN_SUCCESS".equals(a.getEventType())));
     }
 
     @Test
     @DisplayName("B 端准入：手机号在租户内重复 → 拒绝且无绑定增量")
     void callback_admission_ambiguousPhone_rejected() {
-        var users = userServiceReturning(java.util.List.of(
+        var users = userServiceReturning(List.of(
                 newLocalUser(7L, "17800000001"), newLocalUser(8L, "+8617800000001")));
         SsoAuthService svc = serviceWithUsers(fixedClient("ext-ok", "corp-ok", "+8617800000001"), "{}", users);
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
         Mockito.verify(bindingMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any());
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                .insert(ArgumentMatchers.<SsoUserBinding>any());
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "ADMISSION_REJECTED".equals(a.getEventType()) && "ambiguous phone in tenant".equals(a.getDetail())));
     }
 
@@ -229,8 +248,8 @@ class SsoAuthServiceTest {
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
         Mockito.verify(bindingMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any());
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                .insert(ArgumentMatchers.<SsoUserBinding>any());
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "ADMISSION_REJECTED".equals(a.getEventType())
                         && "no local user with trusted phone".equals(a.getDetail())));
     }
@@ -245,7 +264,7 @@ class SsoAuthServiceTest {
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "ADMISSION_REJECTED".equals(a.getEventType())
                         && "phone changed (vendor vs local)".equals(a.getDetail())));
     }
@@ -260,7 +279,7 @@ class SsoAuthServiceTest {
         var res = svc.handleCallback("WECOM", "code-ok", "state-ok");
         assertThat(res.bound()).isTrue();
         assertThat(res.userId()).isEqualTo(7L);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "LOGIN_SUCCESS".equals(a.getEventType())));
     }
 
@@ -268,7 +287,7 @@ class SsoAuthServiceTest {
     @DisplayName("B 端准入：已绑定但本地账号停用 → 拒绝")
     void callback_boundUserDisabled_rejected() {
         var users = Mockito.mock(SysUserService.class);
-        com.sw.ck.system.entity.SysUser disabled = newLocalUser(7L, "17800000001");
+        SysUser disabled = newLocalUser(7L, "17800000001");
         disabled.setStatus(1);
         Mockito.when(users.getById(7L)).thenReturn(disabled);
         SsoAuthService svc = serviceWithUsers(fixedClient("ext-ok", "corp-ok", "17800000001"), "{}", users,
@@ -276,7 +295,7 @@ class SsoAuthServiceTest {
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "ADMISSION_REJECTED".equals(a.getEventType())
                         && "bound local user unavailable".equals(a.getDetail())));
     }
@@ -292,9 +311,9 @@ class SsoAuthServiceTest {
         assertThat(res.bound()).isTrue();
         assertThat(res.userId()).isEqualTo(7L);
         Mockito.verify(bindingMapper).deleteDormantUnboundRows(
-                org.mockito.ArgumentMatchers.eq("WECOM"), org.mockito.ArgumentMatchers.eq(1L),
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(7L));
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                ArgumentMatchers.eq("WECOM"), ArgumentMatchers.eq(1L),
+                ArgumentMatchers.any(), ArgumentMatchers.eq(7L));
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "BIND".equals(a.getEventType()) && "phone-admission auto-bind".equals(a.getDetail())));
     }
 
@@ -308,7 +327,7 @@ class SsoAuthServiceTest {
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "ADMISSION_REJECTED".equals(a.getEventType())
                         && "dormant binding belongs to another local user".equals(a.getDetail())));
     }
@@ -317,23 +336,23 @@ class SsoAuthServiceTest {
     private SsoAuthService serviceWithUsersRebind(SsoProviderClient client, String extraConfig, SysUserService users,
                                                   SsoUserBinding dormant) {
         SsoAuthService svc = serviceWithUsers(client, extraConfig, users, (SsoUserBinding) null);
-        Mockito.when(bindingMapper.selectOne(org.mockito.ArgumentMatchers.any()))
+        Mockito.when(bindingMapper.selectOne(ArgumentMatchers.any()))
                 .thenReturn(dormant);
         Mockito.when(bindingMapper.deleteDormantUnboundRows(
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.any()))
                 .thenReturn(1);
         return svc;
     }
 
     /** A4 在途授权夹具：捕获式 client + 独立 mock 集（不出站、可验证绑定/审计增量）。 */
     private record InFlightHarness(SsoAuthService svc, SsoUserBindingMapper bm, SsoAuditRecordMapper am,
-                                   java.util.List<SsoProviderClient.SsoProviderConfigView> captured) {
+                                   List<SsoProviderClient.SsoProviderConfigView> captured) {
     }
 
     private InFlightHarness inFlightHarness(SsoProviderConfig currentConfig, SsoAuthState state,
-                                            List<com.sw.ck.system.entity.SysUser> tenantUsers) {
-        var captured = new java.util.ArrayList<SsoProviderClient.SsoProviderConfigView>();
+                                            List<SysUser> tenantUsers) {
+        var captured = new ArrayList<SsoProviderClient.SsoProviderConfigView>();
         SsoProviderClient capturingClient = new SsoProviderClient() {
             @Override public String provider() { return "WECOM"; }
             @Override public String buildAuthorizeUrl(SsoProviderConfigView c, String r, String st) { return "u"; }
@@ -347,30 +366,30 @@ class SsoAuthServiceTest {
         var sm = Mockito.mock(SsoAuthStateMapper.class);
         var am = Mockito.mock(SsoAuditRecordMapper.class);
         var users = Mockito.mock(SysUserService.class);
-        Mockito.when(users.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<com.sw.ck.system.entity.SysUser>>any()))
+        Mockito.when(users.list(ArgumentMatchers.<Wrapper<SysUser>>any()))
                 .thenReturn(tenantUsers);
         Mockito.doAnswer(inv -> tenantUsers.isEmpty() ? null : tenantUsers.get(0))
-                .when(users).getById(org.mockito.ArgumentMatchers.any());
-        var tvs = Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
-        Mockito.doNothing().when(tvs).requireValid(org.mockito.ArgumentMatchers.any());
-        var cipher = new com.sw.ck.system.sso.SsoCredentialCipher(
-                java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        Mockito.when(am.insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>any())).thenReturn(1);
-        Mockito.when(bm.insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any())).thenReturn(1);
-        Mockito.when(bm.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
-                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
-        Mockito.when(bm.selectActiveByUser(org.mockito.ArgumentMatchers.eq("WECOM"),
-                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(7L))).thenReturn(null);
-        Mockito.when(bm.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
-        Mockito.when(bm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
-        Mockito.when(bm.deleteDormantUnboundRows(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(0);
-        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(currentConfig);
-        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(state);
-        Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
+                .when(users).getById(ArgumentMatchers.any());
+        var tvs = Mockito.mock(TenantValidityService.class);
+        Mockito.doNothing().when(tvs).requireValid(ArgumentMatchers.any());
+        var cipher = new SsoCredentialCipher(
+                Base64.getEncoder().encodeToString(new byte[32]));
+        Mockito.when(am.insert(ArgumentMatchers.<SsoAuditRecord>any())).thenReturn(1);
+        Mockito.when(bm.insert(ArgumentMatchers.<SsoUserBinding>any())).thenReturn(1);
+        Mockito.when(bm.selectActiveByExternal(ArgumentMatchers.eq("WECOM"),
+                ArgumentMatchers.eq(1L), ArgumentMatchers.anyString())).thenReturn(null);
+        Mockito.when(bm.selectActiveByUser(ArgumentMatchers.eq("WECOM"),
+                ArgumentMatchers.eq(1L), ArgumentMatchers.eq(7L))).thenReturn(null);
+        Mockito.when(bm.selectCount(ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(bm.selectOne(ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(bm.deleteDormantUnboundRows(ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.any())).thenReturn(0);
+        Mockito.when(cm.selectOne(ArgumentMatchers.any())).thenReturn(currentConfig);
+        Mockito.when(sm.selectGlobalByState(ArgumentMatchers.anyString())).thenReturn(state);
+        Mockito.when(sm.update(ArgumentMatchers.isNull(), ArgumentMatchers.any())).thenReturn(1);
         SsoAuthService svc = new SsoAuthService(cm, bm, sm, am, users, List.of(capturingClient),
                 cipher, new SsoCallbackPolicy("", List.of(), ""), tvs,
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+                Mockito.mock(SysTenantMapper.class), noopTxManager(), null, null);
         return new InFlightHarness(svc, bm, am, captured);
     }
 
@@ -381,8 +400,8 @@ class SsoAuthServiceTest {
         config.setProvider("WECOM");
         config.setEnabled(enabled);
         config.setAppId(appId);
-        config.setAppSecretEnc(new com.sw.ck.system.sso.SsoCredentialCipher(
-                java.util.Base64.getEncoder().encodeToString(new byte[32])).encrypt(secret));
+        config.setAppSecretEnc(new SsoCredentialCipher(
+                Base64.getEncoder().encodeToString(new byte[32])).encrypt(secret));
         config.setExtraConfig(extraConfig);
         return config;
     }
@@ -394,8 +413,8 @@ class SsoAuthServiceTest {
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
         assertThat(h.captured()).isEmpty();
         Mockito.verify(h.bm(), Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any());
-        Mockito.verify(h.am()).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+                .insert(ArgumentMatchers.<SsoUserBinding>any());
+        Mockito.verify(h.am()).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "LOGIN_FAILED".equals(a.getEventType()) && expectedAuditDetail.equals(a.getDetail())));
     }
 
@@ -466,7 +485,7 @@ class SsoAuthServiceTest {
         assertThat(h.captured()).hasSize(1);
         assertThat(h.captured().get(0).appId()).isEqualTo("new-app-id");
         assertThat(h.captured().get(0).appSecret()).isEqualTo("new-secret-value");
-        Mockito.verify(h.am()).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(h.am()).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "BIND".equals(a.getEventType()) && "phone-admission auto-bind".equals(a.getDetail())));
     }
 
@@ -475,18 +494,18 @@ class SsoAuthServiceTest {
     void callback_enterpriseVendorFieldMismatch_rejectedAfterExchange() {
         // 指纹一致（企业标识 corp-expected 与发起时相同）→ 进入换票；厂商可信企业
         // 字段 corp-other 与配置不一致 → ENTERPRISE_MISMATCH 拒绝（G3b 语义保持）
-        var users = userServiceReturning(java.util.List.of());
+        var users = userServiceReturning(List.of());
         SsoAuthService svc = serviceWithUsers(fixedClient("ext-ok", "corp-other", "17800000001"),
                 "{\"enterpriseId\":\"corp-expected\"}", users, "corp-expected");
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
         Mockito.verify(bindingMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any());
+                .insert(ArgumentMatchers.<SsoUserBinding>any());
     }
 
-    private com.sw.ck.system.entity.SysUser newLocalUser(Long id, String phone) {
-        com.sw.ck.system.entity.SysUser user = new com.sw.ck.system.entity.SysUser();
+    private SysUser newLocalUser(Long id, String phone) {
+        SysUser user = new SysUser();
         user.setId(id);
         user.setTenantId(1L);
         user.setStatus(0);
@@ -494,16 +513,16 @@ class SsoAuthServiceTest {
         return user;
     }
 
-    private SysUserService userServiceReturning(com.sw.ck.system.entity.SysUser user) {
-        return userServiceReturning(java.util.List.of(user));
+    private SysUserService userServiceReturning(SysUser user) {
+        return userServiceReturning(List.of(user));
     }
 
-    private SysUserService userServiceReturning(java.util.List<com.sw.ck.system.entity.SysUser> users) {
+    private SysUserService userServiceReturning(List<SysUser> users) {
         SysUserService service = Mockito.mock(SysUserService.class);
-        Mockito.when(service.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<com.sw.ck.system.entity.SysUser>>any()))
+        Mockito.when(service.list(ArgumentMatchers.<Wrapper<SysUser>>any()))
                 .thenReturn(users);
         Mockito.doAnswer(inv -> users.isEmpty() ? null : users.get(0))
-                .when(service).getById(org.mockito.ArgumentMatchers.any());
+                .when(service).getById(ArgumentMatchers.any());
         return service;
     }
 
@@ -542,10 +561,10 @@ class SsoAuthServiceTest {
         // 用例内 verify 依赖类字段引用：局部 mock 回写（setUp 已为每用例重建）
         this.auditMapper = am;
         this.bindingMapper = bm;
-        var tvs = Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
-        Mockito.doNothing().when(tvs).requireValid(org.mockito.ArgumentMatchers.any());
-        var cipher = new com.sw.ck.system.sso.SsoCredentialCipher(
-                java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        var tvs = Mockito.mock(TenantValidityService.class);
+        Mockito.doNothing().when(tvs).requireValid(ArgumentMatchers.any());
+        var cipher = new SsoCredentialCipher(
+                Base64.getEncoder().encodeToString(new byte[32]));
         SsoProviderConfig config = new SsoProviderConfig();
         config.setId(9L);
         config.setTenantId(1L);
@@ -554,26 +573,26 @@ class SsoAuthServiceTest {
         config.setAppId("ww-test-corp");
         config.setAppSecretEnc(cipher.encrypt("secret-value"));
         config.setExtraConfig(extraConfig);
-        Mockito.when(cm.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(config);
-        Mockito.when(sm.insert(org.mockito.ArgumentMatchers.<SsoAuthState>any())).thenAnswer(inv -> {
+        Mockito.when(cm.selectOne(ArgumentMatchers.any())).thenReturn(config);
+        Mockito.when(sm.insert(ArgumentMatchers.<SsoAuthState>any())).thenAnswer(inv -> {
             SsoAuthState st = inv.getArgument(0);
             st.setId(2L);
             return 1;
         });
-        Mockito.when(sm.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(sm.selectGlobalByState(ArgumentMatchers.anyString()))
                 .thenReturn(freshState(stateEnterpriseId));
-        Mockito.when(sm.update(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any())).thenReturn(1);
-        Mockito.when(bm.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
-                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(sm.update(ArgumentMatchers.isNull(), ArgumentMatchers.any())).thenReturn(1);
+        Mockito.when(bm.selectActiveByExternal(ArgumentMatchers.eq("WECOM"),
+                ArgumentMatchers.eq(1L), ArgumentMatchers.anyString()))
                 .thenReturn(existingExternal);
-        Mockito.when(bm.selectActiveByUser(org.mockito.ArgumentMatchers.eq("WECOM"),
-                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(7L))).thenReturn(null);
-        Mockito.when(bm.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
-        Mockito.when(bm.insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any())).thenReturn(1);
-        Mockito.when(am.insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>any())).thenReturn(1);
+        Mockito.when(bm.selectActiveByUser(ArgumentMatchers.eq("WECOM"),
+                ArgumentMatchers.eq(1L), ArgumentMatchers.eq(7L))).thenReturn(null);
+        Mockito.when(bm.selectCount(ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(bm.insert(ArgumentMatchers.<SsoUserBinding>any())).thenReturn(1);
+        Mockito.when(am.insert(ArgumentMatchers.<SsoAuditRecord>any())).thenReturn(1);
         return new SsoAuthService(cm, bm, sm, am, users, List.of(client), cipher,
                 new SsoCallbackPolicy("", List.of(), ""), tvs,
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+                Mockito.mock(SysTenantMapper.class), noopTxManager(), null, null);
     }
 
     @Test
@@ -596,7 +615,7 @@ class SsoAuthServiceTest {
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-ok", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_ADMISSION_REJECTED);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "EXCHANGE".equals(a.getEventType())
                         && a.getDetail() != null && a.getDetail().contains("scope=personal")));
     }
@@ -615,12 +634,12 @@ class SsoAuthServiceTest {
     @Test
     @DisplayName("回调：state 不存在 → 拒绝且不换票")
     void handleCallback_unknownState_shouldReject() {
-        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(stateMapper.selectGlobalByState(ArgumentMatchers.anyString()))
                 .thenReturn(null);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "REPLAY_REJECTED".equals(a.getEventType())));
     }
 
@@ -633,12 +652,12 @@ class SsoAuthServiceTest {
         consumed.setProvider("WECOM");
         consumed.setConsumed(1);
         consumed.setExpireAt(LocalDateTime.now().plusSeconds(60));
-        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(stateMapper.selectGlobalByState(ArgumentMatchers.anyString()))
                 .thenReturn(consumed);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "REPLAY_REJECTED".equals(a.getEventType()) && "state replayed".equals(a.getDetail())));
     }
 
@@ -650,7 +669,7 @@ class SsoAuthServiceTest {
         expired.setProvider("WECOM");
         expired.setConsumed(0);
         expired.setExpireAt(LocalDateTime.now().minusSeconds(1));
-        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(stateMapper.selectGlobalByState(ArgumentMatchers.anyString()))
                 .thenReturn(expired);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
                 .isInstanceOf(SsoRejectionException.class)
@@ -665,7 +684,7 @@ class SsoAuthServiceTest {
         state.setProvider("FEISHU");
         state.setConsumed(0);
         state.setExpireAt(LocalDateTime.now().plusSeconds(60));
-        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(stateMapper.selectGlobalByState(ArgumentMatchers.anyString()))
                 .thenReturn(state);
         assertThatThrownBy(() -> service.handleCallback("WECOM", "code-x", "state-x"))
                 .isInstanceOf(SsoRejectionException.class)
@@ -678,11 +697,11 @@ class SsoAuthServiceTest {
         loginAs(1L);
         SsoUserBinding existing = new SsoUserBinding();
         existing.setUserId(99L);
-        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"), org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(SsoAuthService.digest("ext-1")))).thenReturn(existing);
+        Mockito.when(bindingMapper.selectActiveByExternal(ArgumentMatchers.eq("WECOM"), ArgumentMatchers.eq(1L), ArgumentMatchers.eq(SsoAuthService.digest("ext-1")))).thenReturn(existing);
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "ext-1"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "CONFLICT_REJECTED".equals(a.getEventType())));
     }
 
@@ -703,12 +722,12 @@ class SsoAuthServiceTest {
     void bind_success_shouldPersistActiveBinding() {
         loginAs(1L);
         service.bind("WECOM", 2L, "ext-1");
-        Mockito.verify(bindingMapper).insert(org.mockito.ArgumentMatchers.<SsoUserBinding>argThat(b ->
+        Mockito.verify(bindingMapper).insert(ArgumentMatchers.<SsoUserBinding>argThat(b ->
                 "ACTIVE".equals(b.getBindStatus()) && b.getTenantId() == 1L
                         && b.getExternalDigest().length() == 64
                         && b.getExternalId().equals(b.getExternalDigest())));
-        Mockito.when(bindingMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.when(bindingMapper.selectCount(ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "BIND".equals(a.getEventType()) && "SUCCESS".equals(a.getResult())));
     }
 
@@ -731,49 +750,49 @@ class SsoAuthServiceTest {
 
     // ======== I5 复验补证（G5/G7）：登录前安全发起、回调白名单分离、审计查询守卫 ========
 
-    private org.springframework.transaction.PlatformTransactionManager noopTxManager() {
-        return new org.springframework.transaction.PlatformTransactionManager() {
-            @Override public org.springframework.transaction.TransactionStatus getTransaction(org.springframework.transaction.TransactionDefinition definition) { return new org.springframework.transaction.support.SimpleTransactionStatus(); }
-            @Override public void commit(org.springframework.transaction.TransactionStatus status) { }
-            @Override public void rollback(org.springframework.transaction.TransactionStatus status) { }
+    private PlatformTransactionManager noopTxManager() {
+        return new PlatformTransactionManager() {
+            @Override public TransactionStatus getTransaction(TransactionDefinition definition) { return new SimpleTransactionStatus(); }
+            @Override public void commit(TransactionStatus status) { }
+            @Override public void rollback(TransactionStatus status) { }
         };
     }
 
-    private com.sw.ck.system.service.TenantValidityService mockedValidity() {
-        com.sw.ck.system.service.TenantValidityService v =
-                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
-        Mockito.doNothing().when(v).requireValid(org.mockito.ArgumentMatchers.any());
+    private TenantValidityService mockedValidity() {
+        TenantValidityService v =
+                Mockito.mock(TenantValidityService.class);
+        Mockito.doNothing().when(v).requireValid(ArgumentMatchers.any());
         return v;
     }
 
     private SsoAuthService serviceWith(SsoCallbackPolicy policy,
-                                       com.sw.ck.system.service.TenantValidityService validity) {
+                                       TenantValidityService validity) {
         return new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 Mockito.mock(SysUserService.class),
                 List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
                         new DingtalkSsoProviderClient()),
-                new com.sw.ck.system.sso.SsoCredentialCipher(
-                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCredentialCipher(
+                        Base64.getEncoder().encodeToString(new byte[32])),
                 policy, validity,
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+                Mockito.mock(SysTenantMapper.class), noopTxManager(), null, null);
     }
 
-    private SsoAuthService serviceWithTenantMapper(com.sw.ck.system.mapper.SysTenantMapper tenantMapper) {
+    private SsoAuthService serviceWithTenantMapper(SysTenantMapper tenantMapper) {
         return new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 Mockito.mock(SysUserService.class),
                 List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
                         new DingtalkSsoProviderClient()),
-                new com.sw.ck.system.sso.SsoCredentialCipher(
-                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCredentialCipher(
+                        Base64.getEncoder().encodeToString(new byte[32])),
                 new SsoCallbackPolicy("", List.of(), ""), validService(),
                 tenantMapper, noopTxManager(), null, null);
     }
 
-    private com.sw.ck.system.service.TenantValidityService validService() {
-        com.sw.ck.system.service.TenantValidityService v =
-                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
-        Mockito.doNothing().when(v).requireValid(org.mockito.ArgumentMatchers.any());
-        Mockito.when(v.isValid(org.mockito.ArgumentMatchers.any())).thenReturn(true);
+    private TenantValidityService validService() {
+        TenantValidityService v =
+                Mockito.mock(TenantValidityService.class);
+        Mockito.doNothing().when(v).requireValid(ArgumentMatchers.any());
+        Mockito.when(v.isValid(ArgumentMatchers.any())).thenReturn(true);
         return v;
     }
 
@@ -781,34 +800,34 @@ class SsoAuthServiceTest {
     @DisplayName("B021-016 免填企业：无启用配置 → sso_tenant_not_found，不签发 state")
     void authorizeLogin_blankName_zeroEnabledConfig_shouldReject() {
         SsoAuthService svc =
-                serviceWithTenantMapper(Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class));
-        Mockito.when(configMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+                serviceWithTenantMapper(Mockito.mock(SysTenantMapper.class));
+        Mockito.when(configMapper.selectList(ArgumentMatchers.any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "   ", null))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_NOT_FOUND);
         Mockito.verify(stateMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+                .insert(ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
     @DisplayName("B021-016 免填企业：唯一可用企业启用 → 自动解析该企业并按既有链发起")
     void authorizeLogin_blankName_singleEnabledConfig_shouldAutoResolve() {
         SsoAuthService svc =
-                serviceWithTenantMapper(Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class));
+                serviceWithTenantMapper(Mockito.mock(SysTenantMapper.class));
         SsoProviderConfig config = new SsoProviderConfig();
         config.setId(21L);
         config.setTenantId(100L);
         config.setProvider("WECOM");
         config.setEnabled(1);
-        Mockito.when(configMapper.selectList(org.mockito.ArgumentMatchers.any()))
+        Mockito.when(configMapper.selectList(ArgumentMatchers.any()))
                 .thenReturn(List.of(config));
 
         SsoAuthService.AuthorizeStart start =
                 svc.startAuthorizeLogin("WECOM", (String) null, "/workspace");
 
         assertThat(start.authorizeUrl()).contains("appid=ww-test-corp");
-        Mockito.verify(stateMapper).insert(org.mockito.ArgumentMatchers.<SsoAuthState>argThat(s ->
+        Mockito.verify(stateMapper).insert(ArgumentMatchers.<SsoAuthState>argThat(s ->
                 s.getTenantId() != null && s.getTenantId() == 100L && s.getConsumed() == 0));
     }
 
@@ -816,7 +835,7 @@ class SsoAuthServiceTest {
     @DisplayName("B021-016 免填企业：多企业启用同一 Provider → sso_tenant_ambiguous，不任意选中")
     void authorizeLogin_blankName_multiEnabledConfig_shouldReject() {
         SsoAuthService svc =
-                serviceWithTenantMapper(Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class));
+                serviceWithTenantMapper(Mockito.mock(SysTenantMapper.class));
         SsoProviderConfig a = new SsoProviderConfig();
         a.setId(21L);
         a.setTenantId(100L);
@@ -827,85 +846,85 @@ class SsoAuthServiceTest {
         b.setTenantId(101L);
         b.setProvider("WECOM");
         b.setEnabled(1);
-        Mockito.when(configMapper.selectList(org.mockito.ArgumentMatchers.any()))
+        Mockito.when(configMapper.selectList(ArgumentMatchers.any()))
                 .thenReturn(List.of(a, b));
 
         assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "  ", null))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_AMBIGUOUS);
         Mockito.verify(stateMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+                .insert(ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
     @DisplayName("V012-BUG-019 名称解析：唯一命中 → 解析为该租户并按既有链发起（trim 生效）")
     void resolveTenantName_uniqueHit_shouldStartWithResolvedTenant() {
-        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
-        com.sw.ck.system.entity.SysTenant t = new com.sw.ck.system.entity.SysTenant();
+        SysTenantMapper tenantMapper =
+                Mockito.mock(SysTenantMapper.class);
+        SysTenant t = new SysTenant();
         t.setId(100L);
         t.setName("演示企业");
-        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(t));
+        Mockito.when(tenantMapper.selectList(ArgumentMatchers.any())).thenReturn(List.of(t));
         SsoAuthService svc = serviceWithTenantMapper(tenantMapper);
 
         SsoAuthService.AuthorizeStart start = svc.startAuthorizeLogin("WECOM", " 演示企业 ", "/workspace");
 
         assertThat(start.authorizeUrl()).contains("appid=ww-test-corp");
-        Mockito.verify(stateMapper).insert(org.mockito.ArgumentMatchers.<SsoAuthState>argThat(s ->
+        Mockito.verify(stateMapper).insert(ArgumentMatchers.<SsoAuthState>argThat(s ->
                 s.getTenantId() != null && s.getTenantId() == 100L && s.getConsumed() == 0));
     }
 
     @Test
     @DisplayName("V012-BUG-019 名称解析：零命中 → sso_tenant_not_found，不签发 state")
     void resolveTenantName_noHit_shouldReject() {
-        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
-        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+        SysTenantMapper tenantMapper =
+                Mockito.mock(SysTenantMapper.class);
+        Mockito.when(tenantMapper.selectList(ArgumentMatchers.any())).thenReturn(List.of());
         SsoAuthService svc = serviceWithTenantMapper(tenantMapper);
 
         assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "不存在企业", null))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_NOT_FOUND);
         Mockito.verify(stateMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+                .insert(ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
     @DisplayName("V012-BUG-019 名称解析：多行命中 → sso_tenant_ambiguous，不任意选中")
     void resolveTenantName_ambiguous_shouldReject() {
-        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
-        com.sw.ck.system.entity.SysTenant a = new com.sw.ck.system.entity.SysTenant();
+        SysTenantMapper tenantMapper =
+                Mockito.mock(SysTenantMapper.class);
+        SysTenant a = new SysTenant();
         a.setId(1L); a.setName("同名企业");
-        com.sw.ck.system.entity.SysTenant b = new com.sw.ck.system.entity.SysTenant();
+        SysTenant b = new SysTenant();
         b.setId(2L); b.setName("同名企业");
-        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(a, b));
+        Mockito.when(tenantMapper.selectList(ArgumentMatchers.any())).thenReturn(List.of(a, b));
         SsoAuthService svc = serviceWithTenantMapper(tenantMapper);
 
         assertThatThrownBy(() -> svc.startAuthorizeLogin("WECOM", "同名企业", null))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_TENANT_AMBIGUOUS);
         Mockito.verify(stateMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+                .insert(ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
     @DisplayName("V012-BUG-019 名称解析：命中但租户停用/无效 → 按既有有效性校验拒绝")
     void resolveTenantName_invalidTenant_shouldReject() {
-        com.sw.ck.system.mapper.SysTenantMapper tenantMapper =
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class);
-        com.sw.ck.system.entity.SysTenant t = new com.sw.ck.system.entity.SysTenant();
+        SysTenantMapper tenantMapper =
+                Mockito.mock(SysTenantMapper.class);
+        SysTenant t = new SysTenant();
         t.setId(777L); t.setName("停用企业");
-        Mockito.when(tenantMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(t));
-        com.sw.ck.system.service.TenantValidityService invalid =
-                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        Mockito.when(tenantMapper.selectList(ArgumentMatchers.any())).thenReturn(List.of(t));
+        TenantValidityService invalid =
+                Mockito.mock(TenantValidityService.class);
         Mockito.doThrow(new IllegalStateException("租户无效")).when(invalid).requireValid(777L);
         SsoAuthService svc = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 Mockito.mock(SysUserService.class),
                 List.of(new WecomSsoProviderClient(), new FeishuSsoProviderClient(),
                         new DingtalkSsoProviderClient()),
-                new com.sw.ck.system.sso.SsoCredentialCipher(
-                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCredentialCipher(
+                        Base64.getEncoder().encodeToString(new byte[32])),
                 new SsoCallbackPolicy("", List.of(), ""), invalid,
                 tenantMapper, noopTxManager(), null, null);
 
@@ -913,7 +932,7 @@ class SsoAuthServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("租户无效");
         Mockito.verify(stateMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+                .insert(ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
@@ -927,8 +946,8 @@ class SsoAuthServiceTest {
     @Test
     @DisplayName("登录前发起：租户无效 → fail closed 且不签发 state")
     void startAuthorizeLogin_invalidTenant_shouldReject() {
-        com.sw.ck.system.service.TenantValidityService invalid =
-                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        TenantValidityService invalid =
+                Mockito.mock(TenantValidityService.class);
         Mockito.doThrow(new IllegalStateException("租户无效"))
                 .when(invalid).requireValid(777L);
         SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of(), ""), invalid);
@@ -936,7 +955,7 @@ class SsoAuthServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("租户无效");
         Mockito.verify(stateMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoAuthState>any());
+                .insert(ArgumentMatchers.<SsoAuthState>any());
     }
 
     @Test
@@ -944,7 +963,7 @@ class SsoAuthServiceTest {
     void startAuthorizeLogin_validTenant_shouldBindStateToTenant() {
         SsoAuthService.AuthorizeStart start = service.startAuthorizeLogin("WECOM", 100L, "/workspace");
         assertThat(start.authorizeUrl()).contains("appid=ww-test-corp");
-        Mockito.verify(stateMapper).insert(org.mockito.ArgumentMatchers.<SsoAuthState>argThat(s ->
+        Mockito.verify(stateMapper).insert(ArgumentMatchers.<SsoAuthState>argThat(s ->
                 s.getTenantId() != null && s.getTenantId() == 100L && s.getConsumed() == 0));
     }
 
@@ -991,23 +1010,23 @@ class SsoAuthServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("租户上下文缺失");
         loginAs(1L);
-        Mockito.when(auditMapper.selectList(org.mockito.ArgumentMatchers.any()))
+        Mockito.when(auditMapper.selectList(ArgumentMatchers.any()))
                 .thenReturn(List.of());
         var view = service.queryAudit("WECOM", null, null, null, 0, 20);
-        assertThat(view.get("tenantId")).isEqualTo("1");
-        Mockito.verify(auditMapper).selectList(org.mockito.ArgumentMatchers.any());
+        assertThat(view.getTenantId()).isEqualTo("1");
+        Mockito.verify(auditMapper).selectList(ArgumentMatchers.any());
     }
 
     @Test
     @DisplayName("配置保存：Provider 应用已登记在其他租户 → 跨租户冲突拒绝并审计")
     void saveConfig_appRegisteredByAnotherTenant_shouldReject() {
         loginAs(2L);
-        Mockito.when(configMapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
-        Mockito.when(configMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(1L);
+        Mockito.when(configMapper.selectOne(ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(configMapper.selectCount(ArgumentMatchers.any())).thenReturn(1L);
         assertThatThrownBy(() -> service.saveConfig("WECOM", true, "ww-same-app", null, null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("跨租户重复登记");
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "CONFLICT_REJECTED".equals(a.getEventType())));
     }
 
@@ -1015,9 +1034,9 @@ class SsoAuthServiceTest {
     @DisplayName("绑定：同一摘要已在其他租户绑定 → 跨租户拒绝（G6a/V87）")
     void bind_crossTenantDigestConflict_shouldReject() {
         loginAs(2L);
-        Mockito.when(bindingMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(1L);
-        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
-                org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
+        Mockito.when(bindingMapper.selectCount(ArgumentMatchers.any())).thenReturn(1L);
+        Mockito.when(bindingMapper.selectActiveByExternal(ArgumentMatchers.eq("WECOM"),
+                ArgumentMatchers.eq(2L), ArgumentMatchers.anyString())).thenReturn(null);
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "ext-cross"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
@@ -1027,18 +1046,18 @@ class SsoAuthServiceTest {
     @DisplayName("绑定并发唯一键竞争：失败侧转为业务拒绝且不产生成功审计")
     void bind_uniqueConstraintRace_shouldFailClosed() {
         loginAs(2L);
-        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
-                org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(bindingMapper.selectActiveByExternal(ArgumentMatchers.eq("WECOM"),
+                ArgumentMatchers.eq(2L), ArgumentMatchers.anyString()))
                 .thenReturn(null);
         Mockito.when(bindingMapper.selectActiveByUser("WECOM", 2L, 2L)).thenReturn(null);
-        Mockito.when(bindingMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
-        Mockito.when(bindingMapper.insert(org.mockito.ArgumentMatchers.<SsoUserBinding>any()))
-                .thenThrow(new org.springframework.dao.DuplicateKeyException("global binding unique"));
+        Mockito.when(bindingMapper.selectCount(ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(bindingMapper.insert(ArgumentMatchers.<SsoUserBinding>any()))
+                .thenThrow(new DuplicateKeyException("global binding unique"));
 
         assertThatThrownBy(() -> service.bind("WECOM", 2L, "subject-race"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_BINDING_CONFLICT);
-        Mockito.verify(auditMapper).insert(org.mockito.ArgumentMatchers.<SsoAuditRecord>argThat(a ->
+        Mockito.verify(auditMapper).insert(ArgumentMatchers.<SsoAuditRecord>argThat(a ->
                 "CONFLICT_REJECTED".equals(a.getEventType()) && "DENIED".equals(a.getResult())));
     }
 
@@ -1046,9 +1065,9 @@ class SsoAuthServiceTest {
     @DisplayName("回调：换票失败后 state 仍保持已消费，重放在外呼前拒绝（G5b）")
     void stateConsumedSurvivesProviderFailure_replayRejectedBeforeOutbound() {
         // lambdaUpdate 需要 MP TableInfo 缓存（单测上下文无 MapperScan 初始化）
-        com.baomidou.mybatisplus.core.MybatisConfiguration cfg = new com.baomidou.mybatisplus.core.MybatisConfiguration();
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(cfg, ""), SsoAuthState.class);
+        MybatisConfiguration cfg = new MybatisConfiguration();
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(cfg, ""), SsoAuthState.class);
         SsoProviderClient failing = new SsoProviderClient() {
             @Override public String provider() { return "WECOM"; }
             @Override public String buildAuthorizeUrl(SsoProviderConfigView config, String redirectUri, String state) { return "https://provider.example?state=" + state; }
@@ -1056,25 +1075,25 @@ class SsoAuthServiceTest {
         };
         SsoAuthService svc = new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper,
                 Mockito.mock(SysUserService.class), List.of(failing),
-                new com.sw.ck.system.sso.SsoCredentialCipher(
-                        java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                new SsoCredentialCipher(
+                        Base64.getEncoder().encodeToString(new byte[32])),
                 new SsoCallbackPolicy("", List.of(), ""), mockedValidity(),
-                Mockito.mock(com.sw.ck.system.mapper.SysTenantMapper.class), noopTxManager(), null, null);
+                Mockito.mock(SysTenantMapper.class), noopTxManager(), null, null);
         SsoAuthState fresh = new SsoAuthState();
         fresh.setId(7L); fresh.setProvider("WECOM"); fresh.setConsumed(0); fresh.setTenantId(1L);
         fresh.setExpireAt(LocalDateTime.now().plusSeconds(60));
         // A4：state 指纹与 setUp 默认配置桩同源，使换票失败发生在出站调用内（保持本用例语义）
         fresh.setConfigDigest(SsoAuthService.fingerprintOf("WECOM", "ww-test-corp", "secret-value", "", 1));
-        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(fresh);
-        Mockito.when(stateMapper.update(org.mockito.ArgumentMatchers.eq(null), org.mockito.ArgumentMatchers.any())).thenReturn(1);
-        Mockito.when(bindingMapper.selectActiveByExternal(org.mockito.ArgumentMatchers.eq("WECOM"),
-                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
+        Mockito.when(stateMapper.selectGlobalByState(ArgumentMatchers.anyString())).thenReturn(fresh);
+        Mockito.when(stateMapper.update(ArgumentMatchers.eq(null), ArgumentMatchers.any())).thenReturn(1);
+        Mockito.when(bindingMapper.selectActiveByExternal(ArgumentMatchers.eq("WECOM"),
+                ArgumentMatchers.eq(1L), ArgumentMatchers.anyString())).thenReturn(null);
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-x", "state-ok"))
                 .isInstanceOf(SsoProviderClient.SsoProviderException.class);
         SsoAuthState consumed = new SsoAuthState();
         consumed.setId(7L); consumed.setProvider("WECOM"); consumed.setConsumed(1); consumed.setTenantId(1L);
         consumed.setExpireAt(LocalDateTime.now().plusSeconds(60));
-        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString())).thenReturn(consumed);
+        Mockito.when(stateMapper.selectGlobalByState(ArgumentMatchers.anyString())).thenReturn(consumed);
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-y", "state-ok"))
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey", SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED);
@@ -1083,8 +1102,8 @@ class SsoAuthServiceTest {
     @Test
     @DisplayName("回调：租户停用/过期 → 在消费 state 与外呼前拒绝（G6b）")
     void handleCallback_invalidTenant_shouldRejectBeforeConsumeOrOutbound() {
-        com.sw.ck.system.service.TenantValidityService invalid =
-                Mockito.mock(com.sw.ck.system.service.TenantValidityService.class);
+        TenantValidityService invalid =
+                Mockito.mock(TenantValidityService.class);
         Mockito.doThrow(new IllegalStateException("租户无效"))
                 .when(invalid).requireValid(100L);
         SsoAuthService svc = serviceWith(new SsoCallbackPolicy("", List.of(), ""), invalid);
@@ -1094,22 +1113,22 @@ class SsoAuthServiceTest {
         fresh.setTenantId(100L);
         fresh.setConsumed(0);
         fresh.setExpireAt(LocalDateTime.now().plusSeconds(60));
-        Mockito.when(stateMapper.selectGlobalByState(org.mockito.ArgumentMatchers.anyString()))
+        Mockito.when(stateMapper.selectGlobalByState(ArgumentMatchers.anyString()))
                 .thenReturn(fresh);
 
         assertThatThrownBy(() -> svc.handleCallback("WECOM", "code-x", "state-invalid-tenant"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("租户无效");
         Mockito.verify(stateMapper, Mockito.never())
-                .update(org.mockito.ArgumentMatchers.eq(null), org.mockito.ArgumentMatchers.any());
+                .update(ArgumentMatchers.eq(null), ArgumentMatchers.any());
     }
 
     @Test
     @DisplayName("启用 Provider：三 Provider 均拒绝缺失/占位 secret；停用不要求 secret（G3b2）")
     void saveConfig_enabledProvidersRequireRealCredentials() {
         loginAs(2L);
-        Mockito.when(configMapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
-        Mockito.when(configMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(configMapper.selectOne(ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(configMapper.selectCount(ArgumentMatchers.any())).thenReturn(0L);
         for (String provider : SsoAuthService.PROVIDERS) {
             assertThatThrownBy(() -> service.saveConfig(provider, true,
                     "app-" + provider, null, null, null))
@@ -1122,22 +1141,22 @@ class SsoAuthServiceTest {
         }
         service.saveConfig("WECOM", false, null, null, null, null);
         Mockito.verify(configMapper, Mockito.never())
-                .insert(org.mockito.ArgumentMatchers.<SsoProviderConfig>argThat(c -> c.getEnabled() == 1));
+                .insert(ArgumentMatchers.<SsoProviderConfig>argThat(c -> c.getEnabled() == 1));
     }
 
     @Test
     @DisplayName("配置保存：无跨租户冲突 → 正常登记")
     void saveConfig_noConflict_shouldPass() {
         loginAs(2L);
-        Mockito.when(configMapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(null);
-        Mockito.when(configMapper.selectCount(org.mockito.ArgumentMatchers.any())).thenReturn(0L);
-        Mockito.when(configMapper.insert(org.mockito.ArgumentMatchers.<SsoProviderConfig>any()))
+        Mockito.when(configMapper.selectOne(ArgumentMatchers.any())).thenReturn(null);
+        Mockito.when(configMapper.selectCount(ArgumentMatchers.any())).thenReturn(0L);
+        Mockito.when(configMapper.insert(ArgumentMatchers.<SsoProviderConfig>any()))
                 .thenAnswer(inv -> {
                     SsoProviderConfig c = inv.getArgument(0);
                     c.setId(11L);
                     return 1;
                 });
         service.saveConfig("WECOM", true, "ww-new-app", "s", null, null);
-        Mockito.verify(configMapper).insert(org.mockito.ArgumentMatchers.<SsoProviderConfig>any());
+        Mockito.verify(configMapper).insert(ArgumentMatchers.<SsoProviderConfig>any());
     }
 }

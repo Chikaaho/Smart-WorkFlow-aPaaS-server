@@ -1,15 +1,19 @@
 package com.sw.ck.bpm.engine.participant;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
+import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,7 +46,7 @@ class P63FormFieldParticipantResolverTest {
     private UserQueryFacade users(Set<Long> activeUsers, Map<Long, Long> leaderByDept) {
         return new UserQueryFacade() {
             @Override
-            public Optional<List<Long>> findActiveUserIds(java.util.Collection<Long> ids, Long tenantId) {
+            public Optional<List<Long>> findActiveUserIds(Collection<Long> ids, Long tenantId) {
                 if (!TENANT.equals(tenantId)) {
                     return Optional.empty();
                 }
@@ -50,7 +54,7 @@ class P63FormFieldParticipantResolverTest {
             }
 
             @Override
-            public Optional<Map<Long, Long>> findDeptLeaderMap(java.util.Collection<Long> deptIds, Long tenantId) {
+            public Optional<Map<Long, Long>> findDeptLeaderMap(Collection<Long> deptIds, Long tenantId) {
                 if (!TENANT.equals(tenantId)) {
                     return Optional.empty();
                 }
@@ -63,13 +67,13 @@ class P63FormFieldParticipantResolverTest {
                 return Optional.of(result);
             }
 
-            @Override public Optional<List<com.sw.ck.system.api.user.UserOptionDTO>> searchActiveUsers(String k, int l) { return Optional.empty(); }
-            @Override public Optional<Map<Long, String>> getUserDisplayNames(java.util.Collection<Long> ids) { return Optional.empty(); }
-            @Override public Optional<List<Long>> findActiveUserIds(java.util.Collection<Long> ids) { return Optional.empty(); }
-            @Override public Optional<List<Long>> findActiveUserIdsByRoleCodes(java.util.Collection<String> c) { return Optional.empty(); }
-            @Override public Optional<List<Long>> findActiveUserIdsByRoleCodes(java.util.Collection<String> c, Long t) { return Optional.empty(); }
-            @Override public Optional<List<Long>> findActiveUserIdsByDeptLeaders(java.util.Collection<Long> d, Long t) { return Optional.empty(); }
-            @Override public Optional<List<Long>> findActiveUserIdsByPostCodes(java.util.Collection<String> p, Long t) { return Optional.empty(); }
+            @Override public Optional<List<UserOptionDTO>> searchActiveUsers(String k, int l) { return Optional.empty(); }
+            @Override public Optional<Map<Long, String>> getUserDisplayNames(Collection<Long> ids) { return Optional.empty(); }
+            @Override public Optional<List<Long>> findActiveUserIds(Collection<Long> ids) { return Optional.empty(); }
+            @Override public Optional<List<Long>> findActiveUserIdsByRoleCodes(Collection<String> c) { return Optional.empty(); }
+            @Override public Optional<List<Long>> findActiveUserIdsByRoleCodes(Collection<String> c, Long t) { return Optional.empty(); }
+            @Override public Optional<List<Long>> findActiveUserIdsByDeptLeaders(Collection<Long> d, Long t) { return Optional.empty(); }
+            @Override public Optional<List<Long>> findActiveUserIdsByPostCodes(Collection<String> p, Long t) { return Optional.empty(); }
             @Override public Optional<List<Long>> findActiveUserIdsByDeptAndPost(Long d, String p, Long t) { return Optional.empty(); }
         };
     }

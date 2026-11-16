@@ -2,7 +2,10 @@ package com.sw.ck.bpm.process.queue;
 
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+
 import lombok.Data;
+
+import java.time.LocalDateTime;
 
 /**
  * 命令信封：消息边界上传输的最小单元。
@@ -62,10 +65,10 @@ public class CommandEnvelope {
     private int deadlineSeconds = 30;
 
     /** 准入截止时间（受理时冻结；回查用）。 */
-    private java.time.LocalDateTime deadlineAt;
+    private LocalDateTime deadlineAt;
 
     /** 执行中超期标记（回查用）。 */
-    private java.time.LocalDateTime overdueAt;
+    private LocalDateTime overdueAt;
 
     /** 资源类别（PROD/OA/BULK；受理时冻结；null=策略未启用，不参与资源会计）。 */
     private String resourceClass;
@@ -80,5 +83,5 @@ public class CommandEnvelope {
     private Integer policyVersion;
 
     /** 占用释放时间（单位回收事实；null=仍占用）。 */
-    private java.time.LocalDateTime resourceReleasedAt;
+    private LocalDateTime resourceReleasedAt;
 }

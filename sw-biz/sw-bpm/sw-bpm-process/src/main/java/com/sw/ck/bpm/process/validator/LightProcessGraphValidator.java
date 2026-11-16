@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.validator;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
+import java.util.Iterator;
 
 /**
  * 生产轻流程图约束校验器（P62 分级执行 · 发布门）。
@@ -108,14 +110,14 @@ public class LightProcessGraphValidator {
         for (String start : nodeIds) {
             if (!white.contains(start)) continue;
             Deque<String> stack = new ArrayDeque<>();
-            Deque<java.util.Iterator<String>> iterators = new ArrayDeque<>();
+            Deque<Iterator<String>> iterators = new ArrayDeque<>();
             white.remove(start);
             gray.add(start);
             stack.push(start);
             iterators.push(adjacency.getOrDefault(start, List.of()).iterator());
 
             while (!stack.isEmpty()) {
-                java.util.Iterator<String> it = iterators.peek();
+                Iterator<String> it = iterators.peek();
                 if (it.hasNext()) {
                     String next = it.next();
                     if (gray.contains(next)) {

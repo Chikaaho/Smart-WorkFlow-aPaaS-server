@@ -3,11 +3,14 @@ package com.sw.ck.agent.orchestration;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
+
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
@@ -355,7 +358,7 @@ public class AgentGraphDebugEngine {
             // D022-05：429 时组内密钥轮换，与编排入口同语义）
             String systemPrompt = configString(node, CONFIG_KEY_SYSTEM_PROMPT);
             String userPromptTemplate = configString(node, CONFIG_KEY_USER_PROMPT_TEMPLATE);
-            List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
+            List<ChatMessage> messages = new ArrayList<>();
             if (systemPrompt != null && !systemPrompt.isBlank()) {
                 messages.add(SystemMessage.from(systemPrompt));
             }

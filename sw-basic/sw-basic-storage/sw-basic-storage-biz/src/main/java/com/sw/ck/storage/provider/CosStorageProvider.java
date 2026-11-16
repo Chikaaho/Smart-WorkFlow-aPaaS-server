@@ -14,7 +14,7 @@ import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.config.StorageProperties;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -27,7 +27,7 @@ import java.util.Date;
  * 使用 COS SDK 5.x (com.qcloud.cos)，支持预签名 URL。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 @RequiredArgsConstructor
 public class CosStorageProvider implements StorageProvider {

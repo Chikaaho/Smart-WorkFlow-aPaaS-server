@@ -1,42 +1,43 @@
 package com.sw.ck.bootstrap.verify;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.entity.SqlExecutionAudit;
 import com.sw.ck.bpm.engine.executor.SqlExecutor;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.bpm.engine.service.SqlExecutionAuditService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * BPM 外部数据源执行引擎 H2 仿真验证。
  */
 @Profile("dev")
 @Component
+@Log4j2
 public class BpmVerificationRunner implements CommandLineRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmVerificationRunner.class);
-
-    private final ExternalDatasourceService dsService;
-    private final SqlExecutor sqlExecutor;
-    private final SqlExecutionAuditService auditService;
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
-
-    public BpmVerificationRunner(ExternalDatasourceService dsService,
-                                  SqlExecutor sqlExecutor,
-                                  SqlExecutionAuditService auditService,
-                                  org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
-        this.dsService = dsService;
-        this.sqlExecutor = sqlExecutor;
-        this.auditService = auditService;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private ExternalDatasourceService dsService;
+    @Autowired
+    private SqlExecutor sqlExecutor;
+    @Autowired
+    private SqlExecutionAuditService auditService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Override
     public void run(String... args) {
@@ -44,15 +45,15 @@ public class BpmVerificationRunner implements CommandLineRunner {
 
         // 仅 dev 验证骨架：以系统操作人身份（租户 0）运行——本 Runner 无真实登录态，
         // I5 fail-closed 的租户/元数据填充要求显式声明归属，不再静默回落
-        com.sw.ck.security.holder.LoginUser systemOperator = new com.sw.ck.security.holder.LoginUser();
+        LoginUser systemOperator = new LoginUser();
         systemOperator.setUserId(0L);
         systemOperator.setTenantId(0L);
         systemOperator.setUsername("verify-runner");
-        com.sw.ck.security.holder.LoginUserHolder.set(systemOperator);
+        LoginUserHolder.set(systemOperator);
         try {
             doVerify();
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
         log.info("========== BPM 外部数据源执行引擎仿真验证完成 ==========");
     }
@@ -76,8 +77,8 @@ public class BpmVerificationRunner implements CommandLineRunner {
         ds.setReadOnly(0);
         ds.setEnabled(1);
         ds.setTenantId(0L);
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             dsService.saveWithEncryption(ds, "");
         }
         Long dsId = ds.getId();

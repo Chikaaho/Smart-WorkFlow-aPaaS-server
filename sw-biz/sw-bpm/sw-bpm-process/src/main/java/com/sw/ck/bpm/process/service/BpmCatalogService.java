@@ -1,10 +1,12 @@
 package com.sw.ck.bpm.process.service;
 
 import com.sw.ck.bpm.process.dto.CatalogItemDTO;
+import com.sw.ck.bpm.process.dto.CategoryCountsDTO;
+import com.sw.ck.bpm.process.dto.CategoryDTO;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 
-import java.util.Map;
+import java.util.List;
 
 /** 流程中心事项目录服务（v0.0.2）。 */
 public interface BpmCatalogService {
@@ -18,9 +20,9 @@ public interface BpmCatalogService {
     PageResult<CatalogItemDTO> listPortalItems(String keyword, Long categoryId, PageParam pageParam);
 
     /** 普通视角分类聚合数量（仅统计本人可见事项，不泄漏不可见集合）。 */
-    Map<Long, Long> portalCategoryCounts();
+    CategoryCountsDTO portalCategoryCounts();
     /** 普通视角分类列表（仅名称/排序，登录即可用；ID 以字符串下发避免 JS 精度丢失）。 */
-    java.util.List<com.sw.ck.bpm.process.dto.CategoryDTO> portalCategories();
+    List<CategoryDTO> portalCategories();
 
 
     /** 管理视角：全部定义（含未发布），附表单发布状态与绑定状态。 */

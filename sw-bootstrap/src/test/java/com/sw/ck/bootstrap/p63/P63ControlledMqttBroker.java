@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -215,7 +217,7 @@ public final class P63ControlledMqttBroker implements Closeable {
         if (body.length < 5) {
             return new byte[]{0x00, 0x00, 0x00};
         }
-        List<Byte> granted = new java.util.ArrayList<>();
+        List<Byte> granted = new ArrayList<>();
         int idx = 2;
         while (idx < body.length) {
             int topicLen = ((body[idx] & 0xFF) << 8) | (body[idx + 1] & 0xFF);
@@ -257,7 +259,7 @@ public final class P63ControlledMqttBroker implements Closeable {
             packetId = ((body[idx] & 0xFF) << 8) | (body[idx + 1] & 0xFF);
             idx += 2;
         }
-        byte[] payload = java.util.Arrays.copyOfRange(body, idx, body.length);
+        byte[] payload = Arrays.copyOfRange(body, idx, body.length);
         return new Publish(topic, qos, retain, packetId, payload);
     }
 

@@ -4,11 +4,16 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyChannelAdapter;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.api.NotifyTargetResolver;
+import com.sw.ck.notify.config.NotifyChannelProperties;
+import com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps;
+
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -32,18 +37,19 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
     private static final long TOKEN_TTL_MS = 110L * 60L * 1000L;
     private static final NotifyChannel CHANNEL = NotifyChannel.WECHAT_WORK;
 
-    private final NotifyTargetResolver targetResolver;
-    private final String corpId;
-    private final String corpSecret;
-    private final String agentId;
+    @Autowired
+    private NotifyTargetResolver targetResolver;
+    @Autowired
+    private NotifyChannelProperties props;
+    private String corpId;
+    private String corpSecret;
+    private String agentId;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, Object[]> tokenCache = new ConcurrentHashMap<>();
 
-    @Autowired
-    public WeComNotifyChannelAdapter(NotifyTargetResolver targetResolver,
-                                     com.sw.ck.notify.config.NotifyChannelProperties props) {
-        this.targetResolver = targetResolver;
-        com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps cp = props.getChannels().get("WECHAT_WORK");
+    @PostConstruct
+    void initChannelProps() {
+        ChannelProps cp = props.getChannels().get("WECHAT_WORK");
         this.corpId = cp.getCorpId();
         this.corpSecret = cp.getCorpSecret();
         this.agentId = cp.getAgentId();

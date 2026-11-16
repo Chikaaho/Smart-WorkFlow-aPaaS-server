@@ -1,11 +1,11 @@
 package com.sw.ck.bpm.process.service;
 
 import com.sw.ck.bpm.process.dto.CopyItemDTO;
+import com.sw.ck.bpm.process.dto.MyCopyDetailDTO;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 
 /** 抄送我的查询服务（v0.0.2 OA，只读）。 */
 public interface BpmCopyQueryService {
@@ -22,5 +22,5 @@ public interface BpmCopyQueryService {
      * 抄送详情（仅接收人本人）：抄送记录 + 实例摘要 + 只读表单快照（processVariables.formData）
      * + 审批进度与意见。抄送身份不获得审批操作权。
      */
-    Map<String, Object> myCopyDetail(Long copyId);
+    MyCopyDetailDTO myCopyDetail(Long copyId);
 }

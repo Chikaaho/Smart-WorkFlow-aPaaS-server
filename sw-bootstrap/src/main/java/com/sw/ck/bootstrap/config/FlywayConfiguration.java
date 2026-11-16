@@ -3,9 +3,8 @@ package com.sw.ck.bootstrap.config;
 import com.sw.ck.bootstrap.compat.DatabaseCompatibilityGuard;
 import com.sw.ck.bootstrap.migration.SwVendorMigrationRunner;
 import com.sw.ck.common.jdbc.DatabaseVendor;
+
 import org.flywaydb.core.Flyway;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,7 +12,9 @@ import org.springframework.context.annotation.Configuration;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.Locale;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Flyway 配置：通过 {@link FlywayMigrationStrategy} 串联主迁移与 prod-update 补丁迁移。
  * <p>
@@ -23,9 +24,8 @@ import java.sql.SQLException;
  * </p>
  */
 @Configuration
+@Log4j2
 public class FlywayConfiguration {
-
-    private static final Logger log = LoggerFactory.getLogger(FlywayConfiguration.class);
 
     /**
      * 自定义 Flyway 迁移策略，保证兼容性检查先于任何迁移、主迁移先跑、prod-update 补丁后跑。
@@ -46,7 +46,7 @@ public class FlywayConfiguration {
                     || vendor == DatabaseVendor.KINGBASE
                     || vendor == DatabaseVendor.OPENGAUSS) {
                 log.info("Executing SwVendorMigrationRunner (vendor = {}, locations = db/migration/{})",
-                        vendor.displayName(), vendor.name().toLowerCase(java.util.Locale.ROOT));
+                        vendor.displayName(), vendor.name().toLowerCase(Locale.ROOT));
                 SwVendorMigrationRunner.migrate(dataSource, vendor);
                 log.info("SwVendorMigrationRunner completed (vendor = {})", vendor.displayName());
                 return;

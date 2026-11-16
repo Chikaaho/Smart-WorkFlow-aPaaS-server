@@ -22,12 +22,17 @@ import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.entity.BpmCommand;
+import com.sw.ck.bpm.process.queue.support.ResourceAssuranceTestConfig;
+import com.sw.ck.bpm.process.service.TenantRateBuckets;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -52,7 +57,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * </p>
  */
 @SpringBootTest(classes = {QueueH2TestConfig.class,
-        com.sw.ck.bpm.process.queue.support.ResourceAssuranceTestConfig.class},
+        ResourceAssuranceTestConfig.class},
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {"flowable.async-executor-activate=true",
                 "flowable.process.async.executor.core-pool-size=8",
@@ -99,7 +104,7 @@ class ResourceAssuranceH2Test {
 
     /** 速率桶是 JVM 驻留态：跨用例必须复位，否则同窗口内前序用例的 admit 会使后续用例撞 2428（flaky）。 */
     @Autowired
-    private com.sw.ck.bpm.process.service.TenantRateBuckets rateBuckets;
+    private TenantRateBuckets rateBuckets;
 
     @BeforeEach
     void setUp() {
@@ -134,7 +139,7 @@ class ResourceAssuranceH2Test {
         LoginUser user = new LoginUser();
         user.setUserId(userId);
         user.setTenantId(tenantId);
-        user.setPermissions(java.util.List.of("form:action:invoke"));
+        user.setPermissions(List.of("form:action:invoke"));
         LoginUserHolder.set(user);
     }
 
@@ -272,9 +277,9 @@ class ResourceAssuranceH2Test {
                 CommandChannelEnum.NORMAL)));
         CommandEnvelope replay = envelope(commandKey, CommandChannelEnum.NORMAL);
         replay.setPayload("{\"payload\":\"DIFFERENT\"}");
-        replay.setPayloadFingerprint(com.sw.ck.bpm.process.queue.CommandFingerprint.of(replay.getPayload()));
+        replay.setPayloadFingerprint(CommandFingerprint.of(replay.getPayload()));
         assertThatThrownBy(() -> txTemplate.executeWithoutResult(status -> queue.enqueue(replay)))
-                .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+                .isInstanceOf(DuplicateKeyException.class);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM sw_bpm_command WHERE command_key = ?", Long.class, commandKey))
                 .isEqualTo(1);
@@ -327,9 +332,9 @@ class ResourceAssuranceH2Test {
         assertThat(globalUsage("TOTAL")).isEqualTo(3);
     }
 
-    private com.sw.ck.bpm.process.entity.BpmCommand batchAccounting(long tenant, int units,
+    private BpmCommand batchAccounting(long tenant, int units,
                                                                     String segment) {
-        com.sw.ck.bpm.process.entity.BpmCommand command = new com.sw.ck.bpm.process.entity.BpmCommand();
+        BpmCommand command = new BpmCommand();
         command.setTenantId(tenant);
         command.setCommandType(CommandTypeEnum.BATCH_INVOKE.getCode());
         command.setResourceUnits(units);
@@ -535,7 +540,7 @@ class ResourceAssuranceH2Test {
         envelope.setTenantId(TENANT_A);
         envelope.setInitiatorId(7L);
         envelope.setPayload("{\"payload\":\"" + key + "\"}");
-        envelope.setPayloadFingerprint(com.sw.ck.bpm.process.queue.CommandFingerprint.of(envelope.getPayload()));
+        envelope.setPayloadFingerprint(CommandFingerprint.of(envelope.getPayload()));
         return envelope;
     }
 

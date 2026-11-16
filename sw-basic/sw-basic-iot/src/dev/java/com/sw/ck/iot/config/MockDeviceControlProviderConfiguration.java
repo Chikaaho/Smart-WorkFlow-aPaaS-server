@@ -2,6 +2,8 @@ package com.sw.ck.iot.config;
 
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.provider.MockCloudProvider;
+import lombok.extern.log4j.Log4j2;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -32,12 +34,10 @@ public class MockDeviceControlProviderConfiguration {
      * 属性名统一用 kebab 形式，保证 yml（{@code provider-mode}）、环境变量与测试属性三种
      * 来源都能命中同一条条件。</p>
      */
+    @Log4j2
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnProperty(prefix = "sw.iot.tencent", name = "provider-mode", havingValue = "mock")
     static class MockProviderBean {
-
-        private static final org.slf4j.Logger log =
-                org.slf4j.LoggerFactory.getLogger(MockProviderBean.class);
 
         @Bean
         @ConditionalOnMissingBean(DeviceControlProvider.class)

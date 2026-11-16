@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -34,17 +36,12 @@ import java.util.List;
 @RequestMapping("/agent/knowledge-bases")
 public class KnowledgeBaseController {
 
-    private final KnowledgeBaseService baseService;
-    private final KnowledgeDocumentService documentService;
-    private final KnowledgeRetrievalService retrievalService;
-
-    public KnowledgeBaseController(KnowledgeBaseService baseService,
-                                   KnowledgeDocumentService documentService,
-                                   KnowledgeRetrievalService retrievalService) {
-        this.baseService = baseService;
-        this.documentService = documentService;
-        this.retrievalService = retrievalService;
-    }
+    @Autowired
+    private KnowledgeBaseService baseService;
+    @Autowired
+    private KnowledgeDocumentService documentService;
+    @Autowired
+    private KnowledgeRetrievalService retrievalService;
 
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")

@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -31,11 +32,14 @@ import com.sw.ck.notify.dto.TemplatePreviewResult;
 import com.sw.ck.notify.entity.NotifyTemplate;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -50,6 +54,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -663,7 +668,7 @@ class NotifyControllerIntegrationTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -709,9 +714,9 @@ class NotifyControllerIntegrationTest {
                 @Override
                 public TemplatePreviewResult renderPreview(TemplatePreviewRequest request) { return null; }
                 @Override
-                public TemplatePreviewResult previewByCode(String templateCode, java.util.Map<String, String> variables) { return null; }
+                public TemplatePreviewResult previewByCode(String templateCode, Map<String, String> variables) { return null; }
                 @Override
-                public java.util.Set<String> extractVariables(String titleTemplate, String contentTemplate) { return java.util.Set.of(); }
+                public Set<String> extractVariables(String titleTemplate, String contentTemplate) { return Set.of(); }
                 @Override
                 public NotifyTemplate getEnabledByCode(String code) { return null; }
             };
@@ -726,13 +731,13 @@ class NotifyControllerIntegrationTest {
 
         @Bean
         public NotifyFacade notifyFacade(NotifyMessageService notifyMessageService) {
-            return new NotifyFacadeImpl(notifyMessageService, java.util.List.of(), null, (tenantId, claim) -> claim.getAsInt());
+            return new NotifyFacadeImpl(notifyMessageService, List.of(), null, (tenantId, claim) -> claim.getAsInt());
         }
 
         @Bean
         public NotifyController notifyController(
                 NotifyMessageService notifyMessageService) {
-            return new NotifyController(notifyMessageService, org.mockito.Mockito.mock(com.sw.ck.notify.api.NotifyFacade.class));
+            return new NotifyController(notifyMessageService, Mockito.mock(NotifyFacade.class));
         }
     }
 }

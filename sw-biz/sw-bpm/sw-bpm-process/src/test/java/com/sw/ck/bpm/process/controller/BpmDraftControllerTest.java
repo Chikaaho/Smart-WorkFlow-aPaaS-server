@@ -1,28 +1,40 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
+import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.entity.DraftStatusEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.bpm.process.service.BpmDraftService;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.CommandSyncWaiter;
+import com.sw.ck.bpm.process.service.CommandSyncWaiter.Outcome;
+import com.sw.ck.bpm.process.service.CommandSyncWaiter.WaitResult;
+import com.sw.ck.bpm.process.service.DraftSubmitService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.facade.FormDataSubmitFacade;
+import com.sw.ck.form.api.facade.SubmissionValidationOutcome;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.PermissionService;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 import java.util.List;
 import java.util.Map;
@@ -55,16 +67,16 @@ class BpmDraftControllerTest {
     private final FormDefinitionService formDefinitionService = mock(FormDefinitionService.class);
     private final BpmCommandQueue commandQueue = mock(BpmCommandQueue.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final com.sw.ck.bpm.process.service.CommandSyncWaiter syncWaiter =
-            mock(com.sw.ck.bpm.process.service.CommandSyncWaiter.class);
-    private final com.sw.ck.security.support.PermissionService permissionService =
-            mock(com.sw.ck.security.support.PermissionService.class);
+    private final CommandSyncWaiter syncWaiter =
+            mock(CommandSyncWaiter.class);
+    private final PermissionService permissionService =
+            mock(PermissionService.class);
 
-    private final com.sw.ck.form.api.facade.FormDataSubmitFacade formDataSubmitFacade =
-            mock(com.sw.ck.form.api.facade.FormDataSubmitFacade.class);
+    private final FormDataSubmitFacade formDataSubmitFacade =
+            mock(FormDataSubmitFacade.class);
 
-    private final com.sw.ck.bpm.process.service.DraftSubmitService draftSubmitService =
-            new com.sw.ck.bpm.process.service.DraftSubmitService(
+    private final DraftSubmitService draftSubmitService =
+            new DraftSubmitService(
                     draftService, bindingService, formDefinitionService, commandQueue, objectMapper,
                     formDataSubmitFacade);
 
@@ -77,13 +89,13 @@ class BpmDraftControllerTest {
         loginUser.setUserId(2L);
         loginUser.setTenantId(0L);
         LoginUserHolder.set(loginUser);
-        when(formDefinitionService.canCurrentUserInitiate(anyString())).thenReturn(java.util.Optional.of(true));
-        org.mockito.Mockito.lenient()
+        when(formDefinitionService.canCurrentUserInitiate(anyString())).thenReturn(Optional.of(true));
+        Mockito.lenient()
                 .when(formDataSubmitFacade.validateSubmission(anyString(), any()))
-                .thenReturn(java.util.Optional.of(
-                        com.sw.ck.form.api.facade.SubmissionValidationOutcome.VALID));
-        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(java.util.Optional.of(true));
-        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(java.util.Optional.of(true));
+                .thenReturn(Optional.of(
+                        SubmissionValidationOutcome.VALID));
+        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(Optional.of(true));
+        when(formDefinitionService.canCurrentUserPerformAction(anyString(), eq("view"))).thenReturn(Optional.of(true));
     }
 
     @AfterEach
@@ -124,7 +136,7 @@ class BpmDraftControllerTest {
         @DisplayName("formKey 未发布 → 抛 BaseException")
         void create_shouldRejectUnpublishedForm() {
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("DRAFT", 1)));
+                    .thenReturn(Optional.of(formDef("DRAFT", 1)));
 
             assertThatThrownBy(() -> controller.create(Map.of("formKey", "leave_form")))
                     .isInstanceOf(BaseException.class)
@@ -136,7 +148,7 @@ class BpmDraftControllerTest {
         @DisplayName("create 成功：formVersion 从 FormDefDTO 快照、status=EDITING、submitSeq=0")
         void create_shouldSnapshotFormVersionAndSetEditing() {
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 3)));
+                    .thenReturn(Optional.of(formDef("PUBLISHED", 3)));
             when(draftService.save(any(BpmDraft.class))).thenReturn(true);
 
             R<BpmDraft> resp = controller.create(Map.of(
@@ -168,7 +180,7 @@ class BpmDraftControllerTest {
             own.setPayload("{\"secret\":\"should-not-leak\"}");
             when(draftService.getById(6L)).thenReturn(own);
             when(formDefinitionService.canCurrentUserPerformAction("leave_form", "view"))
-                    .thenReturn(java.util.Optional.of(false));
+                    .thenReturn(Optional.of(false));
 
             assertThatThrownBy(() -> controller.get(6L))
                     .isInstanceOf(BaseException.class)
@@ -262,14 +274,14 @@ class BpmDraftControllerTest {
             BpmDraft d = draft(9L, DraftStatusEnum.EDITING.getCode());
             when(draftService.getById(9L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
-            com.sw.ck.bpm.process.entity.BpmFormBinding binding =
-                    new com.sw.ck.bpm.process.entity.BpmFormBinding();
+                    .thenReturn(Optional.of(formDef("PUBLISHED", 1)));
+            BpmFormBinding binding =
+                    new BpmFormBinding();
             binding.setFormKey("leave_form");
             binding.setProcessDefKey("leave_flow");
             binding.setActive(true);
             when(bindingService.findActiveByFormKey("leave_form")).thenReturn(List.of(binding));
-            org.mockito.Mockito.doThrow(new BaseException(1401, "必填字段 'applicant' 缺失"))
+            Mockito.doThrow(new BaseException(1401, "必填字段 'applicant' 缺失"))
                     .when(formDataSubmitFacade).validateSubmission(anyString(), any());
 
             assertThatThrownBy(() -> controller.submit(9L))
@@ -277,7 +289,7 @@ class BpmDraftControllerTest {
                     .hasMessageContaining("必填字段");
             verify(commandQueue, never()).enqueue(any(CommandEnvelope.class));
             verify(draftService, never()).updateById(any(BpmDraft.class));
-            org.mockito.Mockito.verify(formDataSubmitFacade)
+            Mockito.verify(formDataSubmitFacade)
                     .validateSubmission(anyString(), any());
         }
 
@@ -288,7 +300,7 @@ class BpmDraftControllerTest {
             d.setProcessDefKey(null);
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
+                    .thenReturn(Optional.of(formDef("PUBLISHED", 1)));
 
             assertThatThrownBy(() -> controller.submit(5L))
                     .isInstanceOf(BaseException.class)
@@ -300,7 +312,7 @@ class BpmDraftControllerTest {
         void submit_shouldRejectWhenNoActiveBinding() {
             when(draftService.getById(5L)).thenReturn(draft(5L, DraftStatusEnum.EDITING.getCode()));
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
+                    .thenReturn(Optional.of(formDef("PUBLISHED", 1)));
             when(bindingService.findActiveByFormKey("leave_form")).thenReturn(List.of());
 
             assertThatThrownBy(() -> controller.submit(5L))
@@ -314,7 +326,7 @@ class BpmDraftControllerTest {
             BpmDraft d = draft(5L, DraftStatusEnum.EDITING.getCode());
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 2)));
+                    .thenReturn(Optional.of(formDef("PUBLISHED", 2)));
 
             assertThatThrownBy(() -> controller.submit(5L))
                     .isInstanceOf(BaseException.class)
@@ -331,7 +343,7 @@ class BpmDraftControllerTest {
             BpmDraft d = draft(5L, DraftStatusEnum.EDITING.getCode());
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
+                    .thenReturn(Optional.of(formDef("PUBLISHED", 1)));
             BpmFormBinding binding = new BpmFormBinding();
             binding.setFormKey("leave_form");
             binding.setProcessDefKey("leave_flow");
@@ -353,15 +365,15 @@ class BpmDraftControllerTest {
             ArgumentCaptor<CommandEnvelope> envCaptor = ArgumentCaptor.forClass(CommandEnvelope.class);
             verify(commandQueue).enqueue(envCaptor.capture());
             CommandEnvelope env = envCaptor.getValue();
-            assertThat(env.getCommandType()).isEqualTo(com.sw.ck.bpm.process.entity.CommandTypeEnum.DRAFT_SUBMIT);
-            assertThat(env.getChannel()).isEqualTo(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL);
+            assertThat(env.getCommandType()).isEqualTo(CommandTypeEnum.DRAFT_SUBMIT);
+            assertThat(env.getChannel()).isEqualTo(CommandChannelEnum.NORMAL);
             assertThat(env.getCommandKey()).isEqualTo("DRAFT_SUBMIT:5:1");
             assertThat(env.getTenantId()).isEqualTo(0L);
             assertThat(env.getInitiatorId()).isEqualTo(2L);
             assertThat(env.getPayload()).contains("leave_form").contains("submittedData");
 
             ArgumentCaptor<BpmDraft> draftCaptor = ArgumentCaptor.forClass(BpmDraft.class);
-            verify(draftService, org.mockito.Mockito.times(2)).updateById(draftCaptor.capture());
+            verify(draftService, Mockito.times(2)).updateById(draftCaptor.capture());
             List<BpmDraft> updates = draftCaptor.getAllValues();
             assertThat(updates.get(0).getStatus()).isEqualTo(DraftStatusEnum.SUBMITTING.getCode());
             assertThat(updates.get(0).getSubmitSeq()).isEqualTo(1);
@@ -377,8 +389,8 @@ class BpmDraftControllerTest {
             CommandEnvelope existing = new CommandEnvelope();
             existing.setCommandId(33L);
             existing.setCommandKey("DRAFT_SUBMIT:5:1");
-            existing.setCommandType(com.sw.ck.bpm.process.entity.CommandTypeEnum.DRAFT_SUBMIT);
-            existing.setChannel(com.sw.ck.bpm.process.entity.CommandChannelEnum.NORMAL);
+            existing.setCommandType(CommandTypeEnum.DRAFT_SUBMIT);
+            existing.setChannel(CommandChannelEnum.NORMAL);
             when(commandQueue.findById(33L)).thenReturn(Optional.of(existing));
 
             R<CommandAcceptRespDTO> resp = controller.submit(5L);
@@ -408,7 +420,7 @@ class BpmDraftControllerTest {
             when(permissionService.hasPermi("workflow:p0:dispatch")).thenReturn(true);
             when(draftService.getById(5L)).thenReturn(d);
             when(formDefinitionService.getFormDef("leave_form"))
-                    .thenReturn(java.util.Optional.of(formDef("PUBLISHED", 1)));
+                    .thenReturn(Optional.of(formDef("PUBLISHED", 1)));
             BpmFormBinding binding = new BpmFormBinding();
             binding.setFormKey("leave_form");
             binding.setProcessDefKey("leave_flow");
@@ -420,8 +432,8 @@ class BpmDraftControllerTest {
                 env.setCommandId(44L);
                 return 44L;
             });
-            when(syncWaiter.waitSyncResult(44L)).thenReturn(new com.sw.ck.bpm.process.service.CommandSyncWaiter.WaitResult(
-                    com.sw.ck.bpm.process.service.CommandSyncWaiter.Outcome.COMPLETED, null));
+            when(syncWaiter.waitSyncResult(44L)).thenReturn(new WaitResult(
+                    Outcome.COMPLETED, null));
 
             R<CommandAcceptRespDTO> resp = controller.submit(5L, "P0");
 
@@ -430,7 +442,7 @@ class BpmDraftControllerTest {
             ArgumentCaptor<CommandEnvelope> envCaptor = ArgumentCaptor.forClass(CommandEnvelope.class);
             verify(commandQueue).enqueue(envCaptor.capture());
             assertThat(envCaptor.getValue().getChannel()).isEqualTo(
-                    com.sw.ck.bpm.process.entity.CommandChannelEnum.P0);
+                    CommandChannelEnum.P0);
         }
     }
 }

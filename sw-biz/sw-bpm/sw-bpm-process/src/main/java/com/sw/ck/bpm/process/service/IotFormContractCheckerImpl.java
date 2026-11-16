@@ -1,18 +1,24 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.iot.api.IotFormContractChecker;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -23,14 +29,10 @@ import java.util.Set;
 @Service
 public class IotFormContractCheckerImpl implements IotFormContractChecker {
 
-    private final BpmProcessDefService processDefService;
-    private final ObjectProvider<FormDefinitionService> formDefinitionServiceProvider;
-
-    public IotFormContractCheckerImpl(BpmProcessDefService processDefService,
-                                      ObjectProvider<FormDefinitionService> formDefinitionServiceProvider) {
-        this.processDefService = processDefService;
-        this.formDefinitionServiceProvider = formDefinitionServiceProvider;
-    }
+    @Autowired
+    private BpmProcessDefService processDefService;
+    @Autowired
+    private ObjectProvider<FormDefinitionService> formDefinitionServiceProvider;
 
     @Override
     public Optional<List<String>> checkMapping(String processTemplateKey, String formMappingJson) {
@@ -62,10 +64,10 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
         }
         // 字段类型/枚举/引用契约（G3a）：name → {type, options}
         // empty = 该 formKey 无表单定义：无字段契约可提取（上方存在性校验已兜住）
-        java.util.Map<String, com.alibaba.fastjson2.JSONObject> fieldTypes =
+        Map<String, JSONObject> fieldTypes =
                 formService.getFormDefinition(def.getFormKey())
                         .map(this::extractFieldContracts)
-                        .orElseGet(java.util.LinkedHashMap::new);
+                        .orElseGet(LinkedHashMap::new);
         Set<String> formFields = fieldTypes.keySet();
         JSONArray mappings;
         try {
@@ -94,7 +96,7 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
                 errors.add("必填字段缺少来源: " + field);
             }
             // 类型/枚举/引用契约：固定值必须与字段类型/枚举域匹配；REFERENCE 必须给出引用对象标识
-            com.alibaba.fastjson2.JSONObject contract = fieldTypes.get(field);
+            JSONObject contract = fieldTypes.get(field);
             if (contract != null && mapping.get("fixed") != null) {
                 String type = contract.getString("type");
                 Object fixed = mapping.get("fixed");
@@ -108,7 +110,7 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
                 } else if ("DATE".equals(type) && !String.valueOf(fixed).matches("\\d{4}-\\d{2}-\\d{2}.*")) {
                     errors.add("字段 '" + field + "' 为 DATE，固定值非日期: " + fixed);
                 } else if ("DICT".equals(type)) {
-                    com.alibaba.fastjson2.JSONArray options = contract.getJSONArray("options");
+                    JSONArray options = contract.getJSONArray("options");
                     if (options != null && !options.isEmpty()
                             && !options.contains(String.valueOf(fixed))) {
                         errors.add("字段 '" + field + "' 枚举不含值: " + fixed);
@@ -152,8 +154,8 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
     /**
      * 字段契约提取：name → {type, options}（枚举域来自 field options 数组）。
      */
-    private java.util.Map<String, com.alibaba.fastjson2.JSONObject> extractFieldContracts(String json) {
-        java.util.Map<String, com.alibaba.fastjson2.JSONObject> contracts = new java.util.LinkedHashMap<>();
+    private Map<String, JSONObject> extractFieldContracts(String json) {
+        Map<String, JSONObject> contracts = new LinkedHashMap<>();
         if (json == null || json.isBlank()) {
             return contracts;
         }
@@ -171,7 +173,7 @@ public class IotFormContractCheckerImpl implements IotFormContractChecker {
                     contract.put("type", node.getString("type"));
                     Object options = node.get("options");
                     if (options instanceof JSONArray arr) {
-                        java.util.List<String> values = new ArrayList<>();
+                        List<String> values = new ArrayList<>();
                         for (int j = 0; j < arr.size(); j++) {
                             Object opt = arr.get(j);
                             if (opt instanceof JSONObject obj && obj.getString("value") != null) {

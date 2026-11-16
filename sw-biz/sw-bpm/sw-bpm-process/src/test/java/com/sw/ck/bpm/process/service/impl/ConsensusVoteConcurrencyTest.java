@@ -11,6 +11,11 @@ import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.impl.ApprovalLifecycleServiceImpl;
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.bpm.api.participant.DynamicBranchPort;
+import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
+import com.sw.ck.bpm.process.service.TaskActionService;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -20,7 +25,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,7 +54,7 @@ class ConsensusVoteConcurrencyTest {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch ready = new CountDownLatch(threads);
         CountDownLatch start = new CountDownLatch(1);
-        List<Future<java.util.Optional<Boolean>>> futures = new java.util.ArrayList<>();
+        List<Future<Optional<Boolean>>> futures = new ArrayList<>();
         for (int i = 0; i < threads; i++) {
             futures.add(pool.submit(() -> {
                 ready.countDown();
@@ -59,9 +66,9 @@ class ConsensusVoteConcurrencyTest {
         start.countDown();
 
         int accepted = 0;
-        for (Future<java.util.Optional<Boolean>> future : futures) {
+        for (Future<Optional<Boolean>> future : futures) {
             // present=true 记录成功；present=false 幂等重复；empty=端口不可用（不计入成功）
-            java.util.Optional<Boolean> outcome = future.get();
+            Optional<Boolean> outcome = future.get();
             if (outcome.isPresent() && outcome.get()) accepted++;
         }
         pool.shutdown();
@@ -97,12 +104,12 @@ class ConsensusVoteConcurrencyTest {
                 BpmSignRecordMapper signRecordMapper,
                 BpmTaskDeadlineMapper deadlineMapper,
                 BpmConsensusVoteMapper consensusVoteMapper,
-                com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper participantSnapshotMapper,
-                ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade> userQueryFacade,
-                ObjectProvider<com.sw.ck.bpm.process.service.TaskActionService> taskActionService,
-                ObjectProvider<com.sw.ck.bpm.api.participant.DynamicBranchPort> dynamicBranchPort,
+                ParticipantSnapshotMapper participantSnapshotMapper,
+                ObjectProvider<UserQueryFacade> userQueryFacade,
+                ObjectProvider<TaskActionService> taskActionService,
+                ObjectProvider<DynamicBranchPort> dynamicBranchPort,
                 DomainEventPublisher domainEventPublisher,
-                com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                ObjectMapper objectMapper) {
             return new ApprovalLifecycleServiceImpl(bpmTaskFacade, bpmInstanceService,
                     bpmProcessDefService, approvalActionService, authorizeRuleMapper,
                     communicationMapper, signRecordMapper, deadlineMapper, consensusVoteMapper,
@@ -136,17 +143,17 @@ class ConsensusVoteConcurrencyTest {
         }
 
         @Bean
-        com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
-            return new com.fasterxml.jackson.databind.ObjectMapper();
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
         }
 
         @Bean
-        ObjectProvider<com.sw.ck.system.api.user.UserQueryFacade> userQueryFacadeProvider() {
+        ObjectProvider<UserQueryFacade> userQueryFacadeProvider() {
             return Mockito.mock(ObjectProvider.class);
         }
 
         @Bean
-        ObjectProvider<com.sw.ck.bpm.process.service.TaskActionService> taskActionServiceProvider() {
+        ObjectProvider<TaskActionService> taskActionServiceProvider() {
             return Mockito.mock(ObjectProvider.class);
         }
     }

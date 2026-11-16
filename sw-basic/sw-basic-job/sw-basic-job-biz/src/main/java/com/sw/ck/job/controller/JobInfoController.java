@@ -1,5 +1,7 @@
 package com.sw.ck.job.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -9,11 +11,10 @@ import com.sw.ck.job.entity.JobInfo;
 import com.sw.ck.job.enums.JobStatus;
 import com.sw.ck.job.service.JobInfoService;
 import com.sw.ck.job.service.QuartzSchedulerService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 定时任务定义控制器。
  * <p>
@@ -23,18 +24,13 @@ import org.springframework.security.access.prepost.PreAuthorize;
  */
 @RestController
 @RequestMapping("/job/info")
+@Log4j2
 public class JobInfoController {
 
-    private static final Logger log = LoggerFactory.getLogger(JobInfoController.class);
-
-    private final JobInfoService jobInfoService;
-    private final QuartzSchedulerService quartzSchedulerService;
-
-    public JobInfoController(JobInfoService jobInfoService,
-                             QuartzSchedulerService quartzSchedulerService) {
-        this.jobInfoService = jobInfoService;
-        this.quartzSchedulerService = quartzSchedulerService;
-    }
+    @Autowired
+    private JobInfoService jobInfoService;
+    @Autowired
+    private QuartzSchedulerService quartzSchedulerService;
 
     /**
      * 分页查询任务定义。

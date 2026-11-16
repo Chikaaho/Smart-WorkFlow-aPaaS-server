@@ -19,19 +19,12 @@ import java.util.Optional;
 @Service
 public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecorder {
 
-    private final ParticipantSnapshotMapper mapper;
+    @Autowired
+    private ParticipantSnapshotMapper mapper;
 
     /** 运行时任务门面：按任务存活判定失效面（未装配时回退旧全量语义） */
-    private ObjectProvider<BpmTaskFacade> taskFacadeProvider;
-
-    public ParticipantSnapshotRecorderImpl(ParticipantSnapshotMapper mapper) {
-        this.mapper = mapper;
-    }
-
     @Autowired(required = false)
-    public void setTaskFacadeProvider(ObjectProvider<BpmTaskFacade> taskFacadeProvider) {
-        this.taskFacadeProvider = taskFacadeProvider;
-    }
+    private ObjectProvider<BpmTaskFacade> taskFacadeProvider;
 
     @Override
     @Transactional

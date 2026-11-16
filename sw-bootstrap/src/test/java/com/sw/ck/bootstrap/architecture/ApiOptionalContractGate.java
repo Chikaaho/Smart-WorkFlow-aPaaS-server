@@ -7,10 +7,12 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 import java.net.URL;
 import java.security.CodeSource;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -81,7 +83,7 @@ public final class ApiOptionalContractGate {
      * @return 纳入守门范围的类型集合（按类名排序）
      */
     public static Set<Class<?>> scanApiModuleTypes() {
-        Set<Class<?>> types = new TreeSet<>(java.util.Comparator.comparing(Class::getName));
+        Set<Class<?>> types = new TreeSet<>(Comparator.comparing(Class::getName));
         ClassPathScanningCandidateComponentProvider provider =
                 new ClassPathScanningCandidateComponentProvider(false) {
                     @Override
@@ -209,7 +211,7 @@ public final class ApiOptionalContractGate {
                 && parameterized.getRawType() instanceof Class<?> raw) {
             return raw;
         }
-        if (type instanceof java.lang.reflect.WildcardType wildcard
+        if (type instanceof WildcardType wildcard
                 && wildcard.getUpperBounds().length == 1) {
             return rawClassOf(wildcard.getUpperBounds()[0]);
         }

@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /** 催办请求（可空 body：旧客户端无 body 调用保持可用）。 */
 @Data
 @Builder
@@ -19,5 +21,5 @@ public class UrgeReqDTO {
      * 可选催办接收人（稳定用户 ID）：必须全部属于服务端核定的当前实例合法待办人集合；
      * 为空表示沿用实例级旧语义（催办全部当前待办人）。
      */
-    private java.util.List<Long> recipientIds;
+    private List<Long> recipientIds;
 }

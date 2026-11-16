@@ -1,15 +1,19 @@
 package com.sw.ck.security.filter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.security.config.DebugAuthenticationProfile;
 import com.sw.ck.security.config.DebugAuthenticationProperties;
 import com.sw.ck.security.config.SecurityProperties;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import jakarta.servlet.FilterChain;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -76,7 +80,7 @@ class DebugAuthenticationFilterTest {
         filter.doFilter(request("test_7", "127.0.0.1"), new MockHttpServletResponse(), chain);
 
         assertThat(downstreamUnauthenticated).isTrue();
-        verify(loginUserLoader, org.mockito.Mockito.never()).loadByUserId(7L);
+        verify(loginUserLoader, Mockito.never()).loadByUserId(7L);
     }
 
     @Test
@@ -87,7 +91,7 @@ class DebugAuthenticationFilterTest {
 
         FilterChain nonLoopbackChain = (req, res) -> { };
         filter.doFilter(request("test_7", "192.0.2.7"), new MockHttpServletResponse(), nonLoopbackChain);
-        verify(loginUserLoader, org.mockito.Mockito.never()).kickOut(7L);
+        verify(loginUserLoader, Mockito.never()).kickOut(7L);
     }
 
     @Test

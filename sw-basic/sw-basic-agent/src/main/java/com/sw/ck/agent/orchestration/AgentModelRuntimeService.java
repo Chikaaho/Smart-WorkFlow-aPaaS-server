@@ -1,6 +1,9 @@
 package com.sw.ck.agent.orchestration;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
 import com.sw.ck.agent.mapper.AgentModelMapper;
@@ -8,14 +11,33 @@ import com.sw.ck.agent.mapper.AgentProviderMapper;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.exception.HttpException;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.ChatRequest.Builder;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.model.embedding.EmbeddingModel;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * 模型运行时服务（F1 阶段 1，D022-04/05）：统一承接编排 / 图执行 / 单步调试三个调用点
@@ -43,35 +65,38 @@ public class AgentModelRuntimeService {
 
     /** 解析结果：模型 + 供应商 + 已装配的单例客户端 */
     public record ModelInstance(AgentModel model, AgentProvider provider,
-                                dev.langchain4j.model.chat.ChatModel chatModel) {
+                                ChatModel chatModel) {
     }
 
     /** 流式解析结果：与同步模型共用配置、启停和多 Key 候选语义。 */
     public record StreamingModelInstance(AgentModel model, AgentProvider provider,
-                                         dev.langchain4j.model.chat.StreamingChatModel chatModel) {
+                                         StreamingChatModel chatModel) {
     }
 
     /** Embedding 解析结果（F1 阶段 3）：模型 + 供应商 + 单例 EmbeddingModel */
     public record EmbeddingInstance(AgentModel model, AgentProvider provider,
-                                    dev.langchain4j.model.embedding.EmbeddingModel embeddingModel) {
+                                    EmbeddingModel embeddingModel) {
     }
 
     /** 缓存条目：修订键 + 装配产物 */
-    private record CachedEntry(String revisionKey, dev.langchain4j.model.chat.ChatModel chatModel) {
+    private record CachedEntry(String revisionKey, ChatModel chatModel) {
     }
 
     private record CachedStreamingEntry(
-            String revisionKey, dev.langchain4j.model.chat.StreamingChatModel chatModel) {
+            String revisionKey, StreamingChatModel chatModel) {
     }
 
     /** Embedding 缓存条目 */
     private record CachedEmbeddingEntry(String revisionKey,
-                                        dev.langchain4j.model.embedding.EmbeddingModel embeddingModel) {
+                                        EmbeddingModel embeddingModel) {
     }
 
-    private final AgentModelMapper modelMapper;
-    private final AgentProviderMapper providerMapper;
-    private final AesGcmCipher cipher;
+    @Autowired
+    private AgentModelMapper modelMapper;
+    @Autowired
+    private AgentProviderMapper providerMapper;
+    @Autowired
+    private AesGcmCipher cipher;
     private final AgentChatModelAssembler assembler = new AgentChatModelAssembler();
     private final AgentEmbeddingModelAssembler embeddingAssembler = new AgentEmbeddingModelAssembler();
 
@@ -83,14 +108,6 @@ public class AgentModelRuntimeService {
 
     /** 模型 id → Embedding 装配产物（阶段 3，单例复用同 D022-04） */
     private final Map<Long, CachedEmbeddingEntry> embeddingCache = new ConcurrentHashMap<>();
-
-    public AgentModelRuntimeService(AgentModelMapper modelMapper,
-                                    AgentProviderMapper providerMapper,
-                                    AesGcmCipher cipher) {
-        this.modelMapper = modelMapper;
-        this.providerMapper = providerMapper;
-        this.cipher = cipher;
-    }
 
     /**
      * 执行前可用性校验（存在 + 模型/供应商均启用）：与 {@link #acquire(Long)} 同语义，
@@ -128,7 +145,7 @@ public class AgentModelRuntimeService {
                     ERROR_KEY_MODEL_UNAVAILABLE, "供应商已停用: " + provider.getName());
         }
         String revisionKey = revisionKey(model, provider);
-        dev.langchain4j.model.chat.ChatModel chatModel = cache.compute(modelId, (id, cached) ->
+        ChatModel chatModel = cache.compute(modelId, (id, cached) ->
                 cached != null && cached.revisionKey().equals(revisionKey)
                         ? cached
                         : buildAndCache(provider, model, revisionKey)).chatModel();
@@ -140,7 +157,7 @@ public class AgentModelRuntimeService {
         AgentModel model = requireEnabledModel(modelId);
         AgentProvider provider = requireEnabledProvider(model);
         String revisionKey = revisionKey(model, provider);
-        dev.langchain4j.model.chat.StreamingChatModel chatModel = streamingCache.compute(modelId,
+        StreamingChatModel chatModel = streamingCache.compute(modelId,
                 (id, cached) -> cached != null && cached.revisionKey().equals(revisionKey)
                         ? cached : buildStreamingAndCache(provider, model, revisionKey)).chatModel();
         return new StreamingModelInstance(model, provider, chatModel);
@@ -154,12 +171,12 @@ public class AgentModelRuntimeService {
         AgentModel model = requireEnabledModel(modelId);
         AgentProvider provider = requireEnabledProvider(model);
         if (model.getCapabilities() == null
-                || !model.getCapabilities().toUpperCase(java.util.Locale.ROOT).contains("EMBEDDING")) {
+                || !model.getCapabilities().toUpperCase(Locale.ROOT).contains("EMBEDDING")) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     ERROR_KEY_MODEL_UNAVAILABLE, "模型不具备 EMBEDDING 能力: " + model.getName());
         }
         String revisionKey = revisionKey(model, provider);
-        dev.langchain4j.model.embedding.EmbeddingModel embeddingModel = embeddingCache.compute(modelId,
+        EmbeddingModel embeddingModel = embeddingCache.compute(modelId,
                 (id, cached) -> cached != null && cached.revisionKey().equals(revisionKey)
                         ? cached
                         : buildEmbeddingAndCache(provider, model, revisionKey)).embeddingModel();
@@ -179,11 +196,11 @@ public class AgentModelRuntimeService {
             return List.of();
         }
         EmbeddingInstance instance = acquireEmbedding(modelId);
-        List<dev.langchain4j.data.segment.TextSegment> segments = texts.stream()
-                .map(dev.langchain4j.data.segment.TextSegment::from)
+        List<TextSegment> segments = texts.stream()
+                .map(TextSegment::from)
                 .toList();
         return instance.embeddingModel().embedAll(segments).content().stream()
-                .map(dev.langchain4j.data.embedding.Embedding::vector)
+                .map(Embedding::vector)
                 .toList();
     }
 
@@ -303,7 +320,7 @@ public class AgentModelRuntimeService {
     public static boolean isRateLimited(Throwable t) {
         Throwable cur = t;
         while (cur != null) {
-            if (cur instanceof dev.langchain4j.exception.HttpException http && http.statusCode() == 429) {
+            if (cur instanceof HttpException http && http.statusCode() == 429) {
                 return true;
             }
             cur = cur.getCause();
@@ -317,8 +334,8 @@ public class AgentModelRuntimeService {
      * 重试；无候选或非限流异常原样上抛（由调用方按既有分类包装）。消息组装与 usage
      * 提取仍归调用方，本方法只负责"选模型 → 调用 → 限流换把"。
      */
-    public dev.langchain4j.model.chat.response.ChatResponse chatWithRotation(
-            Long modelId, List<dev.langchain4j.data.message.ChatMessage> messages) {
+    public ChatResponse chatWithRotation(
+            Long modelId, List<ChatMessage> messages) {
         return chatWithRotation(modelId, messages, null);
     }
 
@@ -329,17 +346,17 @@ public class AgentModelRuntimeService {
      * 轮换仍只切换模型实例，消息与工具规格由调用方维护并跨轮复用。
      * </p>
      */
-    public dev.langchain4j.model.chat.response.ChatResponse chatWithRotation(
-            Long modelId, List<dev.langchain4j.data.message.ChatMessage> messages,
-            List<dev.langchain4j.agent.tool.ToolSpecification> toolSpecifications) {
-        java.util.Set<Long> tried = new java.util.HashSet<>();
+    public ChatResponse chatWithRotation(
+            Long modelId, List<ChatMessage> messages,
+            List<ToolSpecification> toolSpecifications) {
+        Set<Long> tried = new HashSet<>();
         Long current = modelId;
         while (true) {
             ModelInstance instance = acquire(current);
             tried.add(current);
             try {
-                dev.langchain4j.model.chat.request.ChatRequest.Builder builder =
-                        dev.langchain4j.model.chat.request.ChatRequest.builder().messages(messages);
+                Builder builder =
+                        ChatRequest.builder().messages(messages);
                 if (toolSpecifications != null && !toolSpecifications.isEmpty()) {
                     builder.toolSpecifications(toolSpecifications);
                 }
@@ -362,25 +379,25 @@ public class AgentModelRuntimeService {
      * 真实增量调用。首个可见 delta 到达后不再轮换，避免重放已展示文本或工具副作用；
      * 仅在尚未产生任何可见输出且收到 429 时切换同组候选。
      */
-    public dev.langchain4j.model.chat.response.ChatResponse chatStreamingWithRotation(
-            Long modelId, List<dev.langchain4j.data.message.ChatMessage> messages,
-            List<dev.langchain4j.agent.tool.ToolSpecification> toolSpecifications,
-            java.util.function.Consumer<String> onDelta) {
-        java.util.Set<Long> tried = new java.util.HashSet<>();
+    public ChatResponse chatStreamingWithRotation(
+            Long modelId, List<ChatMessage> messages,
+            List<ToolSpecification> toolSpecifications,
+            Consumer<String> onDelta) {
+        Set<Long> tried = new HashSet<>();
         Long current = modelId;
         while (true) {
             StreamingModelInstance instance = acquireStreaming(current);
             tried.add(current);
-            java.util.concurrent.CompletableFuture<dev.langchain4j.model.chat.response.ChatResponse> result =
-                    new java.util.concurrent.CompletableFuture<>();
-            java.util.concurrent.atomic.AtomicBoolean visible = new java.util.concurrent.atomic.AtomicBoolean();
-            dev.langchain4j.model.chat.request.ChatRequest.Builder builder =
-                    dev.langchain4j.model.chat.request.ChatRequest.builder().messages(messages);
+            CompletableFuture<ChatResponse> result =
+                    new CompletableFuture<>();
+            AtomicBoolean visible = new AtomicBoolean();
+            Builder builder =
+                    ChatRequest.builder().messages(messages);
             if (toolSpecifications != null && !toolSpecifications.isEmpty()) {
                 builder.toolSpecifications(toolSpecifications);
             }
             instance.chatModel().chat(builder.build(),
-                    new dev.langchain4j.model.chat.response.StreamingChatResponseHandler() {
+                    new StreamingChatResponseHandler() {
                         @Override
                         public void onPartialResponse(String partialResponse) {
                             if (partialResponse != null && !partialResponse.isEmpty()) {
@@ -391,7 +408,7 @@ public class AgentModelRuntimeService {
 
                         @Override
                         public void onCompleteResponse(
-                                dev.langchain4j.model.chat.response.ChatResponse response) {
+                                ChatResponse response) {
                             result.complete(response);
                         }
 
@@ -402,7 +419,7 @@ public class AgentModelRuntimeService {
                     });
             try {
                 return result.join();
-            } catch (java.util.concurrent.CompletionException wrapped) {
+            } catch (CompletionException wrapped) {
                 Throwable error = wrapped.getCause() == null ? wrapped : wrapped.getCause();
                 if (visible.get() || !isRateLimited(error) || instance.model().getGroupKey() == null) {
                     if (error instanceof RuntimeException runtimeException) throw runtimeException;

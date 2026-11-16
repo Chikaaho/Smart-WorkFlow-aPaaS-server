@@ -4,11 +4,16 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyChannelAdapter;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.notify.api.NotifyTargetResolver;
+import com.sw.ck.notify.config.NotifyChannelProperties;
+import com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps;
+
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -32,18 +37,19 @@ public class DingtalkNotifyChannelAdapter implements NotifyChannelAdapter {
     private static final long TOKEN_TTL_MS = 110L * 60L * 1000L;
     private static final NotifyChannel CHANNEL = NotifyChannel.DINGTALK;
 
-    private final NotifyTargetResolver targetResolver;
-    private final String appKey;
-    private final String appSecret;
-    private final String agentId;
+    @Autowired
+    private NotifyTargetResolver targetResolver;
+    @Autowired
+    private NotifyChannelProperties props;
+    private String appKey;
+    private String appSecret;
+    private String agentId;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, Object[]> tokenCache = new ConcurrentHashMap<>();
 
-    @Autowired
-    public DingtalkNotifyChannelAdapter(NotifyTargetResolver targetResolver,
-                                        com.sw.ck.notify.config.NotifyChannelProperties props) {
-        this.targetResolver = targetResolver;
-        com.sw.ck.notify.config.NotifyChannelProperties.ChannelProps cp = props.getChannels().get("DINGTALK");
+    @PostConstruct
+    void initChannelProps() {
+        ChannelProps cp = props.getChannels().get("DINGTALK");
         this.appKey = cp.getAppKey();
         this.appSecret = cp.getAppSecret();
         this.agentId = cp.getAgentId();

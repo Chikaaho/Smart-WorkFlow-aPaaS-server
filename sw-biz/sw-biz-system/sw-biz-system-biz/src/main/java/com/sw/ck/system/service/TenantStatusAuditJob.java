@@ -1,13 +1,13 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.system.entity.SysTenant;
 import com.sw.ck.system.entity.SysTenantStatusAudit;
 import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysTenantStatusAuditMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -15,20 +15,18 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /** 将租户自然过期转成一次可追溯事件，不改变租户行或任何业务对象状态。 */
 @Component
+@Log4j2
 public class TenantStatusAuditJob {
 
-    private static final Logger log = LoggerFactory.getLogger(TenantStatusAuditJob.class);
     private static final int MAX_BATCH = 100;
 
-    private final SysTenantMapper tenantMapper;
-    private final SysTenantStatusAuditMapper auditMapper;
-
-    public TenantStatusAuditJob(SysTenantMapper tenantMapper, SysTenantStatusAuditMapper auditMapper) {
-        this.tenantMapper = tenantMapper;
-        this.auditMapper = auditMapper;
-    }
+    @Autowired
+    private SysTenantMapper tenantMapper;
+    @Autowired
+    private SysTenantStatusAuditMapper auditMapper;
 
     @Scheduled(fixedDelayString = "${sw.tenant.expiry-audit.fixed-delay-ms:60000}")
     public void auditExpiredDue() {

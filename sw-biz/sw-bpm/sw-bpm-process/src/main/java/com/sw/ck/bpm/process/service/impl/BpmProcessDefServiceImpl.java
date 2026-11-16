@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.api.dto.BpmDeployResult;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
@@ -14,66 +15,66 @@ import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
+import com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.NodeFunctionService;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
 import com.sw.ck.bpm.process.validator.GraphValidator;
+import com.sw.ck.bpm.process.validator.LightProcessGraphValidator;
+import com.sw.ck.bpm.process.validator.ProcessVariableValidator;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.alibaba.fastjson2.JSON;
+import com.fasterxml.jackson.core.type.TypeReference;
+import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.LocalDateTime;
 import java.util.*;
+import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程定义服务实现。
  */
 @Service
+@Log4j2
 public class BpmProcessDefServiceImpl implements BpmProcessDefService {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmProcessDefServiceImpl.class);
 
     private static final String STATUS_DRAFT = "DRAFT";
     private static final String STATUS_PUBLISHED = "PUBLISHED";
     private static final String FORM_STATUS_PUBLISHED = "PUBLISHED";
 
-    private final BpmProcessDefMapper mapper;
-    private final com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper;
-    private final com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService;
-    private final GraphValidator graphValidator;
-    private final com.sw.ck.bpm.process.validator.LightProcessGraphValidator lightProcessGraphValidator;
-    private final FormDefinitionService formDefinitionService;
-    private final BpmDeployFacade bpmDeployFacade;
-    private final BpmFormBindingService formBindingService;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private BpmProcessDefMapper mapper;
+    @Autowired
+    private BpmProcessDefVersionMapper versionMapper;
+    @Autowired
+    private NodeFunctionService nodeFunctionService;
+    @Autowired
+    private GraphValidator graphValidator;
+    @Autowired
+    private LightProcessGraphValidator lightProcessGraphValidator;
+    @Autowired
+    private FormDefinitionService formDefinitionService;
+    @Autowired
+    private BpmDeployFacade bpmDeployFacade;
+    @Autowired
+    private BpmFormBindingService formBindingService;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** P64 变量/触发器/节点表单发布校验（可选装配；直接构造的既有单测无此依赖时跳过）。 */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.sw.ck.bpm.process.validator.ProcessVariableValidator processVariableValidator;
-
-    public BpmProcessDefServiceImpl(BpmProcessDefMapper mapper,
-                                    com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper,
-                                    com.sw.ck.bpm.process.service.NodeFunctionService nodeFunctionService,
-                                    GraphValidator graphValidator,
-                                    com.sw.ck.bpm.process.validator.LightProcessGraphValidator lightProcessGraphValidator,
-                                    FormDefinitionService formDefinitionService,
-                                    BpmDeployFacade bpmDeployFacade,
-                                    BpmFormBindingService formBindingService,
-                                    ObjectMapper objectMapper) {
-        this.mapper = mapper;
-        this.versionMapper = versionMapper;
-        this.nodeFunctionService = nodeFunctionService;
-        this.graphValidator = graphValidator;
-        this.lightProcessGraphValidator = lightProcessGraphValidator;
-        this.formDefinitionService = formDefinitionService;
-        this.bpmDeployFacade = bpmDeployFacade;
-        this.formBindingService = formBindingService;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired(required = false)
+    private ProcessVariableValidator processVariableValidator;
 
     @Override
     public BpmProcessDef findByProcessKey(String processKey) {
@@ -106,7 +107,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         // BF20261013-041：流程编号（主题）规则是这条流程的必填配置——新建定义即带可用默认值
         // （日期 + 3 位自增，如 20261014-001），可在列表「流程编号」中随时改；
         // 发布门另要求非空，历史/外部导入的空规则定义发布前必须补齐。
-        entity.setThemeRule(com.sw.ck.bpm.process.service.ProcessThemeService.DEFAULT_RULE);
+        entity.setThemeRule(ProcessThemeService.DEFAULT_RULE);
 
         mapper.insert(entity);
         log.info("Created process def: id={}, processKey={}", entity.getId(), processKey);
@@ -332,7 +333,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         String formKey = graph.getFormKey();
         if (formKey != null && !formKey.isBlank()) {
             // empty = 该 formKey 无表单定义（原 null 返回路径）：按“绑定表单不存在”拒绝发布
-            java.util.Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+            Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
             if (formDefLookup.isEmpty()) {
                 throw new BaseException(BpmErrorCode.GRAPH_FORM_NOT_FOUND);
             }
@@ -419,14 +420,14 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         frozen.setDeploymentId(deployResult.getDeploymentId());
         frozen.setProcessDefinitionId(deployResult.getProcessDefinitionId());
         try {
-            com.sw.ck.security.holder.LoginUser loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+            LoginUser loginUser = LoginUserHolder.get();
             if (loginUser != null) {
                 frozen.setPublishedBy(loginUser.getUserId());
             }
         } catch (Exception ignored) {
             // 非请求上下文（内部调用）允许为空
         }
-        frozen.setPublishedAt(java.time.LocalDateTime.now());
+        frozen.setPublishedAt(LocalDateTime.now());
         versionMapper.insert(frozen);
 
         // 只更新发布元数据列，避免把 graph_json 缺省值误写
@@ -459,7 +460,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         }
         try {
             // empty = 该 formKey 无表单定义（原 null 返回路径）：无版本可回填
-            java.util.Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+            Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
             if (formDefLookup.isEmpty()) {
                 return null;
             }
@@ -487,7 +488,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         }
         try {
             Map<String, Object> root = objectMapper.readValue(graphJson,
-                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+                    new TypeReference<Map<String, Object>>() { });
             Object elements = root.get("elements");
             if (!(elements instanceof List<?> list)) {
                 return graphJson;
@@ -510,7 +511,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
                 if (formKeyObj == null || String.valueOf(formKeyObj).isBlank()) {
                     continue;
                 }
-                java.util.Optional<FormDefDTO> def =
+                Optional<FormDefDTO> def =
                         formDefinitionService.getFormDef(String.valueOf(formKeyObj).trim());
                 if (def.isEmpty() || def.get().getFormVersion() == null) {
                     continue;
@@ -725,7 +726,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
             throw new IllegalArgumentException("流程定义不存在: id=" + id);
         }
         def.setThemeRule(themeRule);
-        def.setUpdateTime(java.time.LocalDateTime.now());
+        def.setUpdateTime(LocalDateTime.now());
         mapper.updateById(def);
     }
 
@@ -761,7 +762,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
             throw new IllegalArgumentException("流程定义不存在: id=" + id);
         }
         if (actionJson != null && !actionJson.isBlank()) {
-            com.alibaba.fastjson2.JSON.parseObject(actionJson);
+            JSON.parseObject(actionJson);
         }
         BpmProcessDef patch = new BpmProcessDef();
         patch.setId(id);

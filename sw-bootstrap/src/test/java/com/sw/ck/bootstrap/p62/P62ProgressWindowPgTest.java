@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,6 +19,10 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -48,8 +53,8 @@ class P62ProgressWindowPgTest {
     private static JdbcTemplate jdbc;
     private static Path EVIDENCE;
     private static String runId;
-    private static final java.time.format.DateTimeFormatter TS_FMT =
-            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    private static final DateTimeFormatter TS_FMT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     @BeforeAll
     void boot() throws Exception {
@@ -64,7 +69,7 @@ class P62ProgressWindowPgTest {
         pg = EmbeddedPostgres.builder().start();
         pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort()
                 + "/postgres?stringtype=unspecified&user=postgres&password=postgres";
-        jdbc = new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(pgUrl));
+        jdbc = new JdbcTemplate(new DriverManagerDataSource(pgUrl));
         jdbc.execute("SELECT 1");
         System.out.println("[P62-EV] g3a.window orchestrator pgPort=" + pg.getPort()
                 + " runId=" + runId);
@@ -137,7 +142,7 @@ class P62ProgressWindowPgTest {
                         + " instance=" + instanceId + " invocation=" + invocationId);
 
                 a.destroyForcibly();
-                assertThat(a.waitFor(60, java.util.concurrent.TimeUnit.SECONDS))
+                assertThat(a.waitFor(60, TimeUnit.SECONDS))
                         .as("进程A已退出").isTrue();
                 exitA = a.exitValue();
                 write("window-interrupted.txt", "attempt=" + attempt + " pid=" + pidA
@@ -147,7 +152,7 @@ class P62ProgressWindowPgTest {
                 System.out.println("[P62-EV] g3a.window attempt=" + attempt
                         + " missed (instance completed before capture)");
                 a.destroyForcibly();
-                a.waitFor(60, java.util.concurrent.TimeUnit.SECONDS);
+                a.waitFor(60, TimeUnit.SECONDS);
             }
         }
         assertThat(captured).as("窗口在5轮尝试内捕获").isTrue();
@@ -228,7 +233,7 @@ class P62ProgressWindowPgTest {
         System.out.println("[P62-EV] g3a.window recovered instance=" + instanceStatus
                 + " invocations=1 reservations=1");
         b.destroy();
-        assertThat(b.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(b.waitFor(30, TimeUnit.SECONDS)).isTrue();
     }
 
     // ==================== 辅助 ====================
@@ -303,7 +308,7 @@ class P62ProgressWindowPgTest {
     }
 
     private String field(String content, String key) {
-        java.util.regex.Matcher m = java.util.regex.Pattern
+        Matcher m = Pattern
                 .compile(key + "=([^ \\n]+)").matcher(content);
         assertThat(m.find()).as("字段存在: " + key).isTrue();
         return m.group(1).trim();

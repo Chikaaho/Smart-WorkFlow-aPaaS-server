@@ -1,11 +1,11 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.form.dynamic.FixedTableSql;
 import com.sw.ck.form.entity.FormAppEntity;
 import com.sw.ck.form.entity.FormAppScopeEntity;
 import com.sw.ck.security.holder.LoginUser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 应用可见范围多维度判定（0.1.7 #1）。
  * <p>
@@ -23,17 +24,13 @@ import java.util.stream.Collectors;
  * </p>
  */
 @Service
+@Log4j2
 public class FormAppScopeMatcher {
-
-    private static final Logger log = LoggerFactory.getLogger(FormAppScopeMatcher.class);
 
     private static final String SCOPE_ALL = "ALL";
 
-    private final JdbcTemplate jdbcTemplate;
-
-    public FormAppScopeMatcher(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /** 判定应用对当前用户的可见性（维度命中任一即可）。 */
     public boolean matches(FormAppEntity app, LoginUser user, List<FormAppScopeEntity> rows) {

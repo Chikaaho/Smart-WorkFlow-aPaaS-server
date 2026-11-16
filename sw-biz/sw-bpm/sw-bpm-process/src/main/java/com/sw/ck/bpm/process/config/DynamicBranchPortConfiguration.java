@@ -129,11 +129,11 @@ public class DynamicBranchPortConfiguration {
                             .eq(DynamicBranchSnapshot::getDeleted, 0)
                             .set(DynamicBranchSnapshot::getStatus, "CANCELED")
                             .set(DynamicBranchSnapshot::getCancelReason, "SUPERSEDED_BY_ROUND")
-                            .set(DynamicBranchSnapshot::getUpdateTime, java.time.LocalDateTime.now()));
+                            .set(DynamicBranchSnapshot::getUpdateTime, LocalDateTime.now()));
                 }
                 // 3) 逐对象落行：同负责人不同部门保持独立分支；来源位置整组保留
                 List<BranchCandidateV2> ordered = new ArrayList<>(candidates == null ? List.of() : candidates);
-                ordered.sort(java.util.Comparator.comparingLong(c -> parseLongSafe(c.objectId())));
+                ordered.sort(Comparator.comparingLong(c -> parseLongSafe(c.objectId())));
                 List<FrozenBranchV2> result = new ArrayList<>();
                 int index = 0;
                 for (BranchCandidateV2 candidate : ordered) {
@@ -211,7 +211,7 @@ public class DynamicBranchPortConfiguration {
                         DynamicBranchSnapshot bind = new DynamicBranchSnapshot();
                         bind.setId(unbound.getId());
                         bind.setTaskId(taskId);
-                        bind.setUpdateTime(java.time.LocalDateTime.now());
+                        bind.setUpdateTime(LocalDateTime.now());
                         mapper.updateById(bind);
                         unbound.setTaskId(taskId);
                         current = unbound;
@@ -285,7 +285,7 @@ public class DynamicBranchPortConfiguration {
                             .eq(DynamicBranchSnapshot::getDeleted, 0)
                             .set(DynamicBranchSnapshot::getStatus, "CANCELED")
                             .set(DynamicBranchSnapshot::getCancelReason, reason)
-                            .set(DynamicBranchSnapshot::getUpdateTime, java.time.LocalDateTime.now()));
+                            .set(DynamicBranchSnapshot::getUpdateTime, LocalDateTime.now()));
                     return Optional.of(updated > 0
                             ? MutationOutcome.APPLIED : MutationOutcome.ALREADY_APPLIED);
                 }

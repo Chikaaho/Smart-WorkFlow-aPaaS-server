@@ -8,6 +8,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -160,7 +162,7 @@ class ExternalDatasourceGrantServiceTest {
 
     private static ExternalDatasourceGrant grant(Long datasourceId, String type, String key, int deleted) {
         ExternalDatasourceGrant row = new ExternalDatasourceGrant();
-        row.setId(java.util.concurrent.ThreadLocalRandom.current().nextLong(1, 1_000_000));
+        row.setId(ThreadLocalRandom.current().nextLong(1, 1_000_000));
         row.setDatasourceId(datasourceId);
         row.setSubjectType(type);
         row.setSubjectKey(key);

@@ -1,10 +1,14 @@
 package com.sw.ck.form.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormFieldEnrichmentService;
+import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
+
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -23,17 +27,12 @@ import java.util.Optional;
 @Service
 public class FormDefinitionServiceImpl implements FormDefinitionService {
 
-    private final FormDefService formDefService;
-    private final FormDataQueryService formDataQueryService;
-    private final FormFieldEnrichmentService formFieldEnrichmentService;
-
-    public FormDefinitionServiceImpl(FormDefService formDefService,
-                                     FormDataQueryService formDataQueryService,
-                                     FormFieldEnrichmentService formFieldEnrichmentService) {
-        this.formDefService = formDefService;
-        this.formDataQueryService = formDataQueryService;
-        this.formFieldEnrichmentService = formFieldEnrichmentService;
-    }
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private FormFieldEnrichmentService formFieldEnrichmentService;
 
     @Override
     public Optional<String> getFormDefinition(String formKey) {
@@ -61,7 +60,7 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
         }
         try {
             return Optional.ofNullable(formDefService.getSnapshot(def.getId(), formVersion))
-                    .map(com.sw.ck.form.api.dto.FormSnapshotDetailDTO::getDefinition);
+                    .map(FormSnapshotDetailDTO::getDefinition);
         } catch (RuntimeException e) {
             // 该版本无快照（历史数据）按目标缺失处理，由调用方回退当前定义
             return Optional.empty();

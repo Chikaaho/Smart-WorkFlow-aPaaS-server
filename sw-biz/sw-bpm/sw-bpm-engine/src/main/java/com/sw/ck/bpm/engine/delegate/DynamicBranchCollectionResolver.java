@@ -8,18 +8,24 @@ import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.impl.delegate.FlowableCollectionHandler;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 /**
  * 动态并行分支集合解析（I4 §3.1）。
@@ -37,27 +43,16 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
     static final int DEFAULT_MAX_BRANCHES = 50;
     private static final int HARD_MAX_BRANCHES = 200;
 
-    private final DeptQueryFacade deptQueryFacade;
-    private final UserQueryFacade userQueryFacade;
-    private final ObjectProvider<DynamicBranchPort> branchPort;
-    private final com.sw.ck.form.api.facade.FormRecordReadFacade formRecordReadFacade;
-    private final ObjectProvider<BpmVariableReadPort> bpmVariableReadPort;
-
-    public DynamicBranchCollectionResolver(RepositoryService repositoryService,
-                                           com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                                           ParticipantResolverRegistry participantResolverRegistry,
-                                           DeptQueryFacade deptQueryFacade,
-                                           UserQueryFacade userQueryFacade,
-                                           ObjectProvider<DynamicBranchPort> branchPort,
-                                           com.sw.ck.form.api.facade.FormRecordReadFacade formRecordReadFacade,
-                                           ObjectProvider<BpmVariableReadPort> bpmVariableReadPort) {
-        super(repositoryService, objectMapper, participantResolverRegistry);
-        this.deptQueryFacade = deptQueryFacade;
-        this.userQueryFacade = userQueryFacade;
-        this.branchPort = branchPort;
-        this.formRecordReadFacade = formRecordReadFacade;
-        this.bpmVariableReadPort = bpmVariableReadPort;
-    }
+    @Autowired
+    private DeptQueryFacade deptQueryFacade;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired(required = false)
+    private ObjectProvider<DynamicBranchPort> branchPort;
+    @Autowired
+    private FormRecordReadFacade formRecordReadFacade;
+    @Autowired(required = false)
+    private ObjectProvider<BpmVariableReadPort> bpmVariableReadPort;
 
     @Override
     public Collection<?> resolveCollection(Object collection, DelegateExecution execution) {
@@ -109,7 +104,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
         // deptIds 已在入口保证非空：findActiveDeptIds 的 empty 只在查询对象缺失时产生，属契约违约
         List<Long> active = deptQueryFacade.findActiveDeptIds(deptIds).orElseThrow(
                 () -> new IllegalStateException("部门查询上下文缺失，无法解析动态并行来源: " + deptIds));
-        var activeDeptIds = new java.util.HashSet<>(active);
+        var activeDeptIds = new HashSet<>(active);
         for (Long deptId : deptIds) {
             if (!activeDeptIds.contains(deptId)) {
                 invalid.add(deptId);
@@ -256,7 +251,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
             List<Long> parsed = objectRefs.keySet().stream().map(Long::valueOf).toList();
             List<Long> active = userQueryFacade.findActiveUserIds(parsed, tenantId)
                     .orElse(List.of());
-            var activeSet = new java.util.HashSet<>(active);
+            var activeSet = new HashSet<>(active);
             for (Map.Entry<String, List<String>> entry : objectRefs.entrySet()) {
                 if (activeSet.contains(Long.valueOf(entry.getKey()))) {
                     candidates.add(new DynamicBranchPort.BranchCandidateV2(entry.getKey(),
@@ -269,7 +264,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
             }
         } else {
             List<Long> deptIds = objectRefs.keySet().stream().map(Long::valueOf).toList();
-            var activeSet = new java.util.HashSet<>(
+            var activeSet = new HashSet<>(
                     deptQueryFacade.findActiveDeptIds(deptIds).orElse(List.of()));
             Map<Long, Long> leaderMap = userQueryFacade.findDeptLeaderMap(deptIds, tenantId)
                     .orElse(Map.of());
@@ -325,7 +320,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
     }
 
     /** 单值/多选列表/JSON 数组串统一收集稳定对象 ID。 */
-    private void collectObjectIds(Object value, java.util.function.Consumer<String> sink) {
+    private void collectObjectIds(Object value, Consumer<String> sink) {
         for (String id : splitIds(value)) {
             sink.accept(id);
         }
@@ -365,7 +360,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
         if (value instanceof String text && text.trim().startsWith("[")) {
             try {
                 List<?> decoded = objectMapper.readValue(text,
-                        new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() { });
+                        new TypeReference<List<Object>>() { });
                 flattened.addAll(decoded);
             } catch (Exception e) {
                 flattened.add(value);
@@ -479,7 +474,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
         if (json == null || json.isBlank()) return Map.of();
         try {
             return objectMapper.readValue(json,
-                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() { });
+                    new TypeReference<LinkedHashMap<String, Object>>() { });
         } catch (Exception e) {
             throw new BaseException(BpmErrorCode.NODE_CONFIG_INVALID.getCode(), "动态并行配置读取失败");
         }

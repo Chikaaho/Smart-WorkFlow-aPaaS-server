@@ -1,8 +1,12 @@
 package com.sw.ck.bpm.process.queue;
 
 import com.sw.ck.bpm.process.queue.support.QueueH2TestConfig;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+
+import java.sql.SQLException;
+import javax.sql.DataSource;
 
 /**
  * G7：持久化默认实现运行同一消息边界契约（真实 H2 + 真实迁移）。
@@ -15,7 +19,7 @@ public class PersistentBpmCommandQueueContractTest extends BpmCommandQueueContra
     private BpmCommandQueue queue;
 
     @Autowired
-    private javax.sql.DataSource dataSource;
+    private DataSource dataSource;
 
     @Override
     protected BpmCommandQueue queue() {
@@ -29,7 +33,7 @@ public class PersistentBpmCommandQueueContractTest extends BpmCommandQueueContra
                      "UPDATE sw_bpm_command SET next_retry_at = NULL WHERE id = ?")) {
             ps.setLong(1, commandId);
             ps.executeUpdate();
-        } catch (java.sql.SQLException e) {
+        } catch (SQLException e) {
             throw new IllegalStateException(e);
         }
     }

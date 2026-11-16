@@ -1,26 +1,52 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.dto.SsoAuditListDTO;
+import com.sw.ck.system.dto.SsoAuthorizeStartDTO;
+import com.sw.ck.system.dto.SsoBindingListDTO;
 import com.sw.ck.system.model.TokenResponse;
 import com.sw.ck.common.i18n.LocalizedMessages;
 import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.sso.SsoAuthService;
 import com.sw.ck.system.sso.SsoRejectionException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.security.jwt.JwtProperties;
+import com.sw.ck.security.jwt.JwtTokenProvider;
+import com.sw.ck.system.entity.SysUser;
+import com.sw.ck.system.service.RefreshTokenService;
+import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.TenantValidityService;
+import com.sw.ck.system.sso.SsoCallbackPolicy;
+import com.sw.ck.system.sso.SsoProviderClient.SsoProviderException;
+import com.sw.ck.system.util.CookieUtils;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.servlet.http.HttpServletResponse;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 第三方 SSO 控制器（I5）。
  * <p>
@@ -33,56 +59,46 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/auth/sso")
+@Log4j2
 public class SsoAuthController {
-
-    private static final Logger log = LoggerFactory.getLogger(SsoAuthController.class);
 
     /** 第三方登录未完成的统一结论；精确原因只进日志与 SSO 审计（P61 §3.6）。 */
     private static final String SSO_LOGIN_FAILED_MSG =
             "第三方登录未能完成，请返回登录页重新发起，或改用账号密码登录";
 
-    private final SsoAuthService ssoAuthService;
-    private final SsoTicketStore ticketStore;
-    private final com.sw.ck.system.sso.SsoCallbackPolicy callbackPolicy;
-    private final com.sw.ck.system.service.SysUserService sysUserService;
-    private final com.sw.ck.security.jwt.JwtTokenProvider jwtTokenProvider;
-    private final com.sw.ck.security.jwt.JwtProperties jwtProperties;
-    private final com.sw.ck.system.service.RefreshTokenService refreshTokenService;
-    private final com.sw.ck.system.service.TenantValidityService tenantValidityService;
-    @org.springframework.beans.factory.annotation.Value("${sw.security.cookie.secure:false}")
+    @Autowired
+    private SsoAuthService ssoAuthService;
+    @Autowired
+    private SsoTicketStore ticketStore;
+    @Autowired
+    private SsoCallbackPolicy callbackPolicy;
+    @Autowired
+    private SysUserService sysUserService;
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
+    @Autowired
+    private JwtProperties jwtProperties;
+    @Autowired
+    private RefreshTokenService refreshTokenService;
+    @Autowired
+    private TenantValidityService tenantValidityService;
+    @Value("${sw.security.cookie.secure:false}")
     private boolean cookieSecure;
-    @org.springframework.beans.factory.annotation.Value("${sw.security.cookie.path:/api/auth/}")
+    @Value("${sw.security.cookie.path:/api/auth/}")
     private String cookiePath;
-
-    public SsoAuthController(SsoAuthService ssoAuthService,
-                             SsoTicketStore ticketStore,
-                             com.sw.ck.system.sso.SsoCallbackPolicy callbackPolicy,
-                             com.sw.ck.system.service.SysUserService sysUserService,
-                             com.sw.ck.security.jwt.JwtTokenProvider jwtTokenProvider,
-                             com.sw.ck.security.jwt.JwtProperties jwtProperties,
-                             com.sw.ck.system.service.RefreshTokenService refreshTokenService,
-                             com.sw.ck.system.service.TenantValidityService tenantValidityService) {
-        this.ssoAuthService = ssoAuthService;
-        this.ticketStore = ticketStore;
-        this.callbackPolicy = callbackPolicy;
-        this.sysUserService = sysUserService;
-        this.jwtTokenProvider = jwtTokenProvider;
-        this.jwtProperties = jwtProperties;
-        this.refreshTokenService = refreshTokenService;
-        this.tenantValidityService = tenantValidityService;
-    }
 
     /**
      * 授权发起（需认证；登录页发起场景经 tenant 上下文由查询参数显式提供租户时另行处理）。
      * 返回 Provider 授权 URL 与 state；state 同时落库（摘要）限时一次性。
      */
     @GetMapping("/{provider}/authorize")
-    public R<Map<String, Object>> authorize(@PathVariable("provider") String provider,
-                                            @RequestParam(value = "redirect", required = false) String redirect) {
+    public R<SsoAuthorizeStartDTO> authorize(@PathVariable("provider") String provider,
+                                             @RequestParam(value = "redirect", required = false) String redirect) {
         SsoAuthService.AuthorizeStart start = ssoAuthService.startAuthorize(provider, redirect);
-        return R.ok(Map.of(
-                "authorizeUrl", start.authorizeUrl(),
-                "state", start.state()));
+        SsoAuthorizeStartDTO result = new SsoAuthorizeStartDTO();
+        result.setAuthorizeUrl(start.authorizeUrl());
+        result.setState(start.state());
+        return R.ok(result);
     }
 
     /**
@@ -92,14 +108,15 @@ public class SsoAuthController {
      * 启用后才签发 state；不授予任何权限。不再接受手填数值租户 ID。
      */
     @GetMapping("/{provider}/authorize-login")
-    public R<Map<String, Object>> authorizeLogin(@PathVariable("provider") String provider,
-                                                 @RequestParam(value = "tenantName", required = false) String tenantName,
-                                                 @RequestParam(value = "redirect", required = false) String redirect) {
+    public R<SsoAuthorizeStartDTO> authorizeLogin(@PathVariable("provider") String provider,
+                                                  @RequestParam(value = "tenantName", required = false) String tenantName,
+                                                  @RequestParam(value = "redirect", required = false) String redirect) {
         try {
             SsoAuthService.AuthorizeStart start = ssoAuthService.startAuthorizeLogin(provider, tenantName, redirect);
-            return R.ok(Map.of(
-                    "authorizeUrl", start.authorizeUrl(),
-                    "state", start.state()));
+            SsoAuthorizeStartDTO result = new SsoAuthorizeStartDTO();
+            result.setAuthorizeUrl(start.authorizeUrl());
+            result.setState(start.state());
+            return R.ok(result);
         } catch (SsoRejectionException e) {
             // fail closed 必须返回可判定结果（不可 500/不可栈泄漏；不回显任何敏感值）
             log.warn("SSO 登录前发起被拒: eventRef={} errorKey={} detail={}",
@@ -119,7 +136,7 @@ public class SsoAuthController {
      * 拒绝统一 302 到回跳页携带脱敏 errorKey（不携带 code/state 原文）。
      */
     @GetMapping("/{provider}/callback")
-    public org.springframework.http.ResponseEntity<Void> callback(@PathVariable("provider") String provider,
+    public ResponseEntity<Void> callback(@PathVariable("provider") String provider,
                            @RequestParam(value = "code", required = false) String code,
                            @RequestParam(value = "state", required = false) String state) {
         try {
@@ -137,12 +154,12 @@ public class SsoAuthController {
                     + "&redirect=" + urlEncode(safeRedirect(result.redirectPath()));
             return seeOther(callbackPolicy.resolveFrontendPath(target, "/sso/return"));
         } catch (SsoRejectionException | IllegalStateException | IllegalArgumentException
-                 | com.sw.ck.system.sso.SsoProviderClient.SsoProviderException e) {
+                 | SsoProviderException e) {
             return deny(provider, e);
         }
     }
 
-    private org.springframework.http.ResponseEntity<Void> deny(String provider, Exception e) {
+    private ResponseEntity<Void> deny(String provider, Exception e) {
         // 回调拒绝 302 到同源前端回跳页并携带脱敏 errorKey：不回显 code/state 原文，
         // 不泄漏 Provider 配置、三方响应、租户标识或回调白名单，也不泄漏栈。
         String errorKey;
@@ -159,9 +176,9 @@ public class SsoAuthController {
     }
 
     /** 302 回跳（Location 为站内相对路径，浏览器按回调同源解析，票据不出站）。 */
-    private org.springframework.http.ResponseEntity<Void> seeOther(String path) {
-        return org.springframework.http.ResponseEntity.status(org.springframework.http.HttpStatus.FOUND)
-                .location(java.net.URI.create(path))
+    private ResponseEntity<Void> seeOther(String path) {
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(path))
                 .build();
     }
 
@@ -171,7 +188,7 @@ public class SsoAuthController {
      */
     @PostMapping("/ticket")
     public R<TokenResponse> exchangeTicket(@RequestBody Map<String, String> body,
-                                           jakarta.servlet.http.HttpServletResponse response) {
+                                           HttpServletResponse response) {
         SsoTicketStore.ConsumedSession session = ticketStore.consumeSession(body.get("ticket"));
         if (session == null) {
             return R.failResolved(401, SystemErrorKeys.SSO_TICKET_INVALID,
@@ -196,12 +213,12 @@ public class SsoAuthController {
         }
         // 免认证兑换路径无登录态：租户拦截器 fail-closed 会拒绝生成过滤条件；
         // 租户语义由显式谓词承担（票据载荷 tenantId + 账号行 tenantId 一致性校验）
-        com.sw.ck.system.entity.SysUser user;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        SysUser user;
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             user = sysUserService.getById(session.userId());
         }
-        if (user == null || !java.util.Objects.equals(user.getTenantId(), session.tenantId())
+        if (user == null || !Objects.equals(user.getTenantId(), session.tenantId())
                 || (user.getStatus() != null && user.getStatus() != 0)) {
             return R.failResolved(401, SystemErrorKeys.SSO_ACCOUNT_UNAVAILABLE,
                 LocalizedMessages.text(SystemErrorKeys.SSO_ACCOUNT_UNAVAILABLE, "账号已停用"), EventRef.current());
@@ -209,7 +226,7 @@ public class SsoAuthController {
         String accessToken = jwtTokenProvider.generateToken(user.getId());
         String refreshToken = refreshTokenService.createRefreshToken(
                 user.getId(), user.getTenantId(), jwtProperties.getRefreshExpireSeconds());
-        com.sw.ck.system.util.CookieUtils.setRefreshCookie(response, refreshToken,
+        CookieUtils.setRefreshCookie(response, refreshToken,
                 (int) jwtProperties.getRefreshExpireSeconds(), cookieSecure, cookiePath);
         log.info("SSO 登录成功: userId={}, provider-ticket", user.getId());
         return R.ok(new TokenResponse(accessToken, jwtProperties.getAccessExpireSeconds()));
@@ -222,9 +239,9 @@ public class SsoAuthController {
      */
 
     /** SSO 审计查询（I5 复验 G7）：权限守卫 + 租户隔离；无权与跨租户查询被拒绝。 */
-    @org.springframework.security.access.prepost.PreAuthorize("@ss.hasPermi('system:sso:audit:query')")
+    @PreAuthorize("@ss.hasPermi('system:sso:audit:query')")
     @GetMapping("/audit")
-    public R<Map<String, Object>> audit(@RequestParam(value = "provider", required = false) String provider,
+    public R<SsoAuditListDTO> audit(@RequestParam(value = "provider", required = false) String provider,
                                         @RequestParam(value = "eventType", required = false) String eventType,
                                         @RequestParam(value = "result", required = false) String result,
                                         @RequestParam(value = "localUserId", required = false) Long localUserId,
@@ -235,7 +252,7 @@ public class SsoAuthController {
 
     /** 当前用户绑定状态（个人中心）。 */
     @GetMapping("/bindings")
-    public R<Map<String, Object>> bindings() {
+    public R<SsoBindingListDTO> bindings() {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
             return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
@@ -247,7 +264,7 @@ public class SsoAuthController {
     /** 解绑（携带当前 access token：解绑触发该 token 的会话撤销——I5 §3.2）。 */
     @PostMapping("/unbind")
     public R<Void> unbind(@RequestBody BindRequest request,
-                          @org.springframework.web.bind.annotation.RequestHeader(value = "Authorization", required = false) String authorization) {
+                          @RequestHeader(value = "Authorization", required = false) String authorization) {
         LoginUser current = LoginUserHolder.get();
         if (current == null) {
             return R.failResolved(401, SystemErrorKeys.SESSION_REQUIRED,
@@ -282,7 +299,7 @@ public class SsoAuthController {
     }
 
     private String urlEncode(String value) {
-        return java.net.URLEncoder.encode(value == null ? "" : value, java.nio.charset.StandardCharsets.UTF_8);
+        return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
     }
 
     public record BindRequest(String provider, String externalId) {

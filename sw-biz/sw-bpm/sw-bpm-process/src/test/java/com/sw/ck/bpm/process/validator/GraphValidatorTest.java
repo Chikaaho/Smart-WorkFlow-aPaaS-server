@@ -3,11 +3,13 @@ package com.sw.ck.bpm.process.validator;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeDefinition;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.form.api.form.FormDefinitionService;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -44,7 +46,7 @@ class GraphValidatorTest {
         when(registry.find(any())).thenAnswer(invocation ->
                 Optional.ofNullable(definitions.get(invocation.getArgument(0))));
         // validateConfig 当前契约恒 present（空列表=通过校验）
-        when(registry.validateConfig(any())).thenReturn(java.util.Optional.of(List.of()));
+        when(registry.validateConfig(any())).thenReturn(Optional.of(List.of()));
         // formDefinitionService 在 formKey=null 时不会被调用，safe-null mock
         validator = new GraphValidator(registry, mock(FormDefinitionService.class));
     }
@@ -54,20 +56,20 @@ class GraphValidatorTest {
                                                 boolean startNode, boolean endNode) {
         return new BpmNodeDefinition() {
             @Override
-            public java.util.Optional<String> type() {
-                return java.util.Optional.of(type);
+            public Optional<String> type() {
+                return Optional.of(type);
             }
 
             @Override
-            public java.util.Optional<BpmNodeMetadata> metadata() {
-                return java.util.Optional.of(new BpmNodeMetadata(
+            public Optional<BpmNodeMetadata> metadata() {
+                return Optional.of(new BpmNodeMetadata(
                         type, type, "OTHER",
                         new BpmNodeTopology(minIn, maxIn, minOut, maxOut),
                         List.of(), "test-v1", EnumSet.of(
-                                com.sw.ck.bpm.api.node.BpmNodeCapability.DESIGN,
-                                com.sw.ck.bpm.api.node.BpmNodeCapability.TRANSLATE,
-                                com.sw.ck.bpm.api.node.BpmNodeCapability.RUNTIME,
-                                com.sw.ck.bpm.api.node.BpmNodeCapability.CONFIG_VALIDATE),
+                                BpmNodeCapability.DESIGN,
+                                BpmNodeCapability.TRANSLATE,
+                                BpmNodeCapability.RUNTIME,
+                                BpmNodeCapability.CONFIG_VALIDATE),
                         startNode, endNode, startNode || endNode, false));
             }
         };

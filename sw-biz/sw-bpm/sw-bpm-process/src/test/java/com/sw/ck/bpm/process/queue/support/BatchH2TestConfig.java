@@ -5,8 +5,11 @@ import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
 import com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler;
 import com.sw.ck.bpm.process.queue.CommandEffectRecorder;
 import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
 import com.sw.ck.bpm.process.service.impl.TxnBatchServiceImpl;
 import com.sw.ck.form.api.port.FormTxnActionPort;
+
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -32,7 +35,7 @@ public class BatchH2TestConfig {
                                                BpmCommandBatchItemMapper itemMapper,
                                                PersistentBpmCommandQueue queue,
                                                FormTxnActionPort txnActionPort,
-                                               com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+                                               ResourceAdmissionService admissionService) {
         return new TxnBatchServiceImpl(batchMapper, itemMapper, queue, txnActionPort, admissionService);
     }
 
@@ -43,8 +46,8 @@ public class BatchH2TestConfig {
                                                                FormTxnActionPort txnActionPort,
                                                                CommandEffectRecorder effectRecorder,
                                                                PlatformTransactionManager transactionManager,
-                                                               com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                                               com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
+                                                               ResourceReleaseService releaseService,
+                                                               ResourceAdmissionService admissionService) {
         return new BatchInvokeCommandHandler(batchMapper, itemMapper, queue, txnActionPort,
                 effectRecorder, transactionManager, releaseService, admissionService);
     }

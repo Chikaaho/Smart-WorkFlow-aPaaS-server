@@ -2,6 +2,7 @@ package com.sw.ck.system.usergroup;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -12,12 +13,19 @@ import com.sw.ck.system.mapper.SysUserGroupMemberMapper;
 import com.sw.ck.system.mapper.SysUserGroupMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.service.impl.SysUserGroupServiceImpl;
+
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -47,10 +55,10 @@ class SysUserGroupServiceTest {
         userMapper = mock(SysUserMapper.class);
         service = new SysUserGroupServiceImpl(memberMapper, userMapper);
         // 反射注入 baseMapper：字段实际位于 MP ServiceImpl 父类（继承链查找，名称含 baseMapper）
-        java.lang.reflect.Field baseMapperField = null;
-        Class<?> clazz = com.baomidou.mybatisplus.extension.service.impl.ServiceImpl.class;
+        Field baseMapperField = null;
+        Class<?> clazz = ServiceImpl.class;
         while (clazz != null && baseMapperField == null) {
-            for (java.lang.reflect.Field f : clazz.getDeclaredFields()) {
+            for (Field f : clazz.getDeclaredFields()) {
                 if (f.getName().toLowerCase().contains("basemapper")) {
                     baseMapperField = f;
                     break;
@@ -58,7 +66,7 @@ class SysUserGroupServiceTest {
             }
             clazz = clazz.getSuperclass();
         }
-        org.junit.jupiter.api.Assertions.assertNotNull(baseMapperField, "未找到 baseMapper 字段");
+        Assertions.assertNotNull(baseMapperField, "未找到 baseMapper 字段");
         baseMapperField.setAccessible(true);
         baseMapperField.set(service, groupMapper);
     }
@@ -81,7 +89,7 @@ class SysUserGroupServiceTest {
 
     private Page<SysUser> pageOf(SysUser... users) {
         Page<SysUser> result = new Page<>(1, 50);
-        result.setRecords(java.util.Arrays.asList(users));
+        result.setRecords(Arrays.asList(users));
         result.setTotal(users.length);
         return result;
     }
@@ -115,7 +123,7 @@ class SysUserGroupServiceTest {
     @DisplayName("创建：合法组 → 保存并返回 ID；默认状态 0=启用")
     void create_shouldPersist() {
         when(groupMapper.selectOne(any(Wrapper.class))).thenReturn(null);
-        when(groupMapper.insert(org.mockito.ArgumentMatchers.<SysUserGroup>any())).thenAnswer(inv -> {
+        when(groupMapper.insert(ArgumentMatchers.<SysUserGroup>any())).thenAnswer(inv -> {
             SysUserGroup g = inv.getArgument(0);
             g.setId(88L);
             return 1;
@@ -126,7 +134,7 @@ class SysUserGroupServiceTest {
 
         assertThat(id).isEqualTo(88L);
         assertThat(g.getStatus()).isZero();
-        verify(groupMapper).insert(org.mockito.ArgumentMatchers.<SysUserGroup>any());
+        verify(groupMapper).insert(ArgumentMatchers.<SysUserGroup>any());
         // 唯一性校验仅一次（创建前查重）
         verify(groupMapper, times(1)).selectOne(any(Wrapper.class));
     }
@@ -135,13 +143,13 @@ class SysUserGroupServiceTest {
     @DisplayName("更新：业务标识不可变（请求携带新标识被忽略）")
     void update_groupCodeImmutable() {
         when(groupMapper.selectById(1L)).thenReturn(group(1L, "G-001", "旧名", 0));
-        when(groupMapper.updateById(org.mockito.ArgumentMatchers.<SysUserGroup>any())).thenReturn(1);
+        when(groupMapper.updateById(ArgumentMatchers.<SysUserGroup>any())).thenReturn(1);
 
         SysUserGroup g = group(1L, "G-999", "新名", 1);
         service.update(g);
 
         assertThat(g.getGroupCode()).isEqualTo("G-001");
-        verify(groupMapper).updateById(org.mockito.ArgumentMatchers.<SysUserGroup>argThat(
+        verify(groupMapper).updateById(ArgumentMatchers.<SysUserGroup>argThat(
                 upd -> "G-001".equals(upd.getGroupCode())));
     }
 
@@ -166,7 +174,7 @@ class SysUserGroupServiceTest {
         service.updateMemberIds(1L, List.of(10L, 11L, 10L)); // 含重复 → 去重
 
         verify(memberMapper).delete(any(Wrapper.class));
-        verify(memberMapper, times(2)).insert(org.mockito.ArgumentMatchers.<SysUserGroupMember>any());
+        verify(memberMapper, times(2)).insert(ArgumentMatchers.<SysUserGroupMember>any());
         service.updateMemberIds(1L, List.of());
         verify(memberMapper, times(2)).delete(any(Wrapper.class));
         verifyNoMoreInteractions(memberMapper);
@@ -208,7 +216,7 @@ class SysUserGroupServiceTest {
         service.addMemberIds(1L, List.of(10L, 11L));
 
         verify(memberMapper, times(1)).insert(
-                org.mockito.ArgumentMatchers.<SysUserGroupMember>argThat(m -> m.getUserId() == 11L));
+                ArgumentMatchers.<SysUserGroupMember>argThat(m -> m.getUserId() == 11L));
         service.addMemberIds(1L, List.of());
         // 空输入幂等：提前返回，不再新增任何交互
         verify(memberMapper, times(1)).selectList(any(Wrapper.class));
@@ -264,10 +272,10 @@ class SysUserGroupServiceTest {
         // 此处通过显式 deny 证明：本测试只 mock 三个 mapper，构造参数不可多传
         // 所有构造器参数类型集合：仅组成员 mapper、用户 mapper、登录上下文 ——
         // 绝不出现角色/菜单/数据权限 mapper（角色关系由既有 SysRoleService 管理，用户组不触碰）
-        var paramTypes = java.util.Arrays.stream(SysUserGroupServiceImpl.class.getConstructors())
-                .flatMap(c -> java.util.Arrays.stream(c.getParameterTypes()))
+        var paramTypes = Arrays.stream(SysUserGroupServiceImpl.class.getConstructors())
+                .flatMap(c -> Arrays.stream(c.getParameterTypes()))
                 .map(Class::getSimpleName)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         assertThat(paramTypes)
                 .as("构造器只应注入组成员 mapper、用户 mapper 与登录上下文")
                 .containsExactlyInAnyOrder("SysUserGroupMemberMapper", "SysUserMapper", "LoginContextProvider");
@@ -283,7 +291,7 @@ class SysUserGroupServiceTest {
     @Test
     @DisplayName("分页 → 透传 query 与数据范围参数到 Mapper")
     void page_shouldDelegate() {
-        com.baomidou.mybatisplus.extension.plugins.pagination.Page<SysUserGroup> mpPage = new Page<>(1, 10);
+        Page<SysUserGroup> mpPage = new Page<>(1, 10);
         mpPage.setRecords(List.of(group(1L, "G-001", "组", 0)));
         mpPage.setTotal(1L);
         when(groupMapper.selectGroupPage(any(Page.class), any(SysUserGroup.class), anyBoolean(), anyString(),

@@ -13,6 +13,14 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.bpm.process.mapper.CopyRecordMapper;
+import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
+import com.sw.ck.bpm.process.service.ParticipantNameService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.PermissionService;
+import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -33,17 +41,17 @@ class BpmInstanceControllerTest {
     private final BpmInstanceService bpmInstanceService = mock(BpmInstanceService.class);
     private final BpmRuntimeFacade bpmRuntimeFacade = mock(BpmRuntimeFacade.class);
     private final BpmProcessDefService bpmProcessDefService = mock(BpmProcessDefService.class);
-    private final com.sw.ck.system.api.user.UserQueryFacade userQueryFacade =
-            mock(com.sw.ck.system.api.user.UserQueryFacade.class);
+    private final UserQueryFacade userQueryFacade =
+            mock(UserQueryFacade.class);
 
-    private final com.sw.ck.bpm.process.service.ParticipantNameService participantNameService =
-            new com.sw.ck.bpm.process.service.ParticipantNameService(
-                    mock(com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper.class), userQueryFacade);
+    private final ParticipantNameService participantNameService =
+            new ParticipantNameService(
+                    mock(ParticipantSnapshotMapper.class), userQueryFacade);
 
-    private final com.sw.ck.security.support.PermissionService permissionService =
-            mock(com.sw.ck.security.support.PermissionService.class);
-    private final com.sw.ck.bpm.process.mapper.CopyRecordMapper copyRecordMapper =
-            mock(com.sw.ck.bpm.process.mapper.CopyRecordMapper.class);
+    private final PermissionService permissionService =
+            mock(PermissionService.class);
+    private final CopyRecordMapper copyRecordMapper =
+            mock(CopyRecordMapper.class);
 
     private final BpmInstanceController controller = new BpmInstanceController(
             bpmInstanceService, bpmRuntimeFacade, bpmProcessDefService, userQueryFacade, participantNameService,
@@ -51,19 +59,19 @@ class BpmInstanceControllerTest {
 
     @AfterEach
     void tearDown() {
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
     }
 
-    private com.sw.ck.security.holder.LoginUser superAdmin() {
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+    private LoginUser superAdmin() {
+        LoginUser user = new LoginUser();
         user.setUserId(1L);
         user.setTenantId(0L);
         user.setSuperAdmin(true);
         return user;
     }
 
-    private com.sw.ck.security.holder.LoginUser normalUser(Long userId) {
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+    private LoginUser normalUser(Long userId) {
+        LoginUser user = new LoginUser();
         user.setUserId(userId);
         user.setTenantId(0L);
         user.setSuperAdmin(false);
@@ -77,7 +85,7 @@ class BpmInstanceControllerTest {
     @BeforeEach
     void setUp() {
         // 默认超管身份：既有用例关注详情装配；对象权限负向单独覆盖
-        com.sw.ck.security.holder.LoginUserHolder.set(superAdmin());
+        LoginUserHolder.set(superAdmin());
         sampleInstance = new BpmInstance();
         sampleInstance.setId(1L);
         sampleInstance.setProcessInstanceId("proc-001");
@@ -186,7 +194,7 @@ class BpmInstanceControllerTest {
         @Test
         @DisplayName("无监控权限且非发起人/参与人/抄送人 → 拒绝")
         void instanceDetail_outsider_shouldDeny() {
-            com.sw.ck.security.holder.LoginUserHolder.set(normalUser(999L));
+            LoginUserHolder.set(normalUser(999L));
             when(bpmInstanceService.findByProcessInstanceId("proc-001"))
                     .thenReturn(Optional.of(sampleInstance));
             assertThatThrownBy(() -> controller.instanceDetail("proc-001"))
@@ -198,11 +206,11 @@ class BpmInstanceControllerTest {
         @Test
         @DisplayName("发起人本人 → 允许")
         void instanceDetail_initiator_shouldAllow() {
-            com.sw.ck.security.holder.LoginUserHolder.set(normalUser(100L));
+            LoginUserHolder.set(normalUser(100L));
             when(bpmInstanceService.findByProcessInstanceId("proc-001"))
                     .thenReturn(Optional.of(sampleInstance));
-            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(java.util.Optional.of(List.of()));
-            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(java.util.Optional.of(List.of()));
+            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(Optional.of(List.of()));
+            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(Optional.of(List.of()));
             when(bpmProcessDefService.findByProcessKey("leave")).thenReturn(sampleProcessDef);
             assertThat(controller.instanceDetail("proc-001").getCode()).isZero();
         }
@@ -210,15 +218,15 @@ class BpmInstanceControllerTest {
         @Test
         @DisplayName("参与人（历史任务办理人）→ 允许")
         void instanceDetail_participant_shouldAllow() {
-            com.sw.ck.security.holder.LoginUserHolder.set(normalUser(200L));
+            LoginUserHolder.set(normalUser(200L));
             when(bpmInstanceService.findByProcessInstanceId("proc-001"))
                     .thenReturn(Optional.of(sampleInstance));
-            com.sw.ck.bpm.api.dto.BpmActivityDTO taskRow = new com.sw.ck.bpm.api.dto.BpmActivityDTO();
+            BpmActivityDTO taskRow = new BpmActivityDTO();
             taskRow.setActivityType("userTask");
             taskRow.setTaskId("task-1");
             taskRow.setAssignee("200");
-            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(java.util.Optional.of(List.of(taskRow)));
-            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(java.util.Optional.of(List.of()));
+            when(bpmRuntimeFacade.queryHistoricActivities("proc-001")).thenReturn(Optional.of(List.of(taskRow)));
+            when(bpmRuntimeFacade.getActiveActivityIds("proc-001")).thenReturn(Optional.of(List.of()));
             when(bpmProcessDefService.findByProcessKey("leave")).thenReturn(sampleProcessDef);
             assertThat(controller.instanceDetail("proc-001").getCode()).isZero();
         }
@@ -236,9 +244,9 @@ class BpmInstanceControllerTest {
             when(bpmInstanceService.findByProcessInstanceId("proc-001"))
                     .thenReturn(Optional.of(sampleInstance));
             when(bpmRuntimeFacade.getActiveActivityIds("proc-001"))
-                    .thenReturn(java.util.Optional.of(List.of("Activity_001")));
+                    .thenReturn(Optional.of(List.of("Activity_001")));
             when(bpmRuntimeFacade.queryHistoricActivities("proc-001"))
-                    .thenReturn(java.util.Optional.of(List.of()));
+                    .thenReturn(Optional.of(List.of()));
             when(bpmProcessDefService.findByProcessKey("leave"))
                     .thenReturn(sampleProcessDef);
 
@@ -278,9 +286,9 @@ class BpmInstanceControllerTest {
             when(bpmInstanceService.findByProcessInstanceId("proc-002"))
                     .thenReturn(Optional.of(sampleInstance));
             when(bpmRuntimeFacade.getActiveActivityIds("proc-002"))
-                    .thenReturn(java.util.Optional.of(List.of()));  // 已结束，无活跃节点
+                    .thenReturn(Optional.of(List.of()));  // 已结束，无活跃节点
             when(bpmRuntimeFacade.queryHistoricActivities("proc-002"))
-                    .thenReturn(java.util.Optional.of(List.of(new BpmActivityDTO())));  // 简化表示
+                    .thenReturn(Optional.of(List.of(new BpmActivityDTO())));  // 简化表示
             when(bpmProcessDefService.findByProcessKey("leave"))
                     .thenReturn(sampleProcessDef);
 

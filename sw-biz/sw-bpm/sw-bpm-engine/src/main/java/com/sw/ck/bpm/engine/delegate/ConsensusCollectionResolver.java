@@ -1,8 +1,11 @@
 package com.sw.ck.bpm.engine.delegate;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.impl.delegate.FlowableCollectionHandler;
@@ -10,16 +13,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /** Flowable 多实例 collection 的受控解析出口。 */
 @Component("consensusParticipantResolver")
 public class ConsensusCollectionResolver extends NodeDelegateSupport
         implements FlowableCollectionHandler {
-    public ConsensusCollectionResolver(RepositoryService repositoryService, ObjectMapper objectMapper,
-                                       ParticipantResolverRegistry participantResolverRegistry) {
-        super(repositoryService, objectMapper, participantResolverRegistry);
-    }
-
     public List<String> resolve(DelegateExecution execution, String nodeKey) {
         var config = nodeConfigByKey(execution, nodeKey);
         NodeParticipantContext context = participantContext(execution, config);
@@ -41,13 +40,13 @@ public class ConsensusCollectionResolver extends NodeDelegateSupport
         return resolve(execution, flowElement.getId());
     }
 
-    private java.util.Map<String, Object> nodeConfigByKey(DelegateExecution execution, String nodeKey) {
+    private Map<String, Object> nodeConfigByKey(DelegateExecution execution, String nodeKey) {
         var model = repositoryService.getBpmnModel(execution.getProcessDefinitionId());
         var element = model == null ? null : model.getFlowElement(nodeKey);
         String json = element == null ? null : element.getAttributeValue(FLOWABLE_NS, "nodeConfig");
-        if (json == null || json.isBlank()) return java.util.Map.of();
+        if (json == null || json.isBlank()) return Map.of();
         try {
-            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() { });
+            return objectMapper.readValue(json, new TypeReference<>() { });
         } catch (Exception e) {
             throw new IllegalStateException("会签配置读取失败", e);
         }

@@ -1,9 +1,9 @@
 package com.sw.ck.bpm.process.listener;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.iot.api.IotDeviceFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -11,6 +11,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 审批设备命令意图的事务内登记器（Phase 4 可靠业务事件 —— 设备命令 MUST_DELIVER）。
  *
@@ -29,15 +30,11 @@ import java.util.Optional;
  * 让审批事务整体回滚，不允许审批单边成功。设备不存在等真实错误仍由实现侧抛出。</p>
  */
 @Component
+@Log4j2
 public class BpmDeviceCommandIntentRecorder {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmDeviceCommandIntentRecorder.class);
-
-    private final ObjectProvider<IotDeviceFacade> iotDeviceFacade;
-
-    public BpmDeviceCommandIntentRecorder(ObjectProvider<IotDeviceFacade> iotDeviceFacade) {
-        this.iotDeviceFacade = iotDeviceFacade;
-    }
+    @Autowired
+    private ObjectProvider<IotDeviceFacade> iotDeviceFacade;
 
     /** 稳定幂等键（提交后加速/补偿重试共用；不含随机成分）。 */
     public static String idempotentKey(BpmDeviceCommandEvent event) {

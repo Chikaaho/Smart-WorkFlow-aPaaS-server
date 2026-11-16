@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -20,11 +22,8 @@ import java.util.List;
 @RequestMapping("/system/role")
 public class RoleController {
 
-    private final SysRoleService sysRoleService;
-
-    public RoleController(SysRoleService sysRoleService) {
-        this.sysRoleService = sysRoleService;
-    }
+    @Autowired
+    private SysRoleService sysRoleService;
 
     /**
      * 分页查询角色。

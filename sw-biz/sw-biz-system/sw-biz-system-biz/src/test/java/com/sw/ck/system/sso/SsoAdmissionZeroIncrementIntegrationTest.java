@@ -16,13 +16,16 @@ import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.mapper.SysUserPostMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
+import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.TenantValidityService;
 import com.sw.ck.system.service.impl.SysUserServiceImpl;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.mybatis.spring.mapper.MapperScannerConfigurer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -31,11 +34,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.lang.Nullable;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -105,7 +110,7 @@ class SsoAdmissionZeroIncrementIntegrationTest {
                         """,
                 CONFIG_ID, TENANT_ID);
         jdbc.update("UPDATE sys_sso_provider_config SET app_secret_enc=? WHERE id=?",
-                new SsoCredentialCipher(java.util.Base64.getEncoder().encodeToString(new byte[32]))
+                new SsoCredentialCipher(Base64.getEncoder().encodeToString(new byte[32]))
                         .encrypt("a2-fixture-secret"), CONFIG_ID);
     }
 
@@ -128,7 +133,7 @@ class SsoAdmissionZeroIncrementIntegrationTest {
         assertThatThrownBy(this::runAdmission)
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey",
-                        com.sw.ck.system.security.SystemErrorKeys.SSO_ADMISSION_REJECTED);
+                        SystemErrorKeys.SSO_ADMISSION_REJECTED);
 
         assertThat(users()).as("sys_user 零增量").isEqualTo(usersBefore);
         assertThat(bindings()).as("sys_sso_user_binding 零增量").isEqualTo(bindingsBefore);
@@ -150,7 +155,7 @@ class SsoAdmissionZeroIncrementIntegrationTest {
         assertThatThrownBy(this::runAdmission)
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey",
-                        com.sw.ck.system.security.SystemErrorKeys.SSO_ADMISSION_REJECTED);
+                        SystemErrorKeys.SSO_ADMISSION_REJECTED);
 
         assertThat(users()).as("sys_user 零增量").isEqualTo(usersBefore);
         assertThat(bindings()).as("sys_sso_user_binding 零增量").isEqualTo(bindingsBefore);
@@ -176,7 +181,7 @@ class SsoAdmissionZeroIncrementIntegrationTest {
         assertThatThrownBy(this::runAdmission)
                 .isInstanceOf(SsoRejectionException.class)
                 .hasFieldOrPropertyWithValue("errorKey",
-                        com.sw.ck.system.security.SystemErrorKeys.SSO_ADMISSION_REJECTED);
+                        SystemErrorKeys.SSO_ADMISSION_REJECTED);
 
         assertThat(users()).as("sys_user 零增量").isEqualTo(usersBefore);
         assertThat(bindings()).as("sys_sso_user_binding 零增量").isEqualTo(bindingsBefore);
@@ -320,7 +325,7 @@ class SsoAdmissionZeroIncrementIntegrationTest {
         @Bean
         public TenantValidityService tenantValidityService() {
             // 回调/发起链对租户有效性的显式校验由服务内调用承担；本切片固定有效
-            return org.mockito.Mockito.mock(TenantValidityService.class);
+            return Mockito.mock(TenantValidityService.class);
         }
 
         @Bean
@@ -330,11 +335,11 @@ class SsoAdmissionZeroIncrementIntegrationTest {
                                              SsoAuditRecordMapper auditMapper,
                                              SysUserService sysUserService,
                                              TenantValidityService tenantValidityService,
-                                             @org.springframework.lang.Nullable SysTenantMapper tenantMapper,
+                                             @Nullable SysTenantMapper tenantMapper,
                                              PlatformTransactionManager transactionManager) {
             return new SsoAuthService(configMapper, bindingMapper, stateMapper, auditMapper, sysUserService,
                     List.of(controlledClient()),
-                    new SsoCredentialCipher(java.util.Base64.getEncoder().encodeToString(new byte[32])),
+                    new SsoCredentialCipher(Base64.getEncoder().encodeToString(new byte[32])),
                     new SsoCallbackPolicy("", List.of(), ""), tenantValidityService,
                     tenantMapper, transactionManager, null, null);
         }

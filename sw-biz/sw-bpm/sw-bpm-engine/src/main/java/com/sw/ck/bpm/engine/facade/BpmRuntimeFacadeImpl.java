@@ -1,26 +1,40 @@
 package com.sw.ck.bpm.engine.facade;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.result.BpmProcessStatus;
 import com.sw.ck.bpm.api.result.MutationOutcome;
+
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.SubProcess;
 import org.flowable.common.engine.api.FlowableObjectNotFoundException;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
 import org.flowable.engine.runtime.ProcessInstance;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.variable.api.history.HistoricVariableInstance;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * BPM 运行时门面实现 —— 封装 Flowable {@link RuntimeService} + {@link HistoryService}。
  * <p>
@@ -29,20 +43,15 @@ import java.util.stream.Collectors;
  * </p>
  */
 @Service
+@Log4j2
 public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmRuntimeFacadeImpl.class);
-
-    private final RuntimeService runtimeService;
-    private final HistoryService historyService;
-    private final RepositoryService repositoryService;
-
-    public BpmRuntimeFacadeImpl(RuntimeService runtimeService, HistoryService historyService,
-                                RepositoryService repositoryService) {
-        this.runtimeService = runtimeService;
-        this.historyService = historyService;
-        this.repositoryService = repositoryService;
-    }
+    @Autowired
+    private RuntimeService runtimeService;
+    @Autowired
+    private HistoryService historyService;
+    @Autowired
+    private RepositoryService repositoryService;
 
     @Override
     public Optional<String> startProcess(String processDefKey, String businessKey,
@@ -109,11 +118,11 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
                 // 实例不存在运行期记录（已结束/不存在）：无法给出活跃节点名称
                 return Optional.empty();
             }
-            org.flowable.bpmn.model.BpmnModel model =
+            BpmnModel model =
                     repositoryService.getBpmnModel(instance.getProcessDefinitionId());
-            Map<String, String> names = new java.util.HashMap<>();
+            Map<String, String> names = new HashMap<>();
             for (String id : ids) {
-                org.flowable.bpmn.model.FlowElement element =
+                FlowElement element =
                         findFlowElement(model.getMainProcess(), id);
                 String name = element == null ? null : element.getName();
                 if (name != null && !name.isBlank()) {
@@ -130,15 +139,15 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
     }
 
     /** 递归查找 BPMN 元素（含子流程容器）。 */
-    private org.flowable.bpmn.model.FlowElement findFlowElement(
-            org.flowable.bpmn.model.FlowElementsContainer container, String id) {
-        org.flowable.bpmn.model.FlowElement element = container.getFlowElement(id);
+    private FlowElement findFlowElement(
+            FlowElementsContainer container, String id) {
+        FlowElement element = container.getFlowElement(id);
         if (element != null) {
             return element;
         }
-        for (org.flowable.bpmn.model.FlowElement child : container.getFlowElements()) {
-            if (child instanceof org.flowable.bpmn.model.SubProcess sub) {
-                org.flowable.bpmn.model.FlowElement nested = findFlowElement(sub, id);
+        for (FlowElement child : container.getFlowElements()) {
+            if (child instanceof SubProcess sub) {
+                FlowElement nested = findFlowElement(sub, id);
                 if (nested != null) {
                     return nested;
                 }
@@ -153,7 +162,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
             return Optional.empty();
         }
         try {
-            List<org.flowable.engine.history.HistoricActivityInstance> activities =
+            List<HistoricActivityInstance> activities =
                     historyService.createHistoricActivityInstanceQuery()
                             .processInstanceId(processInstanceId)
                             .orderByHistoricActivityInstanceEndTime().asc()
@@ -174,8 +183,8 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
                     .list().stream()
                     .filter(t -> t.getAssignee() != null)
                     .collect(Collectors.toMap(
-                            org.flowable.task.api.history.HistoricTaskInstance::getId,
-                            org.flowable.task.api.history.HistoricTaskInstance::getAssignee,
+                            HistoricTaskInstance::getId,
+                            HistoricTaskInstance::getAssignee,
                             (a, b) -> a));
             String approverFallback = resolveApproverVariable(processInstanceId);
 
@@ -200,14 +209,13 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
         }
     }
 
-
     /**
      * 读取历史流程变量 approver（DESIGNATED 审批人配置，String 或 List 取首元素）。
      * 查询失败返回 null，不阻断流转记录查询。
      */
     private String resolveApproverVariable(String processInstanceId) {
         try {
-            org.flowable.variable.api.history.HistoricVariableInstance var = historyService
+            HistoricVariableInstance var = historyService
                     .createHistoricVariableInstanceQuery()
                     .processInstanceId(processInstanceId)
                     .variableName("approver")
@@ -216,7 +224,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
                 return null;
             }
             Object v = var.getValue();
-            if (v instanceof java.util.Collection<?> col) {
+            if (v instanceof Collection<?> col) {
                 return col.isEmpty() ? null : String.valueOf(col.iterator().next());
             }
             return String.valueOf(v);
@@ -237,7 +245,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
      * </p>
      */
     private BpmActivityDTO toActivityDto(
-            org.flowable.engine.history.HistoricActivityInstance ha) {
+            HistoricActivityInstance ha) {
         BpmActivityDTO dto = new BpmActivityDTO();
         dto.setActivityId(ha.getActivityId());
         dto.setActivityName(ha.getActivityName());
@@ -268,9 +276,9 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
         if (!instanceExists) {
             return Optional.empty();
         }
-        Map<String, Object> variables = new java.util.LinkedHashMap<>();
+        Map<String, Object> variables = new LinkedHashMap<>();
         try {
-            for (org.flowable.variable.api.history.HistoricVariableInstance var :
+            for (HistoricVariableInstance var :
                     historyService.createHistoricVariableInstanceQuery()
                             .processInstanceId(processInstanceId)
                             .list()) {
@@ -294,7 +302,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
             return Optional.of(BpmProcessStatus.RUNNING);
         }
         try {
-            org.flowable.engine.history.HistoricProcessInstance historic =
+            HistoricProcessInstance historic =
                     historyService.createHistoricProcessInstanceQuery()
                             .processInstanceId(processInstanceId).singleResult();
             if (historic == null) {
@@ -337,7 +345,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
             // 实例不在运行期（已结束/不存在）：empty 语义
             return Optional.empty();
         }
-        org.flowable.engine.runtime.Execution execution = runtimeService.createExecutionQuery()
+        Execution execution = runtimeService.createExecutionQuery()
                 .processInstanceId(processInstanceId)
                 .activityId(activityId)
                 .singleResult();

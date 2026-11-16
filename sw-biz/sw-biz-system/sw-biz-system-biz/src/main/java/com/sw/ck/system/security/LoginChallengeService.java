@@ -1,6 +1,8 @@
 package com.sw.ck.system.security;
 
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;
@@ -9,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.UUID;
 
 /**
@@ -26,35 +29,23 @@ import java.util.UUID;
 @Component
 public class LoginChallengeService {
 
-    private final LoginChallengeStore challengeStore;
-    private final RsaLoginKeyManager rsaKeyManager;
-    private final LoginSecurityProperties properties;
-    private final PngCaptchaRenderer captchaRenderer;
-    private final DevProperties devProperties;
-    private final org.springframework.core.env.Environment environment;
-    private final SecureRandom secureRandom = new SecureRandom();
-    private final byte[] digestSecretBytes;
-
-    public LoginChallengeService(LoginChallengeStore challengeStore,
-                                 RsaLoginKeyManager rsaKeyManager,
-                                 LoginSecurityProperties properties,
-                                 PngCaptchaRenderer captchaRenderer) {
-        this(challengeStore, rsaKeyManager, properties, captchaRenderer, new DevProperties(), null);
-    }
-
     @Autowired
-    public LoginChallengeService(LoginChallengeStore challengeStore,
-                                 RsaLoginKeyManager rsaKeyManager,
-                                 LoginSecurityProperties properties,
-                                 PngCaptchaRenderer captchaRenderer,
-                                 DevProperties devProperties,
-                                 org.springframework.core.env.Environment environment) {
-        this.challengeStore = challengeStore;
-        this.rsaKeyManager = rsaKeyManager;
-        this.properties = properties;
-        this.captchaRenderer = captchaRenderer;
-        this.devProperties = devProperties;
-        this.environment = environment;
+    private LoginChallengeStore challengeStore;
+    @Autowired
+    private RsaLoginKeyManager rsaKeyManager;
+    @Autowired
+    private LoginSecurityProperties properties;
+    @Autowired
+    private PngCaptchaRenderer captchaRenderer;
+    @Autowired
+    private DevProperties devProperties;
+    @Autowired
+    private Environment environment;
+    private final SecureRandom secureRandom = new SecureRandom();
+    private byte[] digestSecretBytes;
+
+    @PostConstruct
+    void initDigestSecret() {
         // 服务端密钥参与答案摘要：未配置即 fail-fast，无密钥摘要不允许上线
         String secret = properties.getDigestSecret();
         if (secret == null || secret.isBlank()) {
@@ -170,7 +161,7 @@ public class LoginChallengeService {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(digestSecretBytes, "HmacSHA256"));
-            return HexFormat.of().formatHex(
+            return HEX_FORMAT.formatHex(
                     mac.doFinal(normalizedAnswer.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException("HMAC-SHA256 不可用", e);
@@ -182,7 +173,7 @@ public class LoginChallengeService {
         return captcha.trim().toLowerCase();
     }
 
-    private static final java.util.HexFormat HexFormat = java.util.HexFormat.of();
+    private static final HexFormat HEX_FORMAT = HexFormat.of();
 
     /** 认证业务异常：code 为既有机器错误码，errorKey 为稳定语义键，message 为外显提示 */
     public static class AuthException extends RuntimeException {

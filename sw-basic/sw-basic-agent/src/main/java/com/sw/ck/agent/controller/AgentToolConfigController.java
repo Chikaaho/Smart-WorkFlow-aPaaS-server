@@ -1,5 +1,7 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
 import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
@@ -31,11 +33,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/agent/tool")
 public class AgentToolConfigController {
 
-    private final AgentToolConfigService agentToolConfigService;
-
-    public AgentToolConfigController(AgentToolConfigService agentToolConfigService) {
-        this.agentToolConfigService = agentToolConfigService;
-    }
+    @Autowired
+    private AgentToolConfigService agentToolConfigService;
 
     // ==================== 内部工具 ====================
 

@@ -1,8 +1,7 @@
 package com.sw.ck.bootstrap.migration;
 
 import com.sw.ck.common.jdbc.DatabaseVendor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -26,7 +25,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.sql.Timestamp;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 达梦/KingbaseES/openGauss 的迁移执行器（Flyway 无对应数据库模块）。
  * <p>
@@ -35,9 +36,9 @@ import java.util.regex.Pattern;
  * 单个历史行锁防止多实例同时迁移；校验和不一致直接拒绝启动。
  * </p>
  */
+@Log4j2
 public final class SwVendorMigrationRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(SwVendorMigrationRunner.class);
     private static final Pattern VERSIONED = Pattern.compile("^V([0-9][0-9A-Za-z_.]*)__(.+)\\.sql$", Pattern.CASE_INSENSITIVE);
     private static final Pattern REPEATABLE = Pattern.compile("^R__(.+)\\.sql$", Pattern.CASE_INSENSITIVE);
     private static final Pattern DOLLAR_QUOTED_BLOCK =
@@ -283,7 +284,7 @@ public final class SwVendorMigrationRunner {
         int updated = jdbc.update("UPDATE " + LOCK_TABLE
                         + " SET locked_by = ?, locked_at = CURRENT_TIMESTAMP"
                         + " WHERE id = 1 AND (locked_by IS NULL OR locked_at < ?)",
-                owner, new java.sql.Timestamp(staleBefore));
+                owner, new Timestamp(staleBefore));
         if (updated != 1) {
             throw new IllegalStateException("另一个实例正在执行迁移，未获得 " + LOCK_TABLE + " 行锁");
         }
