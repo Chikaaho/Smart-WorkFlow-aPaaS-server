@@ -2,9 +2,9 @@ name: Build & Release (main)
 
 on:
   push:
-    # 测试验证在 feature/develop 上触发即可（不再为跑测试推 main）；正式 Release 制品
-    # 仅由 main 推送创建（见下方 Create GitHub Release 的 ref 门控）。
-    branches: [main, develop, 'feature/**']
+    # 仅 main 推送触发构建与发布；develop/feature 日常提交不自动构建，测试在本地执行。
+    # 正式 Release 制品由 main 推送创建（见下方 Create GitHub Release 的 ref 门控）。
+    branches: [main]
 
 jobs:
   build:
