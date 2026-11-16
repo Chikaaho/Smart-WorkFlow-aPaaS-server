@@ -32,6 +32,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import com.sw.ck.notify.api.NotifyBizType;
 
 /**
  * 站内信通知 Service 实现。
@@ -44,7 +45,7 @@ public class NotifyMessageServiceImpl
     private static final int MAX_BATCH_RECIPIENTS = 500;
 
     private static String eventTypeIfPresent() {
-        return "SYSTEM";
+        return NotifyBizType.SYSTEM.name();
     }
 
     @Autowired
@@ -161,7 +162,7 @@ public class NotifyMessageServiceImpl
             msg.setRecipientId(recipientId);
             msg.setTitle(title);
             msg.setContent(content);
-            msg.setBizType("SYSTEM");
+            msg.setBizType(NotifyBizType.SYSTEM.name());
             msg.setIsRead(false);
             msg.setEventType(eventTypeIfPresent());
             msg.setOccurrenceNo(1L);

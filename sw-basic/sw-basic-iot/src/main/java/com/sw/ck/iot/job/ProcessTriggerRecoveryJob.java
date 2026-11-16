@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotTriggerActionTypeEnum;
 /**
  * IoT 流程触发恢复调度（Phase 4 可靠业务事件 —— IoT 触发 MUST_DELIVER）。
  *
@@ -121,7 +122,7 @@ public class ProcessTriggerRecoveryJob {
                             .in(IotProcessTrigger::getStatus, PENDING, FAILED)
                             // AGENT 的 FAILED 是执行终态（失败升级已承接），不得按流程重投；
                             // 仅保留 PENDING（提交前崩溃）供恢复调度重新受理。
-                            .and(w -> w.ne(IotProcessTrigger::getActionType, "AGENT")
+                            .and(w -> w.ne(IotProcessTrigger::getActionType, IotTriggerActionTypeEnum.AGENT.getCode())
                                     .or().eq(IotProcessTrigger::getStatus, PENDING))
                             .lt(IotProcessTrigger::getRetryCount, MAX_RETRY)
                             .and(w -> w.isNull(IotProcessTrigger::getNextRetryTime)
@@ -185,7 +186,7 @@ public class ProcessTriggerRecoveryJob {
                     }
                 }
                 event.setFormData(formData);
-                event.setAgentInput("AGENT".equals(trigger.getActionType()) ? formData : null);
+                event.setAgentInput(IotTriggerActionTypeEnum.AGENT.getCode().equals(trigger.getActionType()) ? formData : null);
                 eventPublisher.publish(event);
                 log.info("IoT 触发已重投: triggerId={}, idempotentKey={}, retryCount={}",
                         trigger.getId(), trigger.getIdempotentKey(), trigger.getRetryCount());

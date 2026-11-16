@@ -638,7 +638,7 @@ public class AgentGraphInterpreter {
                 throw pause;
             } catch (RuntimeException e) {
                 // 本步失败：节点轨迹仍完整留痕（耗时 + 失败时点变量快照），再上抛
-                trace.setStatus("FAILED");
+                trace.setStatus(AgentExecutionOutcomeEnum.FAILED.getCode());
                 trace.setErrorMessage(e.getMessage());
                 finishTrace(trace, stepStartNanos, variables);
                 throw e;

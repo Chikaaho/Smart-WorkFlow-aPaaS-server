@@ -1,19 +1,19 @@
 package com.sw.ck.iot.controller;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
+import com.alibaba.fastjson2.JSONObject;
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotProduct;
 import com.sw.ck.iot.entity.IotThingModel;
+import com.sw.ck.iot.service.IotConnectionService;
 import com.sw.ck.iot.service.IotDeviceManageService;
 import com.sw.ck.iot.service.IotProductService;
 
-import org.springframework.web.bind.annotation.*;
-import org.springframework.security.access.prepost.PreAuthorize;
-import com.alibaba.fastjson2.JSONObject;
-
 import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * 产品、物模型与设备管理控制器（P21 平台化）。
@@ -90,7 +90,7 @@ public class IotProductController {
             product.setCode(code);
             product.setName(name);
             product.setConnId(connId);
-            product.setConnType(connType == null ? "MQTT" : connType);
+            product.setConnType(connType == null ? IotConnectionService.TYPE_MQTT : connType);
             product.setDescription(description);
             return product;
         }

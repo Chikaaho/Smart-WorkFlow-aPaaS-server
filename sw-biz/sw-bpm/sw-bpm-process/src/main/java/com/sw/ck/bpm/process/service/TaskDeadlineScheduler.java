@@ -2,25 +2,33 @@ package com.sw.ck.bpm.process.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
+import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskDeadline;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper;
-import com.sw.ck.bpm.process.service.BpmInstanceService;
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import lombok.extern.log4j.Log4j2;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,14 +38,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * 人工节点办理时限调度（I3 §4.8）。
  * <p>
@@ -92,7 +92,7 @@ public class TaskDeadlineScheduler {
                          TenantLineSuspension.suspended()) {
                 due = deadlineMapper.selectList(
                         Wrappers.<BpmTaskDeadline>lambdaQuery()
-                                .eq(BpmTaskDeadline::getRunState, "PENDING")
+                                .eq(BpmTaskDeadline::getRunState, BatchItemStatusEnum.PENDING.getCode())
                                 .lt(BpmTaskDeadline::getDueAt, LocalDateTime.now())
                                 .last("LIMIT 50"));
             }
@@ -143,7 +143,7 @@ public class TaskDeadlineScheduler {
             }
         } catch (Exception e) {
             log.warn("时限处理失败: taskId={}, error={}", record.getTaskId(), e.getMessage());
-            patch(record, "PENDING", null);
+            patch(record, BatchItemStatusEnum.PENDING.getCode(), null);
         }
     }
 
@@ -168,7 +168,7 @@ public class TaskDeadlineScheduler {
                 .findByProcessInstanceId(record.getProcessInstanceId()).orElse(null);
         if (instance == null
                 || !InstanceStatusEnum.RUNNING.getCode().equals(instance.getStatus())) {
-            patch(record, "CANCELLED", "INSTANCE_CLOSED");
+            patch(record, BpmChildBatch.STATUS_CANCELLED, "INSTANCE_CLOSED");
             return;
         }
         LoginUser synthetic = new LoginUser();
@@ -249,7 +249,7 @@ public class TaskDeadlineScheduler {
                 Wrappers.<BpmTaskDeadline>lambdaUpdate()
                         .eq(BpmTaskDeadline::getId, record.getId())
                         .eq(BpmTaskDeadline::getTenantId, record.getTenantId())
-                        .eq(BpmTaskDeadline::getRunState, "PENDING"));
+                        .eq(BpmTaskDeadline::getRunState, BatchItemStatusEnum.PENDING.getCode()));
     }
 
     /** 任务已消失分支的原子推进：仅 PENDING 行写 DONE/TASK_GONE，不覆盖胜者结果。 */
@@ -263,7 +263,7 @@ public class TaskDeadlineScheduler {
                     Wrappers.<BpmTaskDeadline>lambdaUpdate()
                             .eq(BpmTaskDeadline::getId, record.getId())
                             .eq(BpmTaskDeadline::getTenantId, record.getTenantId())
-                            .eq(BpmTaskDeadline::getRunState, "PENDING"));
+                            .eq(BpmTaskDeadline::getRunState, BatchItemStatusEnum.PENDING.getCode()));
         });
     }
 

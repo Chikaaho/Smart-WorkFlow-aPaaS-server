@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotDirectionEnum;
 /**
  * 自建 MQTT 连接的下行通道：目标解析与真实发布（原生 MQTT 设备控制通道）。
  *
@@ -59,7 +60,7 @@ public class MqttDownlinkPublisher {
     public Optional<DownlinkTarget> resolveDownlink(IotConnection conn, String deviceKey) {
         IotTopic downTopic = topicMapper.selectOne(new LambdaQueryWrapper<IotTopic>()
                 .eq(IotTopic::getConnId, conn.getId())
-                .in(IotTopic::getDirection, "DOWN", "BOTH")
+                .in(IotTopic::getDirection, IotDirectionEnum.DOWN.getCode(), IotDirectionEnum.BOTH.getCode())
                 .eq(IotTopic::getEnabled, 1)
                 .last("limit 1"));
         if (downTopic == null) {

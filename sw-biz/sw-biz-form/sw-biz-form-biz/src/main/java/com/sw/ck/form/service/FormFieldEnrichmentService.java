@@ -1,29 +1,22 @@
 package com.sw.ck.form.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
+import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
-import com.sw.ck.storage.api.StorageFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.storage.api.StorageFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import com.sw.ck.form.entity.FormConfigEntity;
-
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -33,6 +26,12 @@ import java.util.Map;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import com.sw.ck.form.dynamic.FieldType;
 /**
  * I2 写路径统一增补/闸门服务：提交与更新共用同一管线（方向 §4.1—§4.6 服务端权威）。
  *
@@ -111,9 +110,9 @@ public class FormFieldEnrichmentService {
             String name = field.path("name").asText();
             String display = displayOf(field, name);
             switch (type) {
-                case "USER" -> enrichUser(effectiveData, name, display,
+                case FormAppScopeTypes.USER -> enrichUser(effectiveData, name, display,
                         field.path("multiple").asBoolean(false));
-                case "DEPT" -> enrichDept(effectiveData, name, display,
+                case FormAppScopeTypes.DEPT -> enrichDept(effectiveData, name, display,
                         field.path("multiple").asBoolean(false));
                 case "DATASOURCE" -> enrichDatasource(field, effectiveData, name, display);
                 case "TABLE" -> enrichTableRows(field, effectiveData, name, display, liveTargets);
@@ -153,7 +152,7 @@ public class FormFieldEnrichmentService {
     private void collectMainReferenceTargets(JsonNode fields, Map<String, Object> data,
                                              List<DynamicTableSql.LockTarget> sink) {
         for (JsonNode field : fields) {
-            if (!"REFERENCE".equals(field.path("type").asText())) {
+            if (!FieldType.REFERENCE.name().equals(field.path("type").asText())) {
                 continue;
             }
             String name = field.path("name").asText();
@@ -169,7 +168,7 @@ public class FormFieldEnrichmentService {
     private void collectSubRowReferenceTargets(JsonNode fields, Map<String, Object> data,
                                                List<DynamicTableSql.LockTarget> sink) {
         for (JsonNode field : fields) {
-            if (!"TABLE".equals(field.path("type").asText())) {
+            if (!FieldType.TABLE.name().equals(field.path("type").asText())) {
                 continue;
             }
             Object raw = data.get(field.path("name").asText());
@@ -177,7 +176,7 @@ public class FormFieldEnrichmentService {
                 continue;
             }
             for (JsonNode sub : field.path("subFields")) {
-                if (!"REFERENCE".equals(sub.path("type").asText())) {
+                if (!FieldType.REFERENCE.name().equals(sub.path("type").asText())) {
                     continue;
                 }
                 String subName = sub.path("name").asText();
@@ -430,9 +429,9 @@ public class FormFieldEnrichmentService {
                 String subName = sub.path("name").asText();
                 String subDisplay = displayOf(sub, subName);
                 switch (subType) {
-                    case "USER" -> enrichUser(rowMap, subName, subDisplay,
+                    case FormAppScopeTypes.USER -> enrichUser(rowMap, subName, subDisplay,
                             sub.path("multiple").asBoolean(false));
-                    case "DEPT" -> enrichDept(rowMap, subName, subDisplay,
+                    case FormAppScopeTypes.DEPT -> enrichDept(rowMap, subName, subDisplay,
                             sub.path("multiple").asBoolean(false));
                     case "DATASOURCE" -> enrichDatasource(sub, rowMap, subName, subDisplay);
                     case "REFERENCE" -> enrichReference(sub, rowMap, subName, subDisplay, liveTargets);
@@ -521,7 +520,7 @@ public class FormFieldEnrichmentService {
      */
     private void recomputeFormulas(JsonNode fields, Map<String, Object> data) {
         for (JsonNode field : fields) {
-            if (!"FORMULA".equals(field.path("type").asText())) {
+            if (!FieldType.FORMULA.name().equals(field.path("type").asText())) {
                 continue;
             }
             String name = field.path("name").asText();

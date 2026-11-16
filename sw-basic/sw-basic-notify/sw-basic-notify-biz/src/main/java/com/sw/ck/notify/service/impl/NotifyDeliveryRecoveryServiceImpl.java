@@ -26,6 +26,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.api.NotifyDeliveryStatusEnum;
+import com.sw.ck.notify.api.NotifyFailureClassEnum;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 /**
  * 投递恢复与重试实现（I6）。
  * <p>
@@ -61,8 +64,8 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         List<NotifyMessage> due;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             due = messageMapper.selectList(Wrappers.<NotifyMessage>lambdaQuery()
-                    .eq(NotifyMessage::getFailureClass, "RETRYABLE")
-                    .in(NotifyMessage::getDeliveryStatus, "FAILED", "TIMEOUT", "PENDING")
+                    .eq(NotifyMessage::getFailureClass, NotifyFailureClassEnum.RETRYABLE.getCode())
+                    .in(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.FAILED.getCode(), NotifyDeliveryStatusEnum.TIMEOUT.getCode(), NotifyDeliveryStatusEnum.PENDING.getCode())
                     .isNotNull(NotifyMessage::getNextRetryTime)
                     .le(NotifyMessage::getNextRetryTime, LocalDateTime.now())
                     .lt(NotifyMessage::getRetryCount, MAX_RETRY_COUNT)
@@ -90,7 +93,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         List<NotifyMessage> stale;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             stale = messageMapper.selectList(Wrappers.<NotifyMessage>lambdaQuery()
-                    .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
+                    .eq(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.RESENDING.getCode())
                     .le(NotifyMessage::getUpdateTime, LocalDateTime.now().minusMinutes(STALE_LEASE_MINUTES))
                     .last("LIMIT " + MAX_BATCH));
         }
@@ -98,12 +101,12 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         for (NotifyMessage message : stale) {
             reclaimed += tenantWorkAdmission.claim(message.getTenantId(), () -> messageMapper.update(null,
                     Wrappers.<NotifyMessage>lambdaUpdate()
-                            .set(NotifyMessage::getDeliveryStatus, "FAILED")
-                            .set(NotifyMessage::getFailureClass, "RETRYABLE")
+                            .set(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.FAILED.getCode())
+                            .set(NotifyMessage::getFailureClass, NotifyFailureClassEnum.RETRYABLE.getCode())
                             .set(NotifyMessage::getNextRetryTime, LocalDateTime.now())
                             .eq(NotifyMessage::getId, message.getId())
                             .eq(NotifyMessage::getTenantId, message.getTenantId())
-                            .eq(NotifyMessage::getDeliveryStatus, "RESENDING")));
+                            .eq(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.RESENDING.getCode())));
         }
         if (reclaimed > 0) {
             log.warn("回收滞留投递租约（投递者可能已崩溃）: count={}", reclaimed);
@@ -118,8 +121,8 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         List<NotifyMessage> exhaustedRows;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             exhaustedRows = messageMapper.selectList(Wrappers.<NotifyMessage>lambdaQuery()
-                    .eq(NotifyMessage::getFailureClass, "RETRYABLE")
-                    .in(NotifyMessage::getDeliveryStatus, "FAILED", "TIMEOUT", "PENDING")
+                    .eq(NotifyMessage::getFailureClass, NotifyFailureClassEnum.RETRYABLE.getCode())
+                    .in(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.FAILED.getCode(), NotifyDeliveryStatusEnum.TIMEOUT.getCode(), NotifyDeliveryStatusEnum.PENDING.getCode())
                     .ge(NotifyMessage::getRetryCount, MAX_RETRY_COUNT)
                     .last("LIMIT " + MAX_BATCH));
         }
@@ -127,11 +130,11 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         for (NotifyMessage message : exhaustedRows) {
             exhausted += tenantWorkAdmission.claim(message.getTenantId(), () -> messageMapper.update(null,
                     Wrappers.<NotifyMessage>lambdaUpdate()
-                            .set(NotifyMessage::getFailureClass, "RETRY_EXHAUSTED")
+                            .set(NotifyMessage::getFailureClass, NotifyFailureClassEnum.RETRY_EXHAUSTED.getCode())
                             .set(NotifyMessage::getNextRetryTime, null)
                             .eq(NotifyMessage::getId, message.getId())
                             .eq(NotifyMessage::getTenantId, message.getTenantId())
-                            .eq(NotifyMessage::getFailureClass, "RETRYABLE")));
+                            .eq(NotifyMessage::getFailureClass, NotifyFailureClassEnum.RETRYABLE.getCode())));
         }
         if (exhausted > 0) {
             log.warn("投递重试预算耗尽，转可审计终态: count={}", exhausted);
@@ -146,7 +149,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
         // 每次写回都携带行自身的权威 tenant_id，业务列不受切换影响。
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             int claim = tenantWorkAdmission.claim(msg.getTenantId(), () -> messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
-                    .set(NotifyMessage::getDeliveryStatus, "RESENDING")
+                    .set(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.RESENDING.getCode())
                     .setSql("retry_count = retry_count + 1")
                     // 领取即刷新租约时间：崩溃后 stale 回收据此判定（wrapper 更新不会自动填充）
                     .set(NotifyMessage::getUpdateTime, LocalDateTime.now())
@@ -167,16 +170,16 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
                 log.warn("投递恢复异常，按失败回写: id={}, exceptionClass={}", msg.getId(),
                         e.getClass().getSimpleName());
                 result = NotifySendResult.builder().channel(NotifyChannel.valueOf(msg.getChannel()))
-                        .status("FAILED").failureReason("恢复投递失败，请稍后重试：" + DiagnosticText.sanitize(e.getMessage(), 200)).build();
+                        .status(NotifySendStatusEnum.FAILED.getCode()).failureReason("恢复投递失败，请稍后重试：" + DiagnosticText.sanitize(e.getMessage(), 200)).build();
             } finally {
                 LoginUserHolder.clear();
             }
-            String status = result.getStatus() == null ? "FAILED" : result.getStatus();
+            String status = result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus();
             String failureClass = "SUCCESS".equals(status) ? null : classify(result.getFailureReason());
             int newRetry = priorRetry + 1;
             if (!"SUCCESS".equals(status) && newRetry >= MAX_RETRY_COUNT) {
                 // 明确终态：重试预算耗尽后不再属于可重试，交由记录页人工处理
-                failureClass = "RETRY_EXHAUSTED";
+                failureClass = NotifyFailureClassEnum.RETRY_EXHAUSTED.getCode();
             }
             finishAttempt(msg, attemptNo, result, failureClass);
             writeTerminal(msg, result, failureClass, priorRetry + 1);
@@ -193,7 +196,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
             attempt.setMessageId(msg.getId());
             attempt.setAttemptNo(attemptNo);
             attempt.setChannel(msg.getChannel());
-            attempt.setStatus(result.getStatus() == null ? "FAILED" : result.getStatus());
+            attempt.setStatus(result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus());
             attempt.setFailureReason(result.getFailureReason());
             attempt.setExternalMessageId(result.getExternalMessageId());
             attempt.setFailureClass(failureClass);
@@ -211,8 +214,8 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
      * 使租约被回收后旧投递者的迟到结论无法覆盖新持有者（与命令队列同一等强度条件）。
      */
     private void writeTerminal(NotifyMessage msg, NotifySendResult result, String failureClass, int claimedRetry) {
-        String status = result.getStatus() == null ? "FAILED" : result.getStatus();
-        boolean done = "SUCCESS".equals(status) || !"RETRYABLE".equals(failureClass);
+        String status = result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus();
+        boolean done = "SUCCESS".equals(status) || !NotifyFailureClassEnum.RETRYABLE.getCode().equals(failureClass);
         int updated = messageMapper.update(null, Wrappers.<NotifyMessage>lambdaUpdate()
                 .set(NotifyMessage::getDeliveryStatus, status)
                 .set(NotifyMessage::getExternalMessageId, result.getExternalMessageId())
@@ -221,7 +224,7 @@ public class NotifyDeliveryRecoveryServiceImpl implements NotifyDeliveryRecovery
                 .set(NotifyMessage::getNextRetryTime, done ? null : nextBackoff(claimedRetry))
                 .eq(NotifyMessage::getId, msg.getId())
                 .eq(NotifyMessage::getTenantId, msg.getTenantId())
-                .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
+                .eq(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.RESENDING.getCode())
                 .eq(NotifyMessage::getRetryCount, claimedRetry));
         if (updated == 0) {
             log.warn("投递结论写回被跳过: id={} 已离开本次领取权（租约被回收或已被他人推进）", msg.getId());

@@ -1,22 +1,16 @@
 package com.sw.ck.bpm.engine.delegate;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.variable.BpmVariableReadPort;
-import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
-
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.flowable.engine.RepositoryService;
-import org.flowable.engine.delegate.DelegateExecution;
-import org.flowable.engine.impl.delegate.FlowableCollectionHandler;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -26,6 +20,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+
+import org.flowable.engine.RepositoryService;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.impl.delegate.FlowableCollectionHandler;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import com.sw.ck.bpm.api.node.BranchSourceTypeEnum;
+import com.sw.ck.bpm.api.node.ConsensusModeEnum;
+import com.sw.ck.bpm.api.node.NodeEmptyStrategyEnum;
+import com.sw.ck.bpm.api.node.NodeInvalidStrategyEnum;
+import com.sw.ck.bpm.api.participant.ParticipantScopeEnum;
 
 /**
  * 动态并行分支集合解析（I4 §3.1）。
@@ -91,7 +97,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                     "动态并行来源部门数 " + deptIds.size() + " 超过上限 " + maxBranches);
         }
         if (deptIds.isEmpty()) {
-            if ("PROCEED".equalsIgnoreCase(asString(config.get("emptyStrategy")))) {
+            if (NodeEmptyStrategyEnum.PROCEED.getCode().equalsIgnoreCase(asString(config.get("emptyStrategy")))) {
                 freeze(execution, config, tenantId, List.of());
                 return List.of(); // 显式受控放行：零分支，节点直接完成
             }
@@ -128,7 +134,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                     String.valueOf(deptId), String.valueOf(leaders.stream().min(Long::compare).orElseThrow()),
                     null));
         }
-        if (!invalid.isEmpty() && !"SKIP".equalsIgnoreCase(asString(config.get("invalidStrategy")))) {
+        if (!invalid.isEmpty() && !NodeInvalidStrategyEnum.SKIP.getCode().equalsIgnoreCase(asString(config.get("invalidStrategy")))) {
             throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_LEADER_MISSING.getCode(),
                     "部门 " + invalid + " 失效或负责人缺失");
         }
@@ -155,7 +161,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
         return port.freeze(String.valueOf(tenantId), execution.getProcessInstanceId(),
                 execution.getCurrentActivityId(),
                 asString(source.get("type")), asString(source.get("value")),
-                asString(config.getOrDefault("mode", "ALL")), candidates).orElseThrow(
+                asString(config.getOrDefault("mode", ConsensusModeEnum.ALL.getCode())), candidates).orElseThrow(
                         () -> new IllegalStateException("动态分支冻结未返回结果"));
     }
 
@@ -179,12 +185,12 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
         int maxBranches = maxBranches(config);
         Map<String, Object> source = config.get("source") instanceof Map<?, ?> raw
                 ? (Map<String, Object>) raw : Map.of();
-        boolean userObjects = "USER".equalsIgnoreCase(asString(source.get("objectType")));
-        boolean tableScope = "TABLE".equalsIgnoreCase(asString(source.get("scope")));
+        boolean userObjects = SubjectTypeEnum.USER.getCode().equalsIgnoreCase(asString(source.get("objectType")));
+        boolean tableScope = ParticipantScopeEnum.TABLE.getCode().equalsIgnoreCase(asString(source.get("scope")));
 
         // 收集对象 ID → 来源位置（LinkedHashMap 保序去重）
         LinkedHashMap<String, List<String>> objectRefs = new LinkedHashMap<>();
-        if ("FIXED".equalsIgnoreCase(asString(source.get("type")))) {
+        if (BranchSourceTypeEnum.FIXED.getCode().equalsIgnoreCase(asString(source.get("type")))) {
             for (String id : splitIds(source.get("value"))) {
                 objectRefs.computeIfAbsent(id, key -> new ArrayList<>())
                         .add(refJson("FIXED", asString(source.get("field")), null, null));
@@ -207,7 +213,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                                 asString(source.get("tableField")),
                                 rowId == null ? null : String.valueOf(rowId))));
             }
-        } else if ("VARIABLE".equalsIgnoreCase(asString(source.get("type")))) {
+        } else if (BranchSourceTypeEnum.VARIABLE.getCode().equalsIgnoreCase(asString(source.get("type")))) {
             String varId = asString(source.get("value"));
             Object raw = execution.getVariable(varId);
             if (raw == null) {
@@ -236,7 +242,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                     "动态并行来源对象数 " + objectRefs.size() + " 超过上限 " + maxBranches);
         }
         if (objectRefs.isEmpty()) {
-            if ("PROCEED".equalsIgnoreCase(asString(config.get("emptyStrategy")))) {
+            if (NodeEmptyStrategyEnum.PROCEED.getCode().equalsIgnoreCase(asString(config.get("emptyStrategy")))) {
                 freezeRound(execution, config, tenantId, userObjects, List.of());
                 return List.of(); // 显式受控放行：零分支，节点直接完成
             }
@@ -284,7 +290,7 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                 }
             }
         }
-        if (!invalid.isEmpty() && !"SKIP".equalsIgnoreCase(asString(config.get("invalidStrategy")))) {
+        if (!invalid.isEmpty() && !NodeInvalidStrategyEnum.SKIP.getCode().equalsIgnoreCase(asString(config.get("invalidStrategy")))) {
             throw new BaseException(BpmErrorCode.DYNAMIC_BRANCH_LEADER_MISSING.getCode(),
                     (userObjects ? "人员 " : "部门 ") + invalid + " 失效或负责人缺失");
         }
@@ -314,8 +320,8 @@ public class DynamicBranchCollectionResolver extends NodeDelegateSupport
                 execution.getCurrentActivityId(), execution.getId(),
                 asString(source.get("type")),
                 asString(source.get("value")),
-                asString(config.getOrDefault("mode", "ALL")),
-                userObjects ? "USER" : "DEPT", candidates).orElseThrow(
+                asString(config.getOrDefault("mode", ConsensusModeEnum.ALL.getCode())),
+                userObjects ? SubjectTypeEnum.USER.getCode() : "DEPT", candidates).orElseThrow(
                         () -> new IllegalStateException("动态分支轮次冻结未返回结果"));
     }
 

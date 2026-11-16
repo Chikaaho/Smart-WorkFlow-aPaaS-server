@@ -1,5 +1,6 @@
 package com.sw.ck.bpm.api.node;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -7,9 +8,9 @@ import java.util.Optional;
 
 /** 发布节点允许操作的统一解析；未声明承接旧定义，显式空列表不允许任何操作。 */
 public final class NodeActionPolicy {
-    public static final List<String> ALL = List.of(
-            "APPROVE", "DISAPPROVE", "REJECT", "RETURN",
-            "TRANSFER", "DELEGATE", "COMMUNICATE", "ADD_SIGN");
+    public static final List<String> ALL = Arrays.stream(NodeActionTypeEnum.values())
+            .map(NodeActionTypeEnum::getCode)
+            .toList();
 
     private NodeActionPolicy() { }
 

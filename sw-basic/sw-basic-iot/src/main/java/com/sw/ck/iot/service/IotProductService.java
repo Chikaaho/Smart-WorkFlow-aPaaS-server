@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
 
 /**
  * 产品与物模型服务：草稿 → 校验 → 发布；设备与流程引用已发布版本。
@@ -115,7 +116,7 @@ public class IotProductService {
      */
     public List<IotDevice> listProcessEligibleDevices() {
         return deviceMapper.selectList(new LambdaQueryWrapper<IotDevice>()
-                .eq(IotDevice::getManageStatus, "PUBLISHED")
+                .eq(IotDevice::getManageStatus, IotPublishStatusEnum.PUBLISHED.getCode())
                 .eq(IotDevice::getProcessAccessEnabled, 1));
     }
 

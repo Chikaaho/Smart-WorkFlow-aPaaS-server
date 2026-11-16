@@ -43,7 +43,7 @@ import lombok.extern.log4j.Log4j2;
 public class FormVisibilityRules {
 
     private static final Set<String> OPS = Set.of("EQ", "NE", "EMPTY", "NOT_EMPTY");
-    private static final Set<String> LOGICS = Set.of("ALL", "ANY");
+    private static final Set<String> LOGICS = Set.of(FormVisibilityLogicEnum.ALL.name(), FormVisibilityLogicEnum.ANY.name());
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -182,7 +182,7 @@ public class FormVisibilityRules {
 
     /** 单规则求值：条件按 logic 组合；条件字段缺失视为 EMPTY。 */
     boolean evaluate(VisibilityRule rule, Map<String, Object> data) {
-        boolean isAll = "ALL".equals(rule.logic());
+        boolean isAll = FormVisibilityLogicEnum.ALL.name().equals(rule.logic());
         boolean result = isAll;
         for (Condition condition : rule.conditions()) {
             boolean matched = match(condition, data.get(condition.field()));

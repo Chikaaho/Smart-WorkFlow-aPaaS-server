@@ -23,6 +23,9 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotTriggerActionTypeEnum;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
+import com.sw.ck.agent.orchestration.AgentExecutionOutcomeEnum;
 /**
  * IoT 规则 → Agent 图执行桥（0.2.4）。
  * <p>
@@ -50,7 +53,7 @@ public class AgentGraphTriggerListener {
     @Transactional(
             propagation = Propagation.REQUIRES_NEW)
     public void onIotTrigger(IotProcessTriggerEvent event) {
-        if (event == null || !"AGENT".equals(event.getActionType())) {
+        if (event == null || !IotTriggerActionTypeEnum.AGENT.getCode().equals(event.getActionType())) {
             return;
         }
         if (event.getTenantId() == null
@@ -103,7 +106,7 @@ public class AgentGraphTriggerListener {
         int updated = triggerMapper.update(patch,
                 Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .eq(IotProcessTrigger::getId, event.getTriggerId())
-                        .eq(IotProcessTrigger::getStatus, "PENDING"));
+                        .eq(IotProcessTrigger::getStatus, IotTriggerStatusEnum.PENDING.getCode()));
         log.info("IoT 触发 Agent 执行已受理: graphKey={}, executionId={}, triggerId={}, 首次写回={}",
                 event.getAgentGraphKey(), accepted.getExecutionId(), event.getTriggerId(), updated == 1);
     }
@@ -112,11 +115,11 @@ public class AgentGraphTriggerListener {
         String safe = error.length() <= 480 ? error : error.substring(0, 480);
         IotProcessTrigger patch = new IotProcessTrigger();
         patch.setId(event.getTriggerId());
-        patch.setStatus("FAILED");
+        patch.setStatus(AgentExecutionOutcomeEnum.FAILED.getCode());
         patch.setError(safe);
         triggerMapper.update(patch,
                 Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .eq(IotProcessTrigger::getId, event.getTriggerId())
-                        .eq(IotProcessTrigger::getStatus, "PENDING"));
+                        .eq(IotProcessTrigger::getStatus, IotTriggerStatusEnum.PENDING.getCode()));
     }
 }

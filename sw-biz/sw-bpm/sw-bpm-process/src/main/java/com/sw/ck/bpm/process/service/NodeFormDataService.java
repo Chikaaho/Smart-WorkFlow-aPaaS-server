@@ -1,15 +1,13 @@
 package com.sw.ck.bpm.process.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -26,12 +24,6 @@ import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
 
-import lombok.extern.log4j.Log4j2;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -43,6 +35,14 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * P64 任务级节点业务表单数据服务（ADR-P64-001 §1，A01）。
@@ -494,7 +494,7 @@ public class NodeFormDataService {
                 if (parsed.isEmpty()) {
                     return;
                 }
-                if ("USER".equals(type)) {
+                if (SubjectTypeEnum.USER.getCode().equals(type)) {
                     UserQueryFacade facade = userQueryFacadeProvider.getIfAvailable();
                     if (facade != null) {
                         List<Long> active = facade.findActiveUserIds(parsed, currentTenantId()).orElse(List.of());

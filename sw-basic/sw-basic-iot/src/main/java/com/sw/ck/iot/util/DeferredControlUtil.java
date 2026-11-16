@@ -1,7 +1,5 @@
 package com.sw.ck.iot.util;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotDeviceCommand;
@@ -9,11 +7,7 @@ import com.sw.ck.iot.mqtt.MqttDownlinkPublisher;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
-
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.stereotype.Component;
+import com.sw.ck.iot.service.MessageIngestService;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -22,6 +16,14 @@ import java.util.List;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Component;
+import com.sw.ck.iot.entity.IotCommandSemanticModeEnum;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * 延迟生效类控制工具。
  * <p>
@@ -120,9 +122,9 @@ public class DeferredControlUtil {
         command.setProductId(productId);
         command.setDeviceName(deviceName);
         command.setDeviceKey(device.getDeviceKey());
-        command.setCommandType("PROPERTY");
+        command.setCommandType(MessageIngestService.TYPE_PROPERTY);
         command.setCommandKey("control_property");
-        command.setSemanticMode("DEFERRED");
+        command.setSemanticMode(IotCommandSemanticModeEnum.DEFERRED.getCode());
         command.setPayload(propertyJson);
         command.setIdempotentKey(idempotentKey);
         command.setExpiryTime(LocalDateTime.now().plusHours(24));
@@ -172,7 +174,7 @@ public class DeferredControlUtil {
         command.setDeviceKey(device.getDeviceKey());
         command.setCommandType("ACTION");
         command.setCommandKey(actionId);
-        command.setSemanticMode("DEFERRED");
+        command.setSemanticMode(IotCommandSemanticModeEnum.DEFERRED.getCode());
         command.setPayload(inputJson);
         command.setIdempotentKey(idempotentKey);
         command.setExpiryTime(LocalDateTime.now().plusHours(24));
@@ -243,7 +245,7 @@ public class DeferredControlUtil {
 
     /** 仅由成功持久认领的补偿调用方使用，延续同一次执行，不重复认领或增加重试数。 */
     public void sendClaimedCommand(IotDeviceCommand command) {
-        if (command == null || command.getId() == null || !"SENDING".equals(command.getStatus())) {
+        if (command == null || command.getId() == null || !IotCommandStatusEnum.SENDING.getCode().equals(command.getStatus())) {
             throw new IllegalArgumentException("发送已认领命令需要有效的 SENDING 对象");
         }
         sendCommand(command, true);
@@ -277,7 +279,7 @@ public class DeferredControlUtil {
         try {
 
             DeviceControlProvider.DeviceControlResult result;
-            if ("PROPERTY".equals(command.getCommandType())) {
+            if (MessageIngestService.TYPE_PROPERTY.equals(command.getCommandType())) {
                 result = provider.controlDeviceData(
                         command.getProductId(), command.getDeviceName(), command.getPayload());
             } else {

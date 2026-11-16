@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.openapi.biz.entity.OpenApiCallbackStatusEnum;
 /**
  * 出站回调恢复调度（Phase 4 可靠业务事件 —— OpenAPI 回调 MUST_DELIVER）。
  *
@@ -91,7 +92,7 @@ public class OpenApiCallbackRecoveryJob {
             LocalDateTime staleBefore = LocalDateTime.now().minusMinutes(STALE_LEASE_MINUTES);
             stale = taskMapper.selectList(
                     Wrappers.<OpenApiCallbackTask>lambdaQuery()
-                            .eq(OpenApiCallbackTask::getStatus, "SENDING")
+                            .eq(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.SENDING.getCode())
                             .le(OpenApiCallbackTask::getUpdateTime, staleBefore)
                             .last("LIMIT " + MAX_BATCH));
         }
@@ -111,7 +112,7 @@ public class OpenApiCallbackRecoveryJob {
                                     budgetExhausted ? null : LocalDateTime.now())
                             .eq(OpenApiCallbackTask::getId, task.getId())
                             .eq(OpenApiCallbackTask::getTenantId, task.getTenantId())
-                            .eq(OpenApiCallbackTask::getStatus, "SENDING")));
+                            .eq(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.SENDING.getCode())));
             if (budgetExhausted) {
                 exhausted += changed;
             } else {
@@ -129,7 +130,7 @@ public class OpenApiCallbackRecoveryJob {
             return taskMapper.selectList(
                     Wrappers.<OpenApiCallbackTask>lambdaQuery()
                             .eq(OpenApiCallbackTask::getDeleted, 0)
-                            .in(OpenApiCallbackTask::getStatus, "PENDING", "FAILED")
+                            .in(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.PENDING.getCode(), OpenApiCallbackStatusEnum.FAILED.getCode())
                             .le(OpenApiCallbackTask::getNextRetryTime, LocalDateTime.now())
                             .lt(OpenApiCallbackTask::getAttempts, MAX_ATTEMPTS)
                             .orderByAsc(OpenApiCallbackTask::getNextRetryTime)
@@ -181,13 +182,13 @@ public class OpenApiCallbackRecoveryJob {
     private boolean claim(OpenApiCallbackTask task) {
         int affected = tenantWorkAdmission.claim(task.getTenantId(), () -> taskMapper.update(null,
                 Wrappers.<OpenApiCallbackTask>lambdaUpdate()
-                        .set(OpenApiCallbackTask::getStatus, "SENDING")
+                        .set(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.SENDING.getCode())
                         .set(OpenApiCallbackTask::getAttempts,
                                 (task.getAttempts() == null ? 0 : task.getAttempts()) + 1)
                         .set(OpenApiCallbackTask::getUpdateTime, LocalDateTime.now())
                         .eq(OpenApiCallbackTask::getId, task.getId())
                         .eq(OpenApiCallbackTask::getTenantId, task.getTenantId())
-                        .in(OpenApiCallbackTask::getStatus, "PENDING", "FAILED")));
+                        .in(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.PENDING.getCode(), OpenApiCallbackStatusEnum.FAILED.getCode())));
         return affected == 1;
     }
 
@@ -206,11 +207,11 @@ public class OpenApiCallbackRecoveryJob {
     private void closeUnclaimedDelivered(OpenApiCallbackTask task) {
         taskMapper.update(null,
                     Wrappers.<OpenApiCallbackTask>lambdaUpdate()
-                            .set(OpenApiCallbackTask::getStatus, "SUCCESS")
+                            .set(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.SUCCESS.getCode())
                             .set(OpenApiCallbackTask::getNextRetryTime, null)
                             .set(OpenApiCallbackTask::getDeliveredAt, LocalDateTime.now())
                         .eq(OpenApiCallbackTask::getId, task.getId())
-                        .in(OpenApiCallbackTask::getStatus, "PENDING", "FAILED"));
+                        .in(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.PENDING.getCode(), OpenApiCallbackStatusEnum.FAILED.getCode()));
     }
 
     /**
@@ -227,7 +228,7 @@ public class OpenApiCallbackRecoveryJob {
                         .set(OpenApiCallbackTask::getDeliveredAt,
                                 delivered ? LocalDateTime.now() : task.getDeliveredAt())
                         .eq(OpenApiCallbackTask::getId, task.getId())
-                        .eq(OpenApiCallbackTask::getStatus, "SENDING")
+                        .eq(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.SENDING.getCode())
                         .eq(OpenApiCallbackTask::getAttempts, claimedAttempts));
         if (updated == 0) {
             log.warn("回调结论文写回被跳过: taskId={} 已离开本次领取权（租约被回收或已被他人推进）",
@@ -238,12 +239,12 @@ public class OpenApiCallbackRecoveryJob {
     private void writeFailed(OpenApiCallbackTask task, int claimedAttempts, String error) {
         int updated = taskMapper.update(null,
                 Wrappers.<OpenApiCallbackTask>lambdaUpdate()
-                        .set(OpenApiCallbackTask::getStatus, "FAILED")
+                        .set(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.FAILED.getCode())
                         .set(OpenApiCallbackTask::getLastError, error)
                         .set(OpenApiCallbackTask::getNextRetryTime,
                                 LocalDateTime.now().plusMinutes(backoffMinutes(claimedAttempts)))
                         .eq(OpenApiCallbackTask::getId, task.getId())
-                        .eq(OpenApiCallbackTask::getStatus, "SENDING")
+                        .eq(OpenApiCallbackTask::getStatus, OpenApiCallbackStatusEnum.SENDING.getCode())
                         .eq(OpenApiCallbackTask::getAttempts, claimedAttempts));
         if (updated == 0) {
             log.warn("回调重排写回被跳过: taskId={} 已离开本次领取权", task.getId());

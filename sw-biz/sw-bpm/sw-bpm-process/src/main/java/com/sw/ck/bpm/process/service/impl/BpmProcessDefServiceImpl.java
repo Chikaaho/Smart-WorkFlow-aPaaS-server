@@ -1,10 +1,11 @@
 package com.sw.ck.bpm.process.service.impl;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmDeployResult;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
@@ -31,17 +32,15 @@ import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import com.alibaba.fastjson2.JSON;
-import com.fasterxml.jackson.core.type.TypeReference;
-import org.springframework.beans.factory.annotation.Autowired;
-
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 流程定义服务实现。
  */
@@ -184,7 +183,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     public void markTemplateSource(Long id, Long templateId, Integer templateVersion) {
         BpmProcessDef entity = getExisting(id);
         // 仅 DRAFT 未登记时写入：历史与已发布定义的溯源关系不被改写
-        if (!"DRAFT".equals(entity.getStatus()) || entity.getSourceTemplateId() != null) {
+        if (!STATUS_DRAFT.equals(entity.getStatus()) || entity.getSourceTemplateId() != null) {
             return;
         }
         entity.setSourceTemplateId(templateId);
@@ -411,7 +410,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         BpmProcessDefVersion frozen = new BpmProcessDefVersion();
         frozen.setDefId(id);
         frozen.setGraphVersion(frozenVersion);
-        frozen.setStatus("PUBLISHED");
+        frozen.setStatus(STATUS_PUBLISHED);
         frozen.setName(graph.getName() != null ? graph.getName() : def.getName());
         frozen.setFormKey(formKey);
         frozen.setFormVersion(resolveFormVersion(graph.getFormKey()));
@@ -586,7 +585,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         bpmDeployFacade.activateProcessDefinition(version.getProcessDefinitionId())
         .orElseThrow(() -> new IllegalStateException(
                 "BpmDeployFacade#activateProcessDefinition 契约恒 present，empty 属契约违约"));
-        patchVersionStatus(version.getId(), "PUBLISHED");
+        patchVersionStatus(version.getId(), STATUS_PUBLISHED);
         log.info("发布版本已激活: defId={}, version={}", defId, graphVersion);
     }
 
@@ -682,7 +681,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         GraphElement startNode = GraphElement.builder()
                 .id(startId)
                 .kind("node")
-                .type("START")
+                .type(GraphElement.TYPE_START)
                 .style(startStyle)
                 .config(Collections.emptyMap())
                 .build();
@@ -690,7 +689,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         GraphElement endNode = GraphElement.builder()
                 .id(endId)
                 .kind("node")
-                .type("END")
+                .type(GraphElement.TYPE_END)
                 .style(endStyle)
                 .config(Collections.emptyMap())
                 .build();
@@ -743,7 +742,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
         if (def == null) {
             throw new IllegalArgumentException("流程定义不存在: id=" + id);
         }
-        if (flag && !"PUBLISHED".equals(def.getStatus())) {
+        if (flag && !STATUS_PUBLISHED.equals(def.getStatus())) {
             throw new IllegalStateException("仅已发布流程定义可开启 IoT 接入: " + def.getProcessKey());
         }
         BpmProcessDef patch = new BpmProcessDef();

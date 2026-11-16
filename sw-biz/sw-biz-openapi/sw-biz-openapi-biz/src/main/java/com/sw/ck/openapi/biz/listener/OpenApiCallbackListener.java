@@ -20,6 +20,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.openapi.biz.entity.OpenApiAppStatusEnum;
 /**
  * 流程状态出站回调事件转发（I4 §3.4）。
  * <p>
@@ -77,7 +78,7 @@ public class OpenApiCallbackListener {
         try {
             List<OpenApiApp> apps = appMapper.selectList(new LambdaQueryWrapper<OpenApiApp>()
                     .eq(OpenApiApp::getTenantId, tenantId)
-                    .eq(OpenApiApp::getStatus, "ENABLED")
+                    .eq(OpenApiApp::getStatus, OpenApiAppStatusEnum.ENABLED.getCode())
                     .isNotNull(OpenApiApp::getCallbackUrl)
                     .eq(OpenApiApp::getDeleted, 0));
             for (OpenApiApp app : apps) {

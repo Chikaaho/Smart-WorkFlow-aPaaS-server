@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.entity.BpmTemplateStatusEnum;
 /**
  * 流程模板中心实现（I4 §3.2）。
  * <p>
@@ -94,7 +95,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
         template.setFormKey(formKey);
         template.setGraphJson(graphJson);
         template.setTemplateVersion(1);
-        template.setStatus("ENABLED");
+        template.setStatus(BpmTemplateStatusEnum.ENABLED.getCode());
         template.setScopeType("DEPT".equalsIgnoreCase(scopeType) ? "DEPT" : "GLOBAL");
         template.setScopeDeptId("DEPT".equalsIgnoreCase(scopeType) ? scopeDeptId : null);
         template.setSourceDefId(sourceDefId);
@@ -141,7 +142,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     public BpmProcessTemplate changeStatus(Long id, boolean enabled) {
         BpmProcessTemplate template = get(id);
         requireManager();
-        template.setStatus(enabled ? "ENABLED" : "DISABLED");
+        template.setStatus(enabled ? BpmTemplateStatusEnum.ENABLED.getCode() : BpmTemplateStatusEnum.DISABLED.getCode());
         template.setUpdateTime(LocalDateTime.now());
         mapper.updateById(template);
         return template;
@@ -152,7 +153,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     public BpmProcessDef copyToDefinition(Long templateId, String name) {
         BpmProcessTemplate template = get(templateId);
         requireManager();
-        if (!"ENABLED".equals(template.getStatus())) {
+        if (!BpmTemplateStatusEnum.ENABLED.getCode().equals(template.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "模板已停用，不可复制创建定义");
         }
         // 受控来源：走正式定义创建链；模板本身零改写

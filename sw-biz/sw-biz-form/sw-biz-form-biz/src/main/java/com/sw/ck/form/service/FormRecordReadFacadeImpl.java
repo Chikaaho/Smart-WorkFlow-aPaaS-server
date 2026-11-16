@@ -1,18 +1,13 @@
 package com.sw.ck.form.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
 import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.FieldType;
-
-import org.springframework.stereotype.Service;
 
 import java.sql.Date;
 import java.sql.Time;
@@ -27,6 +22,9 @@ import java.util.Map;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 /**
  * 表单记录读取 Facade 实现（P63）。
  * <p>
@@ -76,14 +74,14 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
         Map<String, List<Map<String, Object>>> tables = new LinkedHashMap<>();
         for (Map.Entry<String, FormFieldValidator.FieldDef> entry : fieldDefs.entrySet()) {
             FormFieldValidator.FieldDef def = entry.getValue();
-            if ("TABLE".equals(def.type())) {
+            if (FieldType.TABLE.name().equals(def.type())) {
                 List<Map<String, Object>> rows = raw.get(def.name()) instanceof List<?> list
                         ? decodeRows(def, list)
                         : List.of();
                 tables.put(def.name(), rows);
                 continue;
             }
-            if ("LABEL".equals(def.type())) {
+            if (FieldType.LABEL.name().equals(def.type())) {
                 continue;
             }
             Object value = raw.get(columnOf(def.name(), def.type()));
@@ -124,7 +122,7 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
             return null;
         }
         boolean listLike = "MULTISELECT".equals(type) || "ATTACHMENT".equals(type) || "IMAGE".equals(type)
-                || (multiple && ("USER".equals(type) || "DEPT".equals(type)));
+                || (multiple && (FormAppScopeTypes.USER.equals(type) || FormAppScopeTypes.DEPT.equals(type)));
         if (listLike && value instanceof String text && text.startsWith("[")) {
             try {
                 return objectMapper.readValue(text,

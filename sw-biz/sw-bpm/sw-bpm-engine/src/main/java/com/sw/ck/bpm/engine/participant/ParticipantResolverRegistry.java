@@ -4,16 +4,19 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.NodeParticipantAdapter;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.api.participant.NodeParticipantResolver;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.common.exception.BaseException;
+
 import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /** 统一参与人解析注册结果；启动时拒绝重复 strategy/adapter。 */
 @Component
@@ -35,10 +38,10 @@ public class ParticipantResolverRegistry {
     public List<String> resolve(NodeParticipantContext context) {
         if (context == null || context.getStrategy() == null || context.getStrategy().isBlank()
                 || (context.getStrategyValue() == null
-                && !"ADAPTER".equalsIgnoreCase(context.getStrategy()))) {
+                && !ParticipantStrategy.ADAPTER.equalsIgnoreCase(context.getStrategy()))) {
             throw new BaseException(BpmErrorCode.PARTICIPANT_CONFIG_INVALID);
         }
-        if ("ADAPTER".equalsIgnoreCase(context.getStrategy())
+        if (ParticipantStrategy.ADAPTER.equalsIgnoreCase(context.getStrategy())
                 && (context.getAdapterId() == null || context.getAdapterId().isBlank())) {
             throw new BaseException(BpmErrorCode.PARTICIPANT_CONFIG_INVALID);
         }

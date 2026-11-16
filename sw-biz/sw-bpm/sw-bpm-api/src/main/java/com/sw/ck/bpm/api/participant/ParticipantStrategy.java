@@ -3,7 +3,6 @@ package com.sw.ck.bpm.api.participant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-
 /** 统一人员型节点参与人策略标识。配置值属于产品契约，不是 Bean/class 名称。 */
 public final class ParticipantStrategy {
 
@@ -66,17 +65,18 @@ public final class ParticipantStrategy {
             return Optional.of("FORM_FIELD 必须配置 {objectType, scope, field[, tableField, column]}");
         }
         String objectType = text(mapping.get("objectType"));
-        if (!"USER".equalsIgnoreCase(objectType) && !"DEPT".equalsIgnoreCase(objectType)) {
+        if (!ParticipantObjectTypeEnum.USER.getCode().equalsIgnoreCase(objectType)
+                && !ParticipantObjectTypeEnum.DEPT.getCode().equalsIgnoreCase(objectType)) {
             return Optional.of("FORM_FIELD.objectType 只能是 USER 或 DEPT");
         }
         String scope = text(mapping.get("scope"));
-        if (!"MAIN".equalsIgnoreCase(scope) && !"TABLE".equalsIgnoreCase(scope)) {
+        if (!ParticipantScopeEnum.MAIN.getCode().equalsIgnoreCase(scope) && !ParticipantScopeEnum.TABLE.getCode().equalsIgnoreCase(scope)) {
             return Optional.of("FORM_FIELD.scope 只能是 MAIN 或 TABLE");
         }
         if (text(mapping.get("field")) == null) {
             return Optional.of("FORM_FIELD.field 必须配置来源字段名");
         }
-        if ("TABLE".equalsIgnoreCase(scope)) {
+        if (ParticipantScopeEnum.TABLE.getCode().equalsIgnoreCase(scope)) {
             if (text(mapping.get("tableField")) == null || text(mapping.get("column")) == null) {
                 return Optional.of("FORM_FIELD scope=TABLE 时必须配置 tableField 与 column");
             }

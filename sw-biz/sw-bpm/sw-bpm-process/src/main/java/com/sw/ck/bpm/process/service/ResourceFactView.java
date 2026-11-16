@@ -1,17 +1,17 @@
 package com.sw.ck.bpm.process.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
+import com.sw.ck.bpm.process.entity.ResourceSegmentEnum;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
-
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowCallbackHandler;
-import org.springframework.stereotype.Component;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
+import org.springframework.stereotype.Component;
 
 /**
  * 资源占用事实视图（P62 资源保障；权威口径唯一来源）。
@@ -119,7 +119,7 @@ public class ResourceFactView {
 
     private void merge(ResultSet rs, Map<String, Long> bySegment, Map<String, Long> byTenant)
             throws SQLException {
-        String segment = rs.getString(1) == null ? "SHARED" : rs.getString(1);
+        String segment = rs.getString(1) == null ? ResourceSegmentEnum.SHARED.getCode() : rs.getString(1);
         long tenantId = rs.getLong(2);
         long units = rs.getLong(3);
         if (units <= 0) {

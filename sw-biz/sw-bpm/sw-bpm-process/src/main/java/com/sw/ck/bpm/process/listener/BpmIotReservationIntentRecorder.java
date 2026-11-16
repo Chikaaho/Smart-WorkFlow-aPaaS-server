@@ -1,14 +1,12 @@
 package com.sw.ck.bpm.process.listener;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
@@ -16,12 +14,6 @@ import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.api.IotDeviceFacade;
-
-import lombok.extern.log4j.Log4j2;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.context.event.EventListener;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -31,6 +23,14 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 流程成功结束后的一次性 IoT 预约意图登记器（P63 §4.1）。
@@ -180,7 +180,7 @@ public class BpmIotReservationIntentRecorder {
             case "FIXED" -> deviceFacade.resolveDeviceTarget(tenantId, config.getLong("deviceId"))
                     .orElseThrow(() -> failClosed(processInstanceId,
                             "设计时固定设备不存在: deviceId=" + config.getLong("deviceId")));
-            case "FORM_FIELD" -> {
+            case ParticipantStrategy.FORM_FIELD -> {
                 Object v = formData.get(config.getString("deviceField"));
                 if (v == null || String.valueOf(v).isBlank()) {
                     throw failClosed(processInstanceId,

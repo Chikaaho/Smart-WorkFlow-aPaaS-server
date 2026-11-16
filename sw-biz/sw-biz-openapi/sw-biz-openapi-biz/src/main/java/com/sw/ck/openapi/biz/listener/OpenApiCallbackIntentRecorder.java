@@ -18,6 +18,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.openapi.biz.entity.OpenApiAppStatusEnum;
+import com.sw.ck.openapi.biz.entity.OpenApiCallbackStatusEnum;
 /**
  * 出站回调意图的事务内登记器（Phase 4 可靠业务事件 —— OpenAPI 回调 MUST_DELIVER）。
  *
@@ -62,7 +64,7 @@ public class OpenApiCallbackIntentRecorder {
         }
         List<OpenApiApp> apps = appMapper.selectList(new LambdaQueryWrapper<OpenApiApp>()
                 .eq(OpenApiApp::getTenantId, event.getTenantId())
-                .eq(OpenApiApp::getStatus, "ENABLED")
+                .eq(OpenApiApp::getStatus, OpenApiAppStatusEnum.ENABLED.getCode())
                 .isNotNull(OpenApiApp::getCallbackUrl)
                 .eq(OpenApiApp::getDeleted, 0));
         int recorded = 0;
@@ -71,7 +73,7 @@ public class OpenApiCallbackIntentRecorder {
             task.setAppId(app.getAppId());
             task.setEvent(event.getTrigger().name());
             task.setBizRef(event.getBizId());
-            task.setStatus("PENDING");
+            task.setStatus(OpenApiCallbackStatusEnum.PENDING.getCode());
             task.setAttempts(0);
             task.setNextRetryTime(LocalDateTime.now());
             task.setTenantId(event.getTenantId());

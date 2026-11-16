@@ -1,35 +1,27 @@
 package com.sw.ck.form.txn.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
+import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.entity.FormDefEntity;
-import com.sw.ck.form.service.FormFieldValidator;
 import com.sw.ck.form.entity.FormIdGenerator;
+import com.sw.ck.form.service.FormFieldValidator;
 import com.sw.ck.form.txn.entity.TxnActionEntity;
 import com.sw.ck.form.txn.entity.TxnActionVersionEntity;
 import com.sw.ck.form.txn.entity.TxnInvocationEntity;
 import com.sw.ck.form.txn.entity.TxnLedgerEntity;
 import com.sw.ck.form.txn.entity.TxnReservationEntity;
+import com.sw.ck.form.txn.mapper.TxnActionVersionMapper;
 import com.sw.ck.form.txn.mapper.TxnInvocationMapper;
 import com.sw.ck.form.txn.mapper.TxnLedgerMapper;
 import com.sw.ck.form.txn.mapper.TxnReservationMapper;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.model.TxnInvokeResult;
-import com.sw.ck.common.constant.CommonConstants;
-import com.sw.ck.form.txn.mapper.TxnActionVersionMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -38,6 +30,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 事务动作执行内核（全部方法在事务边界内运行）。
@@ -195,7 +193,7 @@ public class TxnActionTxOperations {
         }
         reservationMapper.insert(reservation);
 
-        insertLedger(action, version, invocationId, reservation.getId(), "RESERVE", form.getId(),
+        insertLedger(action, version, invocationId, reservation.getId(), TxnActionService.TYPE_RESERVE, form.getId(),
                 req.getRecordId(), qty, after, before.keyValues(), userId);
         insertInvocation(action, version, invocationId, invocationKey, requestHash, req.getRecordId(),
                 "SUCCEEDED", null, null, successResultJson(reservation.getId(), qty, after),
@@ -244,7 +242,7 @@ public class TxnActionTxOperations {
         Columns cols = resolveColumns(form, cfg);
         if (cols.reservedCol() == null) {
             throw new TxnBusinessRejection(FormErrorCode.ACTION_FIELD_BINDING_INVALID,
-                    (confirm ? "CONFIRM" : "RELEASE") + " 需要预占字段绑定");
+                    (confirm ? TxnActionService.TYPE_CONFIRM : TxnActionService.TYPE_RELEASE) + " 需要预占字段绑定");
         }
         LocalDateTime now = LocalDateTime.now();
         // 状态守卫：确认要求未过期（与过期释放竞争仅一次合法结算）；释放允许对未结算的任意 ACTIVE 生效
@@ -304,7 +302,7 @@ public class TxnActionTxOperations {
                     "预占目标记录状态异常，结算被拒绝");
         }
         RowSnapshot after = readOnly(cols, reservation.getRecordId(), tenantId);
-        insertLedger(action, version, invocationId, reservation.getId(), confirm ? "CONFIRM" : "RELEASE",
+        insertLedger(action, version, invocationId, reservation.getId(), confirm ? TxnActionService.TYPE_CONFIRM : TxnActionService.TYPE_RELEASE,
                 form.getId(), reservation.getRecordId(), qty, after, null, userId);
         insertInvocation(action, version, invocationId, invocationKey, requestHash, reservation.getRecordId(),
                 "SUCCEEDED", null, null, successResultJson(reservation.getId(), qty, after),
@@ -354,7 +352,7 @@ public class TxnActionTxOperations {
                     "调整后可用量将为负，操作被拒绝");
         }
         RowSnapshot after = readOnly(cols, req.getRecordId(), tenantId);
-        insertLedger(action, version, invocationId, null, "ADJUST", form.getId(),
+        insertLedger(action, version, invocationId, null, TxnActionService.TYPE_ADJUST, form.getId(),
                 req.getRecordId(), delta, after, before.keyValues(), userId);
         insertInvocation(action, version, invocationId, invocationKey, requestHash, req.getRecordId(),
                 "SUCCEEDED", null, null, successResultJson(null, delta, after),

@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.api.common.BpmNotifyLinkTypeEnum;
 /**
  * I6 深链对象权限裁决（方向 §6-11：发起人/参与人/抄送接收人可开，其余 fail closed）。
  * <p>
@@ -47,9 +48,9 @@ public class BpmNotifyLinkAuthorizer implements NotifyLinkAuthorizer {
             return Optional.empty();
         }
         boolean allowed;
-        if ("WF_PROCESS".equals(linkType)) {
+        if (BpmNotifyLinkTypeEnum.WF_PROCESS.getCode().equals(linkType)) {
             allowed = canOpenProcess(linkId, userId);
-        } else if ("WF_TASK".equals(linkType)) {
+        } else if (BpmNotifyLinkTypeEnum.WF_TASK.getCode().equals(linkType)) {
             allowed = canOpenTask(linkId, userId);
         } else {
             allowed = false;

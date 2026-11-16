@@ -1,21 +1,14 @@
 package com.sw.ck.form.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.form.api.facade.FormDataWritebackFacade;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormDefMapper;
-
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -26,6 +19,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * P64 阶段Ⅱ（A06 隔离与准确回写）受控回写实现。
  * <p>
@@ -108,7 +106,7 @@ public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
         Map<String, FormFieldValidator.FieldDef> fieldDefs =
                 formFieldValidator.loadAndParseFieldDefs(formDef.getId(), Map.of());
         FormFieldValidator.FieldDef tableDef = fieldDefs.get(tableField);
-        if (tableDef == null || !"TABLE".equals(tableDef.type())) {
+        if (tableDef == null || !FieldType.TABLE.name().equals(tableDef.type())) {
             return Optional.empty();
         }
         String subTableName = parseSubTableMapping(formDef.getSubTableMapping()).get(tableField);
@@ -131,7 +129,7 @@ public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
         List<Object> params = new ArrayList<>();
         for (Map.Entry<String, Object> entry : request.fields().entrySet()) {
             FormFieldValidator.FieldDef def = fieldDefs.get(entry.getKey());
-            if (def == null || "LABEL".equals(def.type()) || "TABLE".equals(def.type())) {
+            if (def == null || FieldType.LABEL.name().equals(def.type()) || FieldType.TABLE.name().equals(def.type())) {
                 throw new IllegalArgumentException("回写字段不存在或不允许回写: " + entry.getKey());
             }
             String colName = DynamicTableSql.requireColumn(def.name(), FieldType.valueOf(def.type()));
@@ -186,7 +184,7 @@ public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
         String mainTableName = formDef.getPhysicalTableName();
         DynamicTableSql.requireTableName(mainTableName);
         FormFieldValidator.FieldDef tableDef = fieldDefs.get(request.tableField());
-        if (tableDef == null || !"TABLE".equals(tableDef.type()) || tableDef.subFields() == null) {
+        if (tableDef == null || !FieldType.TABLE.name().equals(tableDef.type()) || tableDef.subFields() == null) {
             throw new IllegalArgumentException("回写目标不是合法表格字段: " + request.tableField());
         }
         String subTableName = parseSubTableMapping(formDef.getSubTableMapping())
@@ -204,7 +202,7 @@ public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
         List<Object> params = new ArrayList<>();
         for (Map.Entry<String, Object> entry : request.fields().entrySet()) {
             FormFieldValidator.FieldDef def = subDefMap.get(entry.getKey());
-            if (def == null || "LABEL".equals(def.type())) {
+            if (def == null || FieldType.LABEL.name().equals(def.type())) {
                 throw new IllegalArgumentException("回写列不存在或不允许回写: " + entry.getKey());
             }
             String colName = DynamicTableSql.requireColumn(def.name(), FieldType.valueOf(def.type()));
@@ -274,16 +272,16 @@ public class FormDataWritebackFacadeImpl implements FormDataWritebackFacade {
         if (value == null) {
             return null;
         }
-        if ("RICH_TEXT".equals(def.type())) {
+        if (FieldType.RICH_TEXT.name().equals(def.type())) {
             // 脚本/受控集成回写与表单提交共用同一服务端清洗。
             return RichTextSanitizer.sanitize(String.valueOf(value));
         }
-        if ("BOOL".equals(def.type())) {
+        if (FieldType.BOOL.name().equals(def.type())) {
             return FormFieldValidator.convertBoolValue(value);
         }
-        boolean multiselectLike = "MULTISELECT".equals(def.type()) || "ATTACHMENT".equals(def.type())
-                || "IMAGE".equals(def.type());
-        boolean objectMulti = def.multiple() && ("USER".equals(def.type()) || "DEPT".equals(def.type()));
+        boolean multiselectLike = FieldType.MULTISELECT.name().equals(def.type()) || FieldType.ATTACHMENT.name().equals(def.type())
+                || FieldType.IMAGE.name().equals(def.type());
+        boolean objectMulti = def.multiple() && (FormAppScopeTypes.USER.equals(def.type()) || FormAppScopeTypes.DEPT.equals(def.type()));
         if ((multiselectLike || objectMulti) && (value instanceof List<?> || value instanceof Map<?, ?>)) {
             try {
                 return objectMapper.writeValueAsString(value);

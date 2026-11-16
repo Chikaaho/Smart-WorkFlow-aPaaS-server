@@ -37,6 +37,9 @@ import java.util.List;
 import java.util.Map;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
+import com.sw.ck.iot.entity.IotDirectionEnum;
+import com.sw.ck.iot.entity.IotMessageParseStatusEnum;
 /**
  * 自建 MQTT 订阅消息统一入口。
  * <p>
@@ -92,7 +95,7 @@ public class MessageIngestService {
         IotMessageLog msgLog = new IotMessageLog();
         msgLog.setConnId(connId);
         msgLog.setTopic(topic);
-        msgLog.setDirection("UP");
+        msgLog.setDirection(IotDirectionEnum.UP.getCode());
         msgLog.setMessageId(messageId);
         msgLog.setDedupKey(dedupKey);
         msgLog.setPayload(payload);
@@ -101,9 +104,9 @@ public class MessageIngestService {
         // 重复消息去重：同 dedupKey 已存在则仅记录
         Long dup = messageLogMapper.selectCount(new LambdaQueryWrapper<IotMessageLog>()
                 .eq(IotMessageLog::getDedupKey, dedupKey)
-                .ne(IotMessageLog::getParseStatus, "DUPLICATED"));
+                .ne(IotMessageLog::getParseStatus, IotMessageParseStatusEnum.DUPLICATED.getCode()));
         if (dup != null && dup > 0) {
-            msgLog.setParseStatus("DUPLICATED");
+            msgLog.setParseStatus(IotMessageParseStatusEnum.DUPLICATED.getCode());
             messageLogMapper.insert(msgLog);
             return;
         }
@@ -118,19 +121,19 @@ public class MessageIngestService {
                 case TYPE_PROPERTY -> {
                     requireDevice(device, topic);
                     handleProperty(device, payload, msgLog, dedupKey);
-                    msgLog.setParseStatus("PARSED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.PARSED.getCode());
                 }
                 case TYPE_EVENT -> {
                     requireDevice(device, topic);
                     handleEvent(device, payload, msgLog, dedupKey);
-                    msgLog.setParseStatus("PARSED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.PARSED.getCode());
                 }
                 case TYPE_ACTION_RESULT -> {
                     handleActionResult(payload, msgLog);
-                    msgLog.setParseStatus("PARSED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.PARSED.getCode());
                 }
                 default -> {
-                    msgLog.setParseStatus("RECEIVED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.RECEIVED.getCode());
                     // RAW 消息同样进入 MESSAGE 触发脚本路径
                     if (device != null) {
                         scriptService.onMessageTriggered(device, topic, payload, dedupKey);
@@ -138,7 +141,7 @@ public class MessageIngestService {
                 }
             }
         } catch (Exception e) {
-            msgLog.setParseStatus("FAILED");
+            msgLog.setParseStatus(IotMessageParseStatusEnum.FAILED.getCode());
             msgLog.setParseError(DiagnosticText.sanitize(e.getMessage(), 500));
             log.warn("消息解析失败: topic={}, error={}", topic, e.getMessage());
         }
@@ -264,7 +267,7 @@ public class MessageIngestService {
         }
         // SUCCESS/FAILED 是设备命令终态。设备重投或网关重复回调只能被记录，
         // 不得覆盖结果、回包时间或触发第二次业务副作用。
-        if ("SUCCESS".equals(command.getStatus()) || "FAILED".equals(command.getStatus())) {
+        if (IotCommandStatusEnum.SUCCESS.getCode().equals(command.getStatus()) || IotCommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
             log.info("忽略已终态命令的重复行为结果: commandId={}, status={}",
                     commandId, command.getStatus());
             msgLog.setDeviceId(command.getDeviceId());

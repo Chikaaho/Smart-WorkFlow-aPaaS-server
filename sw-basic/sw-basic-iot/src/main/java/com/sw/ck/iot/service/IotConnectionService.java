@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.net.ssl.SSLException;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotDirectionEnum;
 /**
  * IoT 连接配置服务。
  * <p>
@@ -165,7 +166,7 @@ public class IotConnectionService {
                 topicMapper.selectList(new LambdaQueryWrapper<IotTopic>()
                         .eq(IotTopic::getConnId, id)
                         .eq(IotTopic::getEnabled, 1)
-                        .in(IotTopic::getDirection, "UP", "BOTH"));
+                        .in(IotTopic::getDirection, IotDirectionEnum.UP.getCode(), IotDirectionEnum.BOTH.getCode()));
         try {
             mqttBrokerManager.ensureStarted(conn, subscriptions);
             IotConnection healthPatch = new IotConnection();

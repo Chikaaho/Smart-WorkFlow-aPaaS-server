@@ -27,6 +27,7 @@ import java.util.Optional;
 import java.util.Properties;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 /**
  * 邮件生产渠道适配器（I6）。
  * <p>系统级装配：{@code sw.notify.channels.EMAIL.enabled=true} 即注册；
@@ -57,7 +58,7 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
 
     @PostConstruct
     void initChannelProps() {
-        ChannelProps emailProps = props.getChannels() == null ? null : props.getChannels().get("EMAIL");
+        ChannelProps emailProps = props.getChannels() == null ? null : props.getChannels().get(NotifyChannel.EMAIL.name());
         this.from = emailProps == null ? null : emailProps.getFrom();
         this.port = emailProps == null ? null : emailProps.getPort();
     }
@@ -73,7 +74,7 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
                 ? Optional.empty()
                 : targetResolver.resolveEmail(request.getRecipientId()).filter(value -> !value.isBlank());
         if (to.isEmpty()) {
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("无法解析收件邮箱（用户无效或未登记邮箱），拒绝发送").build());
         }
         Map<String, String> dbConfig = null;
@@ -86,11 +87,11 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
             String effectiveFrom = dbConfig == null ? from
                     : firstNonBlank(dbConfig.get("from"), dbConfig.get("username"), from);
             if (sender == null) {
-                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                         .failureReason("SMTP 未配置（渠道凭据与 spring.mail 均不可用）").build());
             }
             if (effectiveFrom == null || effectiveFrom.isBlank()) {
-                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                         .failureReason("发件人未配置（from/username）").build());
             }
             MimeMessage message = sender.createMimeMessage();
@@ -102,13 +103,13 @@ public class EmailNotifyChannelAdapter implements NotifyChannelAdapter {
             sender.send(message);
             log.info("邮件投递成功: recipient={}, source={}, external=smtp-{}", request.getRecipientId(),
                     dbConfig == null ? "yml" : "db", System.nanoTime());
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.SUCCESS.getCode())
                     .externalMessageId("smtp-" + Math.abs(System.nanoTime()))
                     .build());
         } catch (Exception e) {
             log.warn("邮件投递失败: recipient={}, exceptionClass={}, message={}", request.getRecipientId(),
                     e.getClass().getSimpleName(), e.getMessage());
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("邮件投递失败: " + e.getClass().getSimpleName()).build());
         }
     }

@@ -1,20 +1,29 @@
 package com.sw.ck.bpm.process.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
-import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.entity.BpmResourceRejectLog;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper;
 import com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper;
 import com.sw.ck.bpm.process.queue.BpmCommandHandler;
+import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.bpm.process.service.ResourcePolicyService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.security.holder.LoginUserHolder;
 
 import jakarta.annotation.PostConstruct;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
+import javax.sql.DataSource;
+
+import lombok.extern.log4j.Log4j2;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
@@ -24,13 +33,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import javax.sql.DataSource;
-
-import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.entity.BpmResourcePolicyStatusEnum;
 /**
  * 资源策略服务实现。
  * <p>
@@ -98,7 +101,7 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
         Long tenantId = LoginUserHolder.get() == null
                 ? 0L : LoginUserHolder.get().getTenantId();
         policy.setTenantId(0L);
-        policy.setStatus("DRAFT");
+        policy.setStatus(NodeFormDataService.STATUS_DRAFT);
         policy.setEnabled(false);
         policy.setStopAcceptance(Boolean.TRUE.equals(policy.getStopAcceptance()));
         Integer maxVersion = policyMapper.selectList(Wrappers.<BpmResourcePolicy>lambdaQuery()
@@ -127,9 +130,9 @@ public class ResourcePolicyServiceImpl implements ResourcePolicyService {
         // 单 ACTIVE：旧版本退役（在途对象按各自受理冻结版本结算，不受退役影响）
         policyMapper.update(null, Wrappers.<BpmResourcePolicy>lambdaUpdate()
                 .eq(BpmResourcePolicy::getTenantId, 0L)
-                .eq(BpmResourcePolicy::getStatus, "ACTIVE")
+                .eq(BpmResourcePolicy::getStatus, BpmResourcePolicyStatusEnum.ACTIVE.getCode())
                 .set(BpmResourcePolicy::getStatus, "RETIRED"));
-        policy.setStatus("ACTIVE");
+        policy.setStatus(BpmResourcePolicyStatusEnum.ACTIVE.getCode());
         policy.setEnabled(true);
         if (operatorRemark != null && !operatorRemark.isBlank()) {
             policy.setRemark(operatorRemark);

@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * 命令队列服务实现。
  * <p>
@@ -42,7 +43,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(400, "幂等键已存在: " + command.getIdempotentKey());
         }
 
-        command.setStatus("QUEUED");
+        command.setStatus(IotCommandStatusEnum.QUEUED.getCode());
         command.setRetryCount(0);
         commandMapper.insert(command);
 
@@ -58,13 +59,13 @@ public class CommandQueueServiceImpl implements CommandQueueService {
         if (command == null) {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
-        if (!"QUEUED".equals(command.getStatus()) && !"FAILED".equals(command.getStatus())) {
+        if (!IotCommandStatusEnum.QUEUED.getCode().equals(command.getStatus()) && !IotCommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
             throw new BaseException(400, "命令状态不允许发送: " + command.getStatus());
         }
 
         int claimed = tenantWorkAdmission.claim(command.getTenantId(), () -> commandMapper.update(null,
                 Wrappers.<IotDeviceCommand>lambdaUpdate()
-                        .set(IotDeviceCommand::getStatus, "SENDING")
+                        .set(IotDeviceCommand::getStatus, IotCommandStatusEnum.SENDING.getCode())
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                         .eq(IotDeviceCommand::getId, commandId)
                         .eq(IotDeviceCommand::getTenantId, command.getTenantId())
@@ -72,7 +73,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
                         .and(q -> q.isNull(IotDeviceCommand::getExpiryTime)
                                 .or().gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now()))));
         if (claimed != 1) return null;
-        command.setStatus("SENDING");
+        command.setStatus(IotCommandStatusEnum.SENDING.getCode());
 
         log.debug("命令已标记为发送中: id={}", commandId);
         return command;
@@ -86,7 +87,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
 
-        command.setStatus("SENT");
+        command.setStatus(IotCommandStatusEnum.SENT.getCode());
         command.setTencentRequestId(requestId);
         commandMapper.updateById(command);
 
@@ -102,7 +103,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
 
-        command.setStatus("DELIVERED");
+        command.setStatus(IotCommandStatusEnum.DELIVERED.getCode());
         commandMapper.updateById(command);
 
         log.debug("命令已标记为设备已送达: id={}", commandId);
@@ -117,7 +118,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
 
-        command.setStatus("ACKED");
+        command.setStatus(IotCommandStatusEnum.ACKED.getCode());
         command.setClientToken(clientToken);
         command.setDeviceOutput(outputParams);
         commandMapper.updateById(command);
@@ -134,7 +135,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
 
-        command.setStatus("SUCCESS");
+        command.setStatus(IotCommandStatusEnum.SUCCESS.getCode());
         command.setResult(result);
         commandMapper.updateById(command);
 
@@ -155,7 +156,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
         if ("QUEUED".equals(previous) || "FAILED".equals(previous)) {
             int changed = tenantWorkAdmission.claim(command.getTenantId(), () -> commandMapper.update(null,
                     Wrappers.<IotDeviceCommand>lambdaUpdate()
-                            .set(IotDeviceCommand::getStatus, "FAILED")
+                            .set(IotDeviceCommand::getStatus, IotCommandStatusEnum.FAILED.getCode())
                             .set(IotDeviceCommand::getLastError, error)
                             .set(IotDeviceCommand::getRetryCount, retries)
                             .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
@@ -163,11 +164,11 @@ public class CommandQueueServiceImpl implements CommandQueueService {
                             .eq(IotDeviceCommand::getTenantId, command.getTenantId())
                             .eq(IotDeviceCommand::getStatus, previous)));
             if (changed != 1) return command;
-            command.setStatus("FAILED");
+            command.setStatus(IotCommandStatusEnum.FAILED.getCode());
             command.setLastError(error);
             command.setRetryCount(retries);
         } else {
-            command.setStatus("FAILED");
+            command.setStatus(IotCommandStatusEnum.FAILED.getCode());
             command.setLastError(error);
             command.setRetryCount(retries);
             commandMapper.updateById(command);
@@ -186,7 +187,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
 
-        command.setStatus("UNKNOWN");
+        command.setStatus(IotCommandStatusEnum.UNKNOWN.getCode());
         command.setLastError(error);
         commandMapper.updateById(command);
 
@@ -202,7 +203,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             throw new BaseException(404, "命令不存在: " + commandId);
         }
 
-        command.setStatus("EXPIRED");
+        command.setStatus(IotCommandStatusEnum.EXPIRED.getCode());
         commandMapper.updateById(command);
 
         log.warn("命令已标记为已过期: id={}", commandId);
@@ -243,7 +244,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             return commandMapper.selectList(
                     Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
-                            .eq(IotDeviceCommand::getStatus, "QUEUED")
+                            .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode())
                             .le(IotDeviceCommand::getCreateTime, since));
         }
     }
@@ -254,12 +255,12 @@ public class CommandQueueServiceImpl implements CommandQueueService {
         if (owner == null) return false;
         int affected = tenantWorkAdmission.claim(owner.getTenantId(), () -> commandMapper.update(null,
                 Wrappers.<IotDeviceCommand>lambdaUpdate()
-                        .set(IotDeviceCommand::getStatus, "SENDING")
+                        .set(IotDeviceCommand::getStatus, IotCommandStatusEnum.SENDING.getCode())
                         // 领取即刷新租约时间：发送者崩溃后据此回收（wrapper 更新不会自动填充）
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                         .eq(IotDeviceCommand::getId, commandId)
                         .eq(IotDeviceCommand::getTenantId, owner.getTenantId())
-                        .eq(IotDeviceCommand::getStatus, "QUEUED")
+                        .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode())
                         .le(IotDeviceCommand::getUpdateTime, staleBefore)
                         .and(q -> q.isNull(IotDeviceCommand::getExpiryTime)
                                 .or().gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now()))));
@@ -272,12 +273,12 @@ public class CommandQueueServiceImpl implements CommandQueueService {
         if (owner == null) return false;
         int affected = tenantWorkAdmission.claim(owner.getTenantId(), () -> commandMapper.update(null,
                 Wrappers.<IotDeviceCommand>lambdaUpdate()
-                        .set(IotDeviceCommand::getStatus, "SENDING")
+                        .set(IotDeviceCommand::getStatus, IotCommandStatusEnum.SENDING.getCode())
                         .setSql("retry_count = retry_count + 1")
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                         .eq(IotDeviceCommand::getId, commandId)
                         .eq(IotDeviceCommand::getTenantId, owner.getTenantId())
-                        .eq(IotDeviceCommand::getStatus, "FAILED")
+                        .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.FAILED.getCode())
                         .lt(IotDeviceCommand::getRetryCount, maxRetryCount)
                         .and(q -> q.isNull(IotDeviceCommand::getExpiryTime)
                                 .or().gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now()))));
@@ -291,7 +292,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             return commandMapper.selectList(
                     Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
-                            .eq(IotDeviceCommand::getStatus, "FAILED")
+                            .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.FAILED.getCode())
                             .lt(IotDeviceCommand::getRetryCount, maxRetryCount)
                             .gt(IotDeviceCommand::getExpiryTime, LocalDateTime.now())
                             .orderByAsc(IotDeviceCommand::getCreateTime)
@@ -306,7 +307,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             return commandMapper.selectList(
                     Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
-                            .eq(IotDeviceCommand::getStatus, "QUEUED")
+                            .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode())
                             .le(IotDeviceCommand::getUpdateTime,
                                     LocalDateTime.now().minusMinutes(stuckMinutes))
                             .orderByAsc(IotDeviceCommand::getCreateTime)
@@ -322,7 +323,7 @@ public class CommandQueueServiceImpl implements CommandQueueService {
             return commandMapper.selectList(
                     Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getDeleted, 0)
-                            .eq(IotDeviceCommand::getStatus, "SENDING")
+                            .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.SENDING.getCode())
                             .le(IotDeviceCommand::getUpdateTime,
                                     LocalDateTime.now().minusMinutes(staleMinutes))
                             .orderByAsc(IotDeviceCommand::getCreateTime)
@@ -334,11 +335,11 @@ public class CommandQueueServiceImpl implements CommandQueueService {
     public boolean reclaimStaleSending(Long commandId, LocalDateTime staleBefore) {
         int affected = commandMapper.update(null,
                 Wrappers.<IotDeviceCommand>lambdaUpdate()
-                        .set(IotDeviceCommand::getStatus, "FAILED")
+                        .set(IotDeviceCommand::getStatus, IotCommandStatusEnum.FAILED.getCode())
                         .set(IotDeviceCommand::getLastError, "发送租约过期（发送者可能已崩溃）")
                         .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                         .eq(IotDeviceCommand::getId, commandId)
-                        .eq(IotDeviceCommand::getStatus, "SENDING")
+                        .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.SENDING.getCode())
                         .le(IotDeviceCommand::getUpdateTime, staleBefore));
         if (affected > 0) {
             log.warn("回收滞留 SENDING 命令（发送者可能已崩溃）: id={}", commandId);

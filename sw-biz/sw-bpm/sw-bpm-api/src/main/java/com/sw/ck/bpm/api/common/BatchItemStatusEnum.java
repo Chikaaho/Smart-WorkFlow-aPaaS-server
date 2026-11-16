@@ -1,4 +1,4 @@
-package com.sw.ck.bpm.process.entity;
+package com.sw.ck.bpm.api.common;
 
 /**
  * 批量命令项状态：PENDING → SUCCEEDED / REJECTED。

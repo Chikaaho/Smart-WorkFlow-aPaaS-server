@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * 命令补偿定时任务。
  * <p>
@@ -218,7 +219,7 @@ public class CommandCompensationJob {
             log.warn("发送通道未装配，命令回退为可重试失败: id={}", command.getId());
             return false;
         }
-        command.setStatus("SENDING");
+        command.setStatus(IotCommandStatusEnum.SENDING.getCode());
         sender.sendClaimedCommand(command);
         return true;
     }

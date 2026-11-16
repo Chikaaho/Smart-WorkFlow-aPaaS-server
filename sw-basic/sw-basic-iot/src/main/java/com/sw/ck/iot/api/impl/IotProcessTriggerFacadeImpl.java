@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
 
 /**
  * 流程触发结果回写实现：只有真实流程实例创建成功才标记 SUCCESS。
@@ -36,7 +37,7 @@ public class IotProcessTriggerFacadeImpl implements IotProcessTriggerFacade {
         patch.setId(trigger.getId());
         if (processInstanceId != null && !processInstanceId.isBlank()) {
             // 终态不可被降级：已 SUCCESS 且已有实例标识的行不再改写（迟到/并发写回幂等）
-            if ("SUCCESS".equals(trigger.getStatus()) && trigger.getProcessInstanceId() != null
+            if (IotTriggerStatusEnum.SUCCESS.getCode().equals(trigger.getStatus()) && trigger.getProcessInstanceId() != null
                     && !trigger.getProcessInstanceId().isBlank()) {
                 return Optional.of(false);
             }
@@ -44,7 +45,7 @@ public class IotProcessTriggerFacadeImpl implements IotProcessTriggerFacade {
             patch.setProcessInstanceId(processInstanceId);
         } else {
             // 迟到的失败写回不得覆盖已成立的成功发起（否则恢复调度会重投并重复发起流程）
-            if ("SUCCESS".equals(trigger.getStatus())) {
+            if (IotTriggerStatusEnum.SUCCESS.getCode().equals(trigger.getStatus())) {
                 return Optional.of(false);
             }
             patch.setStatus("FAILED");

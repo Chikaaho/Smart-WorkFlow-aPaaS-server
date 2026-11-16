@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.sw.ck.notify.api.NotifyTargetSourceEnum;
+import com.sw.ck.notify.api.NotifyTargetStatusEnum;
 
 /** P58 开发验收用真实通知入口；生产构建不包含本类。 */
 @RestController
@@ -62,10 +64,10 @@ public class P58DebugNotifyController {
         Long beforeMessages = count("sw_notify_message", tenantId);
         Long beforeAttempts = count("sw_notify_send_attempt", tenantId);
         NotifyTargetResolution resolution = resolver == null
-                ? NotifyTargetResolution.of("RESOLVER_UNAVAILABLE", "SYS_USER", null)
+                ? NotifyTargetResolution.of(NotifyTargetStatusEnum.RESOLVER_UNAVAILABLE.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null)
                 // 契约 empty = 租户/用户上下文缺失，沿用旧对外判定状态 INVALID，响应字段不变
                 : resolver.resolvePhoneForTenant(tenantId, request.getUserId())
-                        .orElseGet(() -> NotifyTargetResolution.of("INVALID", "SYS_USER", null));
+                        .orElseGet(() -> NotifyTargetResolution.of(NotifyTargetStatusEnum.INVALID.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null));
         return R.ok(new PhoneResolution(request.getUserId(), tenantId, resolution.getStatus(),
                 resolution.getSource(), resolution.getValueDigest(), beforeMessages, beforeAttempts,
                 count("sw_notify_message", tenantId), count("sw_notify_send_attempt", tenantId)));

@@ -1,7 +1,9 @@
 package com.sw.ck.iot.script;
 
 import com.alibaba.fastjson2.JSON;
-
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.iot.entity.IotCommand;
 import com.sw.ck.iot.entity.IotConnection;
@@ -23,10 +25,7 @@ import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
 import com.sw.ck.iot.script.api.IotScriptApi;
-
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.sw.ck.iot.service.IotConnectionService;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -38,6 +37,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
+import com.sw.ck.iot.entity.IotTriggerSourceEnum;
 /**
  * 宿主函数服务端实现。
  * <p>
@@ -124,11 +125,11 @@ public class ScriptHostFunctions implements IotScriptApi {
         IotCommand command = new IotCommand();
         command.setDeviceId(deviceId);
         command.setConnId(conn.getId());
-        command.setProvider("MQTT");
+        command.setProvider(IotConnectionService.TYPE_MQTT);
         command.setCapabilityType("PUBLISH");
         command.setCapabilityId(topic);
         command.setParamsJson(payload);
-        command.setStatus("PENDING");
+        command.setStatus(IotCommandStatusEnum.PENDING.getCode());
         command.setSourceType("SCRIPT");
         command.setSourceRef("script:" + spec.getScriptId() + ":v" + spec.getScriptVersion());
         command.setCorrelationId(spec.getCorrelationId());
@@ -207,11 +208,11 @@ public class ScriptHostFunctions implements IotScriptApi {
         validateCapability(device, "setProperty", propertyId);
         IotCommand command = new IotCommand();
         command.setDeviceId(device.getId());
-        command.setProvider("TENCENT".equals(deviceProductConnType(device)) ? "TENCENT" : "MQTT");
+        command.setProvider(IotConnectionService.TYPE_TENCENT.equals(deviceProductConnType(device)) ? IotConnectionService.TYPE_TENCENT : IotConnectionService.TYPE_MQTT);
         command.setCapabilityType("SET_PROPERTY");
         command.setCapabilityId(propertyId);
         command.setParamsJson(JSON.toJSONString(value));
-        command.setStatus("PENDING");
+        command.setStatus(IotCommandStatusEnum.PENDING.getCode());
         command.setSourceType("SCRIPT");
         command.setSourceRef("script:" + spec.getScriptId() + ":v" + spec.getScriptVersion());
         command.setCorrelationId(spec.getCorrelationId());
@@ -249,11 +250,11 @@ public class ScriptHostFunctions implements IotScriptApi {
         validateCapability(device, "action", actionId);
         IotCommand command = new IotCommand();
         command.setDeviceId(device.getId());
-        command.setProvider("TENCENT".equals(deviceProductConnType(device)) ? "TENCENT" : "MQTT");
+        command.setProvider(IotConnectionService.TYPE_TENCENT.equals(deviceProductConnType(device)) ? IotConnectionService.TYPE_TENCENT : IotConnectionService.TYPE_MQTT);
         command.setCapabilityType("INVOKE_ACTION");
         command.setCapabilityId(actionId);
         command.setParamsJson(input == null ? null : JSON.toJSONString(input));
-        command.setStatus("PENDING");
+        command.setStatus(IotCommandStatusEnum.PENDING.getCode());
         command.setSourceType("SCRIPT");
         command.setSourceRef("script:" + spec.getScriptId() + ":v" + spec.getScriptVersion());
         command.setCorrelationId(spec.getCorrelationId());
@@ -290,7 +291,7 @@ public class ScriptHostFunctions implements IotScriptApi {
         event.setProcessTemplateKey(templateKey);
         event.setFormData(formSnapshot);
         event.setIdempotentKey(idempotentKey);
-        event.setTriggerSource("SCRIPT");
+        event.setTriggerSource(IotTriggerSourceEnum.SCRIPT.getCode());
         event.setConfiguredBy(spec.getActorId());
         eventPublisher.publish(event);
         processStartRequests.add(new ProcessStartRequest(templateKey, idempotentKey,
@@ -412,10 +413,10 @@ public class ScriptHostFunctions implements IotScriptApi {
 
     private String deviceProductConnType(IotDevice device) {
         if (device.getProductRefId() == null) {
-            return "MQTT";
+            return IotConnectionService.TYPE_MQTT;
         }
         IotProduct product = productMapper.selectById(device.getProductRefId());
-        return product == null || product.getConnType() == null ? "MQTT" : product.getConnType();
+        return product == null || product.getConnType() == null ? IotConnectionService.TYPE_MQTT : product.getConnType();
     }
 
     private String trim(String text, int max) {

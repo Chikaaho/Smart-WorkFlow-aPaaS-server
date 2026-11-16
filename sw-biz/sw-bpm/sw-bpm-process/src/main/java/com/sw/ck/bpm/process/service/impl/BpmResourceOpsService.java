@@ -1,8 +1,8 @@
 package com.sw.ck.bpm.process.service.impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.sw.ck.bpm.process.dto.BpmResourceOpsViews;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.entity.BpmResourceUsage;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -21,21 +21,23 @@ import com.sw.ck.form.api.port.TxnActionRuntimePort;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.ApplicationContext;
-import org.springframework.core.env.Environment;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
 import javax.sql.DataSource;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationContext;
+import org.springframework.core.env.Environment;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
 /**
  * 资源保障运维查询服务（RG04/RG05/RG06）。
  * <p>
@@ -259,7 +261,7 @@ public class BpmResourceOpsService {
         for (Map<String, Object> row : byStatus) {
             String status = String.valueOf(row.get("status"));
             long cnt = ((Number) row.get("cnt")).longValue();
-            if ("PENDING".equals(status) || "PROCESSING".equals(status)) {
+            if (BatchItemStatusEnum.PENDING.getCode().equals(status) || BatchStatusEnum.PROCESSING.getCode().equals(status)) {
                 open += cnt;
             }
         }
@@ -356,7 +358,7 @@ public class BpmResourceOpsService {
                         + "FROM sw_bpm_resource_reject_log WHERE command_key = ? ORDER BY create_time DESC",
                 String.valueOf(command.get("command_key"))));
         List<Object> targets = new ArrayList<>();
-        if ("FLOW_START".equals(String.valueOf(command.get("command_type")))) {
+        if (CommandTypeEnum.FLOW_START.getCode().equals(String.valueOf(command.get("command_type")))) {
             String commandKey = String.valueOf(command.get("command_key"));
             if (commandKey.startsWith("FLOW_START:")) {
                 FormTxnActionPort port = txnActionPortProvider.getIfAvailable();

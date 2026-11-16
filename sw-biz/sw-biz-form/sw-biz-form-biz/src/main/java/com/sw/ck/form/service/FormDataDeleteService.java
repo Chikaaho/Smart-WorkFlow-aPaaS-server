@@ -5,9 +5,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
@@ -16,19 +15,20 @@ import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 
+import java.util.*;
+
+import lombok.extern.log4j.Log4j2;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.*;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * 表单数据软删除服务。
  *
@@ -102,7 +102,7 @@ public class FormDataDeleteService {
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
-        if (!"PUBLISHED".equals(formDef.getStatus())) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能操作");
         }
         if (enrichment != null) {
@@ -314,7 +314,7 @@ public class FormDataDeleteService {
             if (fieldsArray != null && fieldsArray.isArray()) {
                 for (JsonNode fieldNode : fieldsArray) {
                     collectReferenceFieldName(fieldNode, targetFormKey,
-                            "type", "REFERENCE",
+                            "type", FieldType.REFERENCE.name(),
                             "targetFormId", "name", names);
                 }
                 return names;

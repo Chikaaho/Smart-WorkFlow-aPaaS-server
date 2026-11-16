@@ -6,7 +6,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
@@ -17,7 +16,8 @@ import com.sw.ck.form.api.port.FlowStartPort;
 import com.sw.ck.form.dynamic.DynamicTableManager;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
-import com.sw.ck.form.entity.*;
+import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
@@ -26,12 +26,6 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.InvalidDataAccessApiUsageException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -39,6 +33,14 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.form.entity.FormStatusEnum;
+import com.sw.ck.form.entity.FormTraceEntity;
 /**
  * 表单提交服务。
  * <p>
@@ -351,11 +353,11 @@ public class FormSubmitService {
             String fieldName = entry.getKey();
             FormFieldValidator.FieldDef def = entry.getValue();
 
-            if ("TABLE".equals(def.type())) {
+            if (FieldType.TABLE.name().equals(def.type())) {
                 tableFieldNames.add(fieldName);
                 continue; // TABLE 不在主表加列
             }
-            if ("LABEL".equals(def.type())) {
+            if (FieldType.LABEL.name().equals(def.type())) {
                 continue; // 说明文字：非输入字段，不产生列
             }
 
@@ -363,7 +365,7 @@ public class FormSubmitService {
             Object value = effectiveData.get(fieldName);
 
             // BOOL 类型转换：true/false → 1/0；PG 严格类型要求 DATE/NUMBER 按列语义转换
-            if ("BOOL".equals(def.type())) {
+            if (FieldType.BOOL.name().equals(def.type())) {
                 value = FormFieldValidator.convertBoolValue(value);
             }
             // PG 严格类型（H2 宽松语义掩盖）：DATE 字符串 → LocalDate/LocalDateTime，NUMBER 字符串 → BigDecimal
@@ -428,7 +430,7 @@ public class FormSubmitService {
             List<String> subUserColumns = new ArrayList<>();
             if (tableFieldDef != null && tableFieldDef.subFields() != null) {
                 for (FormFieldValidator.FieldDef subDef : tableFieldDef.subFields()) {
-                    if ("LABEL".equals(subDef.type())) {
+                    if (FieldType.LABEL.name().equals(subDef.type())) {
                         continue; // 说明文字：非输入字段，不产生列
                     }
                     subFieldDefs.add(subDef);
@@ -622,7 +624,7 @@ public class FormSubmitService {
         // BF20261013-009：DICT 下拉多选（multiple）与 MULTISELECT 同口径序列化
         boolean multiselectLike = "MULTISELECT".equals(type) || "ATTACHMENT".equals(type)
                 || "IMAGE".equals(type) || ("DICT".equals(type) && multiple);
-        boolean objectMulti = multiple && ("USER".equals(type) || "DEPT".equals(type));
+        boolean objectMulti = multiple && (FormAppScopeTypes.USER.equals(type) || FormAppScopeTypes.DEPT.equals(type));
         if (multiselectLike || objectMulti) {
             if (value instanceof List<?> || value instanceof Map<?, ?>) {
                 try {

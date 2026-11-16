@@ -1,24 +1,26 @@
 package com.sw.ck.bpm.process.queue;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmResourceUsage;
+import com.sw.ck.bpm.process.entity.ResourceClassEnum;
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
 import com.sw.ck.bpm.process.service.BpmCommandService;
 import com.sw.ck.bpm.process.service.ResourceFactView;
 import com.sw.ck.bpm.process.service.ResourceReleaseService;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import com.sw.ck.bpm.process.entity.ResourceScopeEnum;
 /**
  * 资源保障对账任务（P62 资源保障）。
  * <p>
@@ -82,8 +84,8 @@ public class ResourceAssuranceReconcileJob {
         List<BpmCommand> candidates;
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             candidates = commandService.lambdaQuery()
-                    .eq(BpmCommand::getStatus, "COMPLETED")
-                    .eq(BpmCommand::getResourceClass, "PROD")
+                    .eq(BpmCommand::getStatus, BatchStatusEnum.COMPLETED.getCode())
+                    .eq(BpmCommand::getResourceClass, ResourceClassEnum.PROD.getCode())
                     .eq(BpmCommand::getCompletionPoint,
                             ResourceReleaseService.COMPLETION_POINT_TARGET_DONE)
                     .isNull(BpmCommand::getResourceReleasedAt)
@@ -112,12 +114,12 @@ public class ResourceAssuranceReconcileJob {
         Map<String, Long> factByTenant = new HashMap<>();
         factView.accumulate(factBySegment, factByTenant);
         // TOTAL=Σsegments（与准入「段占位+总量占位」同构）；缺行修复会把 TOTAL 误判为 0
-        factBySegment.put("TOTAL", factBySegment.values().stream().mapToLong(Long::longValue).sum());
+        factBySegment.put(ResourceScopeEnum.TOTAL.getCode(), factBySegment.values().stream().mapToLong(Long::longValue).sum());
         int repaired = 0;
-        repaired += repairRows("GLOBAL", 0, factBySegment);
+        repaired += repairRows(ResourceScopeEnum.GLOBAL.getCode(), 0, factBySegment);
         for (Map.Entry<String, Long> entry : factByTenant.entrySet()) {
             long tenantId = Long.parseLong(entry.getKey().substring(entry.getKey().indexOf('|') + 1));
-            repaired += repairRows("TENANT", tenantId, Map.of("TOTAL", entry.getValue()));
+            repaired += repairRows(ResourceScopeEnum.TENANT.getCode(), tenantId, Map.of(ResourceScopeEnum.TOTAL.getCode(), entry.getValue()));
         }
         return repaired;
     }

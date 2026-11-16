@@ -490,7 +490,7 @@ public class FormDefServiceImpl implements FormDefService {
                 return result;
             }
             for (JsonNode field : fields) {
-                if (!"TABLE".equals(field.path("type").asText())) {
+                if (!FieldType.TABLE.name().equals(field.path("type").asText())) {
                     continue;
                 }
                 String name = field.path("name").asText(null);
@@ -502,7 +502,7 @@ public class FormDefServiceImpl implements FormDefService {
                 if (subFields != null && subFields.isArray()) {
                     for (JsonNode sub : subFields) {
                         signature.append(sub.path("name").asText("")).append(':')
-                                .append(sub.path("type").asText("TEXT")).append(',');
+                                .append(sub.path("type").asText(FieldType.TEXT.name())).append(',');
                     }
                 }
                 result.put(name, signature.toString());
@@ -1039,7 +1039,7 @@ public class FormDefServiceImpl implements FormDefService {
             }
             Map<String, String> expressions = new LinkedHashMap<>();
             for (JsonNode field : fieldsArray) {
-                if ("FORMULA".equals(field.path("type").asText())) {
+                if (FieldType.FORMULA.name().equals(field.path("type").asText())) {
                     expressions.put(field.path("name").asText(), field.path("expression").asText());
                 }
             }

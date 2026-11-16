@@ -1,15 +1,20 @@
 package com.sw.ck.bpm.process.service;
 
-import com.sw.ck.bpm.api.node.NodeActionPolicy;
-import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.dto.GraphElement;
+import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.api.dto.GraphElement;
-import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.api.node.NodeActionPolicy;
+import com.sw.ck.bpm.api.nodefunc.NodeFunctionContext;
+import com.sw.ck.bpm.api.nodefunc.NodeFunctionResult;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
@@ -20,19 +25,10 @@ import com.sw.ck.bpm.process.validator.ApprovalOpinionValidator;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import com.sw.ck.bpm.api.nodefunc.NodeFunctionContext;
-import com.sw.ck.bpm.api.nodefunc.NodeFunctionResult;
-import com.sw.ck.common.response.R;
-
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -47,6 +43,11 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 审批动作统一业务服务（同意/驳回/退回的唯一执行核心）。
  * <p>
@@ -354,9 +355,9 @@ public class TaskActionService {
         Map<String, Object> variables = legacyInvocation ? null : new HashMap<>();
         if (variables != null) {
             variables.put("outcome", switch (action) {
-                case REJECT -> "REJECTED";
+                case REJECT -> InstanceStatusEnum.REJECTED.getCode();
                 case DISAPPROVE -> "DISAPPROVED";
-                default -> "APPROVED";
+                default -> InstanceStatusEnum.APPROVED.getCode();
             });
             // 引擎在本次事务内创建下一个人工任务时，用该稳定变量把通知事件
             // 的操作人绑定到实际推进流程的审批人，而不是回退到发起人。
@@ -417,7 +418,7 @@ public class TaskActionService {
         // 关闭：会签参与人的负向意见统一使用 DISAPPROVE。
         if (action == ApprovalAction.REJECT) {
             // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
-            bpmTaskFacade.terminateProcess(processInstanceId, "REJECTED")
+            bpmTaskFacade.terminateProcess(processInstanceId, InstanceStatusEnum.REJECTED.getCode())
             .orElseThrow(() -> new IllegalStateException(
                     "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         }
@@ -442,9 +443,9 @@ public class TaskActionService {
         }
         recordAction(task, loginUser, effectiveRequest, action,
                 switch (action) {
-                    case REJECT -> "REJECTED";
+                    case REJECT -> InstanceStatusEnum.REJECTED.getCode();
                     case DISAPPROVE -> "DISAPPROVED";
-                    default -> "APPROVED";
+                    default -> InstanceStatusEnum.APPROVED.getCode();
                 }, processVariables, commandId, null);
         // — P64 阶段Ⅰ：节点业务表单合法最终提交（A01）+ 受控触发器评估（A03/A04）——
         // 与任务完成同事务：数据/意图未可靠落库时整个办理回滚，不留半成功；触发器自身
@@ -595,7 +596,7 @@ public class TaskActionService {
         for (Object rawField : fields) {
             if (!(rawField instanceof Map<?, ?> field)) continue;
             Object type = field.get("type");
-            if (type == null || !"USER".equalsIgnoreCase(String.valueOf(type).trim())) continue;
+            if (type == null || !SubjectTypeEnum.USER.getCode().equalsIgnoreCase(String.valueOf(type).trim())) continue;
             Object key = field.get("key");
             if (key == null || String.valueOf(key).isBlank()) continue;
             Object value = request.getOpinionData().get(String.valueOf(key).trim());
@@ -957,9 +958,9 @@ public class TaskActionService {
                                     .variables(variables)
                                     .build(), functions,
                             Map.of("outcome", switch (action) {
-                                case REJECT -> "REJECTED";
+                                case REJECT -> InstanceStatusEnum.REJECTED.getCode();
                                 case DISAPPROVE -> "DISAPPROVED";
-                                default -> "APPROVED";
+                                default -> InstanceStatusEnum.APPROVED.getCode();
                             }));
             if (resultLookup.isEmpty()) {
                 return;

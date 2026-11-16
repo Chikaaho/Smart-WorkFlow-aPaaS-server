@@ -1,15 +1,13 @@
 package com.sw.ck.bpm.process.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.entity.ResourceClassEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
@@ -20,15 +18,16 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 命令受理服务：审批动作异步通道的统一受理入口。
  * <p>
@@ -110,8 +109,8 @@ public class CommandAcceptService {
         // 已核销语义复用同键行重置。
         String acceptKey = commandKey;
         if (existing != null) {
-            boolean failedExisting = "FAILED".equals(existing.getStatus());
-            boolean expiredExisting = "EXPIRED".equals(existing.getStatus());
+            boolean failedExisting = CommandStatusEnum.FAILED.getCode().equals(existing.getStatus());
+            boolean expiredExisting = CommandStatusEnum.EXPIRED.getCode().equals(existing.getStatus());
             if (!failedExisting && !expiredExisting) {
                 // 同键命中（提示05 G3b1）：同载荷=同一操作重放，返回原受理；异载荷=明确拒绝，
                 // 不得默认成功（含受理尚未完成/运行期的首次并发冲突）。旧行缺指纹时以存储
@@ -160,13 +159,13 @@ public class CommandAcceptService {
                     acceptKey = recoveryKey;
                     break;
                 }
-                if ("FAILED".equals(prior.getStatus())) {
+                if (CommandStatusEnum.FAILED.getCode().equals(prior.getStatus())) {
                     prior.setPayload(incomingPayload);
                     prior.setPayloadFingerprint(incomingFingerprint);
                     commandQueue.requeueFailed(prior);
                     return toResp(prior, true);
                 }
-                if (!"EXPIRED".equals(prior.getStatus())) {
+                if (!CommandStatusEnum.EXPIRED.getCode().equals(prior.getStatus())) {
                     log.info("审批命令恢复链幂等命中: originCommandId={}, recoveryKey={}, commandId={}, status={}",
                             existing.getCommandId(), recoveryKey, prior.getCommandId(), prior.getStatus());
                     return toResp(prior, false);

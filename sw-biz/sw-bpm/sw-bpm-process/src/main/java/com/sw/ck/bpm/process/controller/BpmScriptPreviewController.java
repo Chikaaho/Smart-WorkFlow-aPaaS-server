@@ -1,9 +1,8 @@
 package com.sw.ck.bpm.process.controller;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.process.dto.ScriptPreviewDTO;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
@@ -11,13 +10,6 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dept.DeptDirectoryRow;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
-import lombok.extern.log4j.Log4j2;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,6 +18,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 流程脚本模拟运行（只读，无副作用）。
@@ -108,7 +110,7 @@ public class BpmScriptPreviewController {
             String type = Optional.ofNullable(str(declaration.get("type"))).orElse("").toUpperCase();
             if (type.contains("DEPT")) {
                 samples.put(name, new ArrayList<>(sampleDepts));
-            } else if (type.contains("USER")) {
+            } else if (type.contains(SubjectTypeEnum.USER.getCode())) {
                 samples.put(name, new ArrayList<>(sampleUsers));
             } else {
                 samples.put(name, "示例值");

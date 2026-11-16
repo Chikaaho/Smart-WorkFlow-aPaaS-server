@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * 受控真实传输对端 Provider（P63 G07，仅 dev 源根）。
  * <p>
@@ -99,7 +100,7 @@ public class LoopbackPeerProvider implements DeviceControlProvider {
                     Wrappers.<IotDeviceCommand>lambdaQuery()
                             .eq(IotDeviceCommand::getProductId, productId)
                             .eq(IotDeviceCommand::getDeviceName, deviceName)
-                            .eq(IotDeviceCommand::getStatus, "SENDING")
+                            .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.SENDING.getCode())
                             .likeRight(IotDeviceCommand::getIdempotentKey, "RESERVATION:")
                             .orderByDesc(IotDeviceCommand::getId)
                             .last("LIMIT 1"));

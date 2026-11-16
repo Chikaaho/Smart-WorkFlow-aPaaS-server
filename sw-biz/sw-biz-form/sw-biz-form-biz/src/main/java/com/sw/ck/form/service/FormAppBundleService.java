@@ -1,11 +1,8 @@
 package com.sw.ck.form.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.bundle.FormAppBundleDatasourcePort;
 import com.sw.ck.form.api.bundle.FormAppBundleProcessPort;
@@ -19,9 +16,9 @@ import com.sw.ck.form.entity.FormAppImportRecordEntity;
 import com.sw.ck.form.entity.FormAppScopeEntity;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormExtQueryEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
 import com.sw.ck.form.entity.FormListConfigEntity;
-import com.sw.ck.form.entity.FormExtQueryEntity;
 import com.sw.ck.form.mapper.FormAppDirMapper;
 import com.sw.ck.form.mapper.FormAppImportRecordMapper;
 import com.sw.ck.form.mapper.FormAppMapper;
@@ -38,11 +35,6 @@ import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.dict.DictItemDTO;
 import com.sw.ck.system.api.dict.DictTypeDetailDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
-
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StreamUtils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -61,6 +53,13 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StreamUtils;
+import com.sw.ck.form.dynamic.FieldType;
 /**
  * 应用整包导入导出服务（0.2.2 F2，D022-10～15）。
  *
@@ -696,7 +695,7 @@ public class FormAppBundleService {
         app.setSortNo(document.getApp().getSortNo() == null ? 0 : document.getApp().getSortNo());
         app.setVisibleScopeType(document.getApp().getVisibleScopeType() == null
                 ? "ALL" : document.getApp().getVisibleScopeType());
-        app.setStatus(document.getApp().getStatus() == null ? "ENABLED" : document.getApp().getStatus());
+        app.setStatus(document.getApp().getStatus() == null ? FormAppMembershipValidator.STATUS_ENABLED : document.getApp().getStatus());
         app.setSource("MANUAL");
         formAppMapper.insert(app);
         ctx.report.setAppId(app.getId());
@@ -912,7 +911,7 @@ public class FormAppBundleService {
                         insertScope(appId, type, value);
                         ctx.report.getMatchedRoles().add(reused(value, value, null));
                     } else {
-                        ctx.report.getClearedRefs().add(cleared("ROLE", value, "应用 可见范围"));
+                        ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.ROLE, value, "应用 可见范围"));
                     }
                 }
                 case FormAppScopeTypes.POST -> {
@@ -920,7 +919,7 @@ public class FormAppBundleService {
                         insertScope(appId, type, value);
                         ctx.report.getMatchedPosts().add(reused(value, value, null));
                     } else {
-                        ctx.report.getClearedRefs().add(cleared("POST", value, "应用 可见范围"));
+                        ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.POST, value, "应用 可见范围"));
                     }
                 }
                 case FormAppScopeTypes.TENANT -> insertScope(appId, type, value);
@@ -1389,12 +1388,12 @@ public class FormAppBundleService {
                         continue;
                     }
                     if (subject.startsWith("user:")) {
-                        ctx.report.getClearedRefs().add(cleared("USER", subject,
+                        ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.USER, subject,
                                 "表单 " + formName + " · 字段权限 " + entry.getKey()));
                         continue;
                     }
                     if (subject.startsWith("dept:")) {
-                        ctx.report.getClearedRefs().add(cleared("DEPT", subject,
+                        ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.DEPT, subject,
                                 "表单 " + formName + " · 字段权限 " + entry.getKey()));
                         continue;
                     }
@@ -1403,7 +1402,7 @@ public class FormAppBundleService {
                         if (Boolean.TRUE.equals(ctx.facts.roleCodes().get(code))) {
                             ctx.report.getMatchedRoles().add(reused("role:" + code, "角色 " + code, null));
                         } else {
-                            ctx.report.getClearedRefs().add(cleared("ROLE", subject,
+                            ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.ROLE, subject,
                                     "表单 " + formName + " · 字段权限 " + entry.getKey()));
                             continue;
                         }
@@ -1426,7 +1425,7 @@ public class FormAppBundleService {
         }
         Object userIds = scope.get("userIds");
         if (userIds instanceof List<?> ids && !ids.isEmpty()) {
-            ctx.report.getClearedRefs().add(cleared("USER", joinValues(ids),
+            ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.USER, joinValues(ids),
                     "表单 " + formName + " · 发起可见范围"));
         }
         return null;
@@ -1559,14 +1558,14 @@ public class FormAppBundleService {
             case "DEPT_LEADER" -> {
                 Object value = participant.get("value");
                 if (hasValue(value)) {
-                    ctx.report.getClearedRefs().add(cleared("DEPT", valueText(value),
+                    ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.DEPT, valueText(value),
                             nodePath + " · 参与人（部门负责人）"));
                     participant.put("value", null);
                 }
             }
-            case "ROLE" -> rewriteCodeList(participant, ctx.facts.roleCodes(), ctx,
+            case FormAppScopeTypes.ROLE -> rewriteCodeList(participant, ctx.facts.roleCodes(), ctx,
                     nodePath + " · 参与人（角色）", ctx.report.getMatchedRoles());
-            case "POST" -> rewriteCodeList(participant, ctx.facts.postCodes(), ctx,
+            case FormAppScopeTypes.POST -> rewriteCodeList(participant, ctx.facts.postCodes(), ctx,
                     nodePath + " · 参与人（岗位）", ctx.report.getMatchedPosts());
             case "DEPT_POST" -> {
                 Object value = participant.get("value");
@@ -1574,13 +1573,13 @@ public class FormAppBundleService {
                     Map<String, Object> mapping = (Map<String, Object>) mappingRaw;
                     Object deptId = mapping.get("deptId");
                     if (deptId != null) {
-                        ctx.report.getClearedRefs().add(cleared("DEPT", String.valueOf(deptId),
+                        ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.DEPT, String.valueOf(deptId),
                                 nodePath + " · 参与人（部门+岗位）"));
                     }
                     mapping.put("deptId", null);
                     String postCode = text(mapping.get("postCode"));
                     if (postCode != null && !Boolean.TRUE.equals(ctx.facts.postCodes().get(postCode))) {
-                        ctx.report.getClearedRefs().add(cleared("POST", postCode,
+                        ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.POST, postCode,
                                 nodePath + " · 参与人（部门+岗位）"));
                         mapping.put("postCode", null);
                     }
@@ -1603,7 +1602,7 @@ public class FormAppBundleService {
                     matchedSink.add(reused(code, code, null));
                 } else {
                     ctx.report.getClearedRefs().add(cleared(
-                            codeFacts == ctx.facts.roleCodes() ? "ROLE" : "POST", code, location));
+                            codeFacts == ctx.facts.roleCodes() ? FormAppScopeTypes.ROLE : FormAppScopeTypes.POST, code, location));
                     participant.put("value", null);
                 }
             }
@@ -1620,7 +1619,7 @@ public class FormAppBundleService {
                 kept.add(codeObj);
                 matchedSink.add(reused(code, code, null));
             } else {
-                ctx.report.getClearedRefs().add(cleared(isRole ? "ROLE" : "POST", code, location));
+                ctx.report.getClearedRefs().add(cleared(isRole ? FormAppScopeTypes.ROLE : FormAppScopeTypes.POST, code, location));
             }
         }
         participant.put("value", kept.isEmpty() ? null : kept);
@@ -1638,7 +1637,7 @@ public class FormAppBundleService {
         String objectType = text(source.get("objectType"));
         Object value = source.get("value");
         if (hasValue(value)) {
-            String kind = "DEPT".equalsIgnoreCase(objectType) ? "DEPT" : "USER";
+            String kind = FormAppScopeTypes.DEPT.equalsIgnoreCase(objectType) ? FormAppScopeTypes.DEPT : FormAppScopeTypes.USER;
             ctx.report.getClearedRefs().add(cleared(kind, valueText(value),
                     nodePath + " · 动态并行来源"));
             source.put("value", null);
@@ -1708,7 +1707,7 @@ public class FormAppBundleService {
         Map<String, Object> notification = (Map<String, Object>) notificationRaw;
         Object otherIds = notification.get("otherRecipientIds");
         if (otherIds instanceof List<?> ids && !ids.isEmpty()) {
-            ctx.report.getClearedRefs().add(cleared("USER", joinValues(ids),
+            ctx.report.getClearedRefs().add(cleared(FormAppScopeTypes.USER, joinValues(ids),
                     "流程 " + processName + " · 结束通知接收人"));
             notification.put("otherRecipientIds", null);
         }
@@ -1748,9 +1747,9 @@ public class FormAppBundleService {
                 switch (type) {
                     case FormAppScopeTypes.USER, FormAppScopeTypes.DEPT ->
                             sink.add(externalRef(type, value, "应用 可见范围", false, null));
-                    case FormAppScopeTypes.ROLE -> sink.add(externalRef("ROLE", value,
+                    case FormAppScopeTypes.ROLE -> sink.add(externalRef(FormAppScopeTypes.ROLE, value,
                             "应用 可见范围", Boolean.TRUE.equals(facts.roleCodes().get(value)), value));
-                    case FormAppScopeTypes.POST -> sink.add(externalRef("POST", value,
+                    case FormAppScopeTypes.POST -> sink.add(externalRef(FormAppScopeTypes.POST, value,
                             "应用 可见范围", Boolean.TRUE.equals(facts.postCodes().get(value)), value));
                     default -> {
                         // TENANT：租户自身，保留
@@ -1817,7 +1816,7 @@ public class FormAppBundleService {
         }
         Map<String, Object> scope = parseObjectOrNull(visibilityScope);
         if (scope != null && scope.get("userIds") instanceof List<?> ids && !ids.isEmpty()) {
-            sink.add(externalRef("USER", joinValues(ids), formPath + " · 发起可见范围", false, null));
+            sink.add(externalRef(FormAppScopeTypes.USER, joinValues(ids), formPath + " · 发起可见范围", false, null));
         }
     }
 
@@ -1850,12 +1849,12 @@ public class FormAppBundleService {
                         }
                         String fieldPath = formPath + " · 字段权限 " + entry.getKey();
                         if (subject.startsWith("user:")) {
-                            sink.add(externalRef("USER", subject, fieldPath, false, null));
+                            sink.add(externalRef(FormAppScopeTypes.USER, subject, fieldPath, false, null));
                         } else if (subject.startsWith("dept:")) {
-                            sink.add(externalRef("DEPT", subject, fieldPath, false, null));
+                            sink.add(externalRef(FormAppScopeTypes.DEPT, subject, fieldPath, false, null));
                         } else if (subject.startsWith("role:")) {
                             String code = subject.substring("role:".length());
-                            sink.add(externalRef("ROLE", subject, fieldPath,
+                            sink.add(externalRef(FormAppScopeTypes.ROLE, subject, fieldPath,
                                     Boolean.TRUE.equals(facts.roleCodes().get(code)),
                                     Boolean.TRUE.equals(facts.roleCodes().get(code)) ? subject : null));
                         }
@@ -1934,8 +1933,8 @@ public class FormAppBundleService {
                         && config.get("source") instanceof Map<?, ?> sourceRaw
                         && "FIXED".equalsIgnoreCase(text(((Map<?, ?>) sourceRaw).get("type")))) {
                     sink.add(externalRef(
-                            "DEPT".equalsIgnoreCase(text(((Map<?, ?>) sourceRaw).get("objectType")))
-                                    ? "DEPT" : "USER",
+                            FormAppScopeTypes.DEPT.equalsIgnoreCase(text(((Map<?, ?>) sourceRaw).get("objectType")))
+                                    ? FormAppScopeTypes.DEPT : FormAppScopeTypes.USER,
                             valueText(((Map<?, ?>) sourceRaw).get("value")),
                             nodePath + " · 动态并行来源", false, null));
                 }
@@ -1972,7 +1971,7 @@ public class FormAppBundleService {
         }
         if (graph.get("notification") instanceof Map<?, ?> notification
                 && notification.get("otherRecipientIds") instanceof List<?> ids && !ids.isEmpty()) {
-            sink.add(externalRef("USER", joinValues(ids), processPath + " · 结束通知接收人", false, null));
+            sink.add(externalRef(FormAppScopeTypes.USER, joinValues(ids), processPath + " · 结束通知接收人", false, null));
         }
     }
 
@@ -1993,21 +1992,21 @@ public class FormAppBundleService {
         switch (strategy.toUpperCase()) {
             case "FIXED_USER" -> sink.add(externalRef("FIXED_USER", valueText(participant.get("value")),
                     nodePath + " · 参与人（指定用户）", false, null));
-            case "DEPT_LEADER" -> sink.add(externalRef("DEPT", valueText(participant.get("value")),
+            case "DEPT_LEADER" -> sink.add(externalRef(FormAppScopeTypes.DEPT, valueText(participant.get("value")),
                     nodePath + " · 参与人（部门负责人）", false, null));
-            case "ROLE" -> collectCodeListRef(participant.get("value"), facts.roleCodes(), sink,
-                    nodePath + " · 参与人（角色）", "ROLE");
-            case "POST" -> collectCodeListRef(participant.get("value"), facts.postCodes(), sink,
-                    nodePath + " · 参与人（岗位）", "POST");
+            case FormAppScopeTypes.ROLE -> collectCodeListRef(participant.get("value"), facts.roleCodes(), sink,
+                    nodePath + " · 参与人（角色）", FormAppScopeTypes.ROLE);
+            case FormAppScopeTypes.POST -> collectCodeListRef(participant.get("value"), facts.postCodes(), sink,
+                    nodePath + " · 参与人（岗位）", FormAppScopeTypes.POST);
             case "DEPT_POST" -> {
                 if (participant.get("value") instanceof Map<?, ?> mapping) {
                     if (mapping.get("deptId") != null) {
-                        sink.add(externalRef("DEPT", String.valueOf(mapping.get("deptId")),
+                        sink.add(externalRef(FormAppScopeTypes.DEPT, String.valueOf(mapping.get("deptId")),
                                 nodePath + " · 参与人（部门+岗位）", false, null));
                     }
                     String postCode = text(mapping.get("postCode"));
                     if (postCode != null) {
-                        sink.add(externalRef("POST", postCode, nodePath + " · 参与人（部门+岗位）",
+                        sink.add(externalRef(FormAppScopeTypes.POST, postCode, nodePath + " · 参与人（部门+岗位）",
                                 Boolean.TRUE.equals(facts.postCodes().get(postCode)),
                                 Boolean.TRUE.equals(facts.postCodes().get(postCode)) ? postCode : null));
                     }
@@ -2144,7 +2143,7 @@ public class FormAppBundleService {
                 if (!(fieldObj instanceof Map<?, ?> field)) {
                     continue;
                 }
-                if ("REFERENCE".equalsIgnoreCase(text(field.get("type")))) {
+                if (FieldType.REFERENCE.name().equalsIgnoreCase(text(field.get("type")))) {
                     String target = text(field.get("targetFormId"));
                     if (target != null && !finalFormKeys.contains(target)) {
                         throw new BaseException(FormErrorCode.BUNDLE_IMPORT_FAILED.getCode(),
@@ -2353,7 +2352,7 @@ public class FormAppBundleService {
             return;
         }
         Map<String, Object> field = (Map<String, Object>) fieldRaw;
-        if ("DATASOURCE".equalsIgnoreCase(text(field.get("type")))
+        if (FieldType.DATASOURCE.name().equalsIgnoreCase(text(field.get("type")))
                 && field.get("dsBinding") instanceof Map<?, ?> binding
                 && text(binding.get("queryKey")) != null) {
             sink.add(text(binding.get("queryKey")));
@@ -2382,7 +2381,7 @@ public class FormAppBundleService {
             return;
         }
         Map<String, Object> field = (Map<String, Object>) fieldRaw;
-        if ("DICT".equalsIgnoreCase(text(field.get("type"))) && text(field.get("dictType")) != null) {
+        if (FieldType.DICT.name().equalsIgnoreCase(text(field.get("type"))) && text(field.get("dictType")) != null) {
             sink.add(text(field.get("dictType")));
         }
         if (field.get("subFields") instanceof List<?> subFields) {
@@ -2399,9 +2398,9 @@ public class FormAppBundleService {
         collectAllExternalRefs(document, factsForCodeCollection(), packageFormKeys(document),
                 packageProcessKeys(document), sink);
         for (FormBundlePreviewResult.ExternalRefPreview ref : sink) {
-            if ("ROLE".equals(ref.getKind())) {
+            if (FormAppScopeTypes.ROLE.equals(ref.getKind())) {
                 roleCodes.add(stripPrefix(ref.getValue(), "role:"));
-            } else if ("POST".equals(ref.getKind())) {
+            } else if (FormAppScopeTypes.POST.equals(ref.getKind())) {
                 postCodes.add(ref.getValue());
             }
         }

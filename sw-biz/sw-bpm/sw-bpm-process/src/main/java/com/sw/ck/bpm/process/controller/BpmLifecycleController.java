@@ -1,31 +1,27 @@
 package com.sw.ck.bpm.process.controller;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
-import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.PendingSignDTO;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmSignRecord;
+import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmSignRecordMapper;
 import com.sw.ck.bpm.process.service.ApprovalLifecycleService;
+import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.bpm.process.service.BpmInstanceService;
-
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -34,6 +30,12 @@ import java.util.Map;
 import java.util.Objects;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
+import com.sw.ck.bpm.process.entity.BpmSignPositionEnum;
 /**
  * I3 人工审批生命周期端点：转办/委托/代理/撤回/沟通/废弃/加签/补签。
  * <p>
@@ -102,7 +104,7 @@ public class BpmLifecycleController {
         BpmInstance instance = bpmInstanceService.findByProcessInstanceId(instanceId)
                 .orElseThrow(() -> new BaseException(
                         CommonErrorCode.NOT_FOUND.getCode(), "实例不存在"));
-        if (instance.getStatus() == null || "RUNNING".equalsIgnoreCase(instance.getStatus())) {
+        if (instance.getStatus() == null || InstanceStatusEnum.RUNNING.getCode().equalsIgnoreCase(instance.getStatus())) {
             throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                     "补签仅适用于已越过终态的实例");
         }
@@ -128,7 +130,7 @@ public class BpmLifecycleController {
                             .eq(BpmSignRecord::getProcessInstanceId, instanceId)
                             .eq(BpmSignRecord::getSignType, "SUPPLEMENT_SIGN")
                             .eq(BpmSignRecord::getParticipantId, participant)
-                            .eq(BpmSignRecord::getSignStatus, "PENDING"));
+                            .eq(BpmSignRecord::getSignStatus, BatchItemStatusEnum.PENDING.getCode()));
             if (duplicate > 0) {
                 throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                         "该参与人已有待处理补签，不得重复补签");
@@ -142,7 +144,7 @@ public class BpmLifecycleController {
             record.setOperatorId(actor.getUserId());
             record.setParticipantId(participant);
             record.setSeqNo(0);
-            record.setSignStatus("PENDING");
+            record.setSignStatus(BatchItemStatusEnum.PENDING.getCode());
             record.setOriginalTaskId(request.getReturnTargetNodeId());
             record.setOriginalStatus(instance.getStatus());
             record.setDetail(toJsonString(mapOf("auditOnly", true,
@@ -189,7 +191,7 @@ public class BpmLifecycleController {
                 Wrappers.<BpmSignRecord>lambdaQuery()
                         .eq(BpmSignRecord::getParticipantId, actor.getUserId())
                         .eq(BpmSignRecord::getTenantId, actor.getTenantId())
-                        .eq(BpmSignRecord::getSignStatus, "PENDING")
+                        .eq(BpmSignRecord::getSignStatus, BatchItemStatusEnum.PENDING.getCode())
                         .orderByAsc(BpmSignRecord::getCreateTime)
                         .orderByAsc(BpmSignRecord::getSeqNo));
         List<String> taskIds = records.stream().map(BpmSignRecord::getTaskId).distinct().toList();
@@ -197,7 +199,7 @@ public class BpmLifecycleController {
                 Wrappers.<BpmSignRecord>lambdaQuery()
                         .in(BpmSignRecord::getTaskId, taskIds)
                         .eq(BpmSignRecord::getTenantId, actor.getTenantId())
-                        .eq(BpmSignRecord::getSignStatus, "PENDING"));
+                        .eq(BpmSignRecord::getSignStatus, BatchItemStatusEnum.PENDING.getCode()));
         List<PendingSignDTO> out = new ArrayList<>();
         for (BpmSignRecord record : records) {
             boolean serialBlocked = "SERIAL".equalsIgnoreCase(record.getModeType())
@@ -212,7 +214,7 @@ public class BpmLifecycleController {
             item.setSignType(record.getSignType());
             item.setModeType(record.getModeType());
             item.setSeqNo(record.getSeqNo());
-            item.setSignPosition(extractDetail(record.getDetail(), "signPosition", "BEFORE"));
+            item.setSignPosition(extractDetail(record.getDetail(), "signPosition", BpmSignPositionEnum.BEFORE.getCode()));
             item.setComment(extractDetail(record.getDetail(), "comment", ""));
             item.setSerialBlocked(serialBlocked);
             if (record.getTaskId() != null && !record.getTaskId().startsWith("SUPPLEMENT#")) {

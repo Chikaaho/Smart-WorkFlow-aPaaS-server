@@ -1,12 +1,10 @@
 package com.sw.ck.bpm.process.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
 import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.springframework.stereotype.Service;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -16,6 +14,9 @@ import java.util.Map;
 import java.util.Set;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 /**
  * 参与人展示名解析（I1 历史身份不被改写）。
  * <p>
@@ -123,7 +124,7 @@ public class ParticipantNameService {
         if ("HANDLED".equalsIgnoreCase(status)) {
             return 3;
         }
-        if ("PENDING".equalsIgnoreCase(status)) {
+        if (BatchItemStatusEnum.PENDING.getCode().equalsIgnoreCase(status)) {
             return 2;
         }
         return 1;

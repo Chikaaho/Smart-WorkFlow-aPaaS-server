@@ -102,7 +102,7 @@ public class C1PolicyService {
                     throw new BaseException(FormErrorCode.ACTION_FIELD_BINDING_INVALID,
                             "受保护字段不在表单定义中：" + f);
                 }
-                if ("TABLE".equalsIgnoreCase(def.type())) {
+                if (FieldType.TABLE.name().equalsIgnoreCase(def.type())) {
                     throw new BaseException(FormErrorCode.ACTION_FIELD_BINDING_INVALID,
                             "受保护字段不能为表格类型：" + f);
                 }

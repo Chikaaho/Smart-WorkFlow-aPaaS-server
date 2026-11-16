@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 /**
  * 通知消息接收侧控制器（M05 Step 3 — 第四环闭合）。
  * <p>
@@ -170,7 +171,7 @@ public class NotifyController {
         // 每接收人独立结果与尝试流水（失败子记录可查可重发），幂等键按批次+接收人隔离；
         // 缺省仍走既有 IN_APP 批量入口，保留其幂等边界不变。
         if (req != null && req.getChannel() != null && !req.getChannel().isBlank()
-                && !"IN_APP".equalsIgnoreCase(req.getChannel().trim())) {
+                && !NotifyChannel.IN_APP.name().equalsIgnoreCase(req.getChannel().trim())) {
             return R.ok(batchSendByChannel(req));
         }
         return R.ok(notifyMessageService.batchSendWithOutcome(req));
@@ -211,7 +212,7 @@ public class NotifyController {
                     .idempotencyKey("batch:" + batchKey + ":" + recipientId)
                     .build())
                     .orElseThrow(() -> new IllegalStateException("通知发送未返回结果"));
-            String status = result.getStatus() == null ? "FAILED" : result.getStatus();
+            String status = result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus();
             switch (status) {
                 case "SUCCESS" -> delivered++;
                 case "TIMEOUT", "PENDING" -> processing++;

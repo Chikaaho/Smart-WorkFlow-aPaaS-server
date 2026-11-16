@@ -89,7 +89,7 @@ public class NotifySubscriptionServiceImpl implements NotifySubscriptionService 
             }
             String first = r.getChannelPriority() == null ? "IN_APP"
                     : r.getChannelPriority().split(",")[0].trim().toUpperCase(Locale.ROOT);
-            if ("IN_APP".equalsIgnoreCase(channel) && "IN_APP".equals(first)) {
+            if (NotifyChannel.IN_APP.name().equalsIgnoreCase(channel) && NotifyChannel.IN_APP.name().equals(first)) {
                 return false;
             }
         }

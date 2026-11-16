@@ -1,11 +1,8 @@
 package com.sw.ck.form.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.dto.ExtQueryResult;
 import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
@@ -16,20 +13,23 @@ import com.sw.ck.form.dto.ExtQueryContractView;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormExtQueryEntity;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.mapper.FormExtQueryMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.Set;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import com.sw.ck.form.dynamic.FieldType;
 /**
  * 受控外部数据源表单链路服务（I2，方向 §4.3）。
  *
@@ -241,7 +241,7 @@ public class FormExtDataService {
                                                      String formKey, String fieldName) {
         FormDefEntity def = formDefMapper.selectOne(Wrappers.lambdaQuery(FormDefEntity.class)
                 .eq(FormDefEntity::getFormKey, formKey)
-                .eq(FormDefEntity::getStatus, "PUBLISHED")
+                .eq(FormDefEntity::getStatus, FormStatusEnum.PUBLISHED.getCode())
                 .last("LIMIT 1"));
         if (def == null) {
             throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
@@ -255,7 +255,7 @@ public class FormExtDataService {
                     "表单定义缺失，无法读取外部数据: " + formKey);
         }
         JsonNode field = findDefinitionField(config.getDefinition(), fieldName);
-        if (field == null || !"DATASOURCE".equals(field.path("type").asText())) {
+        if (field == null || !FieldType.DATASOURCE.name().equals(field.path("type").asText())) {
             throw new BaseException(FormErrorCode.EXT_DATASOURCE_UNAUTHORIZED.getCode(),
                     "字段不是外部数据源字段或不存在: " + fieldName);
         }

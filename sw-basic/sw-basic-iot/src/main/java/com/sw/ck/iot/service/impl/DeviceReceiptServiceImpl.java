@@ -29,6 +29,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * {@link DeviceReceiptService} 实现：守卫裁决全部经真实命令行状态机与审计落地。
  * <p>
@@ -194,11 +195,11 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
     private void applyOutcome(IotDeviceCommand command, String outcome, String output,
                               String source, String requestId, String verifyDetail) {
         if ("SUCCESS".equals(outcome)) {
-            command.setStatus("SUCCESS");
+            command.setStatus(IotCommandStatusEnum.SUCCESS.getCode());
             command.setResult(serializeResult(source, requestId, output, verifyDetail));
             command.setLastError(null);
         } else {
-            command.setStatus("FAILED");
+            command.setStatus(IotCommandStatusEnum.FAILED.getCode());
             command.setResult(serializeResult(source, requestId, output, verifyDetail));
             command.setLastError("由 " + source + " 收敛为 FAILED");
         }

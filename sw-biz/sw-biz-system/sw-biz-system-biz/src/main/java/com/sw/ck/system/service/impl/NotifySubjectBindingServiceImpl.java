@@ -21,6 +21,7 @@ import java.util.Locale;
 import java.util.Set;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.system.sso.SsoProviderEnum;
 /**
  * 通知 Provider 主体映射服务实现（I6 G5a-I）。
  * <p>规则（方向 §3.6/§D-14）：</p>
@@ -37,7 +38,7 @@ import lombok.extern.log4j.Log4j2;
 public class NotifySubjectBindingServiceImpl implements NotifySubjectBindingService {
 
     /** I6 三 Provider 独立 Adapter（方向 §3.5 不复用 SSO 凭据语义） */
-    private static final Set<String> SUPPORTED_PROVIDERS = Set.of("FEISHU", "DINGTALK", "WECHAT_WORK");
+    private static final Set<String> SUPPORTED_PROVIDERS = Set.of(SsoProviderEnum.FEISHU.name(), SsoProviderEnum.DINGTALK.name(), SsoProviderEnum.WECHAT_WORK.name());
 
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final String STATUS_DISABLED = "DISABLED";

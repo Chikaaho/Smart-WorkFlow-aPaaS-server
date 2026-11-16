@@ -3,6 +3,7 @@ package com.sw.ck.form.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.common.response.R;
+import com.sw.ck.common.value.IdNameProperty;
 import com.sw.ck.form.api.dto.FormAppContentDTO;
 import com.sw.ck.form.api.dto.FormAppDTO;
 import com.sw.ck.form.api.dto.FormAppDirDTO;
@@ -10,7 +11,6 @@ import com.sw.ck.form.api.dto.FormAppDirSaveReq;
 import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
 import com.sw.ck.form.dynamic.FixedTableSql;
-import com.sw.ck.form.dto.TenantOptionDTO;
 import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -146,16 +146,15 @@ public class FormAppManageController {
      * 只回 id 与名称，供选择器展示；读失败返回空列表（选择器呈现为空但可保存其它维度）。
      */
     @GetMapping("/tenants")
-    public R<List<TenantOptionDTO>> listTenantOptions() {
+    public R<List<IdNameProperty>> listTenantOptions() {
         try {
-            List<TenantOptionDTO> options = new ArrayList<>();
+            List<IdNameProperty> options = new ArrayList<>();
             for (Map<String, Object> row : FixedTableSql.listEnabledTenantOptions(jdbcTemplate)) {
                 Object id = row.get("id");
                 Object name = row.get("name");
-                TenantOptionDTO option = new TenantOptionDTO();
-                option.setId(id instanceof Number number ? number.longValue() : null);
-                option.setName(name == null ? null : String.valueOf(name));
-                options.add(option);
+                options.add(IdNameProperty.of(
+                        id instanceof Number number ? String.valueOf(number.longValue()) : null,
+                        name == null ? null : String.valueOf(name)));
             }
             return R.ok(options);
         } catch (Exception e) {

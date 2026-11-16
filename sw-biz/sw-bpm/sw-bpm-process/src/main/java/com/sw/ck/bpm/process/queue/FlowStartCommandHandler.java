@@ -1,26 +1,26 @@
 package com.sw.ck.bpm.process.queue;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
+import com.sw.ck.bpm.process.dto.StartCommand;
+import com.sw.ck.bpm.process.entity.BpmActionRef;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.port.FlowStartPortImpl;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
-import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.service.ProcessStartService;
-import com.sw.ck.bpm.process.entity.BpmActionRef;
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
-
-import org.springframework.stereotype.Component;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 
 import java.util.Map;
 import java.util.Set;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import com.sw.ck.bpm.process.entity.ActionRefStatusEnum;
 /**
  * 流程发起命令处理器：消费 FLOW_START 受理，汇入 {@link ProcessStartService} 唯一入口。
  * <p>
@@ -98,8 +98,8 @@ public class FlowStartCommandHandler implements BpmCommandHandler {
                                         envelope.getTenantId())
                                 .eq(BpmActionRef::getTargetRecordId,
                                         String.valueOf(recordId))
-                                .eq(BpmActionRef::getStatus, "STARTING")
-                                .set(BpmActionRef::getStatus, "FAILED")
+                                .eq(BpmActionRef::getStatus, ActionRefStatusEnum.STARTING.getCode())
+                                .set(BpmActionRef::getStatus, CommandStatusEnum.FAILED.getCode())
                                 .set(BpmActionRef::getErrorText, text));
                 if (updated > 0) {
                     log.warn("二段流程发起失败，意图已标记可诊断失败: recordId={}, reason={}",

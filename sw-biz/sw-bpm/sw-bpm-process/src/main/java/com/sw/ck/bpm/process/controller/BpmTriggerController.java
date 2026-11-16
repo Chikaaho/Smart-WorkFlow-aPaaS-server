@@ -45,6 +45,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import com.sw.ck.bpm.process.entity.ActionRefStatusEnum;
 
 /**
  * P64 触发器与动作回查控制器（A03/A04/A11）。
@@ -211,7 +212,7 @@ public class BpmTriggerController {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "动作意图不存在");
         }
         // 重试门槛按持久事实：目标实例已存在=已成功启动，拒绝恢复
-        if ("STARTED".equals(ref.getStatus()) || resolveTargetInstanceId(ref) != null) {
+        if (ActionRefStatusEnum.STARTED.getCode().equals(ref.getStatus()) || resolveTargetInstanceId(ref) != null) {
             throw new BaseException(BpmErrorCode.ACTION_INVALID.getCode(),
                     "动作意图已成功启动，无需重试");
         }

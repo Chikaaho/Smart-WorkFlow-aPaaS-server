@@ -1,24 +1,31 @@
 package com.sw.ck.bpm.process.queue;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
+import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmCommandBatch;
 import com.sw.ck.bpm.process.entity.BpmCommandBatchItem;
-import com.sw.ck.bpm.process.entity.BatchItemStatusEnum;
-import com.sw.ck.bpm.process.entity.BatchStatusEnum;
+import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
-import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.form.api.port.FormTxnActionPort;
-import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import com.sw.ck.bpm.process.entity.BpmCommand;
-import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.service.ResourceAdmissionService;
 import com.sw.ck.bpm.process.service.ResourceReleaseService;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.form.api.port.FormTxnActionPort;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -27,12 +34,6 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * 后台批量受控动作调用处理器（P62 分级执行 S3，U02/U03/U07）。
  * <p>
@@ -174,7 +175,7 @@ public class BatchInvokeCommandHandler implements BpmCommandHandler {
                             current.getQuantity(), invocationKey(batch.getBatchKey(), current.getItemKey()),
                             null, null, batch.getActionVersion())).orElseThrow(
                     () -> new IllegalStateException("批量项动作调用无结果"));
-            if ("SUCCEEDED".equals(result.status())) {
+            if (BatchItemStatusEnum.SUCCEEDED.getCode().equals(result.status())) {
                 current.setStatus(BatchItemStatusEnum.SUCCEEDED.getCode());
                 current.setInvocationId(result.invocationId());
                 current.setErrorCode(null);

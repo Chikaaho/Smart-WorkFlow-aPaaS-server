@@ -47,7 +47,7 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
         List<NotifyRule> rules = enabledRules(eventType);
         Set<String> tokens = new LinkedHashSet<>();
         if (rules.isEmpty()) {
-            tokens.add("IN_APP");
+            tokens.add(NotifyChannel.IN_APP.name());
         } else {
             for (NotifyRule rule : rules) {
                 if (rule.getChannelPriority() == null || rule.getChannelPriority().isBlank()) {

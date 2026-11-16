@@ -24,6 +24,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
+import com.sw.ck.iot.entity.IotReservationStatusEnum;
 
 /**
  * IoT 预约到点认领下发调度（P63，DB 认领模式：重启自然恢复，无内存状态）。
@@ -81,10 +83,10 @@ public class IotReservationDispatchJob {
                             : reservation.getLateWindowSeconds());
             if (windowEnd.isBefore(nowUtc)) {
                 int updated = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                        .set(IotCommandReservation::getStatus, "EXPIRED")
+                        .set(IotCommandReservation::getStatus, IotReservationStatusEnum.EXPIRED.getCode())
                         .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                         .eq(IotCommandReservation::getId, reservation.getId())
-                        .eq(IotCommandReservation::getStatus, "PENDING")
+                        .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                         .eq(IotCommandReservation::getDeleted, 0));
                 if (updated == 1) {
                     log.info("预约超过迟到窗口，标记过期（不外发）: id={}, processInstanceId={}",
@@ -110,10 +112,10 @@ public class IotReservationDispatchJob {
                         : reservation.getLateWindowSeconds());
         if (!nowUtc.isBefore(windowEnd)) {
             int expired = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                    .set(IotCommandReservation::getStatus, "EXPIRED")
+                    .set(IotCommandReservation::getStatus, IotReservationStatusEnum.EXPIRED.getCode())
                     .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                     .eq(IotCommandReservation::getId, reservation.getId())
-                    .eq(IotCommandReservation::getStatus, "PENDING")
+                    .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                     .eq(IotCommandReservation::getDeleted, 0));
             if (expired == 1) {
                 log.info("认领入口拒绝窗后预约（未开始合法下发即过期，零外发）: id={}, windowEndUtc={}, nowUtc={}",
@@ -122,11 +124,11 @@ public class IotReservationDispatchJob {
             return;
         }
         int claimed = tenantWorkAdmission.claim(reservation.getTenantId(), () -> reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                .set(IotCommandReservation::getStatus, "DISPATCHING")
+                .set(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHING.getCode())
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                 .eq(IotCommandReservation::getId, reservation.getId())
                 .eq(IotCommandReservation::getTenantId, reservation.getTenantId())
-                .eq(IotCommandReservation::getStatus, "PENDING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                 .eq(IotCommandReservation::getDeleted, 0)));
         if (claimed != 1) {
             return; // 已被取消/过期：竞争只有一个结果生效
@@ -137,11 +139,11 @@ public class IotReservationDispatchJob {
             log.error("预约认领下发失败，标记 FAILED 可查: id={}, processInstanceId={}",
                     reservation.getId(), reservation.getProcessInstanceId(), e);
             reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                    .set(IotCommandReservation::getStatus, "FAILED")
+                    .set(IotCommandReservation::getStatus, IotReservationStatusEnum.FAILED.getCode())
                     .set(IotCommandReservation::getRejectReason, truncate(e.getMessage()))
                     .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                     .eq(IotCommandReservation::getId, reservation.getId())
-                    .eq(IotCommandReservation::getStatus, "DISPATCHING")
+                    .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHING.getCode())
                     .eq(IotCommandReservation::getDeleted, 0));
         }
     }
@@ -180,7 +182,7 @@ public class IotReservationDispatchJob {
                                 .toLocalDateTime())
                 .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                 .eq(IotDeviceCommand::getId, command.getId())
-                .eq(IotDeviceCommand::getStatus, "QUEUED"));
+                .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode()));
 
         // 立即尝试外发：窗口内不得只入队后无限期等待补偿。
         // 状态迁移（QUEUED→SENDING）由共享发送路径 markSending 统一承载；
@@ -194,11 +196,11 @@ public class IotReservationDispatchJob {
             commandQueueService.markFailed(queued.getId(), "发送通道未装配（sw.iot.enabled=false）");
         }
         int dispatched = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                .set(IotCommandReservation::getStatus, "DISPATCHED")
+                .set(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHED.getCode())
                 .set(IotCommandReservation::getCommandId, command.getId())
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                 .eq(IotCommandReservation::getId, reservation.getId())
-                .eq(IotCommandReservation::getStatus, "DISPATCHING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHING.getCode())
                 .eq(IotCommandReservation::getDeleted, 0));
         if (dispatched == 1) {
             log.info("预约已到点下发: reservationId={}, commandId={}, processInstanceId={}, dueUtc={}, window={}s",

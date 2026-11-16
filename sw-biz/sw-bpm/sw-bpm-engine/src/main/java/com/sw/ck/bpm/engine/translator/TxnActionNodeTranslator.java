@@ -19,6 +19,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.sw.ck.bpm.api.node.ProcessDefStatusEnum;
 
 /**
  * 事务动作节点（P62 分级执行 · 生产轻流程）：经 form-api 受控 Port 调用已发布事务动作。
@@ -101,7 +102,7 @@ public class TxnActionNodeTranslator extends ServiceTaskNodeTranslator {
         if (descriptor.isEmpty()) {
             return Optional.of(List.of(error(node, "绑定动作不存在或跨租户不可达: " + actionId)));
         }
-        if (!"PUBLISHED".equals(descriptor.get().status())) {
+        if (!ProcessDefStatusEnum.PUBLISHED.getCode().equals(descriptor.get().status())) {
             return Optional.of(List.of(error(node,
                     "绑定动作未发布（当前状态 " + descriptor.get().status() + "），发布前请先发布该动作")));
         }

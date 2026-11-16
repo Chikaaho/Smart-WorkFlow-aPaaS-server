@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.sw.ck.bpm.api.node.NodeFailureStrategyEnum;
 
 /** 通知节点：统一参与人/模板/渠道配置，经 NotifyFacade 发送。 */
 @Component
@@ -47,7 +48,7 @@ public class NotificationNodeTranslator extends ServiceTaskNodeTranslator {
     }
 
     private String failureStrategy(Map<String, Object> config) {
-        return text(config.get("failureStrategy"), "CONTINUE").toUpperCase(); // I6 §3.2：纯通知节点默认入队即推进
+        return text(config.get("failureStrategy"), NodeFailureStrategyEnum.CONTINUE.getCode()).toUpperCase(); // I6 §3.2：纯通知节点默认入队即推进
     }
 
     private GraphValidationError error(GraphElement node, String message) {

@@ -1,10 +1,7 @@
 package com.sw.ck.bpm.engine.translator;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -12,6 +9,15 @@ import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import org.flowable.bpmn.model.CollectionHandler;
 import org.flowable.bpmn.model.ExtensionAttribute;
@@ -20,14 +26,12 @@ import org.flowable.bpmn.model.FlowableListener;
 import org.flowable.bpmn.model.ImplementationType;
 import org.flowable.bpmn.model.MultiInstanceLoopCharacteristics;
 import org.flowable.bpmn.model.UserTask;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.EnumSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import com.sw.ck.bpm.api.node.BranchSourceTypeEnum;
+import com.sw.ck.bpm.api.node.ConsensusModeEnum;
+import com.sw.ck.bpm.api.node.NodeEmptyStrategyEnum;
+import com.sw.ck.bpm.api.node.NodeInvalidStrategyEnum;
 
 /**
  * 动态并行编排节点（I4 §3.1）：并行多实例 UserTask，每分支 = 一个去重后的有效部门负责人。
@@ -37,8 +41,8 @@ import java.util.Optional;
 @Component
 public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
-    private static final List<String> MODES = List.of("ALL", "ANY", "RATIO", "VETO");
-    private static final List<String> SOURCE_TYPES = List.of("FORM_FIELD", "VARIABLE", "FIXED");
+    private static final List<String> MODES = List.of(ConsensusModeEnum.ALL.getCode(), ConsensusModeEnum.ANY.getCode(), ConsensusModeEnum.RATIO.getCode(), ConsensusModeEnum.VETO.getCode());
+    private static final List<String> SOURCE_TYPES = List.of(ParticipantStrategy.FORM_FIELD, BranchSourceTypeEnum.VARIABLE.getCode(), BranchSourceTypeEnum.FIXED.getCode());
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -86,7 +90,7 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
         if (sourceValue == null || String.valueOf(sourceValue).isBlank()) {
             return Optional.of(List.of(error(node, "动态并行来源值不能为空")));
         }
-        if ("FIXED".equalsIgnoreCase(sourceType)) {
+        if (BranchSourceTypeEnum.FIXED.getCode().equalsIgnoreCase(sourceType)) {
             Collection<?> values = sourceValue instanceof Collection<?> collection
                     ? collection : List.of(sourceValue);
             if (values.isEmpty() || values.stream().anyMatch(item -> {
@@ -110,7 +114,7 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
         if (v2) {
             String objectType = source.get("objectType") == null
                     ? null : String.valueOf(source.get("objectType")).trim().toUpperCase();
-            if (!"USER".equals(objectType) && !"DEPT".equals(objectType)) {
+            if (!SubjectTypeEnum.USER.getCode().equals(objectType) && !"DEPT".equals(objectType)) {
                 return Optional.of(List.of(error(node,
                         "动态并行 v2 来源对象类型只能是 USER 或 DEPT")));
             }
@@ -131,7 +135,7 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
         if (mode == null || !MODES.contains(mode.toUpperCase())) {
             return Optional.of(List.of(error(node, "动态并行汇聚方式不合法: " + mode)));
         }
-        if ("RATIO".equalsIgnoreCase(mode)) {
+        if (ConsensusModeEnum.RATIO.getCode().equalsIgnoreCase(mode)) {
             try {
                 int ratio = Integer.parseInt(String.valueOf(config.get("ratio")));
                 if (ratio < 1 || ratio > 100) {
@@ -152,13 +156,13 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
             }
         }
         String emptyStrategy = config.get("emptyStrategy") == null
-                ? "BLOCK" : String.valueOf(config.get("emptyStrategy"));
-        if (!List.of("BLOCK", "PROCEED").contains(emptyStrategy.toUpperCase())) {
+                ? NodeEmptyStrategyEnum.BLOCK.getCode() : String.valueOf(config.get("emptyStrategy"));
+        if (!List.of(NodeEmptyStrategyEnum.BLOCK.getCode(), NodeEmptyStrategyEnum.PROCEED.getCode()).contains(emptyStrategy.toUpperCase())) {
             return Optional.of(List.of(error(node, "动态并行空集合策略不合法: " + emptyStrategy)));
         }
         String invalidStrategy = config.get("invalidStrategy") == null
-                ? "BLOCK" : String.valueOf(config.get("invalidStrategy"));
-        if (!List.of("BLOCK", "SKIP").contains(invalidStrategy.toUpperCase())) {
+                ? NodeInvalidStrategyEnum.BLOCK.getCode() : String.valueOf(config.get("invalidStrategy"));
+        if (!List.of(NodeInvalidStrategyEnum.BLOCK.getCode(), NodeInvalidStrategyEnum.SKIP.getCode()).contains(invalidStrategy.toUpperCase())) {
             return Optional.of(List.of(error(node, "动态并行失效对象策略不合法: " + invalidStrategy)));
         }
         return Optional.of(List.of());
@@ -181,7 +185,7 @@ public class DynamicParallelNodeTranslator implements NodeTypeTranslator {
         collectionHandler.setImplementation(collectionExpression);
         loop.setHandler(collectionHandler);
         loop.setElementVariable("participantId");
-        String mode = String.valueOf(config.getOrDefault("mode", "ALL"));
+        String mode = String.valueOf(config.getOrDefault("mode", ConsensusModeEnum.ALL.getCode()));
         String ratio = String.valueOf(config.getOrDefault("ratio", "100"));
         loop.setCompletionCondition("${consensusCompletionEvaluator.shouldComplete(execution, '"
                 + mode + "', " + ratio + ")}");

@@ -1,9 +1,6 @@
 package com.sw.ck.bpm.process.service.impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
@@ -34,9 +31,6 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUserHolder;
 
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -50,6 +44,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.bpm.process.entity.BpmInterventionStateEnum;
 /**
  * 流程运营监控/干预/基础分析实现（I4 §3.3）。
  * <p>
@@ -191,24 +190,24 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
                 Optional<Boolean> suspendedDecision =
                         bpmTaskFacade.isProcessInstanceSuspended(processInstanceId);
                 boolean before = suspendedDecision.isPresent() && suspendedDecision.get();
-                record.setBeforeState(before ? "SUSPENDED" : "RUNNING");
+                record.setBeforeState(before ? BpmInterventionStateEnum.SUSPENDED.getCode() : InstanceStatusEnum.RUNNING.getCode());
                 // present = APPLIED（本次挂起）/ ALREADY_APPLIED（已挂起或已无运行期记录）
                 bpmTaskFacade.suspendProcessInstance(processInstanceId)
                 .orElseThrow(() -> new IllegalStateException(
                         "BpmTaskFacade#suspendProcessInstance 契约恒 present，empty 属契约违约"));
-                record.setAfterState("SUSPENDED");
+                record.setAfterState(BpmInterventionStateEnum.SUSPENDED.getCode());
             }
             case "RESUME" -> {
                 // empty = 实例标识缺失，无法判定（此处标识非空）：按未挂起记录前态
                 Optional<Boolean> suspendedDecision =
                         bpmTaskFacade.isProcessInstanceSuspended(processInstanceId);
                 boolean before = suspendedDecision.isPresent() && suspendedDecision.get();
-                record.setBeforeState(before ? "SUSPENDED" : "RUNNING");
+                record.setBeforeState(before ? BpmInterventionStateEnum.SUSPENDED.getCode() : InstanceStatusEnum.RUNNING.getCode());
                 // present = APPLIED（本次恢复）/ ALREADY_APPLIED（未挂起或已无运行期记录）
                 bpmTaskFacade.resumeProcessInstance(processInstanceId)
                 .orElseThrow(() -> new IllegalStateException(
                         "BpmTaskFacade#resumeProcessInstance 契约恒 present，empty 属契约违约"));
-                record.setAfterState("RUNNING");
+                record.setAfterState(InstanceStatusEnum.RUNNING.getCode());
             }
             case "TERMINATE" -> {
                 record.setBeforeState(instance.getStatus());

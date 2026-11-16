@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import com.sw.ck.bpm.api.node.NodeFailureStrategyEnum;
 
 abstract class NodeDelegateSupport {
     protected static final String FLOWABLE_NS = "http://flowable.org/bpmn";
@@ -85,6 +86,6 @@ abstract class NodeDelegateSupport {
 
     protected boolean shouldBlock(Map<String, Object> config) {
         // I6 §3.2：纯通知节点入队后即可推进；仅显式 BLOCK 才回滚该节点步骤
-        return "BLOCK".equalsIgnoreCase(String.valueOf(config.getOrDefault("failureStrategy", "CONTINUE")));
+        return NodeFailureStrategyEnum.BLOCK.getCode().equalsIgnoreCase(String.valueOf(config.getOrDefault("failureStrategy", NodeFailureStrategyEnum.CONTINUE.getCode())));
     }
 }

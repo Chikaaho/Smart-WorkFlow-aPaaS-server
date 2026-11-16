@@ -1,36 +1,27 @@
 package com.sw.ck.bpm.process.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.ActionConfig;
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.result.MutationOutcome;
+import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmChildItem;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
-import com.sw.ck.bpm.process.entity.BpmActionRef;
+import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildBatchMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildItemMapper;
+import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormDataWritebackFacade;
-import com.sw.ck.bpm.api.dto.GraphElement;
-import com.sw.ck.bpm.api.result.MutationOutcome;
-import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
-
-import lombok.extern.log4j.Log4j2;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -41,6 +32,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * P64 阶段Ⅱ（A05/A06）主子流程编排：派发批次冻结、子完成回写、等待策略结算、
@@ -325,7 +325,7 @@ public class ChildOrchestrationService {
             if (batch == null) {
                 continue;
             }
-            if (!"APPROVED".equals(terminalStatus)) {
+            if (!InstanceStatusEnum.APPROVED.getCode().equals(terminalStatus)) {
                 // 失败/拒绝/取消不凑成功数：FAILED 计阻断项（ALL 阻断、ANY/COUNT 忽略）
                 item.setStatus(BpmChildItem.STATUS_FAILED);
                 item.setErrorText("子流程终态 " + terminalStatus + "，不计有效完成");
@@ -790,13 +790,13 @@ public class ChildOrchestrationService {
      */
     private void syncParentStatusIfEnded(BpmInstance parent) {
         bpmRuntimeFacade.getActiveActivityIds(parent.getProcessInstanceId()).ifPresent(active -> {
-            if (!active.isEmpty() || !"RUNNING".equals(parent.getStatus())) {
+            if (!active.isEmpty() || !InstanceStatusEnum.RUNNING.getCode().equals(parent.getStatus())) {
                 return;
             }
             boolean updated = bpmInstanceService.lambdaUpdate()
                     .eq(BpmInstance::getId, parent.getId())
-                    .eq(BpmInstance::getStatus, "RUNNING")
-                    .set(BpmInstance::getStatus, "APPROVED")
+                    .eq(BpmInstance::getStatus, InstanceStatusEnum.RUNNING.getCode())
+                    .set(BpmInstance::getStatus, InstanceStatusEnum.APPROVED.getCode())
                     .update();
             if (updated) {
                 log.info("父流程等待唤醒后已结束，实例状态同步为 APPROVED: processInstanceId={}",

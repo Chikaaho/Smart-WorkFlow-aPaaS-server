@@ -1,5 +1,6 @@
 package com.sw.ck.bpm.process.queue;
 
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
@@ -8,28 +9,28 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.spi.UserDetailsProvider;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import lombok.extern.log4j.Log4j2;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-
-import jakarta.annotation.PostConstruct;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * 命令调度器：持久化队列的默认消费者。
  * <p>
@@ -266,7 +267,7 @@ public class CommandDispatcher {
         if (envelope.getClaimToken() == null || envelope.getClaimToken().isBlank()) return false;
         try (var ignored = TenantLineSuspension.suspended()) {
             return commandQueue.findById(envelope.getCommandId()).filter(current ->
-                    "PROCESSING".equals(current.getStatus())
+                    BatchStatusEnum.PROCESSING.getCode().equals(current.getStatus())
                             && Objects.equals(current.getClaimToken(), envelope.getClaimToken())
                             && Objects.equals(current.getTenantId(), envelope.getTenantId())
                             && Objects.equals(current.getInitiatorId(), envelope.getInitiatorId())).isPresent();

@@ -1,18 +1,29 @@
 package com.sw.ck.bpm.process.controller;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
-import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.dto.ProcessedTaskRespDTO;
 import com.sw.ck.bpm.process.dto.TaskDetailRespDTO;
 import com.sw.ck.bpm.process.dto.TodoTaskRespDTO;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
+import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.BpmTaskDeadline;
+import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
+import com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper;
+import com.sw.ck.bpm.process.service.ApprovalActionService;
+import com.sw.ck.bpm.process.service.ApprovalHistoryEnricher;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.InitiatorDisplay;
+import com.sw.ck.bpm.process.service.ParticipantNameService;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
@@ -21,25 +32,8 @@ import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.bpm.process.entity.BpmTaskDeadline;
-import com.sw.ck.bpm.process.mapper.BpmTaskDeadlineMapper;
-import com.sw.ck.bpm.process.service.ApprovalActionService;
-import com.sw.ck.bpm.process.service.ApprovalHistoryEnricher;
-import com.sw.ck.bpm.process.service.InitiatorDisplay;
-import com.sw.ck.bpm.process.service.ParticipantNameService;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
-
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -54,6 +48,15 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 /**
  * 待办中心控制器（查询入口 + 审批动作 HTTP 入口）。
  * <p>
@@ -125,7 +128,7 @@ public class BpmTodoController {
                 for (BpmTaskDeadline d : deadlineMapper.selectList(
                         Wrappers.<BpmTaskDeadline>lambdaQuery()
                                 .in(BpmTaskDeadline::getTaskId, taskIds)
-                                .ne(BpmTaskDeadline::getRunState, "CANCELLED"))) {
+                                .ne(BpmTaskDeadline::getRunState, BpmChildBatch.STATUS_CANCELLED))) {
                     if (d.getDueAt() == null) continue;
                     dueByTask.merge(d.getTaskId(), d.getDueAt(),
                             (a, b) -> a.isBefore(b) ? a : b);
@@ -259,7 +262,7 @@ public class BpmTodoController {
         dto.setTaskName(task.getName());
         dto.setProcessInstanceId(task.getProcessInstanceId());
         dto.setProcessDefinitionKey(task.getProcessDefinitionKey());
-        dto.setTaskStatus(finished ? "FINISHED" : "RUNNING");
+        dto.setTaskStatus(finished ? "FINISHED" : InstanceStatusEnum.RUNNING.getCode());
 
         // processName 富化
         if (task.getProcessDefinitionKey() != null) {
@@ -363,8 +366,8 @@ public class BpmTodoController {
                 if (action == null) continue;
                 item.setAction(action.getAction());
                 item.setActionRecordId(action.getId());
-                item.setApprovalResult("APPROVE".equals(action.getAction()) ? "APPROVED"
-                        : "REJECT".equals(action.getAction()) ? "REJECTED" : null);
+                item.setApprovalResult("APPROVE".equals(action.getAction()) ? InstanceStatusEnum.APPROVED.getCode()
+                        : "REJECT".equals(action.getAction()) ? BatchItemStatusEnum.REJECTED.getCode() : null);
                 item.setOpinionFormId(action.getOpinionFormId());
                 item.setOpinionFormVersion(action.getOpinionFormVersion());
                 if (action.getOpinionData() != null && objectMapper != null) {

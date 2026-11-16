@@ -1,14 +1,15 @@
 package com.sw.ck.bpm.process.controller;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
 import com.sw.ck.bpm.process.dto.CommandStatusRespDTO;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
-import com.sw.ck.bpm.process.entity.CommandStatusEnum;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.service.BpmCommandService;
 import com.sw.ck.bpm.process.service.CommandAcceptService;
 import com.sw.ck.bpm.process.service.CommandSyncWaiter;
@@ -19,7 +20,9 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,8 +31,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * 流程业务命令通道控制器。
  * <p>
@@ -70,7 +71,7 @@ public class BpmCommandController {
         if ("P0".equalsIgnoreCase(channel)) {
             return R.ok(acceptP0Sync(taskId, approvalAction, request));
         }
-        if (!"NORMAL".equalsIgnoreCase(channel)) {
+        if (!CommandChannelEnum.NORMAL.getCode().equalsIgnoreCase(channel)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "未知通道: " + channel);
         }
         return R.ok(commandAcceptService.acceptTaskAction(
@@ -180,8 +181,8 @@ public class BpmCommandController {
      * 时返回 null——调用方据 "flowStart != STARTED" 不得解读为业务发起成功。
      */
     private CommandStatusRespDTO.FlowStartView resolveFlowStartView(BpmCommand command) {
-        if (!"DRAFT_SUBMIT".equals(command.getCommandType())
-                || !"COMPLETED".equals(command.getStatus())
+        if (!CommandTypeEnum.DRAFT_SUBMIT.getCode().equals(command.getCommandType())
+                || !CommandStatusEnum.COMPLETED.getCode().equals(command.getStatus())
                 || command.getResult() == null) {
             return null;
         }
@@ -215,7 +216,7 @@ public class BpmCommandController {
 
     private ApprovalAction resolveAction(String action) {
         return switch (action.toUpperCase()) {
-            case "COMPLETE", "APPROVE", "APPROVAL" -> ApprovalAction.APPROVE;
+            case "COMPLETE", "APPROVE", GraphElement.TYPE_APPROVAL -> ApprovalAction.APPROVE;
             case "REJECT" -> ApprovalAction.REJECT;
             // 单任务不通过意见（会签负向票等）：区别于 REJECT 流程级终态（I3 §4.4）
             case "DISAPPROVE" -> ApprovalAction.DISAPPROVE;

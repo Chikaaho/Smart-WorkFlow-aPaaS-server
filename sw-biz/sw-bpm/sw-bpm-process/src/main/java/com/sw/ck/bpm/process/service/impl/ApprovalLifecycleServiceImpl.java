@@ -3,7 +3,6 @@ package com.sw.ck.bpm.process.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
@@ -15,7 +14,9 @@ import com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
+import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmCommunication;
 import com.sw.ck.bpm.process.entity.BpmConsensusVote;
 import com.sw.ck.bpm.process.entity.BpmInstance;
@@ -47,12 +48,6 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
 
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -63,6 +58,13 @@ import java.util.Objects;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.bpm.process.entity.BpmSignPositionEnum;
 /**
  * I3 生命周期动作统一实现。
  * <p>
@@ -218,7 +220,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                     Wrappers.<BpmCommunication>lambdaQuery()
                             .eq(BpmCommunication::getTaskId, task.getTaskId())
                             .eq(BpmCommunication::getReceiverId, receiver)
-                            .ne(BpmCommunication::getStatus, "CANCELLED"));
+                            .ne(BpmCommunication::getStatus, BpmChildBatch.STATUS_CANCELLED));
             if (existing != null) {
                 continue; // 幂等：同一任务同一接收人的沟通只发起一次
             }
@@ -230,7 +232,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             comm.setInitiatorId(actor.getUserId());
             comm.setReceiverId(receiver);
             comm.setMessage(nullSafe(request.getMessage()));
-            comm.setStatus("PENDING");
+            comm.setStatus(BatchItemStatusEnum.PENDING.getCode());
             communicationMapper.insert(comm);
             publishNotice(actor, task.getProcessInstanceId(), receiver,
                     BpmNotifyTrigger.TASK_COMMUNICATED);
@@ -253,12 +255,12 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
         String mode = MODE_SERIAL.equalsIgnoreCase(nullSafe(request.getMode(), MODE_PARALLEL))
                 ? MODE_SERIAL : MODE_PARALLEL;
-        String signPosition = nullSafe(request.getSignPosition(), "BEFORE").toUpperCase();
-        if (!"BEFORE".equals(signPosition) && !"AFTER".equals(signPosition)) {
+        String signPosition = nullSafe(request.getSignPosition(), BpmSignPositionEnum.BEFORE.getCode()).toUpperCase();
+        if (!BpmSignPositionEnum.BEFORE.getCode().equals(signPosition) && !BpmSignPositionEnum.AFTER.getCode().equals(signPosition)) {
             throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                     "加签位置只能是 BEFORE 或 AFTER");
         }
-        if ("AFTER".equals(signPosition)) {
+        if (BpmSignPositionEnum.AFTER.getCode().equals(signPosition)) {
             TaskActionService policy = taskActionService.getIfAvailable();
             if (policy != null) policy.assertNodeActionAllowed(task, ApprovalAction.APPROVE);
         }
@@ -266,7 +268,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 Wrappers.<BpmSignRecord>lambdaQuery()
                         .eq(BpmSignRecord::getTaskId, task.getTaskId())
                         .eq(BpmSignRecord::getSignType, SIGN_TYPE_ADD)
-                        .ne(BpmSignRecord::getSignStatus, "CANCELLED"));
+                        .ne(BpmSignRecord::getSignStatus, BpmChildBatch.STATUS_CANCELLED));
         if (pendingCount > 0) {
             throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                     "该任务已存在未结束的加签");
@@ -282,7 +284,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             record.setOperatorId(actor.getUserId());
             record.setParticipantId(participant);
             record.setSeqNo(seq++);
-            record.setSignStatus("PENDING");
+            record.setSignStatus(BatchItemStatusEnum.PENDING.getCode());
             record.setDetail(toJson(mapOf(
                     "policy", nullSafe(request.getPolicy(), "ALL_PASS"),
                     "signPosition", signPosition,
@@ -323,7 +325,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             throw new BaseException(BpmErrorCode.WITHDRAW_NOT_PERMITTED);
         }
         // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
-        bpmTaskFacade.terminateProcess(processInstanceId, "WITHDRAWN")
+        bpmTaskFacade.terminateProcess(processInstanceId, InstanceStatusEnum.WITHDRAWN.getCode())
         .orElseThrow(() -> new IllegalStateException(
                 "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         bpmInstanceService.updateStatus(processInstanceId,
@@ -331,7 +333,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         // — P64 阶段Ⅱ（A05）：撤回终态化——本实例作为子流程计失败项、作为父流程取消未完成批次 —
         childOrchestrationHooks(instance, InstanceStatusEnum.WITHDRAWN.getCode());
         closeDeadlines(processInstanceId, "撤回关闭");
-        recordInstance(instance, actor, ApprovalAction.WITHDRAW, "WITHDRAWN",
+        recordInstance(instance, actor, ApprovalAction.WITHDRAW, InstanceStatusEnum.WITHDRAWN.getCode(),
                 mapOf("reason", nullSafe(request.getReason())));
         publishNotice(actor, processInstanceId, instance.getInitiatorId(),
                 BpmNotifyTrigger.PROCESS_WITHDRAWN);
@@ -351,7 +353,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED);
         }
         // present = APPLIED（本次终止）/ ALREADY_APPLIED（已无运行实例）；标识缺失抛参数异常
-        bpmTaskFacade.terminateProcess(processInstanceId, "DISCARDED")
+        bpmTaskFacade.terminateProcess(processInstanceId, InstanceStatusEnum.DISCARDED.getCode())
         .orElseThrow(() -> new IllegalStateException(
                 "BpmTaskFacade#terminateProcess 契约恒 present，empty 属契约违约"));
         bpmInstanceService.updateStatus(processInstanceId,
@@ -359,7 +361,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         // — P64 阶段Ⅱ（A05）：废弃终态化——同撤回口径 —
         childOrchestrationHooks(instance, InstanceStatusEnum.DISCARDED.getCode());
         closeDeadlines(processInstanceId, "废弃关闭");
-        recordInstance(instance, actor, ApprovalAction.DISCARD, "DISCARDED",
+        recordInstance(instance, actor, ApprovalAction.DISCARD, InstanceStatusEnum.DISCARDED.getCode(),
                 mapOf("reason", nullSafe(request.getReason()),
                         "beforeStatus", instance.getStatus()));
         publishNotice(actor, processInstanceId, instance.getInitiatorId(),
@@ -385,7 +387,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         if ("DONE".equals(record.getSignStatus())) {
             return R.ok(); // 幂等
         }
-        if (!"PENDING".equals(record.getSignStatus())) {
+        if (!BatchItemStatusEnum.PENDING.getCode().equals(record.getSignStatus())) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED);
         }
         if (MODE_SERIAL.equals(record.getModeType())
@@ -400,7 +402,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                             .eq(BpmSignRecord::getTenantId, actor.getTenantId())
                             .eq(BpmSignRecord::getSignType, SIGN_TYPE_ADD)
                             .lt(BpmSignRecord::getSeqNo, record.getSeqNo())
-                            .eq(BpmSignRecord::getSignStatus, "PENDING"));
+                            .eq(BpmSignRecord::getSignStatus, BatchItemStatusEnum.PENDING.getCode()));
             if (before > 0) {
                 throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED.getCode(),
                         "串行加签存在前置未表态记录");
@@ -455,13 +457,13 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(),
                     "仅操作人/本人可取消待处理加签");
         }
-        if (!"PENDING".equals(record.getSignStatus())) {
+        if (!BatchItemStatusEnum.PENDING.getCode().equals(record.getSignStatus())) {
             throw new BaseException(BpmErrorCode.ACTION_NOT_ALLOWED);
         }
         BpmSignRecord patch = new BpmSignRecord();
         patch.setId(record.getId());
         patch.setVersion(record.getVersion());
-        patch.setSignStatus("CANCELLED");
+        patch.setSignStatus(BpmChildBatch.STATUS_CANCELLED);
         patch.setCancelReason(nullSafe(request.getReason(), "操作人取消"));
         int updated = signRecordMapper.updateById(patch);
         requireSignRecordTransition(updated, "加签记录状态已变化，请刷新后重试");
@@ -480,7 +482,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 Wrappers.<BpmSignRecord>lambdaQuery()
                         .eq(BpmSignRecord::getTaskId, settled.getTaskId())
                         .eq(BpmSignRecord::getTenantId, settled.getTenantId())
-                        .ne(BpmSignRecord::getSignStatus, "CANCELLED"));
+                        .ne(BpmSignRecord::getSignStatus, BpmChildBatch.STATUS_CANCELLED));
         if (all.isEmpty()) {
             log.warn("加签结算跳过：任务无有效加签记录, taskId={}", settled.getTaskId());
             return;
@@ -504,7 +506,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         }
         BpmTaskDTO task = taskLookup.get();
         String signPosition = extractDetailField(all.get(0).getDetail(), "signPosition");
-        boolean autoFinish = "AUTO_FINISH".equals(policy) || "AFTER".equalsIgnoreCase(signPosition);
+        boolean autoFinish = "AUTO_FINISH".equals(policy) || BpmSignPositionEnum.AFTER.getCode().equalsIgnoreCase(signPosition);
         if (!autoFinish) {
             log.info("加签表决完成（原待办保留，由原责任人办理）: taskId={}, negative={}",
                     settled.getTaskId(), negative);
@@ -520,7 +522,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             settleRequest.setComment(extractDetailField(all.get(0).getDetail(), "originalComment"));
             settleRequest.setOpinionFormId(extractDetailField(all.get(0).getDetail(), "opinionFormId"));
             settleRequest.setOpinionFormVersion(extractDetailField(all.get(0).getDetail(), "opinionFormVersion"));
-            Map<String, Object> opinion = new LinkedHashMap<>(mapOf("source", "ADD_SIGN"));
+            Map<String, Object> opinion = new LinkedHashMap<>(mapOf("source", SIGN_TYPE_ADD));
             String originalOpinion = extractDetailField(all.get(0).getDetail(), "originalOpinionData");
             if (originalOpinion != null && !originalOpinion.isBlank() && !"null".equals(originalOpinion)) {
                 try {
@@ -797,7 +799,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
             record.setAutoAction(auto == null ? null : String.valueOf(auto));
             record.setAutoActionConfig(deadlineMap.get("autoActionConfig") == null
                     ? "{}" : toJson(deadlineMap.get("autoActionConfig")));
-            record.setRunState("PENDING");
+            record.setRunState(BatchItemStatusEnum.PENDING.getCode());
             if (tenantId == null) {
                 // 租户变量在流程启动时已强制非空；缺失属异常路径，fail closed 不落租户 0
                 throw new IllegalArgumentException("办理时限登记缺少租户上下文: taskId=" + taskId);
@@ -817,11 +819,11 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
         List<BpmTaskDeadline> pending = deadlineMapper.selectList(
                 Wrappers.<BpmTaskDeadline>lambdaQuery()
                         .eq(BpmTaskDeadline::getProcessInstanceId, processInstanceId)
-                        .eq(BpmTaskDeadline::getRunState, "PENDING"));
+                        .eq(BpmTaskDeadline::getRunState, BatchItemStatusEnum.PENDING.getCode()));
         for (BpmTaskDeadline record : pending) {
             BpmTaskDeadline patch = new BpmTaskDeadline();
             patch.setId(record.getId());
-            patch.setRunState("CANCELLED");
+            patch.setRunState(BpmChildBatch.STATUS_CANCELLED);
             patch.setLastReason(reason);
             patch.setHandledAt(LocalDateTime.now());
             deadlineMapper.updateById(patch);
@@ -871,7 +873,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
                 Wrappers.<BpmSignRecord>lambdaQuery()
                         .eq(BpmSignRecord::getTaskId, taskId)
                         .eq(BpmSignRecord::getSignType, SIGN_TYPE_ADD)
-                        .eq(BpmSignRecord::getSignStatus, "PENDING"));
+                        .eq(BpmSignRecord::getSignStatus, BatchItemStatusEnum.PENDING.getCode()));
         if (pending > 0) {
             throw new BaseException(BpmErrorCode.ADD_SIGN_INVALID.getCode(),
                     "存在待处理加签，不能直接办理");

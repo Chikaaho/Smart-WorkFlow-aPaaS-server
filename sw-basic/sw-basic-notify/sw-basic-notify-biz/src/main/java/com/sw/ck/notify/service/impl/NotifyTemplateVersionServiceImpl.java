@@ -12,6 +12,8 @@ import com.sw.ck.notify.service.NotifyTemplateVersionService;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyChannel;
 
 /** 模板版本服务实现（I6）。 */
 @Service
@@ -35,8 +37,8 @@ public class NotifyTemplateVersionServiceImpl implements NotifyTemplateVersionSe
         NotifyTemplateVersion version = new NotifyTemplateVersion();
         version.setTemplateId(template.getId());
         version.setTemplateVersion(nextVersion);
-        version.setEventType(orDefault(template.getEventType(), "SYSTEM"));
-        version.setChannel(orDefault(template.getChannel(), "IN_APP"));
+        version.setEventType(orDefault(template.getEventType(), NotifyBizType.SYSTEM.name()));
+        version.setChannel(orDefault(template.getChannel(), NotifyChannel.IN_APP.name()));
         version.setTitleTemplate(template.getTitleTemplate());
         version.setContentTemplate(template.getContentTemplate());
         version.setVariablesAllowed(template.getVariablesAllowed());

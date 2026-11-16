@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
 /**
  * 受控脚本生命周期服务：草稿、语法/安全校验、试运行、发布、版本留痕、停用。
  * <p>
@@ -80,7 +81,7 @@ public class IotScriptService {
         script.setId(null);
         script.setCurrentVersion(1);
         script.setPublishedVersion(null);
-        script.setStatus("DRAFT");
+        script.setStatus(IotPublishStatusEnum.DRAFT.getCode());
         scriptMapper.insert(script);
         saveDraftVersion(script, 1, sourceCode);
         return script;
@@ -178,7 +179,7 @@ public class IotScriptService {
         }
         List<IotScript> scripts = scriptMapper.selectList(new LambdaQueryWrapper<IotScript>()
                 .eq(IotScript::getTriggerType, "MESSAGE")
-                .eq(IotScript::getStatus, "PUBLISHED"));
+                .eq(IotScript::getStatus, IotPublishStatusEnum.PUBLISHED.getCode()));
         for (IotScript script : scripts) {
             if (!matchesBinding(script, device, topic)) {
                 continue;

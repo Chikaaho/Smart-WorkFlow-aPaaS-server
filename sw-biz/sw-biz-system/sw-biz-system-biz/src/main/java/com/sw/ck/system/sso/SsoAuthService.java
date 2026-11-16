@@ -1,43 +1,36 @@
 package com.sw.ck.system.sso;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.system.entity.SsoAuditRecord;
-import com.sw.ck.system.entity.SsoAuthState;
-import com.sw.ck.system.entity.SsoProviderConfig;
-import com.sw.ck.system.entity.SsoUserBinding;
-import com.sw.ck.system.mapper.SsoAuditRecordMapper;
-import com.sw.ck.system.entity.SysTenant;
-import com.sw.ck.system.mapper.SsoAuthStateMapper;
-import com.sw.ck.system.mapper.SysTenantMapper;
-import com.sw.ck.system.mapper.SsoProviderConfigMapper;
-import com.sw.ck.system.mapper.SsoUserBindingMapper;
 import com.sw.ck.system.dto.SsoAuditListDTO;
 import com.sw.ck.system.dto.SsoAuditRecordDTO;
 import com.sw.ck.system.dto.SsoBindingItemDTO;
 import com.sw.ck.system.dto.SsoBindingListDTO;
 import com.sw.ck.system.dto.SsoConfigCheckDTO;
 import com.sw.ck.system.dto.SsoConfigItemDTO;
-import com.sw.ck.system.security.SystemErrorKeys;
-import com.sw.ck.system.service.SysUserService;
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
-import com.sw.ck.security.cache.LoginUserCacheService;
+import com.sw.ck.system.entity.SsoAuditRecord;
+import com.sw.ck.system.entity.SsoAuthState;
+import com.sw.ck.system.entity.SsoProviderConfig;
+import com.sw.ck.system.entity.SsoUserBinding;
+import com.sw.ck.system.entity.SysAuditLog;
+import com.sw.ck.system.entity.SysTenant;
 import com.sw.ck.system.entity.SysUser;
+import com.sw.ck.system.mapper.SsoAuditRecordMapper;
+import com.sw.ck.system.mapper.SsoAuthStateMapper;
+import com.sw.ck.system.mapper.SsoProviderConfigMapper;
+import com.sw.ck.system.mapper.SsoUserBindingMapper;
+import com.sw.ck.system.mapper.SysTenantMapper;
+import com.sw.ck.system.security.SystemErrorKeys;
 import com.sw.ck.system.service.RefreshTokenService;
+import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.TenantValidityService;
 
 import jakarta.annotation.PostConstruct;
-
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -53,6 +46,14 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 第三方 SSO 核心服务（I5）。
  * <p>
@@ -107,7 +108,7 @@ public class SsoAuthService {
             "登录状态已失效，请重新登录";
 
     /** 合法 Provider 集合 */
-    public static final Set<String> PROVIDERS = Set.of("WECOM", "FEISHU", "DINGTALK");
+    public static final Set<String> PROVIDERS = Set.of(SsoProviderEnum.WECOM.name(), SsoProviderEnum.FEISHU.name(), SsoProviderEnum.DINGTALK.name());
 
     /** state 有效期（秒）：一次性、限时 */
     static final long STATE_TTL_SECONDS = 300;
@@ -207,7 +208,7 @@ public class SsoAuthService {
                                 .eq(SsoProviderConfig::getAppId, appId)
                                 .ne(updatingSameRow, SsoProviderConfig::getTenantId, current.getTenantId()));
                 if (conflicts != null && conflicts > 0) {
-                    auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), null, null,
+                    auditDenial(provider, SsoAuditActionEnum.CONFLICT_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), current.getUserId(), null, null,
                             "app already registered by another tenant", current.getTenantId());
                     throw new IllegalStateException("该 Provider 应用已登记在其他租户，不能跨租户重复登记");
                 }
@@ -233,7 +234,7 @@ public class SsoAuthService {
         } else {
             configMapper.updateById(config);
         }
-        audit(provider, "CONFIG_CHANGE", "SUCCESS", current.getUserId(), null, null,
+        audit(provider, "CONFIG_CHANGE", SysAuditLog.RESULT_SUCCESS, current.getUserId(), null, null,
                 "enabled=" + enabled);
     }
 
@@ -255,8 +256,8 @@ public class SsoAuthService {
 
     /** 企业微信 Owner 延期（sso-admin-config §二）：保留既有配置记录只读，不提供变更入口。 */
     private void requireMutableProvider(String provider) {
-        if ("WECOM".equals(provider)) {
-            auditDenial(provider, "CONFIG_REJECTED", "DENIED", currentUserId(), null, null,
+        if (SsoProviderEnum.WECOM.name().equals(provider)) {
+            auditDenial(provider, SsoAuditActionEnum.CONFIG_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), currentUserId(), null, null,
                     "wecom deferred read-only", currentTenantId());
             throw new IllegalStateException("企业微信配置维护已延期，当前只读");
         }
@@ -283,7 +284,7 @@ public class SsoAuthService {
             row.setConfiguredEnterpriseId(enterpriseId == null ? "" : enterpriseId);
             row.setCallbackUrl(callbackPolicy.resolveCallbackUrl(provider));
             row.setUpdateTime(config == null ? "" : String.valueOf(config.getUpdateTime()));
-            row.setDeferred("WECOM".equals(provider));
+            row.setDeferred(SsoProviderEnum.WECOM.name().equals(provider));
             rows.add(row);
         }
         return rows;
@@ -321,7 +322,7 @@ public class SsoAuthService {
         } else {
             configMapper.updateById(config);
         }
-        audit(provider, "CONFIG_SAVE", "SUCCESS", current.getUserId(), null, null,
+        audit(provider, "CONFIG_SAVE", SysAuditLog.RESULT_SUCCESS, current.getUserId(), null, null,
                 "basic fields updated", tenantId);
     }
 
@@ -339,7 +340,7 @@ public class SsoAuthService {
         Long tenantId = current.getTenantId();
         SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
         if (config == null) {
-            auditDenial(provider, enabled ? "CONFIG_ENABLE" : "CONFIG_DISABLE", "DENIED",
+            auditDenial(provider, enabled ? SsoAuditActionEnum.CONFIG_ENABLE.getCode() : SsoAuditActionEnum.CONFIG_DISABLE.getCode(), SsoAuditResultEnum.DENIED.getCode(),
                     current.getUserId(), null, null, "config not found", tenantId);
             throw new IllegalStateException("该平台尚未登记配置");
         }
@@ -348,7 +349,7 @@ public class SsoAuthService {
         }
         config.setEnabled(enabled ? 1 : 0);
         configMapper.updateById(config);
-        audit(provider, enabled ? "CONFIG_ENABLE" : "CONFIG_DISABLE", "SUCCESS",
+        audit(provider, enabled ? "CONFIG_ENABLE" : "CONFIG_DISABLE", SysAuditLog.RESULT_SUCCESS,
                 current.getUserId(), null, null, null, tenantId);
     }
 
@@ -363,20 +364,20 @@ public class SsoAuthService {
         LoginUser current = requireLoginContext();
         Long tenantId = current.getTenantId();
         if (appSecret == null || appSecret.isBlank() || isPlaceholder(appSecret)) {
-            auditDenial(provider, "CONFIG_SECRET_UPDATE", "DENIED", current.getUserId(), null, null,
+            auditDenial(provider, SsoAuditActionEnum.CONFIG_SECRET_UPDATE.getCode(), SsoAuditResultEnum.DENIED.getCode(), current.getUserId(), null, null,
                     appSecret == null || appSecret.isBlank() ? "empty secret rejected" : "placeholder secret rejected",
                     tenantId);
             throw new IllegalStateException("请输入有效的新应用凭据（留空表示不更新）");
         }
         SsoProviderConfig config = loadEnabledConfigGlobal(provider, tenantId);
         if (config == null) {
-            auditDenial(provider, "CONFIG_SECRET_UPDATE", "DENIED", current.getUserId(), null, null,
+            auditDenial(provider, SsoAuditActionEnum.CONFIG_SECRET_UPDATE.getCode(), SsoAuditResultEnum.DENIED.getCode(), current.getUserId(), null, null,
                     "config not found", tenantId);
             throw new IllegalStateException("该平台尚未登记配置");
         }
         config.setAppSecretEnc(cipher.encrypt(appSecret));
         configMapper.updateById(config);
-        audit(provider, "CONFIG_SECRET_UPDATE", "SUCCESS", current.getUserId(), null, null,
+        audit(provider, "CONFIG_SECRET_UPDATE", SysAuditLog.RESULT_SUCCESS, current.getUserId(), null, null,
                 "secret rotated", tenantId);
     }
 
@@ -416,9 +417,9 @@ public class SsoAuthService {
         if (!checks.isEnterpriseIdFormat()) failed.add("enterpriseIdFormat");
         if (!checks.isEnabled()) failed.add("enabled");
         if (overall) {
-            audit(provider, "CONFIG_CHECK", "SUCCESS", current.getUserId(), null, null, null, tenantId);
+            audit(provider, "CONFIG_CHECK", SysAuditLog.RESULT_SUCCESS, current.getUserId(), null, null, null, tenantId);
         } else {
-            auditDenial(provider, "CONFIG_CHECK", "FAILED", current.getUserId(), null, null,
+            auditDenial(provider, SsoAuditActionEnum.CONFIG_CHECK.getCode(), SsoAuditResultEnum.FAILED.getCode(), current.getUserId(), null, null,
                     "failed items: " + String.join(",", failed), tenantId);
         }
         return checks;
@@ -436,7 +437,7 @@ public class SsoAuthService {
                             .eq(SsoProviderConfig::getAppId, appId)
                             .ne(updatingSameRow, SsoProviderConfig::getTenantId, tenantId));
             if (conflicts != null && conflicts > 0) {
-                auditDenial(provider, "CONFLICT_REJECTED", "DENIED", currentUserId(), null, null,
+                auditDenial(provider, SsoAuditActionEnum.CONFLICT_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), currentUserId(), null, null,
                         "app already registered by another tenant", tenantId);
                 throw new IllegalStateException("该 Provider 应用已登记在其他租户，不能跨租户重复登记");
             }
@@ -513,7 +514,7 @@ public class SsoAuthService {
         var bindings = bindingMapper.selectList(
                 Wrappers.<SsoUserBinding>lambdaQuery()
                         .eq(SsoUserBinding::getUserId, userId)
-                        .eq(SsoUserBinding::getBindStatus, "ACTIVE"));
+                        .eq(SsoUserBinding::getBindStatus, SsoBindStatusEnum.ACTIVE.getCode()));
         List<SsoBindingItemDTO> view = bindings.stream()
                 .map(b -> {
                     SsoBindingItemDTO item = new SsoBindingItemDTO();
@@ -561,7 +562,7 @@ public class SsoAuthService {
         SsoProviderClient client = clients.get(provider);
         String authorizeUrl = client.buildAuthorizeUrl(
                 decryptConfig(config), callbackPolicy.resolveCallbackUrl(provider), state);
-        audit(provider, "AUTH_START", "SUCCESS", current == null ? null : current.getUserId(),
+        audit(provider, "AUTH_START", SysAuditLog.RESULT_SUCCESS, current == null ? null : current.getUserId(),
                 null, null, null);
         return new AuthorizeStart(authorizeUrl, state);
     }
@@ -682,7 +683,7 @@ public class SsoAuthService {
             SsoProviderClient client = clients.get(provider);
             String authorizeUrl = client.buildAuthorizeUrl(
                     decryptConfig(config), callbackPolicy.resolveCallbackUrl(provider), state);
-            audit(provider, "AUTH_START", "SUCCESS", null, null, null, "pre-login tenant=" + tenantId, tenantId);
+            audit(provider, "AUTH_START", SysAuditLog.RESULT_SUCCESS, null, null, null, "pre-login tenant=" + tenantId, tenantId);
             return new AuthorizeStart(authorizeUrl, state);
         }
     }
@@ -711,25 +712,25 @@ public class SsoAuthService {
 
     private CallbackResult doHandleCallback(String provider, String code, String state) {
         if (code == null || code.isBlank() || state == null || state.isBlank()) {
-            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "missing code/state");
+            auditDenial(provider, SsoAuditActionEnum.LOGIN_FAILED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null, "missing code/state");
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         String stateDigest = sha256(state);
         SsoAuthState stateRow = stateMapper.selectGlobalByState(stateDigest);
         if (stateRow == null) {
-            auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state not found");
+            auditDenial(provider, SsoAuditActionEnum.REPLAY_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null, "state not found");
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         if (stateRow.getConsumed() != null && stateRow.getConsumed() == 1) {
-            auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state replayed", stateRow.getTenantId());
+            auditDenial(provider, SsoAuditActionEnum.REPLAY_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null, "state replayed", stateRow.getTenantId());
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         if (stateRow.getExpireAt().isBefore(LocalDateTime.now())) {
-            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "state expired", stateRow.getTenantId());
+            auditDenial(provider, SsoAuditActionEnum.LOGIN_FAILED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null, "state expired", stateRow.getTenantId());
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         if (!provider.equals(stateRow.getProvider())) {
-            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider mismatch", stateRow.getTenantId());
+            auditDenial(provider, SsoAuditActionEnum.LOGIN_FAILED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null, "provider mismatch", stateRow.getTenantId());
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         // 回调可能发生在 state 签发后租户被停用/过期的窗口内；在消费 state
@@ -744,13 +745,13 @@ public class SsoAuthService {
                         .eq(SsoAuthState::getConsumed, 0)
                         .set(SsoAuthState::getConsumed, 1)));
         if (consumed == null || consumed != 1) {
-            auditDenial(provider, "REPLAY_REJECTED", "DENIED", null, null, null, "state concurrent replay", stateRow.getTenantId());
+            auditDenial(provider, SsoAuditActionEnum.REPLAY_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null, "state concurrent replay", stateRow.getTenantId());
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
 
         SsoProviderConfig config = loadEnabledConfigGlobal(provider, stateRow.getTenantId());
         if (config == null || config.getEnabled() != 1) {
-            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null, "provider disabled", stateRow.getTenantId());
+            auditDenial(provider, SsoAuditActionEnum.LOGIN_FAILED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null, "provider disabled", stateRow.getTenantId());
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
         // A4 配置生命周期绑定：在途授权按发起时刻配置指纹校验——appId/secret/
@@ -758,7 +759,7 @@ public class SsoAuthService {
         // 发起，不串用新旧配置（方向 §三）。
         String configDigest = configFingerprint(provider, config);
         if (stateRow.getConfigDigest() == null || !stateRow.getConfigDigest().equals(configDigest)) {
-            auditDenial(provider, "LOGIN_FAILED", "DENIED", null, null, null,
+            auditDenial(provider, SsoAuditActionEnum.LOGIN_FAILED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, null,
                     "config changed since authorize start", stateRow.getTenantId());
             throw new SsoRejectionException(SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED, SSO_LOGIN_FAILED_MSG);
         }
@@ -772,7 +773,7 @@ public class SsoAuthService {
             vendorEnterpriseId = er.enterpriseId();
             vendorMobile = er.mobile();
         } catch (SsoProviderClient.SsoProviderException e) {
-            auditDenial(provider, "LOGIN_FAILED", "FAILED", null, null, sha256(externalFingerprint(e)),
+            auditDenial(provider, SsoAuditActionEnum.LOGIN_FAILED.getCode(), SsoAuditResultEnum.FAILED.getCode(), null, null, sha256(externalFingerprint(e)),
                     "provider exchange failed", stateRow.getTenantId());
             throw e;
         }
@@ -783,7 +784,7 @@ public class SsoAuthService {
         if (configuredEnterprise != null && !configuredEnterprise.isBlank()) {
             if (vendorEnterpriseId == null || vendorEnterpriseId.isBlank()
                     || !configuredEnterprise.equals(vendorEnterpriseId)) {
-                auditDenial(provider, "LOGIN_FAILED", "ENTERPRISE_MISMATCH", null, null, null,
+                auditDenial(provider, SsoAuditActionEnum.LOGIN_FAILED.getCode(), SsoAuditResultEnum.ENTERPRISE_MISMATCH.getCode(), null, null, null,
                         "enterprise mismatch (vendor field vs configured)", stateRow.getTenantId());
                 throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT, SSO_LOGIN_FAILED_MSG);
             }
@@ -791,7 +792,7 @@ public class SsoAuthService {
         } else {
             scopeMarker = "personal";
         }
-        audit(provider, "EXCHANGE", "SUCCESS", null, null, sha256(externalId),
+        audit(provider, "EXCHANGE", SysAuditLog.RESULT_SUCCESS, null, null, sha256(externalId),
                 "scope=" + scopeMarker, stateRow.getTenantId());
         return admitCallback(provider, stateRow, externalId, vendorMobile, configDigest);
     }
@@ -819,26 +820,26 @@ public class SsoAuthService {
         if (binding != null) {
             LocalUserView local = loadLocalUser(binding.getUserId());
             if (local == null || !tenantId.equals(local.tenantId()) || !local.active()) {
-                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, binding.getUserId(),
+                auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, binding.getUserId(),
                         externalDigest, "bound local user unavailable", tenantId);
                 throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
             }
             String localPhone = SsoPhoneNormalizer.normalize(local.phone());
             if (normalizedPhone == null || localPhone == null || !localPhone.equals(normalizedPhone)) {
                 // 厂商或本地手机号变化：不自动迁移绑定，交管理员核对
-                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, binding.getUserId(),
+                auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, binding.getUserId(),
                         externalDigest, normalizedPhone == null ? "trusted phone missing"
                                 : "phone changed (vendor vs local)", tenantId);
                 throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
             }
-            audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, binding.getUserId(), externalDigest,
+            audit(provider, "LOGIN_SUCCESS", SysAuditLog.RESULT_SUCCESS, null, binding.getUserId(), externalDigest,
                     null, tenantId);
             return new CallbackResult(provider, tenantId, externalId, externalDigest,
                     binding.getUserId(), stateRow.getRedirectPath(), true, configDigest);
         }
         // 未绑定：按可信手机号在当前租户准入唯一有效用户
         if (normalizedPhone == null) {
-            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, null, externalDigest,
+            auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, externalDigest,
                     "trusted phone missing", tenantId);
             throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
         }
@@ -846,7 +847,7 @@ public class SsoAuthService {
         if (target == null) {
             // 零命中与多命中在审计中区分；对外同一结论
             long matches = countTenantUsersByPhone(tenantId, normalizedPhone);
-            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, null, externalDigest,
+            auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, null, externalDigest,
                     matches > 1 ? "ambiguous phone in tenant" : "no local user with trusted phone", tenantId);
             throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
         }
@@ -854,7 +855,7 @@ public class SsoAuthService {
         // 禁止仅凭手机号覆盖外部身份
         SsoUserBinding userBound = bindingMapper.selectActiveByUser(provider, tenantId, target.userId());
         if (userBound != null) {
-            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+            auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, target.userId(),
                     externalDigest, "user already bound to another external id", tenantId);
             throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
         }
@@ -865,10 +866,10 @@ public class SsoAuthService {
                     Wrappers.<SsoUserBinding>lambdaQuery()
                             .eq(SsoUserBinding::getProvider, provider)
                             .eq(SsoUserBinding::getExternalDigest, externalDigest)
-                            .eq(SsoUserBinding::getBindStatus, "ACTIVE")
+                            .eq(SsoUserBinding::getBindStatus, SsoBindStatusEnum.ACTIVE.getCode())
                             .ne(SsoUserBinding::getTenantId, tenantId));
             if (crossTenant != null && crossTenant > 0) {
-                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+                auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, target.userId(),
                         externalDigest, "external subject already bound in another tenant", tenantId);
                 throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
             }
@@ -884,11 +885,11 @@ public class SsoAuthService {
                             .eq(SsoUserBinding::getProvider, provider)
                             .eq(SsoUserBinding::getTenantId, tenantId)
                             .eq(SsoUserBinding::getExternalDigest, externalDigest)
-                            .eq(SsoUserBinding::getBindStatus, "UNBOUND")
+                            .eq(SsoUserBinding::getBindStatus, SsoBindStatusEnum.UNBOUND.getCode())
                             .orderByDesc(SsoUserBinding::getId)
                             .last("LIMIT 1"));
             if (dormantBySubject != null && !target.userId().equals(dormantBySubject.getUserId())) {
-                auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+                auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, target.userId(),
                         externalDigest, "dormant binding belongs to another local user", tenantId);
                 throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG);
             }
@@ -900,18 +901,18 @@ public class SsoAuthService {
         created.setExternalId(externalDigest);
         created.setExternalDigest(externalDigest);
         created.setUserId(target.userId());
-        created.setBindStatus("ACTIVE");
+        created.setBindStatus(SsoBindStatusEnum.ACTIVE.getCode());
         try {
             bindingMapper.insert(created);
         } catch (DuplicateKeyException e) {
             // 并发绑定以数据库全局唯一键为最终仲裁（fail closed，无会话签发）
-            auditDenial(provider, "ADMISSION_REJECTED", "DENIED", null, target.userId(),
+            auditDenial(provider, SsoAuditActionEnum.ADMISSION_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), null, target.userId(),
                     externalDigest, "binding unique constraint rejected", tenantId);
             throw new SsoRejectionException(SystemErrorKeys.SSO_ADMISSION_REJECTED, SSO_ADMISSION_REJECTED_MSG, e);
         }
-        audit(provider, "BIND", "SUCCESS", null, target.userId(), externalDigest,
+        audit(provider, "BIND", SysAuditLog.RESULT_SUCCESS, null, target.userId(), externalDigest,
                 "phone-admission auto-bind", tenantId);
-        audit(provider, "LOGIN_SUCCESS", "SUCCESS", null, target.userId(), externalDigest, null, tenantId);
+        audit(provider, "LOGIN_SUCCESS", SysAuditLog.RESULT_SUCCESS, null, target.userId(), externalDigest, null, tenantId);
         return new CallbackResult(provider, tenantId, externalId, externalDigest,
                 target.userId(), stateRow.getRedirectPath(), true, configDigest);
     }
@@ -981,14 +982,14 @@ public class SsoAuthService {
         String externalDigest = sha256(externalId);
         SsoUserBinding existingExternal = bindingMapper.selectActiveByExternal(provider, tenantId, externalDigest);
         if (existingExternal != null) {
-            auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), existingExternal.getUserId(),
+            auditDenial(provider, SsoAuditActionEnum.CONFLICT_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), current.getUserId(), existingExternal.getUserId(),
                     externalDigest, "external id already bound");
             throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
                     "该第三方账号已绑定到其他账号，请先在该账号解绑，或改用其他第三方账号");
         }
         SsoUserBinding existingUser = bindingMapper.selectActiveByUser(provider, tenantId, userId);
         if (existingUser != null) {
-            auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
+            auditDenial(provider, SsoAuditActionEnum.CONFLICT_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), current.getUserId(), userId,
                     externalDigest, "user already bound to another external id");
             throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
                     "当前账号已绑定其他第三方账号，请先解绑后再绑定新的");
@@ -1000,10 +1001,10 @@ public class SsoAuthService {
                     Wrappers.<SsoUserBinding>lambdaQuery()
                             .eq(SsoUserBinding::getProvider, provider)
                             .eq(SsoUserBinding::getExternalDigest, externalDigest)
-                            .eq(SsoUserBinding::getBindStatus, "ACTIVE")
+                            .eq(SsoUserBinding::getBindStatus, SsoBindStatusEnum.ACTIVE.getCode())
                             .ne(SsoUserBinding::getTenantId, tenantId));
             if (crossTenant != null && crossTenant > 0) {
-                auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
+                auditDenial(provider, SsoAuditActionEnum.CONFLICT_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), current.getUserId(), userId,
                         externalDigest, "external subject already bound in another tenant");
                 throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
                         "该第三方账号当前无法绑定，请联系管理员处理");
@@ -1015,18 +1016,18 @@ public class SsoAuthService {
         binding.setExternalId(externalDigest);
         binding.setExternalDigest(externalDigest);
         binding.setUserId(userId);
-        binding.setBindStatus("ACTIVE");
+        binding.setBindStatus(SsoBindStatusEnum.ACTIVE.getCode());
         try {
             bindingMapper.insert(binding);
         } catch (DuplicateKeyException e) {
             // 并发绑定以数据库全局唯一键为最终仲裁；把失败侧收敛为可判定的业务拒绝，
             // 避免控制器把唯一键竞争暴露成 500，也不创建角色/会话副作用。
-            auditDenial(provider, "CONFLICT_REJECTED", "DENIED", current.getUserId(), userId,
+            auditDenial(provider, SsoAuditActionEnum.CONFLICT_REJECTED.getCode(), SsoAuditResultEnum.DENIED.getCode(), current.getUserId(), userId,
                     externalDigest, "binding unique constraint rejected");
             throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_CONFLICT,
                     "该第三方账号当前无法绑定，请联系管理员处理", e);
         }
-        audit(provider, "BIND", "SUCCESS", current.getUserId(), userId, externalDigest, null);
+        audit(provider, "BIND", SysAuditLog.RESULT_SUCCESS, current.getUserId(), userId, externalDigest, null);
     }
 
     /**
@@ -1053,9 +1054,9 @@ public class SsoAuthService {
         if (binding == null) {
             throw new SsoRejectionException(SystemErrorKeys.SSO_BINDING_NOT_FOUND, "当前账号没有该第三方账号的绑定");
         }
-        binding.setBindStatus("UNBOUND");
+        binding.setBindStatus(SsoBindStatusEnum.UNBOUND.getCode());
         bindingMapper.updateById(binding);
-        audit(provider, "UNBIND", "SUCCESS", current.getUserId(), userId, binding.getExternalDigest(), null);
+        audit(provider, "UNBIND", SysAuditLog.RESULT_SUCCESS, current.getUserId(), userId, binding.getExternalDigest(), null);
         // 会话撤销（I5 §3.2）：清缓存 + token 摘要撤销标记（过滤器装载前检查）+ 撤 refresh
         if (loginUserCacheService != null) {
             loginUserCacheService.evict(userId);
@@ -1248,7 +1249,7 @@ public class SsoAuthService {
     /** 控制器层越权/候选拒绝审计入口（独立事务提交，不回随响应路径丢失）。 */
     public void auditRejection(String provider, String eventType, String detail) {
         LoginUser current = LoginUserHolder.get();
-        auditDenial(provider, eventType, "DENIED",
+        auditDenial(provider, eventType, SsoAuditResultEnum.DENIED.getCode(),
                 current == null ? null : current.getUserId(), null, null, detail,
                 current == null ? null : current.getTenantId());
     }

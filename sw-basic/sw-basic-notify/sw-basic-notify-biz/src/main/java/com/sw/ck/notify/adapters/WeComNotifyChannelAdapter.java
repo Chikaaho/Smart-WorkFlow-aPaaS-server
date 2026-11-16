@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 
 /**
  * 企业微信应用卡片生产渠道适配器（I6）。
@@ -49,7 +50,7 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
 
     @PostConstruct
     void initChannelProps() {
-        ChannelProps cp = props.getChannels().get("WECHAT_WORK");
+        ChannelProps cp = props.getChannels().get(NotifyChannel.WECHAT_WORK.name());
         this.corpId = cp.getCorpId();
         this.corpSecret = cp.getCorpSecret();
         this.agentId = cp.getAgentId();
@@ -63,10 +64,10 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
     @Override
     public Optional<NotifySendResult> send(NotifySendRequest request) {
         Optional<String> subject = targetResolver
-                .resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "WECHAT_WORK")
+                .resolveProviderSubject(request.getTenantId(), request.getRecipientId(), NotifyChannel.WECHAT_WORK.name())
                 .filter(value -> !value.isBlank());
         if (subject.isEmpty()) {
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("无法解析接收人企业微信主体，拒绝发送").build());
         }
         String userid = subject.orElseThrow();
@@ -88,16 +89,16 @@ public class WeComNotifyChannelAdapter implements NotifyChannelAdapter {
                 JsonNode root = mapper.readTree(resp.body());
                 int errCode = root.path("errcode").asInt(-1);
                 if (errCode == 0) {
-                    return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
+                    return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.SUCCESS.getCode())
                             .externalMessageId("wecom-" + System.nanoTime())
                             .build());
                 }
-                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                         .failureReason("企业微信发送失败: errcode=" + errCode)
                         .build());
             }
         } catch (Exception e) {
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("企业微信发送异常: " + e.getClass().getSimpleName()).build());
         }
     }

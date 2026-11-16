@@ -4,11 +4,11 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
 import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
+import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
@@ -21,9 +21,10 @@ import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
+import com.sw.ck.agent.orchestration.AgentFailureSummarizer;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
-import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
+import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
@@ -33,15 +34,9 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.common.service.BaseServiceImpl;
-import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
-import com.sw.ck.agent.orchestration.AgentFailureSummarizer;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -58,6 +53,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Agent 图执行 Service 实现（M07-F02 Step8 图解释执行引擎第一版 + Step12 执行历史
@@ -246,11 +245,11 @@ public class AgentGraphExecutionServiceImpl
             String output = interpreter.run(debugGraph,
                     inputs == null ? Map.of() : inputs);
             resp.setSuccess(true);
-            resp.setStatus("SUCCESS");
+            resp.setStatus(STATUS_SUCCESS);
             resp.setOutput(output);
         } catch (RuntimeException failure) {
             resp.setSuccess(false);
-            resp.setStatus("FAILED");
+            resp.setStatus(STATUS_FAILED);
             resp.setErrorMessage(summarizeError(failure));
         }
         resp.setLatencyMs(System.currentTimeMillis() - start);
@@ -568,7 +567,7 @@ public class AgentGraphExecutionServiceImpl
             long latency = System.currentTimeMillis() - start;
             boolean cancelled = Thread.currentThread().isInterrupted();
             childExec.setStatus(cancelled ? STATUS_CANCELLED : STATUS_FAILED);
-            childExec.setErrorCategory(cancelled ? "CANCELLED" : classifyError(failure));
+            childExec.setErrorCategory(cancelled ? STATUS_CANCELLED : classifyError(failure));
             childExec.setErrorMessage(cancelled ? "父执行取消，子执行一并取消" : summarizeError(failure));
             childExec.setLatencyMs(latency);
             executionMapper.updateById(childExec);
@@ -808,7 +807,7 @@ public class AgentGraphExecutionServiceImpl
         dto.setOutput(node.getOutputText());
         dto.setStartTime(node.getStartTime());
         dto.setEndTime(node.getEndTime());
-        dto.setStatus(node.getStatus() != null ? node.getStatus() : "SUCCESS");
+        dto.setStatus(node.getStatus() != null ? node.getStatus() : STATUS_SUCCESS);
         dto.setErrorMessage(node.getErrorMessage());
         return dto;
     }

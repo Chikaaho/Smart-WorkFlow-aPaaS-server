@@ -1,9 +1,10 @@
 package com.sw.ck.bpm.process.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import lombok.Data;
 
 import java.util.List;
+
+import lombok.Data;
 
 /**
  * 统一详情权限关系：当前用户与 formKey+businessKey 对应实例的关系。
@@ -15,6 +16,15 @@ import java.util.List;
 @Data
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class InstanceRelationDTO {
+
+    /** 关系值：无关系；响应仅含 formHasProcess，其余字段按契约省略。 */
+    public static final String RELATION_NONE = "NONE";
+
+    /** 关系值：当前用户在该实例上有待办任务。 */
+    public static final String RELATION_APPROVER = "APPROVER";
+
+    /** 关系值：当前用户为发起人或历史任务参与者。 */
+    public static final String RELATION_PARTICIPANT = "PARTICIPANT";
 
     private boolean formHasProcess;
 

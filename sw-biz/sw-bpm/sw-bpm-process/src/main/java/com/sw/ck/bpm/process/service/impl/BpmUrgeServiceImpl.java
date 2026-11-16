@@ -37,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.api.common.BpmNotifyLinkTypeEnum;
 /** 催办服务实现。 */
 @Service
 @Log4j2
@@ -226,7 +227,7 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
                         .tenantId(loginUser.getTenantId())
                         .eventType("TASK_URGE")
                         .occurrenceNo(urgeOccurrence())
-                        .linkType("WF_PROCESS")
+                        .linkType(BpmNotifyLinkTypeEnum.WF_PROCESS.getCode())
                         .linkId(instance.getProcessInstanceId())
                         .build())
                         .orElseThrow(() -> new IllegalStateException(

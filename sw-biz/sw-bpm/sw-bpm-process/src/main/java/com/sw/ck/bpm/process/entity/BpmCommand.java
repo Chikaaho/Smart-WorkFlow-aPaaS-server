@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDateTime;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 
 /**
  * 流程业务命令持久受理记录（{@code sw_bpm_command}）。

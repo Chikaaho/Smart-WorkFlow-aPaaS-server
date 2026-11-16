@@ -47,6 +47,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.system.sso.SsoAuditActionEnum;
 /**
  * 第三方 SSO 控制器（I5）。
  * <p>
@@ -205,7 +206,7 @@ public class SsoAuthController {
         // （配置变更期间不以旧配置建立会话；重新发起授权即可恢复）
         String currentDigest = ssoAuthService.currentConfigDigestFor(session.provider(), session.tenantId());
         if (currentDigest == null || !currentDigest.equals(session.configDigest())) {
-            ssoAuthService.auditRejection(session.provider(), "LOGIN_FAILED",
+            ssoAuthService.auditRejection(session.provider(), SsoAuditActionEnum.LOGIN_FAILED.getCode(),
                     currentDigest == null ? "provider disabled at ticket exchange"
                             : "config changed at ticket exchange");
             return R.failResolved(401, SystemErrorKeys.SSO_LOGIN_NOT_COMPLETED,

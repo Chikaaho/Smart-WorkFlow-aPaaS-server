@@ -1,8 +1,7 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.graalvm.polyglot.Engine;
-
+import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 
 import java.io.BufferedReader;
@@ -13,6 +12,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import org.graalvm.polyglot.Engine;
 
 /**
  * P64 判断脚本专职 worker 进程入口（ADR-P64-001 §3 隔离修订）。
@@ -92,7 +93,7 @@ public final class ScriptWorkerMain {
             } catch (Exception e) {
                 Map<String, Object> out = new LinkedHashMap<>();
                 out.put("id", "unknown");
-                out.put("kind", "SCRIPT_ERROR");
+                out.put("kind", BpmScriptEvaluatePort.ScriptOutcome.KIND_SCRIPT_ERROR);
                 out.put("errorMessage", "worker 请求处理失败: " + e.getMessage());
                 response = mapper.writeValueAsString(out);
             }

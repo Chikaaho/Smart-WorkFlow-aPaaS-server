@@ -27,6 +27,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.entity.BpmResourcePolicyStatusEnum;
+import com.sw.ck.bpm.process.entity.ResourceScopeEnum;
 /**
  * 资源准入与占用会计（P62 资源保障）。
  * <p>
@@ -139,7 +141,7 @@ public class ResourceAdmissionService {
             return ticket;
         }
         auditReject(tenantId, policy, resourceClass, units,
-                rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0],
+                rejectScope[0] == null ? ResourceScopeEnum.QUOTA_SEGMENT.getCode() : rejectScope[0],
                 "适用额度：全局 " + policy.getGlobalMaxOutstanding() + "、每租户 "
                         + policy.getTenantMaxOutstanding() + " 工作单位，当前已满，请稍后重试");
         throw new BaseException(BpmErrorCode.RESOURCE_QUOTA_EXCEEDED);
@@ -162,14 +164,14 @@ public class ResourceAdmissionService {
                 // 借用只在段空闲时发生：对方保留段正被在途事务持有（非空闲）→ 放弃借用，不等待。
                 // 等待会与对方类别的在途受理互等成环（RA02a1），并让保留通道被借用请求排队挤占。
                 if (rejectScope[0] == null) {
-                    rejectScope[0] = "QUOTA_SEGMENT";
+                    rejectScope[0] = ResourceScopeEnum.QUOTA_SEGMENT.getCode();
                 }
                 continue;
             }
             long segmentCap = segmentCapacity(policy, segment);
             if (usageMapper.incrementWithinCap("GLOBAL", 0, segment.getCode(), units, segmentCap) != 1) {
                 if (rejectScope[0] == null) {
-                    rejectScope[0] = "QUOTA_SEGMENT";
+                    rejectScope[0] = ResourceScopeEnum.QUOTA_SEGMENT.getCode();
                 }
                 continue;
             }
@@ -294,7 +296,7 @@ public class ResourceAdmissionService {
         return policyMapper.selectOne(Wrappers.<BpmResourcePolicy>lambdaQuery()
                 .eq(BpmResourcePolicy::getTenantId, 0L)
                 .eq(BpmResourcePolicy::getEnabled, true)
-                .eq(BpmResourcePolicy::getStatus, "ACTIVE")
+                .eq(BpmResourcePolicy::getStatus, BpmResourcePolicyStatusEnum.ACTIVE.getCode())
                 .orderByDesc(BpmResourcePolicy::getPolicyVersion)
                 .last("LIMIT 1"));
     }

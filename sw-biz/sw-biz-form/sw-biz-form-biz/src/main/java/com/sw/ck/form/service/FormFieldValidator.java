@@ -1,13 +1,10 @@
 package com.sw.ck.form.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.re2j.Pattern;
-
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.FieldType;
@@ -15,14 +12,15 @@ import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.system.api.dict.DictFacade;
 
-import org.springframework.stereotype.Component;
-
 import java.math.BigDecimal;
 import java.time.temporal.Temporal;
 import java.util.*;
 import java.util.Date;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 /**
  * 表单字段校验共享工具。
  * <p>
@@ -85,7 +83,7 @@ public class FormFieldValidator {
                 if (nameNode == null || nameNode.asText().isBlank()) continue;
 
                 String name = nameNode.asText();
-                String type = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
+                String type = fieldNode.has("type") ? fieldNode.get("type").asText() : FieldType.TEXT.name();
                 boolean required = fieldNode.has("required") && fieldNode.get("required").asBoolean();
                 Integer length = integerValue(fieldNode.get("length"));
                 Integer minLength = integerValue(fieldNode.get("minLength"));
@@ -112,7 +110,7 @@ public class FormFieldValidator {
                         for (JsonNode sub : subArray) {
                             String subName = sub.has("name") ? sub.get("name").asText() : null;
                             if (subName == null) continue;
-                            String subType = sub.has("type") ? sub.get("type").asText() : "TEXT";
+                            String subType = sub.has("type") ? sub.get("type").asText() : FieldType.TEXT.name();
                             boolean subRequired = sub.has("required") && sub.get("required").asBoolean();
                             Integer subLength = integerValue(sub.get("length"));
                             Integer subMinLength = integerValue(sub.get("minLength"));
@@ -363,7 +361,7 @@ public class FormFieldValidator {
                                 "字段「" + def.displayName() + "」需要 HH:mm 或 HH:mm:ss 时间格式");
                     }
                 }
-                case "USER", "DEPT" -> {
+                case FormAppScopeTypes.USER, FormAppScopeTypes.DEPT -> {
                     // 数字型对象 ID；存在性/启用/租户校验由 FormFieldEnrichmentService 经 Facade 执行
                     if (def.multiple()) {
                         // P63 多选：每个元素都是稳定对象 ID（Number 或数字串）

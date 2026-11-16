@@ -1,18 +1,13 @@
 package com.sw.ck.bpm.engine.listener;
 
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.bpm.api.result.MutationOutcome;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.common.exception.BaseException;
-
-import org.flowable.engine.RuntimeService;
-import org.flowable.task.service.delegate.DelegateTask;
-import org.flowable.task.service.delegate.TaskListener;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.List;
@@ -21,6 +16,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.flowable.engine.RuntimeService;
+import org.flowable.task.service.delegate.DelegateTask;
+import org.flowable.task.service.delegate.TaskListener;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 /**
  * 动态并行分支任务监听器（I4 §3.1）：分支创建冻结快照、完成记票并回写分支动作。
  * 计数权威复用 I3 会签唯一键端口（ConsensusVotePort），保证并发/重复请求只结算一次。
@@ -51,7 +53,7 @@ public class DynamicBranchTaskListener implements TaskListener {
                 .orElseThrow(() -> new IllegalStateException(
                         "ParticipantSnapshotRecorder#record 契约恒 present，empty 属契约违约"));
             }
-            recordBranchAction(task, leaderId, "START", null);
+            recordBranchAction(task, leaderId, GraphElement.TYPE_START, null);
             return;
         }
         if ("complete".equals(task.getEventName()) && runtimeService != null) {
@@ -59,7 +61,7 @@ public class DynamicBranchTaskListener implements TaskListener {
             String outcome = rawOutcome == null
                     || rawOutcome.isBlank()
                     || "DISAPPROVED".equalsIgnoreCase(rawOutcome)
-                    || "REJECTED".equalsIgnoreCase(rawOutcome) ? "DISAPPROVE" : "APPROVE";
+                    || BatchItemStatusEnum.REJECTED.getCode().equalsIgnoreCase(rawOutcome) ? "DISAPPROVE" : "APPROVE";
             String lockKey = task.getProcessInstanceId() + ":" + task.getTaskDefinitionKey();
             synchronized (LOCKS.computeIfAbsent(lockKey, key -> new Object())) {
                 String actionKey = "consensusAction:" + task.getId();

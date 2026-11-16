@@ -38,6 +38,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotTriggerActionTypeEnum;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
 /**
  * Agent 图执行终态承接（0.2.4，失败即升级）。
  * <p>
@@ -76,7 +78,7 @@ public class AgentExecutionOutcomeListener {
                         .eq(IotProcessTrigger::getAgentExecutionId, event.getExecutionId())
                         .eq(IotProcessTrigger::getTenantId, event.getTenantId())
                         .last("LIMIT 1"));
-        if (trigger == null || !"AGENT".equals(trigger.getActionType())) {
+        if (trigger == null || !IotTriggerActionTypeEnum.AGENT.getCode().equals(trigger.getActionType())) {
             // 非桥接触发的执行（页面手动执行等）不承接
             return;
         }
@@ -99,7 +101,7 @@ public class AgentExecutionOutcomeListener {
         switch (event.getStatus() == null ? "" : event.getStatus()) {
             case "SUCCESS" -> markTerminal(trigger, "SUCCESS", null);
             case "FAILED" -> {
-                markTerminal(trigger, "FAILED", event.getErrorCategory()
+                markTerminal(trigger, IotTriggerStatusEnum.FAILED.getCode(), event.getErrorCategory()
                         + (event.getErrorMessage() == null ? "" : ": " + event.getErrorMessage()));
                 escalateIfConfigured(event, trigger);
             }
@@ -119,7 +121,7 @@ public class AgentExecutionOutcomeListener {
         triggerMapper.update(patch,
                 Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .eq(IotProcessTrigger::getId, trigger.getId())
-                        .in(IotProcessTrigger::getStatus, "PENDING", "PROCESSING"));
+                        .in(IotProcessTrigger::getStatus, IotTriggerStatusEnum.PENDING.getCode(), IotTriggerStatusEnum.PROCESSING.getCode()));
     }
 
     /**
@@ -171,7 +173,7 @@ public class AgentExecutionOutcomeListener {
             escalation.setStatus("PENDING");
             escalation.setFormSnapshot(JSON.toJSONString(formData));
             escalation.setTriggerTime(LocalDateTime.now());
-            escalation.setActionType("FLOW");
+            escalation.setActionType(IotTriggerActionTypeEnum.FLOW.getCode());
             escalation.setProcessTemplateKey(effectiveTemplateKey);
             escalation.setTriggerSource("AGENT_FAIL");
             escalation.setConfiguredBy(rule.getCreateBy());
@@ -192,7 +194,7 @@ public class AgentExecutionOutcomeListener {
             flowEvent.setIdempotentKey(idempotentKey);
             flowEvent.setTriggerSource("AGENT_FAIL");
             flowEvent.setConfiguredBy(rule.getCreateBy());
-            flowEvent.setActionType("FLOW");
+            flowEvent.setActionType(IotTriggerActionTypeEnum.FLOW.getCode());
             flowEvent.setFormData(formData);
             Map<String, Object> context = new LinkedHashMap<>();
             context.put("ruleName", rule.getName());

@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Mapper;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import com.sw.ck.iot.entity.IotReservationStatusEnum;
 
 /**
  * IoT 命令预约 Mapper（P63）。
@@ -24,7 +25,7 @@ public interface IotCommandReservationMapper extends BaseMapperX<IotCommandReser
 
     default List<IotCommandReservation> selectDuePending(LocalDateTime nowExclusive, LocalDateTime windowEnd) {
         return selectList(new LambdaQueryWrapper<IotCommandReservation>()
-                .eq(IotCommandReservation::getStatus, "PENDING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                 .gt(IotCommandReservation::getDueAtUtc, nowExclusive)
                 .le(IotCommandReservation::getDueAtUtc, windowEnd)
                 .eq(IotCommandReservation::getDeleted, 0)
@@ -34,7 +35,7 @@ public interface IotCommandReservationMapper extends BaseMapperX<IotCommandReser
 
     default List<IotCommandReservation> selectExpiredPending(LocalDateTime windowEnd) {
         return selectList(new LambdaQueryWrapper<IotCommandReservation>()
-                .eq(IotCommandReservation::getStatus, "PENDING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                 .le(IotCommandReservation::getDueAtUtc, windowEnd)
                 .eq(IotCommandReservation::getDeleted, 0)
                 .orderByAsc(IotCommandReservation::getDueAtUtc)

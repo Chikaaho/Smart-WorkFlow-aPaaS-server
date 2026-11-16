@@ -1,4 +1,4 @@
-package com.sw.ck.bpm.process.entity;
+package com.sw.ck.bpm.api.common;
 
 /**
  * 命令受理状态机：PENDING → PROCESSING → COMPLETED / FAILED；PENDING → EXPIRED。

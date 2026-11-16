@@ -31,6 +31,7 @@ import java.util.ArrayList;
 
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
+import com.sw.ck.bpm.api.node.ConsensusModeEnum;
 
 /** 会签节点：并行多实例 + 统一参与人集合 + 受控结算函数。 */
 @Component
@@ -117,17 +118,17 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
         // mode 缺省时 translate 按 ALL 结算（getOrDefault），校验只拒绝显式非法值；
         // 不可变 List.contains(null) 会 NPE，必须先判空。
         String mode = config.get("mode") == null ? null : String.valueOf(config.get("mode"));
-        if (mode != null && !List.of("COUNT", "RATIO", "ALL", "ANY", "VETO").contains(mode)) {
+        if (mode != null && !List.of(ConsensusModeEnum.COUNT.getCode(), ConsensusModeEnum.RATIO.getCode(), ConsensusModeEnum.ALL.getCode(), ConsensusModeEnum.ANY.getCode(), ConsensusModeEnum.VETO.getCode()).contains(mode)) {
             return Optional.of(List.of(error(node, "会签方式不合法")));
         }
-        if ("RATIO".equals(mode)) {
+        if (ConsensusModeEnum.RATIO.getCode().equals(mode)) {
             try {
                 int ratio = Integer.parseInt(String.valueOf(config.get("ratio")));
                 if (ratio < 1 || ratio > 100) {
                     return Optional.of(List.of(error(node, "会签比例必须为 1-100")));
                 }
             } catch (Exception e) { return Optional.of(List.of(error(node, "会签比例必须为整数"))); }
-        } else if ("COUNT".equals(mode)) {
+        } else if (ConsensusModeEnum.COUNT.getCode().equals(mode)) {
             // 人数模式：必须是大于 0 的整数；达到或超过实际审批人数时按全部通过结算。
             try {
                 int count = Integer.parseInt(String.valueOf(config.get("ratio")));
@@ -161,7 +162,7 @@ public class ConsensusNodeTranslator implements NodeTypeTranslator {
         collectionHandler.setImplementation(collectionExpression);
         loop.setHandler(collectionHandler);
         loop.setElementVariable("participantId");
-        String mode = String.valueOf(config.getOrDefault("mode", "ALL"));
+        String mode = String.valueOf(config.getOrDefault("mode", ConsensusModeEnum.ALL.getCode()));
         String ratio = String.valueOf(config.getOrDefault("ratio", "100"));
         loop.setCompletionCondition("${consensusCompletionEvaluator.shouldComplete(execution, '"
                 + mode + "', " + ratio + ")}");

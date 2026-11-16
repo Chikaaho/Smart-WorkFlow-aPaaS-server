@@ -1,19 +1,19 @@
 package com.sw.ck.bpm.process.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.bpm.process.entity.ResourceClassEnum;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
-
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 
 import java.time.LocalDateTime;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 资源占用释放服务（P62 资源保障）。
  * <p>
@@ -121,7 +121,7 @@ public class ResourceReleaseService {
     }
 
     private boolean isLightProcessTargetPending(BpmCommand command) {
-        return "PROD".equals(command.getResourceClass())
+        return ResourceClassEnum.PROD.getCode().equals(command.getResourceClass())
                 && COMPLETION_POINT_TARGET_DONE.equals(command.getCompletionPoint());
     }
 }

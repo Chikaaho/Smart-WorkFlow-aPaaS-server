@@ -1,11 +1,9 @@
 package com.sw.ck.bpm.process.controller;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.DraftStatusEnum;
@@ -21,6 +19,12 @@ import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
 
+import java.util.List;
+import java.util.Map;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,11 +35,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-import java.util.Map;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * 我的草稿控制器（业务发起草稿，与表单设计/流程定义草稿无关）。
  * <p>
@@ -176,7 +175,7 @@ public class BpmDraftController {
     public R<CommandAcceptRespDTO> submit(@PathVariable Long id,
                                           @RequestParam String channel) {
         boolean p0 = "P0".equalsIgnoreCase(channel);
-        if (!p0 && !"NORMAL".equalsIgnoreCase(channel)) {
+        if (!p0 && !CommandChannelEnum.NORMAL.getCode().equalsIgnoreCase(channel)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "未知通道: " + channel);
         }
         if (p0 && !permissionService.hasPermi("workflow:p0:dispatch")) {
@@ -193,8 +192,8 @@ public class BpmDraftController {
         // 不把尚未执行的启动倒算成同步返回时已完成。
         CommandSyncWaiter.WaitResult wait = syncWaiter.waitSyncResult(accepted.getCommandId());
         accepted.setStatus(switch (wait.outcome()) {
-            case COMPLETED -> "COMPLETED";
-            case FAILED -> "FAILED";
+            case COMPLETED -> BatchStatusEnum.COMPLETED.getCode();
+            case FAILED -> DraftStatusEnum.FAILED.getCode();
             case TIMEOUT -> CommandAcceptRespDTO.STATUS_ACCEPTED;
         });
         return R.ok(accepted);

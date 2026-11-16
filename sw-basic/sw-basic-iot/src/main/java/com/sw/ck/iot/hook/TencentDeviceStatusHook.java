@@ -22,6 +22,7 @@ import java.util.Base64;
 import java.util.Map;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotDeviceStatusEnum;
 /**
  * 腾讯云设备状态事件 Hook（对齐 Demo 实现）。
  * <p>
@@ -134,7 +135,7 @@ public class TencentDeviceStatusHook {
         }
 
         // 更新设备在线状态
-        device.setStatus("ONLINE");
+        device.setStatus(IotDeviceStatusEnum.ONLINE.getCode());
         device.setTencentStatus("online");
         device.setLastOnlineTime(LocalDateTime.now());
         iotDeviceService.updateById(device);

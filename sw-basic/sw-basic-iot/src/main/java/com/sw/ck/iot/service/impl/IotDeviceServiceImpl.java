@@ -1,14 +1,11 @@
 package com.sw.ck.iot.service.impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.service.BaseServiceImpl;
 import com.sw.ck.common.trace.DiagnosticText;
@@ -22,12 +19,9 @@ import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.mapper.IotProductMapper;
 import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.service.IotDeviceService;
+import com.sw.ck.iot.service.MessageIngestService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.dao.DuplicateKeyException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -35,6 +29,15 @@ import java.util.Set;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.iot.entity.IotCommandSemanticModeEnum;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
+import com.sw.ck.iot.entity.IotDeviceStatusEnum;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
 /**
  * IoT 设备控制服务实现。
  * <p>
@@ -74,7 +77,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
                     + ", deviceName=" + device.getDeviceName());
         }
         if (device.getStatus() == null || device.getStatus().isBlank()) {
-            device.setStatus("OFFLINE");
+            device.setStatus(IotDeviceStatusEnum.OFFLINE.getCode());
         }
         if (device.getTencentStatus() == null || device.getTencentStatus().isBlank()) {
             device.setTencentStatus("offline");
@@ -136,7 +139,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
             if (device == null || !tenantId.equals(device.getTenantId())
                     || Integer.valueOf(1).equals(device.getDeleted())
                     // P63 G03a：resolve=权威解析可执行目标——同租户也须发布态+流程接入授权
-                    || !"PUBLISHED".equals(device.getManageStatus())
+                    || !IotPublishStatusEnum.PUBLISHED.getCode().equals(device.getManageStatus())
                     || device.getProcessAccessEnabled() == null || device.getProcessAccessEnabled() != 1) {
                 return null;
             }
@@ -158,7 +161,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
                             .eq(IotDevice::getTenantId, tenantId)
                             .eq(IotDevice::getDeleted, 0)
                             // P63 G03a：到点权威重核执行授权（发布态+流程接入），拒绝可查
-                            .eq(IotDevice::getManageStatus, "PUBLISHED")
+                            .eq(IotDevice::getManageStatus, IotPublishStatusEnum.PUBLISHED.getCode())
                             .eq(IotDevice::getProcessAccessEnabled, 1)
                             .last("LIMIT 1"));
             if (device == null || !tenantId.equals(device.getTenantId())) {
@@ -217,7 +220,7 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
             throw new BaseException(400, "commandKey 不能为空");
         }
         if (commandType == null || commandType.isBlank()) {
-            commandType = "PROPERTY";
+            commandType = MessageIngestService.TYPE_PROPERTY;
         }
 
         IotDeviceCommand command = new IotDeviceCommand();
@@ -227,9 +230,9 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         command.setDeviceKey(device.getDeviceKey());
         command.setCommandType(commandType);
         command.setCommandKey(commandKey);
-        command.setSemanticMode("DEFERRED");
+        command.setSemanticMode(IotCommandSemanticModeEnum.DEFERRED.getCode());
         command.setPayload(payload);
-        command.setStatus("QUEUED");
+        command.setStatus(IotCommandStatusEnum.QUEUED.getCode());
         command.setIdempotentKey(idempotentKey);
         command.setExpiryTime(LocalDateTime.now().plusHours(24));
         command.setRetryCount(0);
@@ -265,12 +268,12 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
         // P62 分级执行 S4 安全合同（G4）：本端点是运维回写原通道，不是独立核实通道——
         // 结果未知（UNKNOWN）只能经独立授权人工核实（iot:command:verify + 可信依据）收敛；
         // 已确定结果（SUCCESS/FAILED/EXPIRED）不得被任何入口覆盖（冲突走受控回执留审计）。
-        if ("UNKNOWN".equals(command.getStatus())) {
+        if (IotCommandStatusEnum.UNKNOWN.getCode().equals(command.getStatus())) {
             throw new BaseException(409, "结果未知的命令须经独立授权人工核实通道收敛，"
                     + "不接受运维回写（缺少 iot:command:verify 时无法补依据）");
         }
-        if ("SUCCESS".equals(command.getStatus()) || "FAILED".equals(command.getStatus())
-                || "EXPIRED".equals(command.getStatus())) {
+        if (IotCommandStatusEnum.SUCCESS.getCode().equals(command.getStatus()) || IotCommandStatusEnum.FAILED.getCode().equals(command.getStatus())
+                || IotCommandStatusEnum.EXPIRED.getCode().equals(command.getStatus())) {
             throw new BaseException(409, "命令已是确定终态（" + command.getStatus()
                     + "），不接受结果覆盖");
         }
@@ -343,9 +346,9 @@ public class IotDeviceServiceImpl extends BaseServiceImpl<IotDeviceMapper, IotDe
                 || !tenantId.equals(model.getTenantId())) {
             throw new BaseException(409, "已发布物模型不存在或未处于发布态");
         }
-        String effectiveType = commandType == null || commandType.isBlank() ? "PROPERTY" : commandType;
+        String effectiveType = commandType == null || commandType.isBlank() ? MessageIngestService.TYPE_PROPERTY : commandType;
         String arrayKey = switch (effectiveType) {
-            case "PROPERTY" -> "properties";
+            case MessageIngestService.TYPE_PROPERTY -> "properties";
             case "ACTION" -> "actions";
             default -> throw new BaseException(400, "未知功能类型: " + effectiveType);
         };

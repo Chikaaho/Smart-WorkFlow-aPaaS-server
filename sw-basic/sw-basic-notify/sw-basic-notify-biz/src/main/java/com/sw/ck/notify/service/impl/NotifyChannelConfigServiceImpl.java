@@ -55,7 +55,7 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
             tenantRows.add(row.getChannel());
             NotifyChannelStatusDTO dto = new NotifyChannelStatusDTO();
             dto.setChannel(row.getChannel());
-            dto.setSystemConfigured(live.contains(row.getChannel()) || "IN_APP".equalsIgnoreCase(row.getChannel()));
+            dto.setSystemConfigured(live.contains(row.getChannel()) || NotifyChannel.IN_APP.name().equalsIgnoreCase(row.getChannel()));
             dto.setTenantEnabled(Boolean.TRUE.equals(row.getEnabled()));
             dto.setSenderDisplay(row.getSenderDisplay());
             dto.setConfigSummary(row.getConfigSummary());
@@ -113,7 +113,7 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
         if (channel == null) {
             return false;
         }
-        if ("IN_APP".equalsIgnoreCase(channel)) {
+        if (NotifyChannel.IN_APP.name().equalsIgnoreCase(channel)) {
             return true;
         }
         NotifyChannelConfig row = configMapper.selectOne(Wrappers.<NotifyChannelConfig>lambdaQuery()
@@ -169,7 +169,7 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
     }
 
     private boolean tenantChannelAvailable(String value) {
-        if ("IN_APP".equalsIgnoreCase(value)) {
+        if (NotifyChannel.IN_APP.name().equalsIgnoreCase(value)) {
             return true;
         }
         for (NotifyChannelAdapter a : adapters) {

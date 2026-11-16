@@ -1,20 +1,23 @@
 package com.sw.ck.iot.util;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.service.IotDeviceService;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
+import com.sw.ck.iot.service.MessageIngestService;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+import com.sw.ck.iot.entity.IotCommandSemanticModeEnum;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * 在线确认类控制工具。
  * <p>
@@ -89,14 +92,14 @@ public class OnlineConfirmControlUtil {
         command.setProductId(productId);
         command.setDeviceName(deviceName);
         command.setDeviceKey(device != null ? device.getDeviceKey() : null);
-        command.setCommandType("PROPERTY");
+        command.setCommandType(MessageIngestService.TYPE_PROPERTY);
         command.setCommandKey("control_property_online");
-        command.setSemanticMode("ONLINE_CONFIRM");
+        command.setSemanticMode(IotCommandSemanticModeEnum.ONLINE_CONFIRM.getCode());
         command.setPayload(propertyJson);
         command.setIdempotentKey(UUID.randomUUID().toString());
         command.setExpiryTime(LocalDateTime.now().plusMinutes(5));
         command.setRetryCount(0);
-        command.setStatus("SENT");
+        command.setStatus(IotCommandStatusEnum.SENT.getCode());
         command.setTencentRequestId(result.requestId());
 
         return command;
@@ -138,12 +141,12 @@ public class OnlineConfirmControlUtil {
         command.setDeviceKey(device != null ? device.getDeviceKey() : null);
         command.setCommandType("ACTION");
         command.setCommandKey(actionId);
-        command.setSemanticMode("ONLINE_CONFIRM");
+        command.setSemanticMode(IotCommandSemanticModeEnum.ONLINE_CONFIRM.getCode());
         command.setPayload(inputJson);
         command.setIdempotentKey(UUID.randomUUID().toString());
         command.setExpiryTime(LocalDateTime.now().plusMinutes(5));
         command.setRetryCount(0);
-        command.setStatus("ACKED");
+        command.setStatus(IotCommandStatusEnum.ACKED.getCode());
         command.setTencentRequestId(result.requestId());
         command.setClientToken(result.clientToken());
         command.setDeviceOutput(result.deviceOutput());

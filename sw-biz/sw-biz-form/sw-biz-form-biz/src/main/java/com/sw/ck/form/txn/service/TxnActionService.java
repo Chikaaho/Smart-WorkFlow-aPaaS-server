@@ -33,6 +33,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.form.dynamic.FieldType;
 /**
  * 事务动作管理：草稿/发布校验/版本冻结/启停。
  * <p>发布校验产出结构化错误（字段路径 + 可读原因），非法配置被拒绝；合法配置发布后冻结为不可变版本。</p>
@@ -380,7 +381,7 @@ public class TxnActionService {
                 if (def == null) {
                     errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                             "业务键字段不在表单定义中：" + k));
-                } else if ("TABLE".equalsIgnoreCase(def.type())) {
+                } else if (FieldType.TABLE.name().equalsIgnoreCase(def.type())) {
                     errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                             "业务键不能为表格类型：" + k));
                 }
@@ -399,7 +400,7 @@ public class TxnActionService {
         if (def == null) {
             errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                     "字段不在表单定义中：" + field));
-        } else if (!"NUMBER".equalsIgnoreCase(def.type())) {
+        } else if (!FieldType.NUMBER.name().equalsIgnoreCase(def.type())) {
             errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                     "字段必须为数字类型：" + field));
         }

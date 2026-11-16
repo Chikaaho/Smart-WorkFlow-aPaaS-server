@@ -5,7 +5,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
@@ -19,17 +18,11 @@ import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,6 +33,13 @@ import java.util.*;
 import java.util.Date;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 表单数据导入导出服务。
  *
@@ -172,7 +172,7 @@ public class FormImportExportService {
                 String name = fieldNode.has("name") ? fieldNode.get("name").asText() : null;
                 if (name == null || name.isBlank()) continue;
 
-                String typeStr = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
+                String typeStr = fieldNode.has("type") ? fieldNode.get("type").asText() : FieldType.TEXT.name();
                 String label = fieldNode.has("label") ? fieldNode.get("label").asText() : name;
 
                 FieldType fieldType;
@@ -193,7 +193,7 @@ public class FormImportExportService {
                         for (JsonNode sub : subArray) {
                             String subName = sub.has("name") ? sub.get("name").asText() : null;
                             if (subName == null || subName.isBlank()) continue;
-                            String subTypeStr = sub.has("type") ? sub.get("type").asText() : "TEXT";
+                            String subTypeStr = sub.has("type") ? sub.get("type").asText() : FieldType.TEXT.name();
                             String subLabel = sub.has("label") ? sub.get("label").asText() : subName;
                             FieldType subType;
                             try {
@@ -845,7 +845,7 @@ public class FormImportExportService {
             JsonNode fieldsArray = root.get("fields");
             if (fieldsArray != null && fieldsArray.isArray()) {
                 for (JsonNode f : fieldsArray) {
-                    String t = f.has("type") ? f.get("type").asText() : "TEXT";
+                    String t = f.has("type") ? f.get("type").asText() : FieldType.TEXT.name();
                     if ("TEXT".equals(t) && f.has("name")) {
                         rawName = f.get("name").asText();
                         break;
@@ -1018,8 +1018,8 @@ public class FormImportExportService {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
         boolean exportExisting = "导出数据".equals(action)
-                && "DISABLED".equals(formDef.getStatus());
-        if (!"PUBLISHED".equals(formDef.getStatus()) && !exportExisting) {
+                && FormStatusEnum.DISABLED.getCode().equals(formDef.getStatus());
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus()) && !exportExisting) {
             throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED,
                     "表单 '" + formKey + "' 未发布，不能" + action);
         }

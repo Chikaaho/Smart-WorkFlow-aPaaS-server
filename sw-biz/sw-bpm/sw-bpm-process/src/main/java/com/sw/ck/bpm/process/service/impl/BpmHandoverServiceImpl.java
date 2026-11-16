@@ -1,13 +1,13 @@
 package com.sw.ck.bpm.process.service.impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
 import com.sw.ck.bpm.process.entity.BpmHandover;
 import com.sw.ck.bpm.process.entity.BpmHandoverItem;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmAuthorizeRuleMapper;
 import com.sw.ck.bpm.process.mapper.BpmHandoverItemMapper;
 import com.sw.ck.bpm.process.mapper.BpmHandoverMapper;
@@ -16,8 +16,6 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -26,6 +24,10 @@ import java.util.List;
 import java.util.Set;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 流程交接实现（I4 §3.6）。
  * <p>
@@ -81,7 +83,7 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
         handover.setIncludeProxyRules(includeProxyRules);
         handover.setOperatorId(operator);
         handover.setExecutedAt(LocalDateTime.now());
-        handover.setStatus("PROCESSING"); // 批次落库即有状态；结束时按迁移/失败结果改写
+        handover.setStatus(BatchStatusEnum.PROCESSING.getCode()); // 批次落库即有状态；结束时按迁移/失败结果改写
         handoverMapper.insert(handover);
 
         int migrated = 0;
@@ -107,7 +109,7 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
                     // 重试安全：上一次已成功迁移的任务不再重复迁移
                     item.setResult("SKIPPED_ALREADY_MIGRATED");
                 } else if (!fromUserId.toString().equals(task.getAssignee())) {
-                    item.setResult("FAILED");
+                    item.setResult(CommandStatusEnum.FAILED.getCode());
                     item.setFailReason("任务当前办理人已变化: " + task.getAssignee());
                     failed++;
                 } else {
@@ -119,7 +121,7 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
                     migrated++;
                 }
             } catch (RuntimeException e) {
-                item.setResult("FAILED");
+                item.setResult(CommandStatusEnum.FAILED.getCode());
                 item.setFailReason(e.getMessage());
                 failed++;
             }
@@ -164,7 +166,7 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
                         migrated++;
                     }
                 } catch (RuntimeException e) {
-                    item.setResult("FAILED");
+                    item.setResult(CommandStatusEnum.FAILED.getCode());
                     item.setFailReason(e.getMessage());
                     failed++;
                 }
@@ -175,8 +177,8 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
         handover.setTotalItems(total);
         handover.setMigratedItems(migrated);
         handover.setFailedItems(failed);
-        handover.setStatus(failed == 0 ? (total == 0 ? "COMPLETED" : "COMPLETED")
-                : (migrated > 0 ? "PARTIAL" : "FAILED"));
+        handover.setStatus(failed == 0 ? (total == 0 ? BatchStatusEnum.COMPLETED.getCode() : BatchStatusEnum.COMPLETED.getCode())
+                : (migrated > 0 ? "PARTIAL" : CommandStatusEnum.FAILED.getCode()));
         handoverMapper.updateById(handover);
         log.info("流程交接完成: handoverId={}, from={}, to={}, migrated={}, failed={}",
                 handover.getId(), fromUserId, toUserId, migrated, failed);

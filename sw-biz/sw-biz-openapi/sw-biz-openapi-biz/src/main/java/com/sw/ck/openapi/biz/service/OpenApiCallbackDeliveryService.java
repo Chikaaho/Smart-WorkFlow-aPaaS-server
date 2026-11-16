@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.openapi.biz.entity.OpenApiAppStatusEnum;
 /**
  * 出站回调投递（I4 §3.4）：签名、重试、去重、失败可查、恢复重发。
  * <p>
@@ -76,7 +77,7 @@ public class OpenApiCallbackDeliveryService {
     public OpenApiCallbackResendDTO resend(String appId, BpmNotifyTrigger trigger, String bizRef) {
         OpenApiApp app = appMapper.selectOne(new LambdaQueryWrapper<OpenApiApp>()
                 .eq(OpenApiApp::getAppId, appId)
-                .eq(OpenApiApp::getStatus, "ENABLED")
+                .eq(OpenApiApp::getStatus, OpenApiAppStatusEnum.ENABLED.getCode())
                 .eq(OpenApiApp::getDeleted, 0));
         if (app == null) {
             throw new BaseException(OpenApiErrorCode.APP_NOT_FOUND);

@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 
 /**
  * 飞书卡片生产渠道适配器（I6）。
@@ -52,7 +53,7 @@ public class FeishuNotifyChannelAdapter implements NotifyChannelAdapter {
 
     @PostConstruct
     void initChannelProps() {
-        ChannelProps cp = props.getChannels().get("FEISHU");
+        ChannelProps cp = props.getChannels().get(NotifyChannel.FEISHU.name());
         this.appId = cp.getAppId();
         this.appSecret = cp.getFeishuAppSecret();
     }
@@ -65,10 +66,10 @@ public class FeishuNotifyChannelAdapter implements NotifyChannelAdapter {
     @Override
     public Optional<NotifySendResult> send(NotifySendRequest request) {
         Optional<String> subject = targetResolver
-                .resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "FEISHU")
+                .resolveProviderSubject(request.getTenantId(), request.getRecipientId(), NotifyChannel.FEISHU.name())
                 .filter(value -> !value.isBlank());
         if (subject.isEmpty()) {
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("无法解析接收人飞书主体，拒绝发送").build());
         }
         return Optional.of(sendCard(subject.orElseThrow(), request.getTitle(), request.getContent(),
@@ -81,7 +82,7 @@ public class FeishuNotifyChannelAdapter implements NotifyChannelAdapter {
         try {
             token = tenantAccessToken();
         } catch (Exception e) {
-            return NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("飞书 token 失败: " + e.getClass().getSimpleName()).build();
         }
         Map<String, Object> body = new LinkedHashMap<>();
@@ -97,7 +98,7 @@ public class FeishuNotifyChannelAdapter implements NotifyChannelAdapter {
                     .execute();
             return handleSendResponse(resp);
         } catch (Exception e) {
-            return NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("飞书发送异常: " + e.getClass().getSimpleName()).build();
         }
     }
@@ -109,16 +110,16 @@ public class FeishuNotifyChannelAdapter implements NotifyChannelAdapter {
             int feishuCode = root.path("code").asInt(-1);
             if (httpCode == 200 && feishuCode == 0) {
                 String messageId = root.path("data").path("message_id").asText(null);
-                return NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
+                return NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.SUCCESS.getCode())
                         .externalMessageId(messageId == null ? ("feishu-" + System.nanoTime())
                                 : messageId)
                         .build();
             }
-            return NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("飞书发送失败: HTTP " + httpCode + " code=" + feishuCode)
                     .build();
         } catch (JsonProcessingException parse) {
-            return NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("飞书响应解析失败")
                     .build();
         }

@@ -1,20 +1,22 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.bpm.api.result.MutationOutcome;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
 import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecorder {
@@ -36,7 +38,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
             row.setNodeKey(nodeKey);
             row.setTaskId(taskId);
             row.setParticipantId(participantId);
-            row.setParticipantStatus("PENDING");
+            row.setParticipantStatus(BatchItemStatusEnum.PENDING.getCode());
             row.setTenantId(tenantId);
             mapper.insert(row);
         }
@@ -57,7 +59,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
             row.setParticipantId(participantId);
             // 冻结展示名：此后改名/停用不重写该轮次历史身份
             row.setParticipantName(displayNames == null ? null : displayNames.get(participantId));
-            row.setParticipantStatus("PENDING");
+            row.setParticipantStatus(BatchItemStatusEnum.PENDING.getCode());
             row.setTenantId(tenantId);
             mapper.insert(row);
         }
@@ -78,7 +80,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
                     .eq(ParticipantSnapshot::getNodeKey, nodeKey)
                     .eq(ParticipantSnapshot::getTaskId, taskId)
                     .eq(ParticipantSnapshot::getParticipantId, actorId)
-                    .eq(ParticipantSnapshot::getParticipantStatus, "PENDING")
+                    .eq(ParticipantSnapshot::getParticipantStatus, BatchItemStatusEnum.PENDING.getCode())
                     .set(ParticipantSnapshot::getParticipantStatus, "HANDLED")
                     .set(ParticipantSnapshot::getInvalidReason, action);
             if (tenantId != null) handled.eq(ParticipantSnapshot::getTenantId, tenantId);
@@ -102,7 +104,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
             LambdaUpdateWrapper<ParticipantSnapshot> invalidated = new LambdaUpdateWrapper<>();
             invalidated.eq(ParticipantSnapshot::getProcessInstanceId, processInstanceId)
                     .eq(ParticipantSnapshot::getNodeKey, nodeKey)
-                    .eq(ParticipantSnapshot::getParticipantStatus, "PENDING");
+                    .eq(ParticipantSnapshot::getParticipantStatus, BatchItemStatusEnum.PENDING.getCode());
             if (tenantId != null) invalidated.eq(ParticipantSnapshot::getTenantId, tenantId);
             if (actorId != null) invalidated.ne(ParticipantSnapshot::getParticipantId, actorId);
             invalidated.set(ParticipantSnapshot::getParticipantStatus, "INVALIDATED")
@@ -114,7 +116,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
                 Wrappers.<ParticipantSnapshot>lambdaQuery()
                         .eq(ParticipantSnapshot::getProcessInstanceId, processInstanceId)
                         .eq(ParticipantSnapshot::getNodeKey, nodeKey)
-                        .eq(ParticipantSnapshot::getParticipantStatus, "PENDING")
+                        .eq(ParticipantSnapshot::getParticipantStatus, BatchItemStatusEnum.PENDING.getCode())
                         .eq(tenantId != null, ParticipantSnapshot::getTenantId, tenantId)
                         .ne(actorId != null, ParticipantSnapshot::getParticipantId, actorId));
         int invalidatedRows = 0;

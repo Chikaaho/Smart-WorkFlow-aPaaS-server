@@ -1,9 +1,9 @@
 package com.sw.ck.bpm.engine.delegate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
@@ -13,6 +13,12 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.spi.UserDetailsProvider;
 
 import jakarta.annotation.PostConstruct;
+
+import java.util.List;
+import java.util.Map;
+
+import lombok.extern.log4j.Log4j2;
+
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.JavaDelegate;
@@ -25,11 +31,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.support.TransactionTemplate;
-
-import java.util.List;
-import java.util.Map;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * 事务动作节点委托（P62 分级执行）：经 {@link FormTxnActionPort} 调用受控事务动作，
  * 复用首阶段幂等（节点稳定幂等键 = {@code NODE:{processInstanceId}:{activityId}}，
@@ -137,7 +138,7 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
         execution.setVariable(actionVar(execution, "status"), result.status());
         execution.setVariable(actionVar(execution, "reservationId"), result.reservationId());
         execution.setVariable(actionVar(execution, "actionVersion"), result.actionVersion());
-        if ("SUCCEEDED".equals(result.status())) {
+        if (BatchItemStatusEnum.SUCCEEDED.getCode().equals(result.status())) {
             log.info("动作节点执行成功: processInstance={}, activity={}, actionId={}, reservationId={}, replay={}",
                     execution.getProcessInstanceId(), execution.getCurrentActivityId(), actionId,
                     result.reservationId(), result.replay());
@@ -180,7 +181,7 @@ public class TxnActionNodeDelegate extends NodeDelegateSupport implements JavaDe
         Integer errorCode = row.get("error_code") == null ? null
                 : Integer.valueOf(String.valueOf(row.get("error_code")));
         String errorMsg = row.get("error_msg") == null ? null : String.valueOf(row.get("error_msg"));
-        return new FormTxnActionPort.TxnActionResult(String.valueOf(row.get("id")), "REJECTED",
+        return new FormTxnActionPort.TxnActionResult(String.valueOf(row.get("id")), BatchItemStatusEnum.REJECTED.getCode(),
                 null, null, null, null, null, errorCode, errorMsg, null, false);
     }
 

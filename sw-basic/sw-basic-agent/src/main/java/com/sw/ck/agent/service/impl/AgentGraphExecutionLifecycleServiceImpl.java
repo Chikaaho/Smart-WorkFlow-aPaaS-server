@@ -2,49 +2,39 @@ package com.sw.ck.agent.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-
-import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
-import com.sw.ck.agent.dto.AgentHumanTaskDTO;
-import com.sw.ck.agent.entity.AgentGraphHumanTask;
-import com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
+import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
+import com.sw.ck.agent.dto.AgentGraphExecutionEventDTO;
+import com.sw.ck.agent.dto.AgentGraphExecutionLifecycleDTO;
+import com.sw.ck.agent.dto.AgentHumanTaskDTO;
 import com.sw.ck.agent.entity.AgentGraphDef;
-import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
+import com.sw.ck.agent.entity.AgentGraphExecution;
 import com.sw.ck.agent.entity.AgentGraphExecutionEvent;
+import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
+import com.sw.ck.agent.entity.AgentGraphHumanTask;
+import com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionEventMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionRequestMapper;
+import com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper;
 import com.sw.ck.agent.orchestration.AgentExecutionEventContext;
 import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.agent.entity.AgentGraphExecution;
-import com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent;
-import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
-import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.dao.DataAccessException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -63,6 +53,15 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 @Service
 @Log4j2
 public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecutionLifecycleService {
@@ -539,7 +538,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 humanTaskMapper.timeoutSiblings(task.getExecutionId(), task.getNodeId());
                 if (requestMapper.transition(task.getExecutionId(), WAITING_HUMAN, RUNNING) == 1) {
                     appendEvent(requestMapper.selectById(task.getExecutionId()),
-                            "STATE", task.getNodeId(), "HUMAN_TIMEOUT");
+                            "STATE", task.getNodeId(), AgentGraphInterpreter.ERROR_CATEGORY_HUMAN_TIMEOUT);
                     dispatch(task.getExecutionId(), scanner);
                 }
             } finally {

@@ -1,23 +1,26 @@
 package com.sw.ck.iot.service.impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.entity.IotCommandReservation;
 import com.sw.ck.iot.mapper.IotCommandReservationMapper;
 import com.sw.ck.iot.service.IotDeviceService;
-import lombok.extern.log4j.Log4j2;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.iot.service.MessageIngestService;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.iot.entity.IotReservationStatusEnum;
 
 /**
  * IoT 命令预约门面实现（P63）。
@@ -70,7 +73,7 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
         row.setProductId(productId);
         row.setDeviceName(deviceName);
         row.setCommandKey(commandKey);
-        row.setCommandType(commandType == null ? "PROPERTY" : commandType);
+        row.setCommandType(commandType == null ? MessageIngestService.TYPE_PROPERTY : commandType);
         row.setPayload(payloadJson);
         row.setDueAtUtc(dueAtUtc);
         row.setTimezoneId(timezoneId);
@@ -98,13 +101,13 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
             return Optional.empty();
         }
         int updated = mapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                .set(IotCommandReservation::getStatus, "CANCELED")
+                .set(IotCommandReservation::getStatus, IotReservationStatusEnum.CANCELED.getCode())
                 .set(IotCommandReservation::getCancelBy, actorUserId)
                 .set(IotCommandReservation::getCancelReason, reason)
                 .set(IotCommandReservation::getCancelTime, LocalDateTime.now())
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                 .eq(IotCommandReservation::getId, reservationId)
-                .eq(IotCommandReservation::getStatus, "PENDING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                 .eq(IotCommandReservation::getDeleted, 0));
         return Optional.of(updated == 1 ? CANCEL_CANCELED : CANCEL_NOT_CANCELLABLE);
     }

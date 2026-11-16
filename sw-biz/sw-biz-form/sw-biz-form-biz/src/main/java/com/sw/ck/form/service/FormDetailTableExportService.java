@@ -135,7 +135,7 @@ public class FormDetailTableExportService {
             }
             for (JsonNode node : fields) {
                 String name = node.path("name").asText(null);
-                if (!fieldName.equals(name) || !"TABLE".equals(node.path("type").asText())) {
+                if (!fieldName.equals(name) || !FieldType.TABLE.name().equals(node.path("type").asText())) {
                     continue;
                 }
                 List<SubField> subFields = new ArrayList<>();
@@ -148,7 +148,7 @@ public class FormDetailTableExportService {
                         }
                         FieldType type;
                         try {
-                            type = FieldType.valueOf(sub.path("type").asText("TEXT"));
+                            type = FieldType.valueOf(sub.path("type").asText(FieldType.TEXT.name()));
                         } catch (IllegalArgumentException e) {
                             continue;
                         }
@@ -299,7 +299,7 @@ public class FormDetailTableExportService {
                 return null;
             }
             for (JsonNode field : fields) {
-                if ("TEXT".equals(field.path("type").asText("TEXT")) && field.has("name")) {
+                if (FieldType.TEXT.name().equals(field.path("type").asText(FieldType.TEXT.name())) && field.has("name")) {
                     return DynamicTableSql.requireColumn(field.get("name").asText(), FieldType.TEXT);
                 }
             }

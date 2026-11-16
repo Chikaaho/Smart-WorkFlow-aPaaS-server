@@ -2,12 +2,11 @@ package com.sw.ck.bpm.process.config;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.participant.DynamicBranchPort;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.entity.DynamicBranchSnapshot;
 import com.sw.ck.bpm.process.mapper.DynamicBranchSnapshotMapper;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -16,6 +15,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import com.sw.ck.bpm.process.entity.DynamicBranchRowStatusEnum;
 
 /**
  * I4 动态并行分支冻结端口装配（bpm-process）。
@@ -70,7 +73,7 @@ public class DynamicBranchPortConfiguration {
                     row.setBranchIndex(index);
                     row.setLeaderId(Long.valueOf(entry.getKey()));
                     row.setDeptIds(String.join(",", entry.getValue()));
-                    row.setStatus("START");
+                    row.setStatus(GraphElement.TYPE_START);
                     mapper.insert(row);
                     result.add(new FrozenBranch(index, entry.getKey(), row.getDeptIds()));
                     index++;
@@ -80,7 +83,7 @@ public class DynamicBranchPortConfiguration {
                             sourceType, sourceDesc, mode);
                     row.setBranchIndex(index);
                     row.setDeptIds(candidate.deptId());
-                    row.setStatus("CANCELED");
+                    row.setStatus(DynamicBranchRowStatusEnum.CANCELED.getCode());
                     row.setCancelReason(candidate.skipReason() == null ? "INVALID" : candidate.skipReason());
                     mapper.insert(row);
                     index++;
@@ -125,9 +128,9 @@ public class DynamicBranchPortConfiguration {
                             .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
                             .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
                             .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
-                            .eq(DynamicBranchSnapshot::getStatus, "START")
+                            .eq(DynamicBranchSnapshot::getStatus, GraphElement.TYPE_START)
                             .eq(DynamicBranchSnapshot::getDeleted, 0)
-                            .set(DynamicBranchSnapshot::getStatus, "CANCELED")
+                            .set(DynamicBranchSnapshot::getStatus, DynamicBranchRowStatusEnum.CANCELED.getCode())
                             .set(DynamicBranchSnapshot::getCancelReason, "SUPERSEDED_BY_ROUND")
                             .set(DynamicBranchSnapshot::getUpdateTime, LocalDateTime.now()));
                 }
@@ -146,14 +149,14 @@ public class DynamicBranchPortConfiguration {
                     row.setExecutionId(executionId);
                     if (candidate.skipReason() != null || candidate.assigneeId() == null) {
                         row.setObjectId(candidate.objectId());
-                        row.setStatus("CANCELED");
+                        row.setStatus(DynamicBranchRowStatusEnum.CANCELED.getCode());
                         row.setCancelReason(candidate.skipReason() == null ? "INVALID" : candidate.skipReason());
                         mapper.insert(row);
                     } else {
                         row.setObjectId(candidate.objectId());
                         row.setLeaderId(Long.valueOf(candidate.assigneeId()));
                         row.setSourceRefs(candidate.sourceRefsJson());
-                        row.setStatus("START");
+                        row.setStatus(GraphElement.TYPE_START);
                         mapper.insert(row);
                         result.add(new FrozenBranchV2(index, candidate.assigneeId(),
                                 objectType, candidate.objectId(), candidate.sourceRefsJson()));
@@ -166,7 +169,7 @@ public class DynamicBranchPortConfiguration {
             private List<FrozenBranchV2> frozenV2Of(List<DynamicBranchSnapshot> rows) {
                 List<FrozenBranchV2> result = new ArrayList<>();
                 for (DynamicBranchSnapshot row : rows) {
-                    if ("CANCELED".equals(row.getStatus()) || row.getLeaderId() == null) {
+                    if (DynamicBranchRowStatusEnum.CANCELED.getCode().equals(row.getStatus()) || row.getLeaderId() == null) {
                         continue;
                     }
                     result.add(new FrozenBranchV2(row.getBranchIndex() == null ? 0 : row.getBranchIndex(),
@@ -202,7 +205,7 @@ public class DynamicBranchPortConfiguration {
                                     .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
                                     .eq(DynamicBranchSnapshot::getLeaderId, Long.valueOf(leaderId))
                                     .isNull(DynamicBranchSnapshot::getTaskId)
-                                    .ne(DynamicBranchSnapshot::getStatus, "CANCELED")
+                                    .ne(DynamicBranchSnapshot::getStatus, DynamicBranchRowStatusEnum.CANCELED.getCode())
                                     .eq(DynamicBranchSnapshot::getDeleted, 0)
                                     .orderByDesc(DynamicBranchSnapshot::getRoundNo)
                                     .orderByAsc(DynamicBranchSnapshot::getBranchIndex)
@@ -237,18 +240,18 @@ public class DynamicBranchPortConfiguration {
                 if (taskId != null && (current.getTaskId() == null || current.getTaskId().isBlank())) {
                     patch.setTaskId(taskId);
                 }
-                if ("START".equals(action)) {
-                    if ("CANCELED".equals(current.getStatus())) {
+                if (GraphElement.TYPE_START.equals(action)) {
+                    if (DynamicBranchRowStatusEnum.CANCELED.getCode().equals(current.getStatus())) {
                         return Optional.of(MutationOutcome.ALREADY_APPLIED); // 取消态不被 START 覆写
                     }
-                    patch.setStatus("START");
+                    patch.setStatus(GraphElement.TYPE_START);
                 } else if ("APPROVE".equals(action) || "DISAPPROVE".equals(action)) {
                     patch.setStatus(action);
                 } else if ("CANCEL".equals(action)) {
                     if ("APPROVE".equals(current.getStatus()) || "DISAPPROVE".equals(current.getStatus())) {
                         return Optional.of(MutationOutcome.ALREADY_APPLIED); // 已终态动作的分支不改写
                     }
-                    patch.setStatus("CANCELED");
+                    patch.setStatus(DynamicBranchRowStatusEnum.CANCELED.getCode());
                     patch.setCancelReason(reason);
                 } else {
                     // 未受支持的动作：不写入任何变更，幂等语义下无第二次效果
@@ -281,9 +284,9 @@ public class DynamicBranchPortConfiguration {
                             .eq(DynamicBranchSnapshot::getNodeKey, nodeKey)
                             .eq(DynamicBranchSnapshot::getSemanticVersion, 2)
                             .eq(DynamicBranchSnapshot::getRoundNo, latest.getRoundNo())
-                            .eq(DynamicBranchSnapshot::getStatus, "START")
+                            .eq(DynamicBranchSnapshot::getStatus, GraphElement.TYPE_START)
                             .eq(DynamicBranchSnapshot::getDeleted, 0)
-                            .set(DynamicBranchSnapshot::getStatus, "CANCELED")
+                            .set(DynamicBranchSnapshot::getStatus, DynamicBranchRowStatusEnum.CANCELED.getCode())
                             .set(DynamicBranchSnapshot::getCancelReason, reason)
                             .set(DynamicBranchSnapshot::getUpdateTime, LocalDateTime.now()));
                     return Optional.of(updated > 0
@@ -294,9 +297,9 @@ public class DynamicBranchPortConfiguration {
                         .eq(DynamicBranchSnapshot::getProcessInstanceId, processInstanceId)
                         .eq(nodeKey != null && !nodeKey.isBlank(),
                                 DynamicBranchSnapshot::getNodeKey, nodeKey)
-                        .eq(DynamicBranchSnapshot::getStatus, "START")
+                        .eq(DynamicBranchSnapshot::getStatus, GraphElement.TYPE_START)
                         .eq(DynamicBranchSnapshot::getDeleted, 0)
-                        .set(DynamicBranchSnapshot::getStatus, "CANCELED")
+                        .set(DynamicBranchSnapshot::getStatus, DynamicBranchRowStatusEnum.CANCELED.getCode())
                         .set(DynamicBranchSnapshot::getCancelReason, reason)
                         .set(DynamicBranchSnapshot::getUpdateTime, LocalDateTime.now()));
                 return Optional.of(updated > 0
@@ -307,7 +310,7 @@ public class DynamicBranchPortConfiguration {
                 List<FrozenBranch> result = new ArrayList<>();
                 Map<Long, Boolean> seen = new LinkedHashMap<>();
                 for (DynamicBranchSnapshot row : existing) {
-                    if (row.getLeaderId() == null || "CANCELED".equals(row.getStatus())) {
+                    if (row.getLeaderId() == null || DynamicBranchRowStatusEnum.CANCELED.getCode().equals(row.getStatus())) {
                         continue;
                     }
                     if (seen.putIfAbsent(row.getLeaderId(), Boolean.TRUE) != null) {

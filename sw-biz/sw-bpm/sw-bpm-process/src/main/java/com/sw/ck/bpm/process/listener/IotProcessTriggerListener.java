@@ -1,38 +1,38 @@
 package com.sw.ck.bpm.process.listener;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.ProcessThemeService;
-import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.api.IotDeviceFacade;
+import com.sw.ck.iot.api.IotDeviceQueryFacade;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
-import com.sw.ck.iot.api.IotDeviceQueryFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.support.TransactionTemplate;
 /**
  * IoT 事件发起流程（P21：规则/脚本 → 流程实例与表单数据）。
  * <p>
@@ -213,7 +213,7 @@ public class IotProcessTriggerListener {
                 }
                 deviceKey = fixedDeviceKey.orElseThrow();
             }
-            case "FORM_FIELD" -> {
+            case ParticipantStrategy.FORM_FIELD -> {
                 Object v = event.getFormData() == null ? null
                         : event.getFormData().get(config.getString("deviceField"));
                 deviceKey = v == null ? null : String.valueOf(v);

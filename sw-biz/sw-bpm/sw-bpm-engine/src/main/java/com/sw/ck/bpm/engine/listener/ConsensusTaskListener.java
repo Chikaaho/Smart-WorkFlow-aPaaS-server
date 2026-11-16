@@ -3,14 +3,8 @@ package com.sw.ck.bpm.engine.listener;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.system.api.user.UserQueryFacade;
-
-import org.flowable.task.service.delegate.DelegateTask;
-import org.flowable.task.service.delegate.TaskListener;
-import org.flowable.engine.RuntimeService;
-import org.springframework.stereotype.Component;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.Collections;
 import java.util.List;
@@ -18,6 +12,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+
+import org.flowable.engine.RuntimeService;
+import org.flowable.task.service.delegate.DelegateTask;
+import org.flowable.task.service.delegate.TaskListener;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /** 会签子任务监听器：将多实例元素变量绑定为 assignee，并维护动作计数。 */
 @Component("consensusTaskListener")
@@ -77,7 +78,7 @@ public class ConsensusTaskListener implements TaskListener {
             String outcome = rawOutcome == null
                     || rawOutcome.isBlank()
                     || "DISAPPROVED".equalsIgnoreCase(rawOutcome)
-                    || "REJECTED".equalsIgnoreCase(rawOutcome) ? "DISAPPROVE" : "APPROVE";
+                    || BatchItemStatusEnum.REJECTED.getCode().equalsIgnoreCase(rawOutcome) ? "DISAPPROVE" : "APPROVE";
             if (runtimeService == null) {
                 String counter = "APPROVE".equals(outcome)
                         ? "consensusApprovedCount" : "consensusRejectedCount";

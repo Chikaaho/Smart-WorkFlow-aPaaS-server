@@ -32,6 +32,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
+import com.sw.ck.iot.entity.IotTriggerActionTypeEnum;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
 /**
  * 设备事件规则引擎。
  * <p>
@@ -236,10 +239,10 @@ public class RuleEngineService {
         trigger.setRuleId(rule.getId());
         trigger.setDeviceId(device.getId());
         trigger.setIdempotentKey(idempotentKey);
-        trigger.setStatus("PENDING");
+        trigger.setStatus(IotTriggerStatusEnum.PENDING.getCode());
         trigger.setFormSnapshot(JSON.toJSONString(formData));
         trigger.setTriggerTime(now);
-        trigger.setActionType("FLOW");
+        trigger.setActionType(IotTriggerActionTypeEnum.FLOW.getCode());
         // Phase 4：触发行必须携带恢复身份（发起目标/来源/发起人），否则提交后进程退出时
         // 恢复调度无法续跑该触发（findDue 要求 process_template_key 非空），事件静默消失。
         trigger.setProcessTemplateKey(rule.getProcessTemplateKey());
@@ -264,10 +267,10 @@ public class RuleEngineService {
         trigger.setRuleId(rule.getId());
         trigger.setDeviceId(device.getId());
         trigger.setIdempotentKey(idempotentKey);
-        trigger.setStatus("PENDING");
+        trigger.setStatus(IotTriggerStatusEnum.PENDING.getCode());
         trigger.setFormSnapshot(JSON.toJSONString(agentInput));
         trigger.setTriggerTime(now);
-        trigger.setActionType("AGENT");
+        trigger.setActionType(IotTriggerActionTypeEnum.AGENT.getCode());
         // 恢复调度 findDue 要求发起目标非空：AGENT 行以目标图 key 承担恢复身份
         trigger.setProcessTemplateKey(rule.getAgentGraphKey());
         trigger.setAgentGraphKey(rule.getAgentGraphKey());
@@ -321,7 +324,7 @@ public class RuleEngineService {
         eventPublisher.publish(event);
 
         if (auditService != null) {
-            String action = "AGENT".equals(trigger.getActionType()) ? "AGENT_TRIGGER" : "FLOW_TRIGGER";
+            String action = IotTriggerActionTypeEnum.AGENT.getCode().equals(trigger.getActionType()) ? "AGENT_TRIGGER" : "FLOW_TRIGGER";
             auditService.recordAction(device.getTenantId(), rule.getCreateBy(),
                     "system:iot-rule-engine", action, "RULE_TRIGGER",
                     String.valueOf(trigger.getId()), "PENDING", trigger.getIdempotentKey(),
@@ -329,7 +332,7 @@ public class RuleEngineService {
         }
 
         log.info("规则触发{}事件: ruleId={}, device={}, key={}",
-                "AGENT".equals(trigger.getActionType()) ? "Agent" : "流程",
+                IotTriggerActionTypeEnum.AGENT.getCode().equals(trigger.getActionType()) ? "Agent" : "流程",
                 rule.getId(), device.getDeviceKey(), trigger.getIdempotentKey());
     }
 
@@ -448,6 +451,6 @@ public class RuleEngineService {
     private List<IotEventRule> publishedRules(Long deviceId) {
         return ruleMapper.selectList(new LambdaQueryWrapper<IotEventRule>()
                 .eq(IotEventRule::getDeviceId, deviceId)
-                .eq(IotEventRule::getStatus, "PUBLISHED"));
+                .eq(IotEventRule::getStatus, IotPublishStatusEnum.PUBLISHED.getCode()));
     }
 }

@@ -2,7 +2,6 @@ package com.sw.ck.bpm.engine.translator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -13,17 +12,17 @@ import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.engine.script.ScriptSugar;
 
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
 import org.flowable.bpmn.model.FieldExtension;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.ImplementationType;
 import org.flowable.bpmn.model.ServiceTask;
 import org.springframework.beans.factory.annotation.Autowired;
-
-import java.util.EnumSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Collection;
-import java.util.Optional;
 
 /** P58 服务节点翻译公共基类：配置只作为 BPMN 扩展属性传给受控委托。 */
 abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
@@ -67,11 +66,11 @@ abstract class ServiceTaskNodeTranslator implements NodeTypeTranslator {
             return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_TYPE_NOT_IMPLEMENTED,
                     "未实现的参与人策略: " + selected)));
         }
-        if (participant.get("value") == null && !"ADAPTER".equalsIgnoreCase(selected)) {
+        if (participant.get("value") == null && !ParticipantStrategy.ADAPTER.equalsIgnoreCase(selected)) {
             return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,
                     "参与人值不能为空")));
         }
-        if ("ADAPTER".equalsIgnoreCase(selected)
+        if (ParticipantStrategy.ADAPTER.equalsIgnoreCase(selected)
                 && (participant.get("adapterId") == null
                 || String.valueOf(participant.get("adapterId")).isBlank())) {
                 return Optional.of(List.of(error(node, BpmErrorCode.PARTICIPANT_CONFIG_INVALID,

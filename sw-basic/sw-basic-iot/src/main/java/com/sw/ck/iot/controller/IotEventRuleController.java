@@ -21,6 +21,8 @@ import com.alibaba.fastjson2.JSONObject;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
+import com.sw.ck.iot.entity.IotRuleTypeEnum;
 
 /**
  * 事件规则控制器：条件/阈值/防抖/冷却/流程模板/表单映射与发布。
@@ -57,7 +59,7 @@ public class IotEventRuleController {
     public R<IotEventRule> create(@RequestBody IotEventRule rule) {
         validate(rule);
         rule.setId(null);
-        rule.setStatus("DRAFT");
+        rule.setStatus(IotPublishStatusEnum.DRAFT.getCode());
         rule.setRuleVersion(1);
         if (rule.getProcessEnabled() == null) {
             rule.setProcessEnabled(0);
@@ -146,8 +148,8 @@ public class IotEventRuleController {
         if (!"PROPERTY_CHANGED".equals(rule.getRuleType())
                 && !"THRESHOLD".equals(rule.getRuleType())
                 && !"EVENT_OCCUR".equals(rule.getRuleType())
-                && !"ONLINE".equals(rule.getRuleType())
-                && !"OFFLINE".equals(rule.getRuleType())) {
+                && !IotRuleTypeEnum.ONLINE.getCode().equals(rule.getRuleType())
+                && !IotRuleTypeEnum.OFFLINE.getCode().equals(rule.getRuleType())) {
             throw new IllegalArgumentException("非法规则类型: " + rule.getRuleType());
         }
         if (rule.getConditionJson() == null || rule.getConditionJson().isBlank()) {

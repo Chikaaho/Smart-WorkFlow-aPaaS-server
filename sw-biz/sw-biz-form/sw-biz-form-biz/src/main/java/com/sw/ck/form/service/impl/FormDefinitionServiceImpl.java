@@ -1,17 +1,17 @@
 package com.sw.ck.form.service.impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.form.FormDefinitionService;
-import com.sw.ck.form.service.FormDefService;
-import com.sw.ck.form.service.FormDataQueryService;
-import com.sw.ck.form.service.FormFieldEnrichmentService;
 import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
-
-import org.springframework.stereotype.Service;
+import com.sw.ck.form.api.form.FormDefinitionService;
+import com.sw.ck.form.entity.FormStatusEnum;
+import com.sw.ck.form.service.FormDataQueryService;
+import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormFieldEnrichmentService;
 
 import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 /**
  * {@link FormDefinitionService} 实现。
@@ -84,7 +84,7 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
         if (formDef == null || !formDefService.isCurrentUserVisible(formKey)) {
             return Optional.of(false);
         }
-        if (!"view".equals(action) && !"PUBLISHED".equals(formDef.getStatus())) {
+        if (!"view".equals(action) && !FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())) {
             return Optional.of(false);
         }
         return Optional.of(formFieldEnrichmentService == null

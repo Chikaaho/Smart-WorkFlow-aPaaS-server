@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 /** P58 开发验收用独立渠道适配器；生产 profile 不装配，不伪造真实第三方投递。 */
 @Component
 @Profile("dev")
@@ -34,11 +35,11 @@ public class P58DebugNotifyChannelAdapter implements NotifyChannelAdapter {
             result = NotifySendResult.builder().channel(CHANNEL).status("TIMEOUT")
                     .failureReason("P58 adapter timeout").build();
         } else if (marker.contains("FAILURE")) {
-            result = NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            result = NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("P58 adapter failure").build();
         } else {
             String externalId = "p58_ext_" + Integer.toHexString(String.valueOf(request.getIdempotencyKey()).hashCode());
-            result = NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
+            result = NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.SUCCESS.getCode())
                     .externalMessageId(externalId).build();
         }
         int callNo = INVOCATION_COUNT.incrementAndGet();

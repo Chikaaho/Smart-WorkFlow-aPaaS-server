@@ -3,7 +3,6 @@ package com.sw.ck.bpm.process.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
@@ -12,19 +11,17 @@ import com.sw.ck.bpm.api.nodefunc.NodeFunctionContext;
 import com.sw.ck.bpm.api.nodefunc.NodeFunctionResult;
 import com.sw.ck.bpm.api.nodefunc.ParticipantFunction;
 import com.sw.ck.bpm.api.nodefunc.ResultFunction;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmNodeFunction;
 import com.sw.ck.bpm.process.entity.BpmNodeFunctionAudit;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmNodeFunctionAuditMapper;
 import com.sw.ck.bpm.process.mapper.BpmNodeFunctionMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.api.user.UserQueryFacade;
 
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
-import org.springframework.stereotype.Service;
-
 import jakarta.annotation.PreDestroy;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -40,6 +37,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.stereotype.Service;
 /**
  * 受控节点函数注册表与运行器（I3 §4.9）。
  * <p>
@@ -194,15 +196,15 @@ public class NodeFunctionService {
             }
             log.info("节点函数解析参与人成功: funcKey={}, version={}, nodeKey={}, size={}",
                     row.getFuncKey(), row.getFuncVersion(), nodeKey, participants.size());
-            writeAudit(row, context, "SUCCEEDED", null,
+            writeAudit(row, context, BatchItemStatusEnum.SUCCEEDED.getCode(), null,
                     "participants=" + participants.size(), startMs);
             return Optional.of(participants);
         } catch (BaseException e) {
-            writeAudit(row, context, "FAILED", e.getCode(), e.getMessage(), startMs);
+            writeAudit(row, context, CommandStatusEnum.FAILED.getCode(), e.getCode(), e.getMessage(), startMs);
             throw e;
         } catch (RuntimeException e) {
             log.warn("节点函数解析失败: funcKey={}, error={}", row.getFuncKey(), e.getMessage());
-            writeAudit(row, context, "FAILED", BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
+            writeAudit(row, context, CommandStatusEnum.FAILED.getCode(), BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
                     String.valueOf(e.getMessage()), startMs);
             if ("FALLBACK".equals(row.getFailureStrategy())) {
                 return Optional.empty();
@@ -232,11 +234,11 @@ public class NodeFunctionService {
                     && result.getResultVariables().size() > 50) {
                 throw new BaseException(BpmErrorCode.NODE_FUNCTION_INVALID_OUTPUT);
             }
-            writeAudit(row, context, "SUCCEEDED", null, result.getSummary(), startMs);
+            writeAudit(row, context, BatchItemStatusEnum.SUCCEEDED.getCode(), null, result.getSummary(), startMs);
             return Optional.of(result);
         } catch (RuntimeException e) {
             log.warn("结果函数失败: funcKey={}, error={}", row.getFuncKey(), e.getMessage());
-            writeAudit(row, context, "FAILED", BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
+            writeAudit(row, context, CommandStatusEnum.FAILED.getCode(), BpmErrorCode.NODE_FUNCTION_FAILED.getCode(),
                     String.valueOf(e.getMessage()), startMs);
             if ("FALLBACK".equals(row.getFailureStrategy())) {
                 return Optional.of(NodeFunctionResult.builder()

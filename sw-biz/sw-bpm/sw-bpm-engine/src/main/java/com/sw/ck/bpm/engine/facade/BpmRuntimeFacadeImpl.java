@@ -1,11 +1,22 @@
 package com.sw.ck.bpm.engine.facade;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.sw.ck.bpm.api.dto.BpmActivityDTO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.result.BpmProcessStatus;
 import com.sw.ck.bpm.api.result.MutationOutcome;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
+
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
+import lombok.extern.log4j.Log4j2;
 
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.FlowElement;
@@ -22,19 +33,8 @@ import org.flowable.engine.runtime.Execution;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
-
-import lombok.extern.log4j.Log4j2;
 /**
  * BPM 运行时门面实现 —— 封装 Flowable {@link RuntimeService} + {@link HistoryService}。
  * <p>
@@ -326,7 +326,7 @@ public class BpmRuntimeFacadeImpl implements BpmRuntimeFacade {
         }
         if (normalized.contains("WITHDRAW")) return BpmProcessStatus.WITHDRAWN;
         if (normalized.contains("DISCARD")) return BpmProcessStatus.DISCARDED;
-        if (normalized.contains("FAILED") || normalized.contains("ERROR")) {
+        if (normalized.contains(CommandStatusEnum.FAILED.getCode()) || normalized.contains("ERROR")) {
             return BpmProcessStatus.FAILED;
         }
         return BpmProcessStatus.TERMINATED;

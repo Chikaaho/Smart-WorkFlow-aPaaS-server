@@ -3,16 +3,13 @@ package com.sw.ck.bpm.process.service;
 import com.alibaba.fastjson2.JSON;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
+import com.sw.ck.bpm.process.dto.InstanceRelationDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
-
-import lombok.extern.log4j.Log4j2;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +20,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 /**
  * P64 BPM 变量运行快照解析（ADR-P64-001 §2，A02）。
@@ -232,7 +234,7 @@ public class BpmVariableSnapshotService {
                                        List<Map<String, Object>> submittedRows,
                                        List<String> missing, List<String> errors) {
         String field = def.getSourceFormField();
-        String aggregation = def.getAggregation() == null ? "NONE" : def.getAggregation().toUpperCase();
+        String aggregation = def.getAggregation() == null ? InstanceRelationDTO.RELATION_NONE : def.getAggregation().toUpperCase();
         if (submittedRows.isEmpty()) {
             return null;
         }

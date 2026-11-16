@@ -25,6 +25,7 @@ import java.util.HexFormat;
 import java.util.List;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import com.sw.ck.openapi.biz.entity.OpenApiAppStatusEnum;
 
 /**
  * 开放接口入站鉴权（I4 §3.4）。
@@ -68,7 +69,7 @@ public class OpenApiAuthService {
         if (app == null) {
             throw new BaseException(OpenApiErrorCode.APP_NOT_FOUND);
         }
-        if (!"ENABLED".equals(app.getStatus())) {
+        if (!OpenApiAppStatusEnum.ENABLED.getCode().equals(app.getStatus())) {
             throw new BaseException(OpenApiErrorCode.APP_DISABLED);
         }
         long ts;

@@ -3,44 +3,33 @@ package com.sw.ck.bpm.process.service;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.bpm.api.dto.ActionConfig;
+import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
+import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
+import com.sw.ck.bpm.process.dto.InstanceRelationDTO;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTriggerExec;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmTriggerExecMapper;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
-import com.sw.ck.bpm.api.script.ScriptFunctionContext;
-import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.queue.CommandFingerprint;
 
 import jakarta.annotation.PostConstruct;
-import lombok.extern.log4j.Log4j2;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -55,6 +44,23 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import com.sw.ck.bpm.api.node.TriggerStartModeEnum;
+import com.sw.ck.bpm.process.entity.ActionRefStatusEnum;
 
 /**
  * P64 Trigger 受控判断与配置化动作执行（ADR-P64-001 §3/§4，A03+A04；DR07 阶段区分）。
@@ -268,7 +274,7 @@ public class TriggerExecutionService {
      */
     @Transactional(propagation = Propagation.REQUIRED)
     public void onProcessCompleted(BpmInstance instance, String terminalStatus) {
-        if (!"APPROVED".equals(terminalStatus)) {
+        if (!InstanceStatusEnum.APPROVED.getCode().equals(terminalStatus)) {
             return;
         }
         ProcessGraph graph = nodeFormDataService.loadGraph(instance.getProcessDefKey(), instance.getDefVersion());
@@ -398,7 +404,7 @@ public class TriggerExecutionService {
         exec.setExecKey(execKey);
         try {
             if (trigger.getScript() == null || trigger.getScript().isBlank()) {
-                exec.setStatus("FAILED");
+                exec.setStatus(CommandStatusEnum.FAILED.getCode());
                 exec.setErrorText(BpmErrorCode.TRIGGER_SCRIPT_FAILED.getMessage() + ": 脚本为空");
                 insertExec(exec);
                 return;
@@ -406,21 +412,21 @@ public class TriggerExecutionService {
             BpmVariableSnapshotService.SnapshotResult snapshot = variableSnapshotService.buildSnapshot(
                     tenantId, instance, graph.getVariables(), trigger.getVariables(), nodeKey, round);
             if (snapshot.tooLarge()) {
-                exec.setStatus("FAILED");
+                exec.setStatus(CommandStatusEnum.FAILED.getCode());
                 exec.setErrorText(BpmErrorCode.VARIABLE_SNAPSHOT_TOO_LARGE.getMessage());
                 exec.setDurationMs(elapsed(begin));
                 insertExec(exec);
                 return;
             }
             if (!snapshot.errors().isEmpty()) {
-                exec.setStatus("FAILED");
+                exec.setStatus(CommandStatusEnum.FAILED.getCode());
                 exec.setErrorText("变量解析失败: " + String.join("; ", snapshot.errors()));
                 exec.setDurationMs(elapsed(begin));
                 insertExec(exec);
                 return;
             }
             if (!snapshot.missingRequired().isEmpty()) {
-                exec.setStatus("FAILED");
+                exec.setStatus(CommandStatusEnum.FAILED.getCode());
                 exec.setDisposition("BLOCK");
                 exec.setErrorText("必填变量缺失，触发被阻止: " + String.join(", ", snapshot.missingRequired()));
                 exec.setDurationMs(elapsed(begin));
@@ -445,7 +451,7 @@ public class TriggerExecutionService {
             switch (result.kind()) {
                 case BpmScriptEvaluatePort.ScriptOutcome.KIND_TIMEOUT,
                      BpmScriptEvaluatePort.ScriptOutcome.KIND_RESOURCE_LIMIT -> {
-                    exec.setStatus("FAILED");
+                    exec.setStatus(CommandStatusEnum.FAILED.getCode());
                     exec.setErrorText(BpmErrorCode.TRIGGER_RESOURCE_LIMIT.getMessage() + ": "
                             + result.errorMessage());
                     insertExec(exec);
@@ -453,7 +459,7 @@ public class TriggerExecutionService {
                 }
                 case BpmScriptEvaluatePort.ScriptOutcome.KIND_SCRIPT_ERROR,
                      BpmScriptEvaluatePort.ScriptOutcome.KIND_TYPE_ERROR -> {
-                    exec.setStatus("FAILED");
+                    exec.setStatus(CommandStatusEnum.FAILED.getCode());
                     exec.setErrorText(BpmErrorCode.TRIGGER_SCRIPT_FAILED.getMessage() + ": "
                             + result.errorMessage());
                     insertExec(exec);
@@ -471,7 +477,7 @@ public class TriggerExecutionService {
             if (result.ok() && result.variableWrites() != null && !result.variableWrites().isEmpty()) {
                 String writeError = applyVariableWrites(instance, result.variableWrites());
                 if (writeError != null) {
-                    exec.setStatus("FAILED");
+                    exec.setStatus(CommandStatusEnum.FAILED.getCode());
                     exec.setErrorText(writeError);
                     insertExec(exec);
                     return;
@@ -502,7 +508,7 @@ public class TriggerExecutionService {
             // 触发器评估异常不回滚业务办理：就地落可诊断 FAILED 行
             log.error("触发器评估异常: instance={}, trigger={}", instance.getProcessInstanceId(),
                     trigger.getTriggerId(), e);
-            exec.setStatus("FAILED");
+            exec.setStatus(CommandStatusEnum.FAILED.getCode());
             exec.setErrorText("触发器评估异常: " + e.getMessage());
             exec.setDurationMs(elapsed(begin));
             insertExec(exec);
@@ -575,7 +581,7 @@ public class TriggerExecutionService {
                             instance.getFormKey(), instance.getTenantId());
                     frozen = new ChildOrchestrationService.FrozenBatch(batch.getId(), batch.getBatchKey(),
                             batch.getWaitPolicy());
-                    if ("NONE".equals(frozen.waitPolicy())) {
+                    if (InstanceRelationDTO.RELATION_NONE.equals(frozen.waitPolicy())) {
                         dispatchNotes.add("动作 " + action.getActionId() + ": NONE 策略批次 "
                                 + batch.getBatchKey() + " 派发意图提交后即结算，父流程不等待");
                     }
@@ -585,7 +591,7 @@ public class TriggerExecutionService {
                     dispatchItem(instance, trigger, action, exec, item, snapshot, dispatchNotes,
                             frozen, mappingScriptValues);
                 }
-                if (orchestration != null && frozen != null && "NONE".equals(frozen.waitPolicy())) {
+                if (orchestration != null && frozen != null && InstanceRelationDTO.RELATION_NONE.equals(frozen.waitPolicy())) {
                     // NONE：全部项登记完成后立即结算（单次推进由结算通道幂等保证）
                     orchestration.settleIfNone(
                             orchestration.loadBatch(instance.getTenantId(), frozen.batchId()));
@@ -629,7 +635,7 @@ public class TriggerExecutionService {
         ref.setCommandKey(commandKey);
         ref.setTargetDefKey(action.getTargetProcessDefKey());
         ref.setTargetFormKey(action.getTargetFormKey());
-        ref.setStatus("INTENT_SUBMITTED");
+        ref.setStatus(ActionRefStatusEnum.INTENT_SUBMITTED.getCode());
         actionRefMapper.insert(ref);
 
         // 阶段Ⅱ（P64 A05/A06）：CHILD 项登记（冻结本项授权来源行集合与版本；转办/重试不增加预期数）
@@ -775,13 +781,13 @@ public class TriggerExecutionService {
     private List<ActionItem> resolveItems(ActionConfig action, Map<String, Object> snapshot) {
         String type = action.getType() == null ? "" : action.getType().toUpperCase();
         List<ActionItem> items = new ArrayList<>();
-        if ("START_SINGLE".equals(type)) {
+        if (TriggerStartModeEnum.START_SINGLE.getCode().equals(type)) {
             Map<String, Object> emptyValues = Map.of();
             items.add(new ActionItem("SINGLE", Map.of("type", "SINGLE"), emptyValues, List.of()));
             return items;
         }
         Object source = action.getSourceVariable() == null ? null : snapshot.get(action.getSourceVariable());
-        if ("START_EACH".equals(type)) {
+        if (TriggerStartModeEnum.START_EACH.getCode().equals(type)) {
             if (source instanceof List<?> list) {
                 int index = 0;
                 for (Object item : list) {
@@ -804,7 +810,7 @@ public class TriggerExecutionService {
             }
             return items;
         }
-        if ("START_GROUPED".equals(type)) {
+        if (TriggerStartModeEnum.START_GROUPED.getCode().equals(type)) {
             String groupBy = action.getGroupBy() == null ? "id" : action.getGroupBy();
             if (source instanceof List<?> list) {
                 Map<String, List<Map<String, Object>>> groups = new LinkedHashMap<>();

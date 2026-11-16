@@ -1,11 +1,12 @@
 package com.sw.ck.bpm.process.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -81,7 +82,7 @@ public final class ApprovalHistoryEnricher {
                 view.setType(type);
                 Object value = item.getOpinionData().get(key);
                 view.setValue(value);
-                if ("USER".equalsIgnoreCase(type) && value != null) {
+                if (SubjectTypeEnum.USER.getCode().equalsIgnoreCase(type) && value != null) {
                     for (Object raw : (value instanceof List<?> list ? list : List.of(value))) {
                         String text = raw == null ? "" : String.valueOf(raw).trim();
                         if (text.matches("\\d+")) {
@@ -175,7 +176,7 @@ public final class ApprovalHistoryEnricher {
             return "";
         }
         String normalized = type == null ? "" : type.toUpperCase();
-        if ("USER".equals(normalized)) {
+        if (SubjectTypeEnum.USER.getCode().equals(normalized)) {
             List<String> ids = new ArrayList<>();
             for (Object raw : (value instanceof List<?> list ? list : List.of(value))) {
                 String text = raw == null ? "" : String.valueOf(raw).trim();

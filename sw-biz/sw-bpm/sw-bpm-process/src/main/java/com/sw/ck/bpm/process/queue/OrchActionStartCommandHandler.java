@@ -1,11 +1,10 @@
 package com.sw.ck.bpm.process.queue;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.alibaba.fastjson2.JSON;
-
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -13,9 +12,6 @@ import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
-
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -26,6 +22,12 @@ import java.util.Optional;
 import java.util.Set;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.bpm.api.participant.ParticipantScopeEnum;
+import com.sw.ck.bpm.process.entity.ActionRefStatusEnum;
 /**
  * P64 配置化动作命令处理器：消费 ORCH_ACTION_START 受理（ADR-P64-001 §4，A04）。
  * <p>
@@ -74,7 +76,7 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
                     + ", commandKey=" + envelope.getCommandKey());
         }
         // 幂等：已成功/启动中意图回查原结果，重复投递/恢复后不重复启动
-        if (("STARTED".equals(ref.getStatus()) || "STARTING".equals(ref.getStatus()))
+        if ((ActionRefStatusEnum.STARTED.getCode().equals(ref.getStatus()) || ActionRefStatusEnum.STARTING.getCode().equals(ref.getStatus()))
                 && ref.getTargetRecordId() != null) {
             log.info("动作意图幂等跳过: commandKey={}, recordId={} 已受理启动",
                     envelope.getCommandKey(), ref.getTargetRecordId());
@@ -103,7 +105,7 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
         // 状态语义（审查02 P1-06b）：STARTING=目标记录已建且 FLOW_START 已受理，目标实例
         // 尚未由既有消费链异步创建完成；"STARTED"由回查层按目标实例持久事实解析展示，
         // 不在受理事务内冒称目标已启动。
-        ref.setStatus("STARTING");
+        ref.setStatus(ActionRefStatusEnum.STARTING.getCode());
         actionRefMapper.updateById(ref);
         log.info("关联实例动作已启动: commandKey={}, targetFormKey={}, recordId={}, recordOwner={}",
                 envelope.getCommandKey(), targetFormKey, recordId, targetOwnerUserId);
@@ -162,7 +164,7 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
     private String firstNodeAfterStart(ProcessGraph graph) {
         String startId = graph.getElements().stream()
                 .filter(element -> "node".equals(element.getKind())
-                        && "START".equalsIgnoreCase(element.getType()))
+                        && GraphElement.TYPE_START.equalsIgnoreCase(element.getType()))
                 .map(GraphElement::getId)
                 .findFirst().orElse(null);
         if (startId == null) {
@@ -180,14 +182,14 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
         if (!(participant instanceof Map<?, ?> binding)) {
             return Optional.empty();
         }
-        if (!"FORM_FIELD".equalsIgnoreCase(text(binding.get("strategy")))) {
+        if (!ParticipantStrategy.FORM_FIELD.equalsIgnoreCase(text(binding.get("strategy")))) {
             return Optional.empty();
         }
         if (!(binding.get("value") instanceof Map<?, ?> value)) {
             return Optional.empty();
         }
-        if (!"USER".equalsIgnoreCase(text(value.get("objectType")))
-                || !"MAIN".equalsIgnoreCase(text(value.get("scope")))) {
+        if (!SubjectTypeEnum.USER.getCode().equalsIgnoreCase(text(value.get("objectType")))
+                || !ParticipantScopeEnum.MAIN.getCode().equalsIgnoreCase(text(value.get("scope")))) {
             return Optional.empty();
         }
         String field = text(value.get("field"));

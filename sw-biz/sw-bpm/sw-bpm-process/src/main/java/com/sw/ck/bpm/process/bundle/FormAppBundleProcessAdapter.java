@@ -1,16 +1,12 @@
 package com.sw.ck.bpm.process.bundle;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-
 import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmCategoryMapper;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
+import com.sw.ck.bpm.process.service.NodeFormDataService;
 import com.sw.ck.form.api.bundle.FormAppBundleProcessPort;
-
-import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -22,6 +18,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 /**
  * {@link FormAppBundleProcessPort} 实现（0.2.2 F2）：应用整包导出/导入的流程侧读写。
  * <p>
@@ -79,7 +78,7 @@ public class FormAppBundleProcessAdapter implements FormAppBundleProcessPort {
         def.setName(row.name());
         def.setFormKey(row.formKey());
         def.setDefVersion(1);
-        def.setStatus("DRAFT");
+        def.setStatus(NodeFormDataService.STATUS_DRAFT);
         def.setGraphJson(row.graphJson());
         def.setThemeRule(row.themeRule());
         def.setCategoryId(row.categoryId());

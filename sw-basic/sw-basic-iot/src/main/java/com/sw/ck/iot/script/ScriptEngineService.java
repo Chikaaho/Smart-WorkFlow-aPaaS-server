@@ -32,6 +32,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.sw.ck.iot.entity.IotTriggerSourceEnum;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
 
 /**
  * 受控脚本执行编排。
@@ -180,9 +182,9 @@ public class ScriptEngineService {
             trigger.setTenantId(request.tenantId());
             trigger.setIdempotentKey(request.idempotentKey());
             trigger.setProcessTemplateKey(request.processTemplateKey());
-            trigger.setTriggerSource(request.triggerSource() == null ? "SCRIPT" : request.triggerSource());
+            trigger.setTriggerSource(request.triggerSource() == null ? IotTriggerSourceEnum.SCRIPT.getCode() : request.triggerSource());
             trigger.setConfiguredBy(request.configuredBy());
-            trigger.setStatus("PENDING");
+            trigger.setStatus(IotTriggerStatusEnum.PENDING.getCode());
             trigger.setRetryCount(0);
             trigger.setTriggerTime(LocalDateTime.now());
             trigger.setFormSnapshot(JSON.toJSONString(request.formData()));

@@ -1,5 +1,6 @@
 package com.sw.ck.bpm.process.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.BpmTaskDTO;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
@@ -14,6 +15,7 @@ import com.sw.ck.bpm.process.dto.MyInstanceRelationInstanceDTO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.ApprovalHistoryAssembler;
 import com.sw.ck.bpm.process.service.ApprovalHistoryEnricher;
@@ -32,14 +34,6 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -49,6 +43,13 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 /**
  * 我发起的控制器（个人入口，非流程监控）。
  * <p>
@@ -191,7 +192,7 @@ public class BpmMyInstanceController {
     private String resolveCurrentNode(BpmInstance record,
                                       Map<String, String> endNodeNames) {
         String status = record.getStatus();
-        if ("RUNNING".equalsIgnoreCase(status)) {
+        if (InstanceStatusEnum.RUNNING.getCode().equalsIgnoreCase(status)) {
             if (bpmTaskFacade == null || record.getProcessInstanceId() == null) {
                 return null;
             }
@@ -205,7 +206,8 @@ public class BpmMyInstanceController {
                     .filter(name -> name != null && !name.isBlank())
                     .findFirst().orElse(null);
         }
-        if ("APPROVED".equalsIgnoreCase(status) && record.getProcessDefKey() != null) {
+        if (InstanceStatusEnum.APPROVED.getCode().equalsIgnoreCase(status)
+                && record.getProcessDefKey() != null) {
             return endNodeNames.get(record.getProcessDefKey());
         }
         return null;
@@ -227,7 +229,8 @@ public class BpmMyInstanceController {
                 return null;
             }
             for (GraphElement element : graph.getElements()) {
-                if (!"END".equalsIgnoreCase(element.getType()) || element.getConfig() == null) {
+                if (!GraphElement.TYPE_END.equalsIgnoreCase(element.getType())
+                        || element.getConfig() == null) {
                     continue;
                 }
                 Object name = element.getConfig().get("name");
@@ -398,7 +401,7 @@ public class BpmMyInstanceController {
 
         BpmInstance instance = findLatestInstance(formKey, businessKey);
         if (instance == null) {
-            result.setRelation("NONE");
+            result.setRelation(InstanceRelationDTO.RELATION_NONE);
             return R.ok(result);
         }
 
@@ -422,10 +425,11 @@ public class BpmMyInstanceController {
                     .anyMatch(task -> userId != null && userId.toString().equals(task.getAssignee()));
         }
 
-        String relation = pendingTaskId != null ? "APPROVER"
-                : historyParticipant ? "PARTICIPANT" : "NONE";
+        String relation = pendingTaskId != null ? InstanceRelationDTO.RELATION_APPROVER
+                : historyParticipant ? InstanceRelationDTO.RELATION_PARTICIPANT
+                : InstanceRelationDTO.RELATION_NONE;
         result.setRelation(relation);
-        if ("NONE".equals(relation)) {
+        if (InstanceRelationDTO.RELATION_NONE.equals(relation)) {
             return R.ok(result);
         }
 

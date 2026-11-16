@@ -5,19 +5,19 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.datascope.DataScopeFilter;
+import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.common.page.PageResult;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FilterOp;
 import com.sw.ck.form.api.dto.FormDataFilter;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
 import com.sw.ck.form.api.dto.FormDefDTO;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dynamic.DynamicTableSql;
-import com.sw.ck.form.dynamic.ColumnValidation;
-import com.sw.ck.form.dynamic.FieldType;
+import com.sw.ck.form.api.port.FormRecordAccessPort;
 import com.sw.ck.form.dto.FormDataRecordDTO;
 import com.sw.ck.form.dto.WorkspaceAggregateDTO;
 import com.sw.ck.form.dto.WorkspaceFieldDTO;
@@ -27,21 +27,16 @@ import com.sw.ck.form.dto.WorkspaceOptionDTO;
 import com.sw.ck.form.dto.workspace.WorkspaceAggregateReq;
 import com.sw.ck.form.dto.workspace.WorkspaceMetric;
 import com.sw.ck.form.dto.workspace.WorkspaceRowsReq;
+import com.sw.ck.form.dynamic.ColumnValidation;
+import com.sw.ck.form.dynamic.DynamicTableSql;
+import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
-import com.sw.ck.form.service.FormFieldEnrichmentService;
 import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.common.datascope.DeptScopeProvider;
-import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.common.security.LoginContextProvider;
-import com.sw.ck.form.api.port.FormRecordAccessPort;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 
 import java.sql.Date;
 import java.sql.Time;
@@ -53,6 +48,11 @@ import java.util.LinkedHashSet;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import com.sw.ck.form.dynamic.FormWorkspaceAggEnum;
 /**
  * 表单数据查询服务。
  *
@@ -190,7 +190,7 @@ public class FormDataQueryService {
         if (appAccessGuard != null) {
             appAccessGuard.requireNewBusiness(formKey, formDef.getAppId());
         }
-        if (!"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus()) && !FormStatusEnum.DISABLED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
         }
         String tableName = formDef.getPhysicalTableName();
@@ -288,7 +288,7 @@ public class FormDataQueryService {
     );
 
     /** 聚合指标允许的统计方式。 */
-    private static final Set<String> WORKSPACE_AGGS = Set.of("COUNT", "SUM", "AVG", "MIN", "MAX");
+    private static final Set<String> WORKSPACE_AGGS = Set.of(FormWorkspaceAggEnum.COUNT.name(), FormWorkspaceAggEnum.SUM.name(), FormWorkspaceAggEnum.AVG.name(), FormWorkspaceAggEnum.MIN.name(), FormWorkspaceAggEnum.MAX.name());
 
     private static final int WORKSPACE_MAX_METRICS = 5;
     private static final int WORKSPACE_MAX_GROUPS = 100;
@@ -387,7 +387,7 @@ public class FormDataQueryService {
                 if (type == null || ctx.viewDenied().contains(field)) {
                     throw unknownWorkspaceField(ctx, field);
                 }
-                if ("COUNT".equals(agg)) {
+                if (FormWorkspaceAggEnum.COUNT.name().equals(agg)) {
                     if (!type.isEnabled() || type == FieldType.TABLE || type == FieldType.LABEL) {
                         throw new BaseException(FormErrorCode.QUERY_FILTER_FIELD_NOT_FILTERABLE,
                                 "字段「" + ctx.fieldLabels().getOrDefault(field, field) + "」不支持计数");
@@ -401,7 +401,7 @@ public class FormDataQueryService {
                     }
                     physical = DynamicTableSql.requireColumn(field, type);
                 }
-            } else if (!"COUNT".equals(agg)) {
+            } else if (!FormWorkspaceAggEnum.COUNT.name().equals(agg)) {
                 throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
                         agg + " 统计必须指定字段");
             }
@@ -621,7 +621,7 @@ public class FormDataQueryService {
         if (appAccessGuard != null) {
             appAccessGuard.requireNewBusiness(formKey, formDef.getAppId());
         }
-        if (!"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus()) && !FormStatusEnum.DISABLED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
         }
         String tableName = formDef.getPhysicalTableName();
@@ -718,7 +718,7 @@ public class FormDataQueryService {
 
     private record MetricSpec(String agg, String physical) {
         String expression() {
-            return "COUNT".equals(agg) && physical == null ? "COUNT(*)" : agg + "(" + physical + ")";
+            return FormWorkspaceAggEnum.COUNT.name().equals(agg) && physical == null ? "COUNT(*)" : agg + "(" + physical + ")";
         }
     }
 
@@ -753,7 +753,7 @@ public class FormDataQueryService {
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
-        if (!"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus()) && !FormStatusEnum.DISABLED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能查询");
         }
         if (enrichment != null) {
@@ -959,7 +959,7 @@ public class FormDataQueryService {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "读取表单记录缺少租户或记录标识");
         }
         FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
-        if (formDef == null || !"PUBLISHED".equals(formDef.getStatus()) && !"DISABLED".equals(formDef.getStatus())) {
+        if (formDef == null || !FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus()) && !FormStatusEnum.DISABLED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在或未发布");
         }
         String tableName = formDef.getPhysicalTableName();
@@ -1056,7 +1056,7 @@ public class FormDataQueryService {
             return false;
         }
         FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
-        if (formDef == null || !"PUBLISHED".equals(formDef.getStatus())
+        if (formDef == null || !FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())
                 || !formDefService.isCurrentUserVisible(formKey)) {
             return false;
         }
@@ -1133,7 +1133,7 @@ public class FormDataQueryService {
                 if (nameNode == null || nameNode.asText().isBlank()) continue;
 
                 String name = nameNode.asText();
-                String typeStr = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
+                String typeStr = fieldNode.has("type") ? fieldNode.get("type").asText() : FieldType.TEXT.name();
 
                 FieldType fieldType;
                 try {
@@ -1446,7 +1446,7 @@ public class FormDataQueryService {
             JsonNode fieldsArray = root.get("fields");
             if (fieldsArray != null && fieldsArray.isArray()) {
                 for (JsonNode field : fieldsArray) {
-                    if (!"TABLE".equals(field.path("type").asText())) continue;
+                    if (!FieldType.TABLE.name().equals(field.path("type").asText())) continue;
                     String tableName = field.path("name").asText();
                     for (JsonNode sub : field.path("subFields")) {
                         String key = tableName + "." + sub.path("name").asText();
@@ -1498,7 +1498,7 @@ public class FormDataQueryService {
             }
 
             for (JsonNode fieldNode : fieldsArray) {
-                String type = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
+                String type = fieldNode.has("type") ? fieldNode.get("type").asText() : FieldType.TEXT.name();
                 if (!"TABLE".equals(type)) continue;
 
                 String name = fieldNode.has("name") ? fieldNode.get("name").asText() : null;
@@ -1511,7 +1511,7 @@ public class FormDataQueryService {
                 for (JsonNode subNode : subFieldsNode) {
                     String subName = subNode.has("name") ? subNode.get("name").asText() : null;
                     if (subName == null) continue;
-                    String subType = subNode.has("type") ? subNode.get("type").asText() : "TEXT";
+                    String subType = subNode.has("type") ? subNode.get("type").asText() : FieldType.TEXT.name();
                     FieldType subFieldType;
                     try {
                         subFieldType = FieldType.valueOf(subType);

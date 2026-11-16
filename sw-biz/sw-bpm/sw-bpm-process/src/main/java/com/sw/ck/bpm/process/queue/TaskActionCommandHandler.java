@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 import java.util.Set;
 
 import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.entity.BpmCommandResultStatusEnum;
 /**
  * 审批动作命令处理器：消费 TASK_APPROVE/TASK_REJECT/TASK_RETURN 受理，
  * 汇入 {@link TaskActionService} 唯一执行核心（与同步 HTTP 入口共享语义）。
@@ -88,7 +89,7 @@ public class TaskActionCommandHandler implements BpmCommandHandler {
         boolean recoveredByIdentity = replay || sameOperationPrior;
         ApprovalActionRecord committed = recoveredByIdentity ? prior
                 : (approvalActionService == null ? null : approvalActionService.findByTaskId(taskId));
-        String result = "{\"status\":\"" + (recoveredByIdentity ? "RECOVERED" : "DONE") + "\""
+        String result = "{\"status\":\"" + (recoveredByIdentity ? BpmCommandResultStatusEnum.RECOVERED.getCode() : BpmCommandResultStatusEnum.DONE.getCode()) + "\""
                 + (committed == null ? "" : ",\"actionRecordId\":" + committed.getId())
                 + "}";
         log.info("审批命令已执行: commandId={}, taskId={}, action={}, result={}",

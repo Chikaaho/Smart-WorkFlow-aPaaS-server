@@ -1,29 +1,23 @@
 package com.sw.ck.agent.service.impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.agent.dto.AgentGraphDefDTO;
 import com.sw.ck.agent.dto.AgentGraphSnapshotDTO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
+import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.service.BaseServiceImpl;
-
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,6 +28,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Agent 图定义 Service 实现（M07-F02 Step7 图定义 CRUD + 版本 + 发布骨架）。
@@ -77,7 +76,7 @@ public class AgentGraphDefServiceImpl
     private void validateHumanNodes(ProcessGraph graph) {
         for (GraphElement element : graph.getElements()) {
             if (!"node".equals(element.getKind())
-                    || !"HUMAN".equals(element.getType())) {
+                    || !AgentGraphInterpreter.NODE_TYPE_HUMAN.equals(element.getType())) {
                 continue;
             }
             Map<String, Object> config = element.getConfig() == null
@@ -157,7 +156,7 @@ public class AgentGraphDefServiceImpl
         if (currentDefId != null) nextChain.add(currentDefId);
         for (GraphElement element : graph.getElements()) {
             if (!"node".equals(element.getKind())
-                    || !"SUBGRAPH".equals(element.getType())) {
+                    || !AgentGraphInterpreter.NODE_TYPE_SUBGRAPH.equals(element.getType())) {
                 continue;
             }
             Map<String, Object> config = element.getConfig() == null
@@ -341,7 +340,7 @@ public class AgentGraphDefServiceImpl
         AgentGraphDef entity = baseMapper.selectOne(
                 Wrappers.<AgentGraphDef>lambdaQuery()
                         .eq(AgentGraphDef::getGraphKey, graphKey)
-                        .eq(AgentGraphDef::getStatus, "PUBLISHED")
+                        .eq(AgentGraphDef::getStatus, STATUS_PUBLISHED)
                         .last("LIMIT 1"));
         return entity == null ? Optional.empty() : Optional.of(entity.getId());
     }
@@ -381,7 +380,7 @@ public class AgentGraphDefServiceImpl
         GraphElement startNode = GraphElement.builder()
                 .id(startId)
                 .kind("node")
-                .type("START")
+                .type(AgentGraphInterpreter.NODE_TYPE_START)
                 .style(startStyle)
                 .config(Collections.emptyMap())
                 .build();
@@ -389,7 +388,7 @@ public class AgentGraphDefServiceImpl
         GraphElement endNode = GraphElement.builder()
                 .id(endId)
                 .kind("node")
-                .type("END")
+                .type(AgentGraphInterpreter.NODE_TYPE_END)
                 .style(endStyle)
                 .config(Collections.emptyMap())
                 .build();

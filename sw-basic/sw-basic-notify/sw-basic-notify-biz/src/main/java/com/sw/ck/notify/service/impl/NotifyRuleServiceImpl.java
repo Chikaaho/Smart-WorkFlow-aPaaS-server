@@ -21,6 +21,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.Locale;
+import com.sw.ck.notify.api.NotifyFailurePolicyEnum;
 
 /** 通知规则服务实现（I6）。 */
 @Service
@@ -144,7 +145,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
             }
         }
         // 渠道顺序必须以 IN_APP 开头：必须送达规则的最低保证（方向 §3.4/§3.6）
-        if (!"IN_APP".equalsIgnoreCase(dto.getChannelPriority().split(",")[0].trim())) {
+        if (!NotifyChannel.IN_APP.name().equalsIgnoreCase(dto.getChannelPriority().split(",")[0].trim())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "渠道顺序必须以 IN_APP 开头（站内信保底）");
         }
         String rr = dto.getRecipientRule();
@@ -166,7 +167,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         r.setChannelPriority(dto.getChannelPriority());
         r.setRecipientRule(dto.getRecipientRule());
         r.setRequiredFlag(Boolean.TRUE.equals(dto.getRequiredFlag()) ? 1 : 0);
-        r.setFailurePolicy("MANUAL".equals(dto.getFailurePolicy()) ? "MANUAL" : "RETRY");
+        r.setFailurePolicy(NotifyFailurePolicyEnum.MANUAL.getCode().equals(dto.getFailurePolicy()) ? NotifyFailurePolicyEnum.MANUAL.getCode() : NotifyFailurePolicyEnum.RETRY.getCode());
         r.setEnabled(dto.getEnabled() == null || Boolean.TRUE.equals(dto.getEnabled()));
         r.setRemark(dto.getRemark());
         return r;

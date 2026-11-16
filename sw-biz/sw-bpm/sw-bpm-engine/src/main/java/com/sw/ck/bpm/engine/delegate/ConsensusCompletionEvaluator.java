@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import com.sw.ck.bpm.api.node.ConsensusModeEnum;
 
 /**
  * 会签提前结算判定（I3 §4.5）。
@@ -87,17 +88,17 @@ public class ConsensusCompletionEvaluator {
 
         boolean positive;
         boolean negative;
-        if ("ANY".equals(mode)) {
+        if (ConsensusModeEnum.ANY.getCode().equals(mode)) {
             positive = approved >= 1;
             // ANY 负向阈值与 RATIO 同口径：任一否决不立即终结，
             // 须等参与人全部表决完成（completed >= total）且无足够通过票；
             // 一票否决语义由 VETO 承担，不得混入 ANY。
             negative = !positive && completed >= total;
-        } else if ("VETO".equals(mode)) {
+        } else if (ConsensusModeEnum.VETO.getCode().equals(mode)) {
             // 一票否决：任何否决即节点负向
             positive = approved >= total;
             negative = rejected > 0;
-        } else if ("COUNT".equals(mode)) {
+        } else if (ConsensusModeEnum.COUNT.getCode().equals(mode)) {
             if (total <= 0) {
                 return false;
             }
@@ -105,7 +106,7 @@ public class ConsensusCompletionEvaluator {
             int required = Math.max(1, Math.min(ratio, total));
             positive = approved >= required;
             negative = !positive && completed >= total && approved < required;
-        } else if ("ALL".equals(mode)) {
+        } else if (ConsensusModeEnum.ALL.getCode().equals(mode)) {
             positive = total > 0 && approved >= total;
             negative = !positive && rejected > 0;
         } else {

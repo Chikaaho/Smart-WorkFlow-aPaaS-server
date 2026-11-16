@@ -1,13 +1,15 @@
 package com.sw.ck.bpm.process.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmCommand;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 /**
  * P0 同步等待器：受理后对单次命令做有界等待。
  * <p>
@@ -95,10 +97,10 @@ public class CommandSyncWaiter {
         while (System.currentTimeMillis() < deadline) {
             BpmCommand command = commandService.getById(commandId);
             if (command != null) {
-                if ("COMPLETED".equals(command.getStatus())) {
+                if (BatchStatusEnum.COMPLETED.getCode().equals(command.getStatus())) {
                     return new WaitResult(Outcome.COMPLETED, command);
                 }
-                if ("FAILED".equals(command.getStatus())) {
+                if (CommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
                     return new WaitResult(Outcome.FAILED, command);
                 }
             }

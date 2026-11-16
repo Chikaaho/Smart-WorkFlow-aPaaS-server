@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 
 /**
  * 钉钉工作通知生产渠道适配器（I6）。
@@ -49,7 +50,7 @@ public class DingtalkNotifyChannelAdapter implements NotifyChannelAdapter {
 
     @PostConstruct
     void initChannelProps() {
-        ChannelProps cp = props.getChannels().get("DINGTALK");
+        ChannelProps cp = props.getChannels().get(NotifyChannel.DINGTALK.name());
         this.appKey = cp.getAppKey();
         this.appSecret = cp.getAppSecret();
         this.agentId = cp.getAgentId();
@@ -63,10 +64,10 @@ public class DingtalkNotifyChannelAdapter implements NotifyChannelAdapter {
     @Override
     public Optional<NotifySendResult> send(NotifySendRequest request) {
         Optional<String> subject = targetResolver
-                .resolveProviderSubject(request.getTenantId(), request.getRecipientId(), "DINGTALK")
+                .resolveProviderSubject(request.getTenantId(), request.getRecipientId(), NotifyChannel.DINGTALK.name())
                 .filter(value -> !value.isBlank());
         if (subject.isEmpty()) {
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("无法解析接收人钉钉主体，拒绝发送").build());
         }
         String userid = subject.orElseThrow();
@@ -91,16 +92,16 @@ public class DingtalkNotifyChannelAdapter implements NotifyChannelAdapter {
                 JsonNode root = mapper.readTree(resp.body());
                 int errCode = root.path("errcode").asInt(-1);
                 if (errCode == 0) {
-                    return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
+                    return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.SUCCESS.getCode())
                             .externalMessageId(root.path("task_id").asText("dingtalk-" + System.nanoTime()))
                             .build());
                 }
-                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+                return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                         .failureReason("钉钉发送失败: errcode=" + errCode)
                         .build());
             }
         } catch (Exception e) {
-            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("钉钉发送异常: " + e.getClass().getSimpleName()).build());
         }
     }

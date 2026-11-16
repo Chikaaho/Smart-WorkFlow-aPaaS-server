@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
@@ -17,6 +16,7 @@ import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.entity.FormIdGenerator;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.txn.service.C1PolicyService;
@@ -24,17 +24,17 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dict.DictFacade;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.HashMap;
 import java.util.stream.Collectors;
 
 import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 表单记录更新服务。
  * <p>
@@ -128,7 +128,7 @@ public class FormDataUpdateService {
         if (!formDefService.isCurrentUserVisible(formKey)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
-        if (!"PUBLISHED".equals(formDef.getStatus())) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED, "表单 '" + formKey + "' 未发布，不能更新");
         }
         if (enrichment != null) {
@@ -268,16 +268,16 @@ public class FormDataUpdateService {
         List<Object> params = new ArrayList<>();
 
         for (FormFieldValidator.FieldDef def : fieldDefs.values()) {
-            if ("TABLE".equals(def.type())) continue; // TABLE 不在主表加列
-            if ("LABEL".equals(def.type())) continue; // v0.0.2：说明文字非输入字段，无列
+            if (FieldType.TABLE.name().equals(def.type())) continue; // TABLE 不在主表加列
+            if (FieldType.LABEL.name().equals(def.type())) continue; // v0.0.2：说明文字非输入字段，无列
 
             String colName = DynamicTableSql.requireColumn(def.name(), FieldType.valueOf(def.type()));
             Object value = submittedData.get(def.name());
 
-            if ("BOOL".equals(def.type())) {
+            if (FieldType.BOOL.name().equals(def.type())) {
                 value = FormFieldValidator.convertBoolValue(value);
             }
-            if ("DATASOURCE".equals(def.type()) && value instanceof Map<?, ?> jsonValue) {
+            if (FieldType.DATASOURCE.name().equals(def.type()) && value instanceof Map<?, ?> jsonValue) {
                 try {
                     value = objectMapper.writeValueAsString(jsonValue);
                 } catch (JsonProcessingException e) {
@@ -420,10 +420,10 @@ public class FormDataUpdateService {
         List<Object> values = new ArrayList<>(sysCols.values());
 
         for (FormFieldValidator.FieldDef subDef : subFieldDefs) {
-            if ("LABEL".equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
+            if (FieldType.LABEL.name().equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
             String colName = DynamicTableSql.requireColumn(subDef.name(), FieldType.valueOf(subDef.type()));
             Object val = rowData.get(subDef.name());
-            if ("BOOL".equals(subDef.type())) {
+            if (FieldType.BOOL.name().equals(subDef.type())) {
                 val = FormFieldValidator.convertBoolValue(val);
             }
             val = serializeListValue(subDef.type(), subDef.multiple(), val);
@@ -465,10 +465,10 @@ public class FormDataUpdateService {
         List<Object> params = new ArrayList<>();
 
         for (FormFieldValidator.FieldDef subDef : subFieldDefs) {
-            if ("LABEL".equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
+            if (FieldType.LABEL.name().equals(subDef.type())) continue; // v0.0.2：说明文字非输入字段，无列
             String colName = DynamicTableSql.requireColumn(subDef.name(), FieldType.valueOf(subDef.type()));
             Object val = rowData.get(subDef.name());
-            if ("BOOL".equals(subDef.type())) {
+            if (FieldType.BOOL.name().equals(subDef.type())) {
                 val = FormFieldValidator.convertBoolValue(val);
             }
             val = serializeListValue(subDef.type(), subDef.multiple(), val);
@@ -511,7 +511,7 @@ public class FormDataUpdateService {
         // BF20261013-009：DICT 下拉多选（multiple）与 MULTISELECT 同口径序列化
         boolean multiselectLike = "MULTISELECT".equals(type) || "ATTACHMENT".equals(type)
                 || "IMAGE".equals(type) || ("DICT".equals(type) && multiple);
-        boolean objectMulti = multiple && ("USER".equals(type) || "DEPT".equals(type));
+        boolean objectMulti = multiple && (FormAppScopeTypes.USER.equals(type) || FormAppScopeTypes.DEPT.equals(type));
         if ((multiselectLike || objectMulti) && (value instanceof List<?> || value instanceof Map<?, ?>)) {
             try {
                 return objectMapper.writeValueAsString(value);

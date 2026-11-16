@@ -1,23 +1,32 @@
 package com.sw.ck.bpm.engine.translator;
 
-import com.sw.ck.bpm.api.node.NodeActionPolicy;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
-import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
+import com.sw.ck.bpm.api.node.NodeActionPolicy;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
+import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.engine.script.ScriptSugar;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
 
 import org.flowable.bpmn.model.ExtensionAttribute;
 import org.flowable.bpmn.model.FlowElement;
@@ -27,16 +36,7 @@ import org.flowable.bpmn.model.UserTask;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.EnumSet;
-import java.util.Optional;
-import java.util.Set;
-
-import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.api.node.OpinionFieldTypeEnum;
 /**
  * APPROVAL 节点翻译器 —— 画布 APPROVAL 节点 → BPMN {@link UserTask}。
  * <p>
@@ -62,7 +62,7 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
 
     /** 审批意见表单可用组件集合（组件适用矩阵，I3 §4.10；与 ApprovalOpinionValidator 口径一致）。 */
     private static final Set<String> OPINION_SUPPORTED_TYPES = Set.of(
-            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE", "USER");
+            OpinionFieldTypeEnum.TEXT.getCode(), OpinionFieldTypeEnum.TEXTAREA.getCode(), OpinionFieldTypeEnum.NUMBER.getCode(), OpinionFieldTypeEnum.RADIO.getCode(), OpinionFieldTypeEnum.CHECKBOX.getCode(), OpinionFieldTypeEnum.SELECT.getCode(), OpinionFieldTypeEnum.DATETIME.getCode(), OpinionFieldTypeEnum.NOTE.getCode(), SubjectTypeEnum.USER.getCode());
 
     /** Flowable 扩展命名空间（BPMN 2.0 XSD 允许 {@code flowable:*} 属性） */
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
@@ -87,7 +87,7 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
 
     @Override
     public Optional<String> type() {
-        return Optional.of("APPROVAL");
+        return Optional.of(GraphElement.TYPE_APPROVAL);
     }
 
     @Override
@@ -326,7 +326,7 @@ public class ApprovalUserTaskTranslator implements NodeTypeTranslator {
             // create 监听器内 setAssignee 不落 HI_ACTINST/HI_TASKINST（集成探针证实，
             // 监控流转记录审批人显示 "-"），原生属性由引擎在任务插入时持久化，历史表可查。
             if (approverObj instanceof Map<?, ?> approverMap
-                    && ("DESIGNATED".equalsIgnoreCase(String.valueOf(approverMap.get("type")))
+                    && (NodeApproverType.DESIGNATED.equalsIgnoreCase(String.valueOf(approverMap.get("type")))
                     || ParticipantStrategy.FIXED_USER.equalsIgnoreCase(String.valueOf(approverMap.get("strategy"))))) {
                 String designated = firstDesignatedUser(approverMap.get("value"));
                 if (designated != null && !designated.isBlank()

@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.time.LocalDateTime;
+import com.sw.ck.system.sso.SsoAuditActionEnum;
 
 /**
  * 租户管理服务（T020 / DR02）。
@@ -199,7 +200,7 @@ public class TenantAdminService {
         if (tenantMapper.updateById(tenant) != 1) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "租户状态更新失败，请重试");
         }
-        recordStatusAudit(id, status == 1 ? "DISABLE" : "ENABLE", previousStatus, status,
+        recordStatusAudit(id, status == 1 ?  SsoAuditActionEnum.DISABLE.getCode() :  SsoAuditActionEnum.ENABLE.getCode(), previousStatus, status,
                 tenant.getExpireTime(), normalizedReason, status == 1 ? "已停用" : "已启用");
     }
 
