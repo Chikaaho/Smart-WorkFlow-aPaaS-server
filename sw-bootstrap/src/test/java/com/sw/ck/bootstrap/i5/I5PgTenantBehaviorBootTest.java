@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.i5;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -27,7 +28,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Base64;
@@ -79,7 +79,7 @@ class I5PgTenantBehaviorBootTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "i5-pg-test-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "i5-pg-test-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -410,15 +410,6 @@ class I5PgTenantBehaviorBootTest {
         return clean.substring(0, Math.min(160, clean.length()));
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
-            return Base64.getEncoder().encodeToString(g.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     @AfterAll
     static void tearDown() {

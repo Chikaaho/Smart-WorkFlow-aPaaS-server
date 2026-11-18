@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.common.exception.BaseException;
@@ -30,7 +31,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPairGenerator;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -93,7 +93,7 @@ class P62ReceiptBoundaryPgTest {
                         + ",classpath:db/migration/openapi/{vendor}"
                         + ",classpath:db/migration/system/{vendor}");
         props.put("sw.security.jwt.secret", "p62-boundary-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-boundary-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -416,14 +416,4 @@ class P62ReceiptBoundaryPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

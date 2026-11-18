@@ -123,7 +123,7 @@ docker run -d --name sw-redis -p 6379:6379 redis:7
 
 ### 3. 本地配置
 
-新建 `sw-bootstrap/src/main/resources/application-local.yml`（已被忽略，不会误提交）：
+本机启动需要 `sw-bootstrap/src/main/resources/application-local.yml`（已入库，作为可运行的本地模板；改本机地址直接改这个文件）：
 
 ```yaml
 spring:
@@ -155,19 +155,29 @@ sw:
     active-provider: local
 ```
 
-再生成几个本地开发用的随机密钥：
+再生成几个本地开发用的随机密钥（RSA 私钥写进仓库外的文件，配置里只留文件路径）：
 
 ```bash
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048   # 登录口令加密私钥（PKCS#8 PEM）
+mkdir -p "$HOME/.smart-workflow"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$HOME/.smart-workflow/login-rsa.pem"
 openssl rand -base64 32    # SW_CIPHER_KEY、SW_SSO_CIPHER_KEY（各生成一份）
 openssl rand -base64 24    # SW_LOGIN_DIGEST_SECRET
 openssl rand -base64 32    # JWT_SECRET
 ```
 
+`application-local.yml` 里只写路径：
+
+```yaml
+sw:
+  security:
+    login:
+      rsa-private-key-file: ${SW_LOGIN_RSA_PRIVATE_KEY_FILE:~/.smart-workflow/login-rsa.pem}
+```
+
 ### 4. 启动
 
 ```bash
-SW_LOGIN_RSA_PRIVATE_KEY="$(cat dev-login.key)" \
+SW_LOGIN_RSA_PRIVATE_KEY_FILE="$HOME/.smart-workflow/login-rsa.pem" \
 SW_LOGIN_DIGEST_SECRET="上一步生成" \
 SW_CIPHER_KEY="上一步生成" \
 SW_SSO_CIPHER_KEY="上一步生成" \
@@ -175,6 +185,9 @@ JWT_SECRET="上一步生成" \
 SPRING_PROFILES_ACTIVE=local \
 java -jar sw-bootstrap/target/bootstrap.jar
 ```
+
+生产同样只提供私钥文件路径：把私钥文件挂载到只读卷（如 `/etc/smart-workflow/login-rsa.pem`），
+由 `SW_LOGIN_RSA_PRIVATE_KEY_FILE` 指向它，配置文件中不出现私钥本体。
 
 - 默认地址 `http://127.0.0.1:8080`，健康检查 `http://127.0.0.1:8080/api/actuator/health` 返回 `{"status":"UP"}`。
 - 端口被占用时在 `application-local.yml` 加 `server.port: 18080`。

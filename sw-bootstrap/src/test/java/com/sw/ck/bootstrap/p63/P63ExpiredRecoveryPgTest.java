@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p63;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
@@ -33,8 +34,6 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -90,7 +89,7 @@ class P63ExpiredRecoveryPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p63-expired-recovery-jwt-secret-0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p63-expired-recovery-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -395,10 +394,4 @@ class P63ExpiredRecoveryPgTest {
         throw new AssertionError("命令未在时限内到终态: " + commandId + " last=" + last);
     }
 
-    private static String generatedRsaPkcs8Base64() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048);
-        KeyPair pair = generator.generateKeyPair();
-        return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
-    }
 }

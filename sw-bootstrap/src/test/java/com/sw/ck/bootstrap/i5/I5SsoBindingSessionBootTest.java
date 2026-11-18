@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.i5;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.security.support.SecurityLoginContextProvider;
 import com.sw.ck.system.controller.SsoTicketStore;
 import com.sw.ck.system.sso.SsoAuthService;
@@ -27,7 +28,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
-import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.PublicKey;
 import java.security.spec.MGF1ParameterSpec;
@@ -86,7 +86,7 @@ class I5SsoBindingSessionBootTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "sa");
         props.put("spring.datasource.dynamic.datasource.master.password", "");
         props.put("sw.security.jwt.secret", "i5-g6b1-test-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "i5-g6b1-test-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -619,15 +619,6 @@ class I5SsoBindingSessionBootTest {
                 90001L, TENANT_ID);
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
-            return Base64.getEncoder().encodeToString(g.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     private boolean sessionRowExists() {
         try {

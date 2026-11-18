@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p63;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -31,8 +32,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -78,7 +77,7 @@ class P63ImmediateTriggerPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p63-imm-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p63-imm-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -312,14 +311,4 @@ class P63ImmediateTriggerPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            KeyPair pair = gen.generateKeyPair();
-            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

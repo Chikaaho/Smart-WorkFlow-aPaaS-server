@@ -5,6 +5,7 @@ import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
 import com.sw.ck.agent.vo.AgentToolInternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
 import com.sw.ck.agent.integration.AgentExternalCapabilityFacade;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.common.integration.ExternalCapability;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
 import com.sw.ck.agent.service.AgentGraphDebugService;
@@ -33,7 +34,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.security.KeyPairGenerator;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -80,7 +80,7 @@ class AgentToolEnabledPgTest {
         props.put("spring.datasource.dynamic.druid.min-idle", "1");
         props.put("spring.datasource.dynamic.druid.max-active", "4");
         props.put("sw.security.jwt.secret", "p66-x1-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p66-x1-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -221,14 +221,4 @@ class AgentToolEnabledPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

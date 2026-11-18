@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p63;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.controller.BpmCommandController;
@@ -48,8 +49,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.Method;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -127,7 +126,7 @@ class P63FunctionAuthorityWindowPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p63-fa-window-jwt-secret-0123456789abcdef0123456789");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p63-fa-window-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -695,16 +694,6 @@ class P63FunctionAuthorityWindowPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            KeyPair pair = gen.generateKeyPair();
-            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     /** 可设定时钟：instant 由测试显式推进，withZone 仍共享同一时间源。 */
     private static final class SettableClock extends Clock {

@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.bpm.process.service.TxnBatchService;
@@ -28,7 +29,6 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
-import java.security.KeyPairGenerator;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -77,7 +77,7 @@ class P62BatchInvokePgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p62-batch-e2e-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-batch-e2e-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -308,14 +308,4 @@ class P62BatchInvokePgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

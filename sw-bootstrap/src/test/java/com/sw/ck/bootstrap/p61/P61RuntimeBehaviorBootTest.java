@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p61;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.security.support.SecurityLoginContextProvider;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
@@ -20,7 +21,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.security.KeyPairGenerator;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -111,7 +111,7 @@ class P61RuntimeBehaviorBootTest {
         props.put("spring.data.redis.password", System.getenv().getOrDefault("REDIS_PASSWORD", ""));
         // prod fail-fast 门禁：登录链密钥必须显式提供（进程内测试密钥，不落仓库、不进日志正文）
         props.put("sw.security.jwt.secret", "p61-runtime-test-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p61-runtime-test-digest-secret");
         props.put("sw.security.sso.cipher-key",
                 Base64.getEncoder().encodeToString(new byte[32]));
@@ -122,16 +122,6 @@ class P61RuntimeBehaviorBootTest {
         return props;
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
-            return Base64.getEncoder()
-                    .encodeToString(g.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     /** 发起真实请求；{@code acceptLanguage} 为 null 时不带 Accept-Language 头。 */
     private HttpResponse<String> get(String path, String acceptLanguage, String requestId) throws Exception {

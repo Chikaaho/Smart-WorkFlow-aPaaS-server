@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.i5;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.security.support.SecurityLoginContextProvider;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,7 +23,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.security.KeyPairGenerator;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -65,7 +65,7 @@ class I5ProdProfileSecurityBootTest {
         // 本类前提：prod 下固定验证码开关被误开，profile 门禁仍须拒绝固定答案
         props.put("ch.dev.test-mock", "true");
         props.put("sw.security.jwt.secret", "i5-prod-test-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "i5-prod-test-digest-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
@@ -106,15 +106,6 @@ class I5ProdProfileSecurityBootTest {
         return props;
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
-            return Base64.getEncoder().encodeToString(g.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     @Test
     @DisplayName("匿名矩阵：仅最小健康探针可达且不泄漏详情，其余全部拒绝")
@@ -183,7 +174,7 @@ class I5ProdProfileSecurityBootTest {
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.url", livePgUrl);
         props.put("sw.security.jwt.secret", "i5-prod-test-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "i5-prod-test-digest-secret");
         props.putAll(overrides);
         try {
@@ -212,7 +203,7 @@ class I5ProdProfileSecurityBootTest {
     @DisplayName("G3b：凭据逐项缺失/占位的 prod 启动矩阵（首因命中目标且不泄密）")
     void credentialMatrixFailFast() {
         // 1) 缺 RSA 私钥（其余有效）→ 首因 = RSA 门禁
-        String rsa = tryBoot(Map.of("sw.security.login.rsa-private-key", ""));
+        String rsa = tryBoot(Map.of("sw.security.login.rsa-private-key-file", ""));
         System.out.println("[G3b] 缺RSA: " + rsa);
         Assertions.assertThat(rsa).contains("RSA 私钥");
         // 2) RSA 有效、缺 JWT → 首因 = JWT 门禁

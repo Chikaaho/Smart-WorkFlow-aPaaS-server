@@ -2,6 +2,7 @@ package com.sw.ck.bootstrap.iot;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bootstrap.p63.P63ControlledMqttBroker;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.iot.job.IotReservationDispatchJob;
 import com.sw.ck.security.support.SecurityLoginContextProvider;
 
@@ -21,8 +22,6 @@ import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProc
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
@@ -79,7 +78,7 @@ class IotNativeMqttDeferredDispatchPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "nat-mqtt-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "nat-mqtt-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -283,14 +282,4 @@ class IotNativeMqttDeferredDispatchPgTest {
                 .findFirst().orElseThrow(() -> new AssertionError("QoS1 发布完成但 Broker 接收记录缺失"));
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            KeyPair pair = gen.generateKeyPair();
-            return Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

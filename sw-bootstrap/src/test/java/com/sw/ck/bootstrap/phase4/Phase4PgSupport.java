@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.phase4;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
@@ -21,7 +22,6 @@ import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.security.KeyPairGenerator;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -166,7 +166,7 @@ abstract class Phase4PgSupport {
         // 迁移由本类显式执行（clean + migrate 原始输出即证据），应用不再自行迁移
         props.put("spring.flyway.enabled", "false");
         props.put("sw.security.jwt.secret", "phase4-pg-test-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", rsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "phase4-pg-test-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -372,17 +372,5 @@ abstract class Phase4PgSupport {
                 + " VALUES (" + userId + ", CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, " + tenantId
                 + ", 0, 'p4" + tag + "user', '$2a$10$GQx6ILw5jsPhqHxJ6/AcmOzSM8xRVRwqChiH/B9ylh0srY0/NqXiK', 'P4 user', 0, 0, 1)"
                 + " ON CONFLICT (id) DO NOTHING");
-    }
-
-    /** 与 Phase 3 PG 用例同构：运行期生成 RSA 私钥，避免任何机器相关路径进入仓库。 */
-    private static String rsaPkcs8Base64() {
-        try {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
     }
 }

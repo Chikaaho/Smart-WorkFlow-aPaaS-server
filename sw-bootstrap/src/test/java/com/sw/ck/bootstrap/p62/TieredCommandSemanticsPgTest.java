@@ -77,7 +77,7 @@
 //         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
 //         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
 //         props.put("sw.security.jwt.secret", "p62-tiered-pg-jwt-secret-0123456789abcdef0123456789");
-//         props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+//         props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
 //         props.put("sw.security.login.digest-secret", "p62-tiered-pg-digest-secret");
 //         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
 //         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));

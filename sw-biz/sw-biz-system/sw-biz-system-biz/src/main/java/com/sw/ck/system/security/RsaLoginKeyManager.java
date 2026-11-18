@@ -8,6 +8,9 @@ import org.springframework.stereotype.Component;
 import javax.crypto.Cipher;
 import javax.crypto.spec.OAEPParameterSpec;
 import javax.crypto.spec.PSource;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
@@ -26,8 +29,9 @@ import java.security.spec.RSAPublicKeySpec;
 /**
  * RSA 登录密码密钥管理器（P45）。
  * <p>
- * - 仅从 {@link LoginSecurityProperties} 读取外部注入的 PKCS#8 私钥，无任何默认可用密钥；
- *   未配置或密钥强度不足 2048 位时启动期 fail-fast。
+ * - 仅从 {@link LoginSecurityProperties} 给出的私钥文件路径读取 PKCS#8 私钥，
+ *   配置文件与代码里都不承载私钥本体，无任何默认可用密钥；路径未配置、文件不可读或
+ *   密钥强度不足 2048 位时启动期 fail-fast。
  * - 加密算法与前端 WebCrypto 对齐：RSA-OAEP，摘要 SHA-256，MGF1 也必须显式指定 SHA-256
  *  （SunJCE 对 {@code OAEPWithSHA-256AndMGF1Padding} 默认 MGF1 用 SHA-1，与 WebCrypto 不兼容，
  *   必须用 {@link OAEPParameterSpec} 显式声明）。
@@ -50,25 +54,35 @@ public class RsaLoginKeyManager {
     // 初始化期完成密钥装载与 fail-fast 校验，保证任何装配方式下都不会带空密钥表上线
     @PostConstruct
     void init() {
-        Map<String, String> configured = new HashMap<>(properties.getRsaExtraKeys());
+        Map<String, String> configured = new HashMap<>(properties.getRsaExtraKeyFiles());
         String activeVersion = properties.getRsaKeyVersion();
         if (configured.containsKey(activeVersion)) {
             throw new IllegalStateException(
-                    "登录 RSA 密钥配置冲突：版本 " + activeVersion + " 同时出现在 rsa-extra-keys 与 rsa-key-version");
+                    "登录 RSA 密钥配置冲突：版本 " + activeVersion
+                            + " 同时出现在 rsa-extra-key-files 与 rsa-key-version");
         }
-        configured.put(activeVersion, properties.getRsaPrivateKey());
+        configured.put(activeVersion, properties.getRsaPrivateKeyFile());
 
         boolean anyConfigured = false;
         for (Map.Entry<String, String> entry : configured.entrySet()) {
             String version = entry.getKey();
-            String pem = entry.getValue() == null ? "" : entry.getValue().trim();
+            String path = entry.getValue() == null ? "" : entry.getValue().trim();
+            if (path.isEmpty()) {
+                if (version.equals(activeVersion)) {
+                    throw new IllegalStateException(
+                            "登录 RSA 私钥未配置：必须提供 sw.security.login.rsa-private-key-file"
+                                    + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY_FILE 指向的 PKCS#8 PEM 文件），"
+                                    + "不允许默认私钥上线");
+                }
+                // 轮换窗口外的空条目（env 占位）直接忽略
+                continue;
+            }
+            String pem = readKeyFile(version, path);
             if (pem.isEmpty()) {
                 if (version.equals(activeVersion)) {
                     throw new IllegalStateException(
-                            "登录 RSA 私钥未配置：必须经外部安全配置注入 sw.security.login.rsa-private-key"
-                                    + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY），不允许默认私钥上线");
+                            "登录 RSA 私钥未配置：文件 " + path + " 内容为空，不允许默认私钥上线");
                 }
-                // 轮换窗口外的空条目（env 占位）直接忽略
                 continue;
             }
             anyConfigured = true;
@@ -83,10 +97,26 @@ public class RsaLoginKeyManager {
         }
         if (!anyConfigured) {
             throw new IllegalStateException(
-                    "登录 RSA 私钥未配置：必须经外部安全配置注入 sw.security.login.rsa-private-key"
-                            + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY），不允许默认私钥上线");
+                    "登录 RSA 私钥未配置：必须提供 sw.security.login.rsa-private-key-file"
+                            + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY_FILE 指向的 PKCS#8 PEM 文件），"
+                            + "不允许默认私钥上线");
         }
         log.info("登录 RSA 密钥装载完成: activeVersion={}, versions={}", activeVersion, privateKeys.keySet());
+    }
+
+    /**
+     * 读取私钥文件。失败只暴露路径与失败原因（不含文件内容），避免私钥进入日志。
+     */
+    private String readKeyFile(String version, String path) {
+        Path file = Path.of(path);
+        if (!Files.isReadable(file)) {
+            throw new IllegalStateException("登录 RSA 私钥文件不可读：版本 " + version + "，路径 " + path);
+        }
+        try {
+            return Files.readString(file, StandardCharsets.UTF_8).trim();
+        } catch (IOException e) {
+            throw new IllegalStateException("登录 RSA 私钥文件读取失败：版本 " + version + "，路径 " + path, e);
+        }
     }
 
     /** 当前生效版本标识（新挑战一律绑定该版本） */

@@ -3,6 +3,7 @@ package com.sw.ck.bootstrap.multidb;
 import com.sw.ck.bootstrap.compat.DatabaseCompatibilityGuard;
 import com.sw.ck.bootstrap.config.FlywayConfiguration;
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.process.entity.BpmTaskOpinionDraft;
 import com.sw.ck.bpm.process.mapper.BpmTaskOpinionDraftMapper;
 import com.sw.ck.knowledge.vector.KnowledgeVectorStore;
@@ -32,7 +33,6 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.security.KeyPairGenerator;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -74,7 +74,7 @@ class OracleBootSmokeTest {
         props.put("spring.datasource.dynamic.datasource.master.username", user);
         props.put("spring.datasource.dynamic.datasource.master.password", password);
         props.put("sw.security.jwt.secret", "oracle-smoke-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "oracle-smoke-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -316,14 +316,4 @@ class OracleBootSmokeTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

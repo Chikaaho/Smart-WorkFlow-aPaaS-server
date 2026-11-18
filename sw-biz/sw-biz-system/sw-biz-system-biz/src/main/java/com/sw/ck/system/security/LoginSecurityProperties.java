@@ -10,8 +10,9 @@ import java.util.Map;
 /**
  * P45 登录安全配置。
  * <p>
- * 私钥只允许经外部安全配置（环境变量/密钥设施）注入；本类不提供任何可用的默认私钥，
- * 未配置时由 {@link RsaLoginKeyManager} 在启动期 fail-fast，拒绝静默降级。
+ * 私钥只经文件路径注入（配置文件里只出现路径，私钥本体落在文件系统/密钥设施挂载的文件中）；
+ * 本类不提供任何可用的默认私钥，未配置时由 {@link RsaLoginKeyManager} 在启动期 fail-fast，
+ * 拒绝静默降级。
  */
 @Data
 @Component
@@ -36,14 +37,21 @@ public class LoginSecurityProperties {
     /** 验证码字符数 */
     private int captchaLength = 4;
 
-    /** 当前生效的 RSA 私钥版本标识（PKCS#8 PEM，Base64 单行或含头尾均可） */
+    /** 当前生效的 RSA 私钥版本标识（对应 rsa-private-key-file 指向文件的密钥） */
     private String rsaKeyVersion = "v1";
 
-    /** 当前生效版本的 RSA 私钥（PKCS#8 PEM）；生产必须经环境变量注入 */
-    private String rsaPrivateKey = "";
+    /**
+     * 当前生效版本的 RSA 私钥文件路径（PKCS#8 PEM 文件）。
+     * <p>
+     * 配置文件只放路径，私钥本体不落配置；文件内容允许含头尾 PEM 标记或纯 Base64 单行。
+     */
+    private String rsaPrivateKeyFile = "";
 
-    /** 轮换窗口内的旧版本私钥：版本 → PKCS#8 PEM；至少保留到最后一个旧挑战过期 */
-    private Map<String, String> rsaExtraKeys = new LinkedHashMap<>();
+    /**
+     * 轮换窗口内的旧版本私钥文件：版本 → PKCS#8 PEM 文件路径；
+     * 至少保留到最后一个旧挑战过期。
+     */
+    private Map<String, String> rsaExtraKeyFiles = new LinkedHashMap<>();
 
     /** 验证码字符集（去除易混淆字符 0/O/1/I/l） */
     private String captchaCharset = "23456789abcdefghjkmnpqrstuvwxyz";
