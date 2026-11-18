@@ -394,7 +394,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                     sessionMapper.updateById(refreshed);
                     return toDTO(refreshed, engine, countTraces(refreshed.getId()));
                 }
-            } catch (Exception e) { }
+            } catch (Exception e) { /* 补保存失败 → 落到下方兜底读取最新会话 */ }
         }
 
         // 若未进入终态/失败分支，当前 engine 为最新

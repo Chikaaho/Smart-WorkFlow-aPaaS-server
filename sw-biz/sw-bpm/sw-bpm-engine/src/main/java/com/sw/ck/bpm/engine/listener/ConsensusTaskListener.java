@@ -61,7 +61,7 @@ public class ConsensusTaskListener implements TaskListener {
                             }
                         }
                     }
-                } catch (Exception ignored) { }
+                } catch (Exception ignored) { /* 展示名查询失败 → 快照仅记录 ID */ }
             }
             snapshotRecorder.record(task.getProcessInstanceId(), task.getTaskDefinitionKey(), task.getId(),
                     List.of(String.valueOf(participant)), displayNames, tenant)
