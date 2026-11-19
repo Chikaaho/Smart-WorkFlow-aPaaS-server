@@ -6,6 +6,7 @@ import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysTenantStatusAuditMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,7 +29,11 @@ class TenantStatusAuditJobTest {
         tenant.setExpireTime(LocalDateTime.now().minusMinutes(1));
         when(tenants.selectList(any())).thenReturn(List.of(tenant));
 
-        new TenantStatusAuditJob().auditExpiredDue();
+        TenantStatusAuditJob job = new TenantStatusAuditJob();
+        // 生产类已统一字段注入：@Autowired 字段经反射注入 mock
+        ReflectionTestUtils.setField(job, "tenantMapper", tenants);
+        ReflectionTestUtils.setField(job, "auditMapper", audits);
+        job.auditExpiredDue();
 
         ArgumentCaptor<SysTenantStatusAudit> audit = ArgumentCaptor.forClass(SysTenantStatusAudit.class);
         verify(audits).insert(audit.capture());

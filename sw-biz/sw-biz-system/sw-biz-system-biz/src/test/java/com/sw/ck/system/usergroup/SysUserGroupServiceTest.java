@@ -12,6 +12,7 @@ import com.sw.ck.system.entity.SysUserGroupMember;
 import com.sw.ck.system.mapper.SysUserGroupMemberMapper;
 import com.sw.ck.system.mapper.SysUserGroupMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
+import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.system.service.impl.SysUserGroupServiceImpl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Field;
@@ -69,6 +71,10 @@ class SysUserGroupServiceTest {
         Assertions.assertNotNull(baseMapperField, "未找到 baseMapper 字段");
         baseMapperField.setAccessible(true);
         baseMapperField.set(service, groupMapper);
+        // 生产类已统一字段注入：其余 @Autowired 字段经反射注入 mock（不变量见 noImplicitAuthorization）
+        ReflectionTestUtils.setField(service, "sysUserGroupMemberMapper", memberMapper);
+        ReflectionTestUtils.setField(service, "sysUserMapper", userMapper);
+        ReflectionTestUtils.setField(service, "loginContextProvider", mock(LoginContextProvider.class));
     }
 
     private SysUserGroup group(Long id, String code, String name, Integer status) {
@@ -269,17 +275,18 @@ class SysUserGroupServiceTest {
     @DisplayName("零隐式授权：用户组实现不触碰角色/菜单/数据权限关系表")
     void noImplicitAuthorization() {
         // 若实现引用 SysRoleMapper/SysRoleMenuMapper/SysRoleDeptMapper 或 sys_user_role，
-        // 此处通过显式 deny 证明：本测试只 mock 三个 mapper，构造参数不可多传
-        // 所有构造器参数类型集合：仅组成员 mapper、用户 mapper、登录上下文 ——
-        // 绝不出现角色/菜单/数据权限 mapper（角色关系由既有 SysRoleService 管理，用户组不触碰）
-        var paramTypes = Arrays.stream(SysUserGroupServiceImpl.class.getConstructors())
-                .flatMap(c -> Arrays.stream(c.getParameterTypes()))
-                .map(Class::getSimpleName)
+        // 此处通过显式 deny 证明：本测试只 mock 三个 mapper
+        // 注入面（@Autowired 字段类型集合）：仅组成员 mapper、用户 mapper、登录上下文 ——
+        // 绝不出现角色/菜单/数据权限 mapper（角色关系由既有 SysRoleService 管理，用户组不触碰）。
+        // 原「构造器参数集合」断言随 d53c7fb6 统一字段注入改为字段集合，不变量不变。
+        var injectedTypes = Arrays.stream(SysUserGroupServiceImpl.class.getDeclaredFields())
+                .filter(f -> f.getAnnotation(org.springframework.beans.factory.annotation.Autowired.class) != null)
+                .map(f -> f.getType().getSimpleName())
                 .collect(Collectors.toSet());
-        assertThat(paramTypes)
-                .as("构造器只应注入组成员 mapper、用户 mapper 与登录上下文")
+        assertThat(injectedTypes)
+                .as("字段注入只应包含组成员 mapper、用户 mapper 与登录上下文")
                 .containsExactlyInAnyOrder("SysUserGroupMemberMapper", "SysUserMapper", "LoginContextProvider");
-        assertThat(paramTypes)
+        assertThat(injectedTypes)
                 .as("不得注入任何角色/菜单/数据权限 mapper（零隐式授权）")
                 .doesNotContain("SysRoleMapper", "SysRoleMenuMapper", "SysRoleDeptMapper", "SysUserRoleMapper");
         // 契约：角色/菜单/按钮/数据范围关系不因加组变化 —— 由集成测试以权限快照证明
@@ -300,9 +307,10 @@ class SysUserGroupServiceTest {
         PageResult<SysUserGroup> result = service.page(new PageParam(), group(1L, null, "组", null));
 
         assertThat(result.getTotal()).isEqualTo(1L);
-        // 无登录上下文时数据范围参数为安全默认（ALL、无过滤）；租户显式传 null
+        // 无登录上下文时数据范围参数为 fail-closed 零值（0 id / 空集合 → 不匹配任何行），
+        // scopeType 仍为安全默认 ALL（superadmin 旁路逻辑不因缺失上下文放大权限）
         verify(groupMapper).selectGroupPage(any(Page.class), any(SysUserGroup.class), eq(false), eq("ALL"),
-                isNull(), isNull(), any(), isNull());
+                eq(0L), eq(0L), any(), eq(0L));
     }
 
     @Test
@@ -318,7 +326,7 @@ class SysUserGroupServiceTest {
 
         assertThat(result.getTotal()).isEqualTo(1L);
         verify(groupMapper).selectMemberCandidates(any(Page.class), eq("张三"), eq(false), eq("ALL"),
-                isNull(), isNull(), any(), isNull());
+                eq(0L), eq(0L), any(), eq(0L));
     }
 
     private SysUserGroupMember member(Long id, Long userId) {

@@ -149,7 +149,7 @@ class UserGroupAuthorizationTest {
     static class TestConfig {
 
         @Bean
-        UserGroupController controller() {
+        SysUserGroupService sysUserGroupService() {
             SysUserGroupService service = mock(SysUserGroupService.class);
             // 鉴权通过后的成功路径：返回空分页结果（避免 null 触发 400）
             PageResult<SysUserGroup> empty = new PageResult<>();
@@ -158,6 +158,12 @@ class UserGroupAuthorizationTest {
             Mockito.when(service.page(ArgumentMatchers.any(PageParam.class),
                             ArgumentMatchers.<SysUserGroup>any()))
                     .thenReturn(empty);
+            return service;
+        }
+
+        @Bean
+        UserGroupController controller(SysUserGroupService service) {
+            // 生产类已统一字段注入：mock 服务以容器 bean 形式按类型装配
             return new UserGroupController();
         }
 

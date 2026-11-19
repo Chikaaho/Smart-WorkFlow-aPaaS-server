@@ -14,6 +14,7 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -50,6 +51,10 @@ class PositionDelegateFacadeImplTest {
         postMapper = mock(SysPostMapper.class);
         userMapper = mock(SysUserMapper.class);
         facade = new PositionDelegateFacadeImpl();
+        // 生产类已统一字段注入：字段名为 delegateMapper/sysPostMapper/sysUserMapper（与测试变量名不同，按类型映射）
+        ReflectionTestUtils.setField(facade, "delegateMapper", delegateMapper);
+        ReflectionTestUtils.setField(facade, "sysPostMapper", postMapper);
+        ReflectionTestUtils.setField(facade, "sysUserMapper", userMapper);
         when(postMapper.selectOne(any())).thenAnswer(invocation -> null);
         when(postMapper.selectById(anyLong())).thenAnswer(invocation ->
                 switch (invocation.getArgument(0, Long.class).intValue()) {

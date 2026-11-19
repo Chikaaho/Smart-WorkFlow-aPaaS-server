@@ -11,6 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -43,12 +44,12 @@ class AuditOperationFilterTest {
     @Mock
     private AuditLogService auditLogService;
 
+    @InjectMocks
     private AuditOperationFilter filter;
 
     @BeforeEach
     void setUp() {
         when(provider.getObject()).thenReturn(auditLogService);
-        filter = new AuditOperationFilter();
         LoginUser user = new LoginUser();
         user.setUserId(1L);
         user.setTenantId(0L);

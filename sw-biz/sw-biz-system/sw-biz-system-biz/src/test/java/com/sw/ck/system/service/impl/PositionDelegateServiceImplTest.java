@@ -10,6 +10,7 @@ import com.sw.ck.system.mapper.SysPostMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -45,6 +46,9 @@ class PositionDelegateServiceImplTest {
         service = new PositionDelegateServiceImpl() {
             {
                 this.baseMapper = delegateMapper;
+                // 生产类已统一字段注入：其余 @Autowired 字段经反射注入 mock
+                ReflectionTestUtils.setField(this, "sysPostMapper", postMapper);
+                ReflectionTestUtils.setField(this, "sysDeptMapper", deptMapper);
             }
         };
         when(postMapper.selectById(1L)).thenReturn(post(1L, "P_LEAD", 1));

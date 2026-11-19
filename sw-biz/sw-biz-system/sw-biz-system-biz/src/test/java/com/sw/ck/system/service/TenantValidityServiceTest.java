@@ -4,22 +4,32 @@ import com.sw.ck.system.entity.SysTenant;
 import com.sw.ck.system.mapper.SysTenantMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
  * I5 租户有效性校验行为证据（方向 §3.2/§4.B10）：
  * 租户存在/启用/未过期 → 有效；不存在/停用/过期/null → 无效。
  */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("I5 租户有效性校验行为证据")
 class TenantValidityServiceTest {
 
-    private final SysTenantMapper tenantMapper = mock(SysTenantMapper.class);
-    private final TenantValidityService service = new TenantValidityService();
+    @Mock
+    private SysTenantMapper tenantMapper;
+
+    @InjectMocks
+    private TenantValidityService service;
 
     private SysTenant tenant(Long id, Integer status, LocalDateTime expireAt) {
         SysTenant t = new SysTenant();

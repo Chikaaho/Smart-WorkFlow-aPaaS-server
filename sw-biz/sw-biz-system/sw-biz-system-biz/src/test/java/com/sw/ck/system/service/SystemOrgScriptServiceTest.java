@@ -18,6 +18,7 @@ import com.sw.ck.system.mapper.SysUserRoleMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -108,6 +109,13 @@ class SystemOrgScriptServiceTest {
                 .thenReturn(List.of(activePostRelation, disabledPostRelation));
 
         SystemOrgScriptService service = new SystemOrgScriptService();
+        // 生产类已统一字段注入：@Autowired 字段经反射注入上方 mock
+        ReflectionTestUtils.setField(service, "userMapper", userMapper);
+        ReflectionTestUtils.setField(service, "deptMapper", deptMapper);
+        ReflectionTestUtils.setField(service, "roleMapper", roleMapper);
+        ReflectionTestUtils.setField(service, "postMapper", postMapper);
+        ReflectionTestUtils.setField(service, "userRoleMapper", userRoleMapper);
+        ReflectionTestUtils.setField(service, "userPostMapper", userPostMapper);
 
         SystemOrgScriptService.OrgScriptContext context = service.load();
 

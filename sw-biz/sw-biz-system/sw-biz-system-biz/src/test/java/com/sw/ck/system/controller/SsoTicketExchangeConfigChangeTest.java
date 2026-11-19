@@ -60,6 +60,15 @@ class SsoTicketExchangeConfigChangeTest {
         Mockito.when(refreshTokenService.createRefreshToken(Mockito.any(), Mockito.any(), Mockito.anyLong()))
                 .thenReturn("refresh-token-stub");
         controller = new SsoAuthController();
+        // 生产类已统一字段注入：全部 @Autowired 字段经反射注入（本地桩变量与字段同名同型）
+        ReflectionTestUtils.setField(controller, "ticketStore", ticketStore);
+        ReflectionTestUtils.setField(controller, "ssoAuthService", ssoAuthService);
+        ReflectionTestUtils.setField(controller, "callbackPolicy", callbackPolicy);
+        ReflectionTestUtils.setField(controller, "sysUserService", sysUserService);
+        ReflectionTestUtils.setField(controller, "jwtTokenProvider", jwtTokenProvider);
+        ReflectionTestUtils.setField(controller, "jwtProperties", jwtProperties);
+        ReflectionTestUtils.setField(controller, "refreshTokenService", refreshTokenService);
+        ReflectionTestUtils.setField(controller, "tenantValidityService", tenantValidityService);
         ReflectionTestUtils.setField(controller, "cookieSecure", false);
         ReflectionTestUtils.setField(controller, "cookiePath", "/api/auth/");
     }
