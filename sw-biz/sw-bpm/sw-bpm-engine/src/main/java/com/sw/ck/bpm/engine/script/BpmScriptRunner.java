@@ -88,8 +88,12 @@ public class BpmScriptRunner {
     /**
      * BF20261019-02：可共享的 Polyglot {@link Engine}（worker 进程专用）。共享后语言初始化
      * 与 JS 内建编译只付一次；进程内路径（validate/单测）保持 null = 每次 Context 独立 Engine。
+     * <p>1.1.3 修复：宿主 Spring 上下文不注册 Engine bean（1.1.2 的 Spring 构造器即单参
+     * (ObjectMapper) 版本）；d53c7fb6 转字段注入后误成必注依赖，导致应用无法启动。
+     * 恢复可选注入（required = false）——宿主保持 null，worker 子进程经
+     * {@link #forStandalone(ObjectMapper, Engine)} 显式提供。</p>
      */
-    @Autowired
+    @Autowired(required = false)
     private Engine sharedEngine;
 
     /** 非 Spring 场景（worker 子进程/单测）显式提供 ObjectMapper。 */
