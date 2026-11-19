@@ -516,20 +516,35 @@ public class AgentGraphExecutionServiceImpl
         }
         validateForExecution(childGraph);
 
-        AgentGraphExecution childExec = new AgentGraphExecution();
-        childExec.setGraphDefId(child.getId());
-        childExec.setGraphDefVersion(version);
-        childExec.setParentExecutionId(parentExecutionId);
-        childExec.setStatus(STATUS_RUNNING);
-        try {
-            childExec.setInput(objectMapper.writeValueAsString(call.inputs));
-        } catch (Exception ignored) {
-            childExec.setInput("{}");
+        // 1.1.3/P72：恢复轮复用暂停前的子执行行（对齐顶层 V3 语义——恢复前后同一条执行，
+        // 不再新建行导致旧行永远停在 WAITING_HUMAN）；行缺失时防御性新建
+        AgentGraphExecution childExec = null;
+        boolean resumedChild = false;
+        if (call.resumeState != null && call.resumeState.executionRowId != null) {
+            childExec = executionMapper.selectById(call.resumeState.executionRowId);
+            if (childExec != null) {
+                resumedChild = true;
+                childExec.setStatus(STATUS_RUNNING);
+            }
         }
-        executionMapper.insert(childExec);
+        if (childExec == null) {
+            childExec = new AgentGraphExecution();
+            childExec.setGraphDefId(child.getId());
+            childExec.setGraphDefVersion(version);
+            childExec.setParentExecutionId(parentExecutionId);
+            childExec.setStatus(STATUS_RUNNING);
+            try {
+                childExec.setInput(objectMapper.writeValueAsString(call.inputs));
+            } catch (Exception ignored) {
+                childExec.setInput("{}");
+            }
+            executionMapper.insert(childExec);
+        }
 
         int childNodeCount = (int) childGraph.getElements().stream()
                 .filter(e -> "node".equals(e.getKind())).count();
+        // 复用/新建分支统一到本引用（下方 lambda 要求实际 final）
+        final AgentGraphExecution currentChildExec = childExec;
         AgentGraphInterpreter childInterpreter = new AgentGraphInterpreter(modelRuntimeService,
                 agentToolCallbackFactory, knowledgeRetrievalService,
                 loginContextProvider.getTenantId(), Math.max(8, childNodeCount * 2));
@@ -539,7 +554,7 @@ public class AgentGraphExecutionServiceImpl
         childOptions.decisions = call.decisions == null ? List.of() : call.decisions;
         Set<Long> childChain = new HashSet<>(graphChain);
         childChain.add(call.graphDefId);
-        childOptions.subgraphRunner = nested -> runSubgraph(nested, childExec.getId(), depth + 1,
+        childOptions.subgraphRunner = nested -> runSubgraph(nested, currentChildExec.getId(), depth + 1,
                 childChain);
 
         long start = System.currentTimeMillis();
@@ -550,7 +565,7 @@ public class AgentGraphExecutionServiceImpl
             childExec.setResultText(output);
             childExec.setLatencyMs(latency);
             executionMapper.updateById(childExec);
-            persistNodeTraces(childExec.getId(), childInterpreter.getTraces());
+            persistNodeTraces(childExec.getId(), childInterpreter.getTraces(), resumedChild);
             AgentGraphInterpreter.SubgraphResult result = new AgentGraphInterpreter.SubgraphResult();
             result.outputs = resolveOutputs(childGraph, childInterpreter);
             result.childExecutionId = childExec.getId();
@@ -560,7 +575,9 @@ public class AgentGraphExecutionServiceImpl
             childExec.setStatus(STATUS_WAITING_HUMAN);
             childExec.setLatencyMs(latency);
             executionMapper.updateById(childExec);
-            persistNodeTraces(childExec.getId(), childInterpreter.getTraces());
+            persistNodeTraces(childExec.getId(), childInterpreter.getTraces(), resumedChild);
+            // 1.1.3/P72：把子执行行 id 存入暂停状态，恢复轮凭它复用本行（不新建成功行）
+            pause.getPauseState().executionRowId = childExec.getId();
             // 父执行通过异常链感知子图人工暂停（父级会合并自身暂停状态）
             throw pause;
         } catch (RuntimeException failure) {
@@ -571,7 +588,7 @@ public class AgentGraphExecutionServiceImpl
             childExec.setErrorMessage(cancelled ? "父执行取消，子执行一并取消" : summarizeError(failure));
             childExec.setLatencyMs(latency);
             executionMapper.updateById(childExec);
-            persistNodeTraces(childExec.getId(), childInterpreter.getTraces());
+            persistNodeTraces(childExec.getId(), childInterpreter.getTraces(), resumedChild);
             throw failure;
         }
     }
