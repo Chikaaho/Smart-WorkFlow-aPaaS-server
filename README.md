@@ -123,9 +123,11 @@ docker run -d --name sw-redis -p 6379:6379 redis:7
 
 ### 3. 本地配置
 
-`sw-bootstrap/src/main/resources/application-local.yml` 已入库，就是可用的本地模板。按本机环境改这几处即可：
+本机配置不入库（`sw-bootstrap/src/main/resources/application-local.yml` 已被 `.gitignore` 忽略，
+防止本机凭据进入仓库与生产制品）。自建一份 43 行以内的最小模板即可，可直接复制下面内容再按本机环境改：
 
 ```yaml
+# 本机开发/验证配置（local profile；以下密钥为本机生成的开发值，非生产凭据）
 spring:
   datasource:
     dynamic:
@@ -153,7 +155,13 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$HOME/.smart-
 export SW_LOGIN_RSA_PRIVATE_KEY_FILE=/你的路径/login-rsa.pem
 ```
 
-`digest-secret`、`cipher-key` 等本地开发值已写在文件里，本机启动不需要额外注入。
+`sw.security.login.digest-secret` 与各 `cipher-key` 用本机生成的开发值补进模板即可（与上面
+`cipher-key` 同口径，只作本机加解密，非生产凭据），例如：
+
+```bash
+openssl rand -hex 32   # digest-secret
+openssl rand -base64 32 # SW_CIPHER_KEY 等对称密钥
+```
 
 ### 4. 启动
 

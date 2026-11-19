@@ -26,3 +26,6 @@ uploads/
 # 运行期日志与浏览器 profile 产物（P64 时期误提交 e2fe50f7 引入，2026-11-06 取消跟踪）
 logs/
 *.crdownload
+
+# 本机开发配置（可能包含本地服务地址与凭据）
+sw-bootstrap/src/main/resources/application-local.yml
