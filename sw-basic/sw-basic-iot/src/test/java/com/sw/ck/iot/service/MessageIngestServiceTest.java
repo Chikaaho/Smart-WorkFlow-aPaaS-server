@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -67,6 +68,9 @@ class MessageIngestServiceTest {
     @Mock
     private IotScriptService scriptService;
 
+    // 生产类已统一 @Autowired 字段注入（d53c7fb6）：改 @InjectMocks 按类型自动装配
+    // （mock 字段与生产 @Autowired 字段一一对应），等价原构造注入。
+    @InjectMocks
     private MessageIngestService service;
 
     private IotTopic topicCfg;
@@ -76,8 +80,6 @@ class MessageIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MessageIngestService();
-
         topicCfg = new IotTopic();
         topicCfg.setId(10L);
         topicCfg.setConnId(1L);

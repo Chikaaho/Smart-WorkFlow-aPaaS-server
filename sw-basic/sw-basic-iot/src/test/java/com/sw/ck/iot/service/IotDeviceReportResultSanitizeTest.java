@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,7 +39,12 @@ class IotDeviceReportResultSanitizeTest {
 
     @BeforeEach
     void setUp() {
+        // 生产类已统一 @Autowired 字段注入（d53c7fb6）：经反射逐字段装配，等价原构造注入
+        // （reportResult 只触达 commandMapper，其余两 mapper 以空 mock 占位与原测试一致）。
         service = new IotDeviceServiceImpl();
+        ReflectionTestUtils.setField(service, "commandMapper", commandMapper);
+        ReflectionTestUtils.setField(service, "productMapper", Mockito.mock(IotProductMapper.class));
+        ReflectionTestUtils.setField(service, "thingModelMapper", Mockito.mock(IotThingModelMapper.class));
     }
 
     private IotDeviceCommand existing() {

@@ -20,12 +20,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 
@@ -148,12 +150,26 @@ class IotFeatureToggleContextTest {
 
         /**
          * 自建 MQTT 下行通道：本上下文只装配开关语义所需组件，通道依赖以 mock 提供。
+         * 生产类已统一 @Autowired 字段注入（d53c7fb6）：通道与依赖改为已实例化单例直进
+         * 容器（BeanFactoryPostProcessor + registerSingleton），字段经反射装配等价原
+         * 构造注入 —— 若走 @Bean 定义，AutowiredAnnotationBeanPostProcessor 会继续装配
+         * bean 自身的 @Autowired 字段（MqttBrokerManager → MessageIngestService 整树下游），
+         * 测试只需空 mock。DeferredControlUtil 的字段注入按类型解析可命中手工单例。
          * 解析不到启用中的 MQTT 连接（mapper 返回 null）即视为「非 MQTT 设备」，
          * 与生产语义一致：通道缺失时由 provider 路径 fail closed。
          */
         @Bean
-        MqttDownlinkPublisher mqttDownlinkPublisher() {
-            return new MqttDownlinkPublisher();
+        static BeanFactoryPostProcessor mqttChannelSingletonRegistrar() {
+            return beanFactory -> {
+                MqttDownlinkPublisher publisher = new MqttDownlinkPublisher();
+                ReflectionTestUtils.setField(publisher, "connectionMapper", mock(IotConnectionMapper.class));
+                ReflectionTestUtils.setField(publisher, "topicMapper", mock(IotTopicMapper.class));
+                ReflectionTestUtils.setField(publisher, "mqttBrokerManager", mock(MqttBrokerManager.class));
+                // 原「空 provider」语义：容器内无 IotConnectionService bean，getIfAvailable() 返回 null
+                ReflectionTestUtils.setField(publisher, "connectionServiceProvider",
+                        new DefaultListableBeanFactory().getBeanProvider(IotConnectionService.class));
+                beanFactory.registerSingleton("mqttDownlinkPublisher", publisher);
+            };
         }
     }
 }

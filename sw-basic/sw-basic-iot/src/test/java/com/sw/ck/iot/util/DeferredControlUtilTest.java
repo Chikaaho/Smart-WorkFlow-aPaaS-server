@@ -15,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 import java.util.Optional;
@@ -48,7 +49,19 @@ class DeferredControlUtilTest {
     void setUp() {
         // provider 可缺省：装配存在与否决定控制通道是否可用
         deferredControlUtil = new DeferredControlUtil();
+        // 生产类已统一字段注入：@Autowired 字段经反射注入 mock；provider 助手按有/无两态装配
+        ReflectionTestUtils.setField(deferredControlUtil, "iotDeviceService", iotDeviceService);
+        ReflectionTestUtils.setField(deferredControlUtil, "commandQueueService", commandQueueService);
+        ReflectionTestUtils.setField(deferredControlUtil, "deviceControlProvider", provider(deviceControlProvider));
+        ReflectionTestUtils.setField(deferredControlUtil, "mqttDownlinkPublisher", mqttDownlinkPublisher);
+        ReflectionTestUtils.setField(deferredControlUtil, "clock", Clock.systemDefaultZone());
+
         deferredControlUtilWithoutProvider = new DeferredControlUtil();
+        ReflectionTestUtils.setField(deferredControlUtilWithoutProvider, "iotDeviceService", iotDeviceService);
+        ReflectionTestUtils.setField(deferredControlUtilWithoutProvider, "commandQueueService", commandQueueService);
+        ReflectionTestUtils.setField(deferredControlUtilWithoutProvider, "deviceControlProvider", provider(null));
+        ReflectionTestUtils.setField(deferredControlUtilWithoutProvider, "mqttDownlinkPublisher", mqttDownlinkPublisher);
+        ReflectionTestUtils.setField(deferredControlUtilWithoutProvider, "clock", Clock.systemDefaultZone());
 
         testDevice = new IotDevice();
         testDevice.setId(1L);

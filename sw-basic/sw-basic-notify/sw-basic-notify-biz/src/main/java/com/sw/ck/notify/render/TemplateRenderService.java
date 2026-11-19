@@ -127,19 +127,19 @@ public class TemplateRenderService {
             return;
         }
         String type = declared.toUpperCase();
-        if (type.equals("NUMBER")) {
+        if ("NUMBER".equals(type)) {
             if (value == null || NUMBER_VALUE.matcher(value).matches() == false) {
                 throw new TemplateRenderException("变量 " + name + " 类型不符（应为 NUMBER）");
             }
             return;
         }
-        if (type.equals("DATE")) {
+        if ("DATE".equals(type)) {
             if (value == null || DATE_VALUE.matcher(value).matches() == false) {
                 throw new TemplateRenderException("变量 " + name + " 类型不符（应为 DATE）");
             }
             return;
         }
-        if (type.equals("EMAIL")) {
+        if ("EMAIL".equals(type)) {
             if (value == null || EMAIL_VALUE.matcher(value).matches() == false) {
                 throw new TemplateRenderException("变量 " + name + " 类型不符（应为 EMAIL）");
             }

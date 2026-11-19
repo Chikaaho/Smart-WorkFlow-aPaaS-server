@@ -25,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -78,7 +79,12 @@ class IotAgentBridgeTest {
     @Mock
     private NotifyFacade notifyFacade;
 
+    // 生产类已统一 @Autowired 字段注入（d53c7fb6）：改 @InjectMocks 按 mock 字段名/类型
+    // 自动装配（两个监听器的字段名与上述 @Mock 变量名一致，ObjectProvider 同型 mock 靠
+    // 字段名消歧），等价原构造注入。
+    @InjectMocks
     private AgentGraphTriggerListener triggerListener;
+    @InjectMocks
     private AgentExecutionOutcomeListener outcomeListener;
 
     @BeforeEach
@@ -91,8 +97,6 @@ class IotAgentBridgeTest {
                 .channel(NotifyChannel.IN_APP).status("SUCCESS").build()));
         // 升级路径在显式事务模板内插入并发布；测试中直接同步执行回调
         when(transactionManager.getTransaction(any())).thenReturn(null);
-        triggerListener = new AgentGraphTriggerListener();
-        outcomeListener = new AgentExecutionOutcomeListener();
         when(tenantWorkAdmission.claim(eq(1L), any())).thenReturn(1);
         LoginUserHolder.clear();
     }
