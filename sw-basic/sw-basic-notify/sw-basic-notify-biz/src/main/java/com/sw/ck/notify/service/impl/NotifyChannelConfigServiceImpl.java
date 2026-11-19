@@ -33,9 +33,12 @@ public class NotifyChannelConfigServiceImpl implements NotifyChannelConfigServic
 
     private static final ObjectMapper JSON_OBJECT_MAPPER = new ObjectMapper();
 
-    /** 系统级已装配适配器（未装配=生产无投递能力，租户不可启用）。 */
-    @Autowired
-    private List<NotifyChannelAdapter> adapters;
+    /** 系统级已装配适配器（未装配=生产无投递能力，租户不可启用）。
+     * d53c7fb6 字段注入改造后，无渠道 Bean 的环境（如 prod profile 未启用任何
+     * sw.notify.channels.*）里 List 注入会因「expected at least 1 bean」启动失败；
+     * 构造器注入时代空列表是合法语义，required=false + 空兜底恢复该语义（1.1.3 CI 首跑发现）。 */
+    @Autowired(required = false)
+    private List<NotifyChannelAdapter> adapters = new ArrayList<>();
     @Autowired
     private NotifyChannelConfigMapper configMapper;
 
