@@ -55,7 +55,10 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     @Autowired
     private NotifyMessageService notifyMessageService;
-    @Autowired
+    /** 无渠道 Bean 的环境（如 prod profile 未启用任何 sw.notify.channels.*）允许空装配，
+     * initAdapters 已对 null 兜底；required=false 恢复该语义（1.1.3 CI 发现，
+     * 与 NotifyChannelConfigServiceImpl.adapters 同批 d53c7fb6 字段注入改造引入）。 */
+    @Autowired(required = false)
     private List<NotifyChannelAdapter> adapterList;
     private Map<NotifyChannel, NotifyChannelAdapter> adapters;
     /** 窄测试上下文可缺省；生产装配尝试流水 Mapper。 */
