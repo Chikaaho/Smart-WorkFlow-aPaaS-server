@@ -369,6 +369,12 @@ public class AgentGraphInterpreter {
         public Map<String, Integer> joinCounts = new HashMap<>();
         /** 子图暂停链：父节点 id → 子图暂停状态（G3-5：父执行等待人工后恢复子图） */
         public Map<String, PauseState> subgraphPauseStates = new HashMap<>();
+        /**
+         * 本层执行行 id（1.1.3/P72：人工暂停时由执行服务写入、恢复轮凭它复用同一执行行，
+         * 对齐顶层 V3「恢复前后同一条执行」语义；随暂停状态一并序列化进 pause_state_json）。
+         * 顶层执行的行 id 不走本字段（受理行 result_execution_id 即顶层结果行）。
+         */
+        public Long executionRowId;
     }
 
     /** 活跃执行点快照（nodeId + 分支路径）。 */

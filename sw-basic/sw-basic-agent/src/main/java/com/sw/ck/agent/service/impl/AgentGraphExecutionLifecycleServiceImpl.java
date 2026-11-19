@@ -13,12 +13,14 @@ import com.sw.ck.agent.vo.AgentHumanTaskVO;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecution;
 import com.sw.ck.agent.entity.AgentGraphExecutionEvent;
+import com.sw.ck.agent.entity.AgentGraphExecutionNode;
 import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
 import com.sw.ck.agent.entity.AgentGraphHumanTask;
 import com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionEventMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionRequestMapper;
 import com.sw.ck.agent.mapper.AgentGraphHumanTaskMapper;
 import com.sw.ck.agent.orchestration.AgentExecutionEventContext;
@@ -77,6 +79,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     static final String CANCELLED = "CANCELLED";
     static final String INTERRUPTED = "INTERRUPTED";
     static final String WAITING_HUMAN = "WAITING_HUMAN";
+    /** 节点轨迹等待态（人工/子图暂停时解释器写入；取消时同步改判终态） */
+    static final String NODE_STATUS_WAITING = "WAITING";
 
     @Autowired
     private AgentGraphExecutionRequestMapper requestMapper;
@@ -86,6 +90,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     private AgentGraphHumanTaskMapper humanTaskMapper;
     @Autowired
     private AgentGraphExecutionMapper executionMapper;
+    @Autowired
+    private AgentGraphExecutionNodeMapper executionNodeMapper;
     @Autowired
     private AgentGraphDefMapper graphDefMapper;
     @Autowired
@@ -117,6 +123,11 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 new ArrayBlockingQueue<>(boundedCapacity), Thread.ofVirtual().name("agent-graph-exec-", 0).factory(),
                 new ThreadPoolExecutor.AbortPolicy());
         if (!lifecycleTableAvailable()) return;
+        // 1.1.3/P72 同族收尾：重启判 INTERRUPTED 的受理行，先把其等待中的子执行行、
+        // 人工任务与节点轨迹同步收尾——否则子行永远停在「等待人工」且死任务仍占待办
+        List<AgentGraphExecutionRequest> inFlight = requestMapper.selectList(
+                Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
+                        .in(AgentGraphExecutionRequest::getStatus, RUNNING, CANCEL_REQUESTED));
         requestMapper.update(null, Wrappers.<AgentGraphExecutionRequest>lambdaUpdate()
                 .in(AgentGraphExecutionRequest::getStatus, RUNNING, CANCEL_REQUESTED)
                 .set(AgentGraphExecutionRequest::getStatus, INTERRUPTED)
@@ -124,6 +135,16 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 .set(AgentGraphExecutionRequest::getErrorMessage,
                         "服务重启前的执行效果无法确认，已停止自动重放，请人工核实外部副作用")
                 .set(AgentGraphExecutionRequest::getFinishedAt, LocalDateTime.now()));
+        for (AgentGraphExecutionRequest affected : inFlight) {
+            try {
+                humanTaskMapper.cancelPending(affected.getId());
+                closeChildrenAsInterrupted(affected.getResultExecutionId());
+            } catch (Exception sweepFailure) {
+                // 单行收尾失败不阻断启动恢复；留日志排障
+                log.warn("重启收尾子执行失败: requestId={}, error={}",
+                        affected.getId(), sweepFailure.getMessage());
+            }
+        }
         List<AgentGraphExecutionRequest> queued = requestMapper.selectList(
                 Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
                         .eq(AgentGraphExecutionRequest::getStatus, QUEUED)
@@ -208,7 +229,30 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
 
     @Override
     public AgentGraphExecutionLifecycleVO get(Long executionId) {
-        return toDto(requireOwned(executionId));
+        AgentGraphExecutionRequest request = requireOwned(executionId);
+        // 1.1.3/P72：入参是子执行行 id 时返回该行自身视图（状态/耗时/输出取子行，
+        // 受理号仍指向所属受理行——任务与事件按受理行查询的语义不变）
+        AgentGraphExecution childRow = executionRowIfChild(executionId);
+        if (childRow != null) {
+            return toChildDto(request, childRow);
+        }
+        return toDto(request);
+    }
+
+    /**
+     * 入参不是受理行/首层结果行时，若命中子执行行（子图级，parent_execution_id 非空）
+     * 则返回该行；否则 null（含受理行自身 id，避免误判）。
+     */
+    private AgentGraphExecution executionRowIfChild(Long executionId) {
+        try {
+            AgentGraphExecution row = executionMapper.selectById(executionId);
+            if (row != null && row.getParentExecutionId() != null) {
+                return row;
+            }
+        } catch (Exception lookupFailure) {
+            // 行不存在或表不可用时按原语义走受理行视图，不放大错误
+        }
+        return null;
     }
 
     @Override
@@ -238,6 +282,9 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 humanTaskMapper.cancelPending(requestId);
                 cancelChildWaitingExecutions(current.getResultExecutionId());
                 markResultExecutionCancelled(current.getResultExecutionId());
+                // 1.1.3/P73：取消同步把仍在等待的节点轨迹行改判「已取消」——
+                // 此前轨迹行停在 WAITING，详情头部已取消而节点轨迹仍显示等待人工
+                markWaitingNodesCancelled(current.getResultExecutionId());
                 appendEvent(requestMapper.selectById(requestId), "STATE", null, CANCELLED);
             }
         } else if (RUNNING.equals(current.getStatus())) {
@@ -687,11 +734,71 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 humanTaskMapper.cancelPending(child.getId());
                 child.setStatus(CANCELLED);
                 executionMapper.updateById(child);
+                // 1.1.3/P73：子行取消时其节点轨迹同步改判（人工节点行不再停留等待人工）
+                markWaitingNodesCancelled(child.getId());
             }
         } catch (Exception cascadeFailure) {
             // 级联失败不回滚父取消（父已终态）；留日志排障
             log.warn("子执行级联取消失败: parentExecutionId={}, error={}",
                     resultExecutionId, cascadeFailure.getMessage());
+        }
+    }
+
+    /**
+     * 把执行行仍在等待的节点轨迹行改判「已取消」（1.1.3/P73）：人工/子图暂停时
+     * 解释器写入的 WAITING 轨迹行，在取消收尾时与头部状态、人工任务行对齐。
+     */
+    private void markWaitingNodesCancelled(Long executionId) {
+        if (executionId == null) {
+            return;
+        }
+        markWaitingNodes(executionId, CANCELLED);
+    }
+
+    /**
+     * 重启收尾（1.1.3/P72 同族）：受理行判 INTERRUPTED 后，其仍等待人工的子执行行
+     * 同步改判 INTERRUPTED（行 + 节点轨迹 + 残留待办），结果执行行本身非终态时一并
+     * 改判，避免列表停留「执行中/等待人工」。
+     */
+    private void closeChildrenAsInterrupted(Long resultExecutionId) {
+        if (resultExecutionId == null) {
+            return;
+        }
+        try {
+            List<AgentGraphExecution> waitingChildren = executionMapper.selectList(
+                    Wrappers.<AgentGraphExecution>lambdaQuery()
+                            .eq(AgentGraphExecution::getParentExecutionId, resultExecutionId)
+                            .eq(AgentGraphExecution::getStatus, WAITING_HUMAN));
+            for (AgentGraphExecution child : waitingChildren) {
+                humanTaskMapper.cancelPending(child.getId());
+                child.setStatus(INTERRUPTED);
+                executionMapper.updateById(child);
+                markWaitingNodes(child.getId(), INTERRUPTED);
+            }
+            AgentGraphExecution result = executionMapper.selectById(resultExecutionId);
+            if (result != null && !isTerminalExecutionStatus(result.getStatus())
+                    && !WAITING_HUMAN.equals(result.getStatus())) {
+                result.setStatus(INTERRUPTED);
+                result.setErrorMessage("服务重启，执行效果无法确认");
+                executionMapper.updateById(result);
+            }
+        } catch (Exception sweepFailure) {
+            // 收尾失败不阻断启动恢复；留日志排障
+            log.warn("重启子执行收尾失败: resultExecutionId={}, error={}",
+                    resultExecutionId, sweepFailure.getMessage());
+        }
+    }
+
+    /** 节点轨迹等待行改判指定终态（取消=CANCELLED，重启收尾=INTERRUPTED）。 */
+    private void markWaitingNodes(Long executionId, String terminalStatus) {
+        try {
+            executionNodeMapper.update(null, Wrappers.<AgentGraphExecutionNode>lambdaUpdate()
+                    .eq(AgentGraphExecutionNode::getExecutionId, executionId)
+                    .eq(AgentGraphExecutionNode::getStatus, NODE_STATUS_WAITING)
+                    .set(AgentGraphExecutionNode::getStatus, terminalStatus));
+        } catch (Exception markFailure) {
+            log.warn("节点轨迹状态同步失败: executionId={}, status={}, error={}",
+                    executionId, terminalStatus, markFailure.getMessage());
         }
     }
 
@@ -737,12 +844,46 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                     .orderByDesc(AgentGraphExecutionRequest::getId)
                     .last("LIMIT 1"));
         }
+        if (request == null) {
+            // 1.1.3/P72：子执行行（子图级）回链所属受理行——详情/取消按子执行编号
+            // 不再 404；归属校验仍落在受理行 createBy 上
+            request = requestByChildExecutionRow(id);
+        }
         if (request == null) throw new BaseException(CommonErrorCode.NOT_FOUND, "执行记录不存在");
         Long userId = requireUserId();
         if (!loginContext.isSuperAdmin() && !Objects.equals(request.getCreateBy(), userId)) {
             throw new BaseException(CommonErrorCode.NOT_FOUND, "执行记录不存在");
         }
         return request;
+    }
+
+    /**
+     * 子执行行 → 所属受理行：沿 parent_execution_id 向上找到顶层结果行（嵌套深度
+     * 上限与子图一致），再按 result_execution_id 反查受理簿。行不存在/链断裂返回 null
+     * （保持原 NOT_FOUND 语义）。
+     */
+    private AgentGraphExecutionRequest requestByChildExecutionRow(Long executionRowId) {
+        try {
+            AgentGraphExecution row = executionMapper.selectById(executionRowId);
+            if (row == null) {
+                return null;
+            }
+            int depth = 0;
+            while (row.getParentExecutionId() != null && depth < 3) {
+                row = executionMapper.selectById(row.getParentExecutionId());
+                if (row == null) {
+                    return null;
+                }
+                depth++;
+            }
+            return requestMapper.selectOne(Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
+                    .eq(AgentGraphExecutionRequest::getResultExecutionId, row.getId())
+                    .orderByDesc(AgentGraphExecutionRequest::getId)
+                    .last("LIMIT 1"));
+        } catch (Exception lookupFailure) {
+            // 表不可用等异常按未命中处理，保持原 NOT_FOUND 语义
+            return null;
+        }
     }
 
     private Long requireUserId() {
@@ -774,6 +915,28 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
                 dto.setOutput(null);
             }
         }
+        return dto;
+    }
+
+    /**
+     * 子执行行视图（1.1.3/P72）：列表点开子行时展示该行自身状态与耗时，
+     * 执行编号=子行 id、受理编号=所属受理行 id（详情页两编号齐备，父子关系可辨）。
+     */
+    private AgentGraphExecutionLifecycleVO toChildDto(AgentGraphExecutionRequest request,
+                                                       AgentGraphExecution childRow) {
+        AgentGraphExecutionLifecycleVO dto = new AgentGraphExecutionLifecycleVO();
+        dto.setExecutionId(request.getId());
+        dto.setGraphDefId(childRow.getGraphDefId());
+        dto.setGraphDefVersion(childRow.getGraphDefVersion());
+        dto.setStatus(childRow.getStatus());
+        dto.setInput(childRow.getInput());
+        dto.setErrorCategory(childRow.getErrorCategory());
+        dto.setErrorMessage(childRow.getErrorMessage());
+        dto.setLatencyMs(childRow.getLatencyMs());
+        dto.setResultExecutionId(childRow.getId());
+        dto.setCreateTime(childRow.getCreateTime());
+        dto.setFinishedAt(childRow.getUpdateTime());
+        dto.setOutput(childRow.getResultText());
         return dto;
     }
 
