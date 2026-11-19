@@ -5,6 +5,7 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,8 +19,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 class SsoProviderClients {
 
-    @Autowired
-    private List<SsoProviderClient> clientList;
+    /** SSO provider 实现按条件装配（0 实现=本环境未启用 SSO）；构造器注入时代空列表合法，
+     * required=false + 空兜底恢复该语义（1.1.3 CI：d53c7fb6 字段注入改造后零 Bean 环境启动失败）。 */
+    @Autowired(required = false)
+    private List<SsoProviderClient> clientList = new ArrayList<>();
     private Map<String, SsoProviderClient> clients;
 
     @PostConstruct

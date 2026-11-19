@@ -22,9 +22,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class ParticipantResolverRegistry {
 
-    @Autowired
+    /** 策略/适配器均为可选 SPI（NodeParticipantAdapter 生产可为 0 实现）；unique* 已对 null 兜底，
+     * required=false 恢复构造器注入时代的空集合语义（1.1.3 CI：d53c7fb6 字段注入改造后
+     * 零 Bean 环境启动失败）。 */
+    @Autowired(required = false)
     private List<NodeParticipantResolver> resolverList;
-    @Autowired
+    @Autowired(required = false)
     private List<NodeParticipantAdapter> adapterList;
     private Map<String, NodeParticipantResolver> resolvers;
     private Map<String, NodeParticipantAdapter> adapters;

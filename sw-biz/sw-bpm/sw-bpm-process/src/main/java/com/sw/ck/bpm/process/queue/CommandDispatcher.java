@@ -51,8 +51,11 @@ public class CommandDispatcher {
 
     @Autowired
     private BpmCommandQueue commandQueue;
-    @Autowired
-    private List<BpmCommandHandler> handlerList;
+    /** 命令处理器按条件装配（如 BatchInvokeCommandHandler 带 @ConditionalOnProperty），
+     * 零实现时 dispatch 不可用但注册表仍须可构造；构造器注入时代空列表合法，
+     * required=false + 空兜底恢复该语义（1.1.3 CI：d53c7fb6 字段注入改造后零 Bean 环境启动失败）。 */
+    @Autowired(required = false)
+    private List<BpmCommandHandler> handlerList = new ArrayList<>();
     private Map<CommandTypeEnum, BpmCommandHandler> handlers;
     @Autowired(required = false)
     private UserDetailsProvider userDetailsProvider;
